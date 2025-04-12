@@ -1,2 +1,1 @@
-# deepearth
-DeepEarth: A Deep Spatiotemporal Simulator for Earth's Ecosystems
+# DeepEarth: Geospatial Deep Learning of Earth's Ecosystems at Landscape Scale
