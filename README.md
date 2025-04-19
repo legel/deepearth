@@ -169,12 +169,3 @@ for lat, lon, alt in coordinates:
     print(f"Normalized coordinates: {norm[0,0].item():.6f}, {norm[0,1].item():.6f}, {norm[0,2].item():.6f}")
     print(f"Recovered geodetic: {geo2[0,0].item():.8f}°, {geo2[0,1].item():.8f}°, {geo2[0,2].item():.3f}m")
 ```
-
-## Testing
-
-Run the test suite using pytest:
-
-```bash
-pytest tests/
-```
-*(Ensure you have installed the `
