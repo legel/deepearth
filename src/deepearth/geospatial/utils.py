@@ -52,16 +52,29 @@ def _as_fp64(t: torch.Tensor) -> torch.Tensor:
 
 
 def _safe_div(num: torch.Tensor, den: torch.Tensor) -> torch.Tensor:
-    """Element-wise division that maps 0/0 to 0 to avoid NaNs.
+    """Element-wise division safe for normalization.
+    Maps division by zero (0/0 or x/0 where span=0) to 0.5.
     
     Args:
-        num: Numerator tensor
-        den: Denominator tensor
+        num: Numerator tensor (e.g., value - min)
+        den: Denominator tensor (e.g., max - min, i.e., span)
         
     Returns:
-        Division result with 0/0 mapped to 0
+        Division result, with division by zero mapped to 0.5.
     """
-    return num / torch.where(den == 0, torch.ones_like(den), den)
+    # Create a mask for denominators that are close to zero
+    zero_den_mask = torch.abs(den) < 1e-9 # Use a small threshold for safety
+    
+    # Replace near-zero denominators with 1 to avoid NaN/Inf during division
+    safe_den = torch.where(zero_den_mask, torch.ones_like(den), den)
+    
+    # Perform the division
+    result = num / safe_den
+    
+    # Where the original denominator was near-zero, set the result to 0.5
+    result = torch.where(zero_den_mask, torch.full_like(result, 0.5), result)
+    
+    return result
 
 
 def wrap_lat(lat: float) -> float:

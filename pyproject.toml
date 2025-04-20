@@ -25,7 +25,13 @@ dependencies = [
     "numpy",
     "pandas",
     "torch",
-    "gsplat"
+    "gsplat",
+    "torchvision",
+    "pillow",
+    "tqdm",
+    "tifffile",
+    "open3d",
+    "imagecodecs"  # For TIFF LZW decompression
     # Add other core dependencies like PIL, matplotlib, etc.
 ]
 

@@ -125,56 +125,115 @@ class GeospatialConverter:
         """Clear the stored bounding box."""
         self._bbox = None
 
-    def geodetic_to_xyz(self, geo: torch.Tensor, orientation: torch.Tensor | None = None) -> Tuple[torch.Tensor, torch.Tensor | None]:
+    def geodetic_to_xyz(self, geo: torch.Tensor, orientation: torch.Tensor | None = None, return_intermediates: bool = False) -> Tuple[torch.Tensor, torch.Tensor | None] | Tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
         """Convert geodetic coordinates to Earth-centered Cartesian XYZ.
         
         Args:
             geo: Tensor of shape (..., 3) containing (lat, lon, alt) in degrees/meters
             orientation: Optional tensor of shape (..., 3) containing (yaw, pitch, roll) in degrees
+            return_intermediates: If True, return R_ned_body and R_ecef_ned as well.
             
         Returns:
             Tuple of:
-                - Tensor of shape (..., 3) containing (X, Y, Z) in meters
-                - Optional tensor of shape (..., 3, 3) containing rotation matrices if orientation provided
+                - Tensor of shape (..., 3) containing (X, Y, Z) in meters (ECEF)
+                - Optional tensor of shape (..., 3, 3) containing camera-to-world rotation matrices (body-to-ECEF) if orientation provided
+            OR if return_intermediates is True:
+                - xyz: (..., 3)
+                - R_ecef_body: (..., 3, 3) or None
+                - R_ned_body: (..., 3, 3) or None
+                - R_ecef_ned: (..., 3, 3) or None
         """
         assert geo.shape[-1] == 3, "last dimension must be (lat, lon, alt)"
         geo = _as_fp64(geo)
         lat, lon, alt = torch.deg2rad(geo[..., 0]), torch.deg2rad(geo[..., 1]), geo[..., 2]
         sin_lat, cos_lat = torch.sin(lat), torch.cos(lat)
+        sin_lon, cos_lon = torch.sin(lon), torch.cos(lon)
+        
+        # Calculate N (radius of curvature in prime vertical)
         N = self._a / torch.sqrt(1 - self._e2 * sin_lat ** 2)
+        
+        # Calculate ECEF coordinates (XYZ)
         xyz = torch.stack((
-            (N + alt) * cos_lat * torch.cos(lon),
-            (N + alt) * cos_lat * torch.sin(lon),
+            (N + alt) * cos_lat * cos_lon,
+            (N + alt) * cos_lat * sin_lon,
             (N * (1 - self._e2) + alt) * sin_lat
         ), -1)
         
+        # Initialize return rotation matrix
+        R_ecef_body = None
+        R_ned_body = None # Initialize intermediate
+        R_ecef_ned = None # Initialize intermediate
+        R_ecef_cam = None # Initialize the final camera rotation matrix
+
         if orientation is not None:
-            # Convert orientation angles to rotation matrices
+            # 1. Calculate Body-to-NED rotation (R_ned_body) from YPR angles
             orientation = _as_fp64(orientation)
             y, p, r = [torch.deg2rad(orientation[..., i]) for i in range(3)]
-            
-            # Compute rotation matrices for each point
             cy, sy = torch.cos(y), torch.sin(y)
             cp, sp = torch.cos(p), torch.sin(p)
             cr, sr = torch.cos(r), torch.sin(r)
             
-            # Create rotation matrices (broadcasting to match input shape)
-            R = torch.zeros((*orientation.shape[:-1], 3, 3), dtype=torch.float64, device=orientation.device)
+            R_ned_body = torch.zeros((*orientation.shape[:-1], 3, 3), dtype=torch.float64, device=orientation.device)
+            R_ned_body[..., 0, 0] = cy * cp
+            R_ned_body[..., 0, 1] = cy * sp * sr - sy * cr
+            R_ned_body[..., 0, 2] = cy * sp * cr + sy * sr
+            R_ned_body[..., 1, 0] = sy * cp
+            R_ned_body[..., 1, 1] = sy * sp * sr + cy * cr
+            R_ned_body[..., 1, 2] = sy * sp * cr - cy * sr
+            R_ned_body[..., 2, 0] = -sp
+            R_ned_body[..., 2, 1] = cp * sr
+            R_ned_body[..., 2, 2] = cp * cr
+
+            # 2. Calculate NED-to-ECEF rotation (R_ecef_ned)
+            # Columns are the ECEF representations of North, East, Down unit vectors
+            # North = [-sin_lat * cos_lon, -sin_lat * sin_lon,  cos_lat]
+            # East  = [-sin_lon,           cos_lon,           0      ]
+            # Down  = [-cos_lat * cos_lon, -cos_lat * sin_lon, -sin_lat]
+            R_ecef_ned = torch.zeros((*geo.shape[:-1], 3, 3), dtype=torch.float64, device=geo.device)
+            R_ecef_ned[..., 0, 0] = -sin_lat * cos_lon
+            R_ecef_ned[..., 1, 0] = -sin_lat * sin_lon
+            R_ecef_ned[..., 2, 0] =  cos_lat
+            R_ecef_ned[..., 0, 1] = -sin_lon
+            R_ecef_ned[..., 1, 1] =  cos_lon
+            R_ecef_ned[..., 2, 1] =  0.0
+            R_ecef_ned[..., 0, 2] = -cos_lat * cos_lon
+            R_ecef_ned[..., 1, 2] = -cos_lat * sin_lon
+            R_ecef_ned[..., 2, 2] = -sin_lat
+
+            # 3. Combine: R_ecef_body = R_ecef_ned @ R_ned_body
+            R_ecef_body = torch.matmul(R_ecef_ned, R_ned_body)
+
+            # 4. Apply fixed rotation from Body Frame to Camera Frame
+            # Determined empirically using interactive_visualizer.py: Rz(90 degrees)
+            R_body_cam = torch.tensor([
+                [0.0, -1.0, 0.0],
+                [1.0,  0.0, 0.0],
+                [0.0,  0.0, 1.0]
+                ], dtype=torch.float64, device=geo.device)
             
-            # Fill rotation matrix elements (aerospace sequence)
-            R[..., 0, 0] = cy * cp
-            R[..., 0, 1] = cy * sp * sr - sy * cr
-            R[..., 0, 2] = cy * sp * cr + sy * sr
-            R[..., 1, 0] = sy * cp
-            R[..., 1, 1] = sy * sp * sr + cy * cr
-            R[..., 1, 2] = sy * sp * cr - cy * sr
-            R[..., 2, 0] = -sp
-            R[..., 2, 1] = cp * sr
-            R[..., 2, 2] = cp * cr
+            # R_ecef_cam = R_ecef_body @ R_body_cam 
+            R_ecef_cam = torch.matmul(R_ecef_body, R_body_cam)
             
-            return xyz, R
-        
-        return xyz, None
+            # --- DEBUG: Print rotation matrices for first view --- 
+            # (Keep this debug section for now, can be removed later)
+            if return_intermediates and R_ned_body.shape[0] > 0: 
+                print(f"--- Rotation Debug (View 0) ---")
+                print(f"  R_ned_body:\n{R_ned_body[0].cpu().numpy()}")
+                print(f"  R_ecef_ned:\n{R_ecef_ned[0].cpu().numpy()}")
+                print(f"  R_ecef_body:\n{R_ecef_body[0].cpu().numpy()}")
+                print(f"  R_body_cam (Rz(90)):\n{R_body_cam.cpu().numpy()}")
+                print(f"  FINAL R_ecef_cam:\n{R_ecef_cam[0].cpu().numpy()}")
+                print(f"  Det(R_ned_body): {torch.linalg.det(R_ned_body[0]):.4f}")
+                print(f"  Det(R_ecef_ned): {torch.linalg.det(R_ecef_ned[0]):.4f}")
+                print(f"  Det(R_ecef_cam): {torch.linalg.det(R_ecef_cam[0]):.4f}")
+                print(f"--- End Rotation Debug --- ")
+            # --- End DEBUG ---
+
+        # Return ECEF position and the final camera-to-ECEF rotation
+        if return_intermediates:
+            return xyz, R_ecef_cam, R_ned_body, R_ecef_ned 
+        else:
+            return xyz, R_ecef_cam
 
     def xyz_to_geodetic(self, xyz: torch.Tensor, rotation_matrix: torch.Tensor | None = None) -> Tuple[torch.Tensor, torch.Tensor | None]:
         """Convert Earth-centered Cartesian XYZ to geodetic coordinates.
