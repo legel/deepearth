@@ -12,7 +12,6 @@ Pollinators (e.g., bees, butterflies, hummingbirds) provide vital ecosystem serv
 
 DeepEarth is introduced for scientific modeling of Earth's ecosystems at landscape scale. It is a Bayesian deep neural network designed to scale geographically across the planet and biologically across the tree of life. DeepEarth represents an integrative deep encoding of diverse data, including:
 
-*   **AlphaFold** deep embeddings of species proteomes
 *   **iNaturalist & Herbaria** records of species presence
 *   Visible and hyperspectral **aerial/remote sensing**
 *   **3D topographic maps** from LiDAR and photogrammetry
@@ -31,9 +30,6 @@ The development is planned in phases:
 *   [ ] Develop Data Loaders for Diverse Ecological and Geospatial Datasets:
     *   [ ] **GeoFusion:** Fuse 3D data (LiDAR, ARKit, GCPs, GNSS RTK) into global geodetic coordinates for photorealistic 3D mapping & Gaussian Splatting.
         *   Geotagged 3D Gaussian Splats (*Neural Output: (latitude, longitude, altitude) → (color, opacity)*)
-    *   [ ] **AlphaFold:** Load deep embeddings of species proteomes for biophysical traits/adaptations.
-        *   Protein Structure Embeddings (*384 × proteins × taxa*)
-        *   Molecular Function Annotations (*GO × proteins × taxa*)
     *   [ ] **iNaturalist:** Load millions of timestamped/geotagged species photos for distributions, phenology, interactions.
         *   *In Situ* Nature Imagery (*3 × H × W × RGB*)
     *   [ ] **iDigBio:** Load millions of historical biodiversity records (pre-1900) for native ecosystem modeling.
