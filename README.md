@@ -28,8 +28,6 @@ The development is planned in phases:
 
 *   [x] High-precision Geodetic Coordinate Conversions (Lat/Lon/Alt ↔ XYZ ↔ Normalized)
 *   [ ] Develop Data Loaders for Diverse Ecological and Geospatial Datasets:
-    *   [ ] **GeoFusion:** Fuse 3D data (LiDAR, ARKit, GCPs, GNSS RTK) into global geodetic coordinates for photorealistic 3D mapping & Gaussian Splatting.
-        *   Geotagged 3D Gaussian Splats (*Neural Output: (latitude, longitude, altitude) → (color, opacity)*)
     *   [ ] **iNaturalist:** Load millions of timestamped/geotagged species photos for distributions, phenology, interactions.
         *   *In Situ* Nature Imagery (*3 × H × W × RGB*)
     *   [ ] **iDigBio:** Load millions of historical biodiversity records (pre-1900) for native ecosystem modeling.
@@ -79,6 +77,8 @@ The development is planned in phases:
         *   Digital Elevation Model (*m*)
         *   3D Topographic LiDAR (`N × (x,y,z)`) *m*
         *   Slope / Aspect (*°*)
+    *   [ ] **GeoFusion:** Fuse 3D data (LiDAR, ARKit, GCPs, GNSS RTK) into global geodetic coordinates for photorealistic 3D mapping & Gaussian Splatting.
+        *   Geotagged 3D Gaussian Splats (*Neural Output: (latitude, longitude, altitude) → (color, opacity)*)
 *   [ ] Implement Transformer-based encoders for unifying different data modalities.
 *   [ ] Develop spatio-temporal embeddings (Multiresolution Hash, Time2Vec).
 *   [ ] Implement self-supervised training via masked data reconstruction.
