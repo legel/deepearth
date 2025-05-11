@@ -1,6 +1,6 @@
-# DeepEarth: Neural Simulator of Earth's Ecosystems at Landscape Scale
+# Deep Neural Networks for Ecological Simulation at Landscape Scale
 
-**DeepEarth** is a neural network architecture for simulation of Earth's ecosystems at landscape scale.  It will help to more precisely predict _pollination_, _fire_, and _flood_ interactions with plant species in California and Florida.  
+**DeepEarth** is a neural network architecture for simulation of Earth's ecosystems at landscape scale.  It will help to more precisely predict _pollination_, _fire_, and _flood_ interactions with plant species in California and Florida.
 
 Preview our [paper](https://github.com/legel/deepearth/blob/main/docs/deepearth.pdf) to learn more.
 
