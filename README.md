@@ -1,102 +1,16 @@
 # DeepEarth: Geospatial Deep Simulator of Earth's Ecosystems
 
-This repository supports the development of **DeepEarth**, a deep neural network for modeling Earth's ecosystems at landscape scale.  DeepEarth will directly support prediction of plant-pollinator interactions, as well as plant-fire and plant-flood ecohydrology, across California and Florida.  Its development is led by Ecodash.ai, Stanford University, and University of Florida, with support from NSF.
+**DeepEarth** is a neural network architecture for simulation of Earth's ecosystems at landscape scale.  It will help ecologists to more precisely predict _pollination_, _fire_, and _flood_ interactions with plant species in California and Florida.  Preview our [paper](https://github.com/legel/deepearth/blob/main/docs/deepearth.pdf) to learn more.
 
-DeepEarth learns from biological, geological, and ecological data – e.g., species presence records, satellite imagery, 3D topography, soil surveys, and climate models – across space and time. It learns by reconstructing partially or fully masked data, sampled around (x, y, z, t) coordinates of scientific records. Prior knowledge from validated scientific models guides optimization as Bayesian constraints.
+### Join us for an NSF-funded workshop on June 17th, 2025
 
-Initial prototype results are expected by a DeepEarth workshop on June 17th, 2025, sponsored by NSF I-GUIDE in Chicago.  The prototype will focus on simulating flowering and pollination in native ecosystems of California and Florida between 2010 to 2025. Predictive accuracy will initially be validated through (i) _in silico_ accuracy of predicted plant-pollinator distributions vs. real observations
-unseen during model training, and eventually by (ii) planting field trials seeking to maximize native plant & pollinator biodiversity, flowering abundance, and cross-pollination.
+We're proud to host an NSF I-GUIDE workshop on DeepEarth this summer in Chicago!  See ["DeepEarth Workshop: Self-Supervised AI for Spatiotemporal Modeling of Ecosystems"](https://i-guide.io/forum/forum-2025/workshops/) for more details. Looking forward to meeting you!
 
-## Core Functionality Roadmap
+### NSF summer program in AI for disaster resilience, August 4-8, 2025
 
-The development is planned in phases:
+We will work with 5 PhD students in geospatial, ecological, and computational scientists for a 5 day program themed ["Spatial AI for Extreme Events and Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/).  We will geospatially and temporally simulate fire and flood responses of plants at sub-meter scale.
 
-### Phase 1: Foundational Geospatial, Reconstruction & Data Tools
-
-*   [x] High-precision Geodetic Coordinate Conversions (Lat/Lon/Alt ↔ XYZ ↔ Normalized)
-*   [ ] Develop Data Loaders for Diverse Ecological and Geospatial Datasets:
-    *   [ ] **iNaturalist:** Load millions of timestamped/geotagged species photos for distributions, phenology, interactions.
-        *   *In Situ* Nature Imagery (*3 × H × W × RGB*)
-    *   [ ] **iDigBio:** Load millions of historical biodiversity records (pre-1900) for native ecosystem modeling.
-        *   Species Distribution Records (*N × taxa*)
-    *   [ ] **PhyloRegion:** Load geographic species distribution models with evolutionary constraints.
-        *   Species Habitat Range Model (*12k × taxa*)
-    *   [ ] **PhenoVision:** Load pre-trained model/data for flowering classification from images.
-        *   Plant Flowering Phenology (*12k × taxa*)
-    *   [ ] **GloBI:** Load indexed plant-pollinator interaction events (330k+ since 2014).
-        *   Plant-Pollinator Flower Visits (*2 × taxa*)
-    *   [ ] **InVEST:** Load pollination model outputs (LULC maps, pollinator presence, flight ranges).
-        *   Floral Resources Index (*blooms/km²/season*)
-        *   Habitat Nesting Suitability (*nests/km²*)
-        *   Relative Species Abundance (*species/km²/season*)
-        *   Pollinator Abundance (*visits/flower/season*)
-    *   [ ] **USDA-Aerial:** Load HD aerial RGBI imagery (0.33m/px NAIP) for agricultural intelligence.
-        *   Visible (aerial) (*H × W × RGBI*)
-    *   [ ] **NASA-Thermal:** Load HD infrared satellite data (GOES-R) for hourly weather/cloud/temperature fields.
-        *   Infrared (satellite) (*H × W × 16 × m*)
-        *   Wind (speed, direction) (*m/s, °*)
-        *   Downward Shortwave Radiation (*W/m²*)
-    *   [ ] **ESA-Hyperspectral:** Load satellite hyperspectral data (DESIS, 235 frequencies) for spectrographic analysis.
-        *   Hyperspectral (satellite) (*H × W × 235 × nm*)
-    *   [ ] **WorldClim:** Load bioclimatic metrics (19 variables, 1970-2000, 1km res).
-        *   Bioclimatic Metrics (*19 × kg/m², K*)
-    *   [ ] **NOAA-Weather:** Load hourly land hydrology/energy simulations (evapotranspiration, heat flux).
-        *   Precipitation (*kg/m²*)
-        *   Air Temperature (2m) (*K*)
-        *   Specific Humidity (2m) (*%*)
-        *   Convective Available Potential Energy (*J/kg*)
-        *   Surface Albedo (*%*)
-        *   Sensible / Ground / Latent Heat Flux (*W/m²*)
-        *   Surface / Subsurface Runoff (*kg/m²*)
-        *   Streamflow (*m³/s*)
-        *   Snow Water Equivalent (*kgm⁻²*)
-        *   Evapotranspiration (mass/energy flux) (*kg, W/m²*)
-    *   [ ] **SoilSurvey:** Load precision USDA soil surveys (pH, organic matter, texture).
-        *   pH (*0 − 14*)
-        *   Sand, Silt, Clay, Organic Matter (*4 × %*)
-        *   Bulk Density (*g/cm³*)
-        *   Depth to Water Table (*cm*)
-        *   Saturated Hydraulic Conductivity (*𝜇m/s*)
-        *   Available Water Capacity (*%*)
-    *   [ ] **HydroSHEDS:** Load v2 global watersheds/river networks (12m scale).
-        *   Mean Annual Discharge (*m³ s⁻¹*)
-    *   [ ] **USGS-3DEP:** Load 3D topography/LiDAR data for microclimate/water flow modeling.
-        *   Digital Elevation Model (*m*)
-        *   3D Topographic LiDAR (`N × (x,y,z)`) *m*
-        *   Slope / Aspect (*°*)
-    *   [ ] **GeoFusion:** Fuse 3D data (LiDAR, ARKit, GCPs, GNSS RTK) into global geodetic coordinates for photorealistic 3D mapping & Gaussian Splatting.
-        *   Geotagged 3D Gaussian Splats (*Neural Output: (latitude, longitude, altitude) → (color, opacity)*)
-*   [ ] Implement Transformer-based encoders for unifying different data modalities.
-*   [ ] Develop spatio-temporal embeddings (Multiresolution Hash, Time2Vec).
-*   [ ] Implement self-supervised training via masked data reconstruction.
-
-### Phase 2: Core DeepEarth Model & Simulation
-
-*   [ ] Integrate Bayesian priors from external ecological models (e.g., Phyloregion).
-*   [ ] Develop simulation capabilities for:
-    *   [ ] Plant/Pollinator Habitat Distributions
-    *   [ ] Plant Flowering Phenology
-    *   [ ] Plant-Pollinator Interaction Networks
-*   [ ] Implement observation bias modeling.
-*   [ ] Develop APIs and tools for querying the simulator (e.g., for pollinator garden planning).
-
-### Phase 3: Validation & Application
-
-*   [ ] Validate predictions against environmental studies and field trials (California & Florida focus initially).
-*   [ ] Scale model geographically and taxonomically.
-*   [ ] Open-source the model and framework.
-
-## Current Features
-
-This package currently provides foundational tools for:
-
-*   Converting between geodetic (latitude, longitude, altitude) and Earth-Centered, Earth-Fixed (ECEF) XYZ coordinates.
-*   Handling orientation data (yaw, pitch, roll) and associated rotation matrices.
-*   Supporting CSV data import/export with comprehensive metadata (e.g., for GeoFusion data).
-*   Ensuring high-precision coordinate conversions suitable for landscape-scale modeling.
-*   Enabling efficient batch processing via PyTorch tensors.
-
-## Installation
+### Installation
 
 1.  Clone the repository:
     ```bash
@@ -107,9 +21,8 @@ This package currently provides foundational tools for:
     ```bash
     pip install -e .[dev]
     ```
-    *(The `-e` installs the package in editable mode. `[dev]` includes development tools like pytest, black, etc.)*
 
-## Usage Example (Coordinate Conversion)
+### Converting between (_lat_, _lon_, _alt_) and ECEF (_x_,_y_,_z_) coordinates
 
 ```python
 import torch
