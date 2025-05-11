@@ -1,6 +1,6 @@
 # DeepEarth: Geospatial Deep Simulator of Earth's Ecosystems
 
-This repository supports the development of **DeepEarth**, a deep neural network for modeling Earth's ecosystems at landscape scale.  To be introduced initially for predicting plant-pollinator interactions, in the coming months DeepEarth is expected to be adapted for plant-fire and plant-food ecohydrology.  The development of DeepEarth is led by scientists from Ecodash.ai, Stanford University, and University of Florida, with support from NSF.
+This repository supports the development of **DeepEarth**, a deep neural network for modeling Earth's ecosystems at landscape scale.  The first experimental designs of DeepEarth will directly support prediction of plant-pollinator interactions in California and Florida, while forthcoming models will support plant-fire and plant-flood ecohydrology.  The development of DeepEarth is led by scientists from Ecodash.ai, Stanford University, and University of Florida, with support from NSF.
 
 DeepEarth learns from biological, geological, and ecological data – e.g., species presence records, satellite imagery, 3D topography, soil surveys, and climate models – across space and time. It learns by reconstructing partially or fully masked data, sampled around (x, y, z, t) coordinates of biodiversity records. Prior knowledge from validated scientific models guides optimization as Bayesian constraints.
 
