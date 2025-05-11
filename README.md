@@ -1,4 +1,4 @@
-# DeepEarth: Geospatial Deep Simulator of Earth's Ecosystems
+# DeepEarth: Geospatial Deep Simulator of Earth's Ecosystems at Landscape Scale
 
 **DeepEarth** is a neural network architecture for simulation of Earth's ecosystems at landscape scale.  It will help to more precisely predict _pollination_, _fire_, and _flood_ interactions with plant species in California and Florida.  
 
