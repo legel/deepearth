@@ -10,7 +10,7 @@ We're proud to host an NSF I-GUIDE workshop on DeepEarth this summer in Chicago!
 
 ### NSF summer program in AI for disaster resilience, August 4-8, 2025
 
-5 PhD students will join us for a 5 day program in Boulder, Colorado themed ["Spatial AI for Extreme Events and Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/).  We will geospatially and temporally simulate fire and flood responses of plants at sub-meter scale.
+5 PhD students will join us for a 5 day program in Boulder, Colorado on ["Spatial AI for Extreme Events and Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/).  We will geospatially and temporally simulate fire and flood responses of plants at sub-meter scale.
 
 ### Installation
 
