@@ -2,7 +2,7 @@
 
 This repository supports the development of **DeepEarth**, a deep neural network for modeling Earth's ecosystems, introduced initially for predicting pollination.
 
-DeepEarth learns from biological, geological, and ecological data – e.g., protein structure embeddings, species presence records, satellite imagery, 3D topography, soil surveys, and climate models – across space and time. It learns by reconstructing partially or fully masked data, sampled around (x, y, z, t) coordinates of biodiversity records. Prior knowledge from validated scientific models guides optimization as Bayesian constraints.
+DeepEarth learns from biological, geological, and ecological data – e.g., species presence records, satellite imagery, 3D topography, soil surveys, and climate models – across space and time. It learns by reconstructing partially or fully masked data, sampled around (x, y, z, t) coordinates of biodiversity records. Prior knowledge from validated scientific models guides optimization as Bayesian constraints.
 
 The initial prototype focuses on simulating flowering and pollination in native ecosystems of California and Florida between 2010 to 2025. Predictive accuracy will be validated through (i) environmental studies comparing observed vs. predicted plant-pollinator distributions, and (ii) planting field trials seeking to maximize native plant & pollinator biodiversity, flowering abundance, and cross-pollination.
 
