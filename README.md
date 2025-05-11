@@ -4,21 +4,8 @@ This repository supports the development of **DeepEarth**, a deep neural network
 
 DeepEarth learns from biological, geological, and ecological data – e.g., species presence records, satellite imagery, 3D topography, soil surveys, and climate models – across space and time. It learns by reconstructing partially or fully masked data, sampled around (x, y, z, t) coordinates of scientific records. Prior knowledge from validated scientific models guides optimization as Bayesian constraints.
 
-The initial prototype focuses on simulating flowering and pollination in native ecosystems of California and Florida between 2010 to 2025. Predictive accuracy will be validated through (i) environmental studies comparing observed vs. predicted plant-pollinator distributions, and (ii) planting field trials seeking to maximize native plant & pollinator biodiversity, flowering abundance, and cross-pollination.
-
-## Introduction & Motivation
-
-Pollinators (e.g., bees, butterflies, hummingbirds) provide vital ecosystem services for life on Earth, cultivating \$500 billion per year in global food crops and 88% of all flowering plants. Yet, pollinators are declining worldwide with dire consequences. Scientific fields such as biodiversity, biogeography, conservation biology, restoration ecology, and natural capital have emerged to support global sustainability, inspiring efforts to preserve over 16% of Earth's land. However, existing models of Earth's ecosystems often fail to accurately predict real distributions at landscape scale (<1 × 1m), limiting their utility.
-
-DeepEarth is introduced for scientific modeling of Earth's ecosystems at landscape scale. It is a Bayesian deep neural network designed to scale geographically across the planet and biologically across the tree of life. DeepEarth represents an integrative deep encoding of diverse data, including:
-
-*   **iNaturalist & Herbaria** records of species presence
-*   Visible and hyperspectral **aerial/remote sensing**
-*   **3D topographic maps** from LiDAR and photogrammetry
-*   Laboratory-grade **soil surveys** (chemistry, texture)
-*   Dynamic **weather and climate models** (hourly resolution)
-
-This repository contains the codebase for developing, training, and utilizing the DeepEarth model.
+Initial prototype results are expected by a DeepEarth workshop on June 17th, 2025, sponsored by NSF I-GUIDE in Chicago.  The prototype will focus on simulating flowering and pollination in native ecosystems of California and Florida between 2010 to 2025. Predictive accuracy will initially be validated through (i) _in silico_ accuracy of predicted plant-pollinator distributions vs. real observations
+unseen during model training, and eventually by (ii) planting field trials seeking to maximize native plant & pollinator biodiversity, flowering abundance, and cross-pollination.
 
 ## Core Functionality Roadmap
 
