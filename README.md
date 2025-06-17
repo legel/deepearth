@@ -2,6 +2,8 @@
 
 DeepEarth is an AI foundation model for deep multimodal geospatial simulation.  It can learn to inductively reconstruct masked spatiotemporal distributions of datasets from across Earth sciences, including from physics, chemistry, biology, and ecology.  
 
+![DeepEarth v.0.00 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_v0.0.png)
+
 #### Deep Physical Simulation  
 DeepEarth is designed to deliver state-of-the-art modeling representations that can directly answer classical Bayesian questions, _e.g._ "As variable X changes across space S and time T, how is variable Y most likely to change, given all available evidence?"
 
