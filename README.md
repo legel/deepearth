@@ -1,6 +1,8 @@
-# DeepEarth: Spatiotemporal Multimodal Self-Supervised Simulator of Earth Ecosystems
+# DeepEarth: Self-Supervised Multimodal Spatiotemporal Simulator
 
-DeepEarth is an AI foundation model for deep multimodal geospatial simulation.  It can learn to inductively reconstruct masked spatiotemporal distributions of datasets from across Earth sciences, including from physics, chemistry, biology, and ecology.  
+DeepEarth is an AI foundation model for deep multimodal spatiotemporal simulation of physical systems.  It can learn to reconstruct masked spatiotemporal distributions of datasets from physics, chemistry, biology, geology, and ecology.  DeepEarth integrates [Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main) (_x_, _y_, _z_, _t_) deep spacetime encoding with [V-JEPA 2](https://ai.meta.com/vjepa/) (vision) and [DeepSeek V3](https://github.com/deepseek-ai/DeepSeek-V3) (language) world models.
+
+![DeepEarth Grid4D spacetime encoding](https://github.com/legel/deepearth/blob/main/docs/deepearth_spacetime_encoder.png) 
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_inductive_simulator.png)
 
@@ -18,8 +20,6 @@ Input any number of datasets distributed across space and time (_e.g._  satellit
 
 #### Deep Spacetime Manifold
 One of the great lessons from Einstein's _relativity_ is that _space_ and _time_ are not independent variables.  DeepEarth learns unified (x,y,z,t) deep vector representations from _[Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main)_ as ["multi-resolution hash encodings"](https://graphics.stanford.edu/courses/cs348n-22-winter/LectureSlides/FinalSlides/ING.pdf).  This enables deep learning of complex spatiotemporal distributions.
-
-![DeepEarth Grid4D spacetime encoding](https://github.com/legel/deepearth/blob/main/docs/deepearth_spacetime_encoder.png) 
 
 #### Built for Lightspeed 
  DeepEarth is built on the [57x](https://www.youtube.com/watch?v=0VLAoVGf_74&ab_channel=WelchLabs) more memory-efficient Transformer architecture of _[DeepSeek](https://github.com/deepseek-ai/DeepSeek-V3)_ to unlock next-generation speed, accuracy, and scalability of multimodal cross-fusion attention.
