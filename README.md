@@ -1,4 +1,4 @@
-# DeepEarth: Self-Supervised Multimodal Spatiotemporal Simulator
+# DeepEarth: Self-Supervised Spatiotemporal Multimodality Simulator 
 
 DeepEarth is an AI foundation model for deep multimodal spatiotemporal simulation of physical systems.  It can learn to reconstruct masked spatiotemporal distributions of datasets from physics, chemistry, biology, geology, and ecology.  DeepEarth integrates [Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main) (_x_, _y_, _z_, _t_) deep spacetime encoding with [V-JEPA 2](https://ai.meta.com/vjepa/) (vision) and [DeepSeek V3](https://github.com/deepseek-ai/DeepSeek-V3) (language) world models.
 
@@ -38,16 +38,16 @@ See [SPECIFICATIONS.md](https://github.com/legel/deepearth/blob/main/SPECIFICATI
 
 ```python
 class DeepEarthModel(nn.Module):
-    """DeepEarth: Hierarchical Multimodal Transformer for Earth System Science
+    """DeepEarth: Hierarchical Multimodal Transformer for Scientific Simulation
     
-    This model implements a hierarchical architecture that processes arbitrary Earth
-    observation data through three stages:
+    This model implements a hierarchical architecture that processes arbitrary integrations of
+    multimodal observational datasets through three stages:
     1. Spatiotemporal encoding: Multi-resolution hash encoding of coordinates
     2. Modality-specific encoding: Small DeepSeek Transformers process each data type
     3. Cross-modal fusion: Large DeepSeek Transformer integrates all information
     
     The model learns through self-supervised reconstruction of masked inputs,
-    enabling it to understand complex Earth system dynamics without labels.
+    enabling it to understand complex physical system dynamics without labels.
     
     Args:
         config: DeepEarthConfig with all model specifications
