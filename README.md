@@ -43,8 +43,8 @@ class DeepEarthModel(nn.Module):
     This model implements a hierarchical architecture that processes arbitrary Earth
     observation data through three stages:
     1. Spatiotemporal encoding: Multi-resolution hash encoding of coordinates
-    2. Modality-specific encoding: Small transformers process each data type
-    3. Cross-modal fusion: Large transformer integrates all information
+    2. Modality-specific encoding: Small DeepSeek Transformers process each data type
+    3. Cross-modal fusion: Large DeepSeek Transformer integrates all information
     
     The model learns through self-supervised reconstruction of masked inputs,
     enabling it to understand complex Earth system dynamics without labels.
