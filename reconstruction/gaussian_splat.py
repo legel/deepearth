@@ -33,8 +33,8 @@ from typing import Dict, Optional
 # Assuming gsplat library is installed
 import gsplat
 
-from deepearth.reconstruction.geofusion_dataset import GeoFusionDataset
-from deepearth.reconstruction.point_cloud_utils import load_tiff, unproject_depth
+from reconstruction.geofusion_dataset import GeoFusionDataset
+from reconstruction.point_cloud_utils import load_tiff, unproject_depth
 
 
 # Define project and data paths

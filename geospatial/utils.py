@@ -25,7 +25,7 @@
 #
 #  Quick‑start
 #  -----------
-#  >>> from deepearth.geospatial.utils import wrap_lat, wrap_lon_error
+#  >>> from geospatial.utils import wrap_lat, wrap_lon_error
 #  >>> lat = wrap_lat(91.0)  # Normalizes to 89.0
 #  >>> error = wrap_lon_error(lon1, lon2, lat)  # Computes scaled error
 #

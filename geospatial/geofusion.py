@@ -23,8 +23,8 @@
 #
 #  Quick‑start
 #  -----------
-#  >>> from deepearth.geospatial.geofusion import GeoFusionDataLoader
-#  >>> from deepearth.geospatial.geo2xyz import GeospatialConverter
+#  >>> from geospatial.geofusion import GeoFusionDataLoader
+#  >>> from geospatial.geo2xyz import GeospatialConverter
 #  >>> converter = GeospatialConverter()
 #  >>> loader = GeoFusionDataLoader(converter)
 #  >>> loader.load_csv("geofusion_data.csv")
@@ -41,7 +41,7 @@ import torch
 from typing import Optional, Tuple
 from dataclasses import dataclass
 
-from deepearth.geospatial.data_structures import GeoOrientation
+from geospatial.data_structures import GeoOrientation
 
 # --------------------------------------------------------------------------- #
 #  GeoFusion data loader                                                       #

@@ -23,7 +23,7 @@
 #
 #  Quick‑start
 #  -----------
-#  >>> from deepearth.geospatial.data_structures import CoordinateSet
+#  >>> from geospatial.data_structures import CoordinateSet
 #  >>> coords = CoordinateSet(
 #  ...     lat=37.7749,
 #  ...     lon=-122.4194,

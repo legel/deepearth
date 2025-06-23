@@ -27,7 +27,7 @@
 #
 #  Quick‑start
 #  -----------
-#  >>> from deepearth.geospatial.geo2xyz import GeospatialConverter
+#  >>> from geospatial.geo2xyz import GeospatialConverter
 #  >>> import torch
 #  >>> converter = GeospatialConverter(device="cuda", norm_dtype=torch.float64)
 #  >>> geo  = torch.tensor([[37.7749, -122.4194, 10.0],   # San Francisco
@@ -50,8 +50,8 @@ from dataclasses import dataclass
 import os
 import csv
 
-from deepearth.geospatial.utils import _human_unit, wrap_lat, wrap_lon_error, wrap_lat_error, _as_fp64, _safe_div
-from deepearth.geospatial.data_structures import BoundingBox, GeoOrientation, CoordinateSet, GeoPoint
+from geospatial.utils import _human_unit, wrap_lat, wrap_lon_error, wrap_lat_error, _as_fp64, _safe_div
+from geospatial.data_structures import BoundingBox, GeoOrientation, CoordinateSet, GeoPoint
 
 
 # --------------------------------------------------------------------------- #

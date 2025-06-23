@@ -44,8 +44,8 @@ except ImportError:
     print("Error: 'open3d' package not found. Please install it: pip install open3d")
     o3d = None
 
-from deepearth.reconstruction.geofusion_dataset import GeoFusionDataset
-from deepearth.reconstruction.point_cloud_utils import load_tiff, unproject_depth, project_points_to_image, sample_colors_from_image
+from reconstruction.geofusion_dataset import GeoFusionDataset
+from reconstruction.point_cloud_utils import load_tiff, unproject_depth, project_points_to_image, sample_colors_from_image
 
 # --- Script Configuration --- 
 # Default values, can be overridden by command-line arguments
