@@ -1,0 +1,16 @@
+# Data files
+*.json
+!config_schema.json
+!configs/*.json
+
+# Static assets
+static/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
