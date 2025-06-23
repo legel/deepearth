@@ -1,0 +1,47 @@
+# Model files
+models/
+*.gguf
+*.bin
+*.safetensors
+
+# Output directories
+embeddings/
+output/
+results/
+example_output/
+
+# Data files
+*.csv
+!example_data.csv
+*.json
+!*_config.json
+!config_schema.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
