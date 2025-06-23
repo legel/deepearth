@@ -1,5 +1,5 @@
 ---
-license: cc-by-4.0
+license: mit
 task_categories:
 - feature-extraction
 language:
@@ -24,7 +24,7 @@ This dataset contains language embeddings for 232 native plant species from Cent
 
 - **Curated by:** DeepEarth Project
 - **Language(s):** English
-- **License:** CC-BY-4.0
+- **License:** MIT
 
 ### Dataset Summary
 
@@ -136,7 +136,7 @@ This dataset was created by the [DeepEarth Project](https://github.com/legel/dee
 
 ### Licensing Information
 
-This dataset is licensed under the Creative Commons Attribution 4.0 International License (CC-BY-4.0).
+This dataset is licensed under the MIT License.
 
 ### Citation Information
 
