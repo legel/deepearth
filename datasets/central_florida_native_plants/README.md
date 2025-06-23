@@ -1,66 +1,155 @@
-# Central Florida Native Plants Dataset
+---
+license: cc-by-4.0
+task_categories:
+- feature-extraction
+language:
+- en
+tags:
+- biology
+- ecology
+- plants
+- embeddings
+- florida
+- biodiversity
+pretty_name: Central Florida Native Plants Language Embeddings
+size_categories:
+- n<1K
+---
 
-This dataset contains language embeddings for 232 native plant species from Central Florida.
+# Central Florida Native Plants Language Embeddings
 
-## Contents
+This dataset contains language embeddings for 232 native plant species from Central Florida, extracted using the DeepSeek-V3 language model.
 
-- **embeddings/**: PyTorch tensor files (.pt) containing 5120-dimensional language embeddings
-- **tokens/**: CSV files containing token mappings for each species
-- **metadata.json**: Dataset metadata including model information
+## Dataset Description
 
-## Model Information
+- **Curated by:** DeepEarth Project
+- **Language(s):** English
+- **License:** CC-BY-4.0
 
-- **Model**: DeepSeek-V3-0324-UD-Q4_K_XL (671B parameters, 4.5-bit quantized)
-- **Embedding Dimension**: 5120
+### Dataset Summary
+
+This dataset provides pre-computed language embeddings for Central Florida plant species. Each species has been encoded using the prompt "Ecophysiology of {species_name}:" to capture semantic information about the plant's ecological characteristics.
+
+## Dataset Structure
+
+### Data Instances
+
+Each species is represented by:
+- A PyTorch file (`.pt`) containing a dictionary with embeddings and metadata
+- A CSV file containing the token mappings
+
+### Embedding File Structure
+
+Each `.pt` file contains a dictionary with:
+- `mean_embedding`: Tensor of shape `[7168]` - mean-pooled embedding across all tokens
+- `token_embeddings`: Tensor of shape `[num_tokens, 7168]` - individual token embeddings
+- `species_name`: String - the species name
+- `taxon_id`: String - GBIF taxon ID
+- `num_tokens`: Integer - number of tokens (typically 18-20)
+- `embedding_stats`: Dictionary with embedding statistics
+- `timestamp`: String - when the embedding was created
+
+### Token Mapping Structure
+
+Token mapping CSV files contain:
+- `position`: Token position in sequence
+- `token_id`: Token ID in model vocabulary  
+- `token`: Token string representation
+
+### Data Splits
+
+This dataset contains a single split with embeddings for all 232 species.
+
+## Dataset Creation
+
+### Model Information
+
+- **Model**: DeepSeek-V3-0324-UD-Q4_K_XL
+- **Parameters**: 671B (4.5-bit quantized GGUF format)
+- **Embedding Dimension**: 7168
+- **Context**: 2048 tokens
 - **Prompt Template**: "Ecophysiology of {species_name}:"
 
-## Download Instructions
+### Source Data
 
-### Prerequisites
+Species names are based on GBIF (Global Biodiversity Information Facility) taxonomy for plants native to Central Florida.
 
-1. Install Google Cloud SDK: https://cloud.google.com/sdk/install
-2. Authenticate with Google Cloud:
-   ```bash
-   gcloud auth login
-   ```
+## Usage
 
-### Download Dataset
-
-Run the download script:
-```bash
-./download_dataset.sh
-```
-
-This will download:
-- 232 embedding files (`.pt` format)
-- 232 token mapping files (`.csv` format)
-- Dataset metadata
-
-## File Format
-
-### Embeddings
-Each `.pt` file contains a PyTorch tensor of shape `[5120]` representing the language embedding for one species. Files are named by GBIF taxon ID.
-
-### Token Mappings
-Each `.csv` file contains the tokenization information with columns:
-- `position`: Token position in sequence
-- `token_id`: Token ID in model vocabulary
-- `token`: Token string
-
-## Usage Example
+### Loading Embeddings
 
 ```python
 import torch
 import pandas as pd
+from huggingface_hub import hf_hub_download
 
-# Load embedding
+# Download a specific embedding
+repo_id = "deepearth/central_florida_native_plants"
 species_id = "2650927"  # Example GBIF ID
-embedding = torch.load(f"embeddings/{species_id}.pt")
 
-# Load token mapping
-tokens = pd.read_csv(f"tokens/{species_id}.csv")
+# Download embedding file
+embedding_path = hf_hub_download(
+    repo_id=repo_id,
+    filename=f"embeddings/{species_id}.pt",
+    repo_type="dataset"
+)
+
+# Load embedding dictionary
+data = torch.load(embedding_path)
+
+# Access embeddings
+mean_embedding = data['mean_embedding']  # Shape: [7168]
+token_embeddings = data['token_embeddings']  # Shape: [num_tokens, 7168]
+species_name = data['species_name']
+
+print(f"Species: {species_name}")
+print(f"Mean embedding shape: {mean_embedding.shape}")
+print(f"Token embeddings shape: {token_embeddings.shape}")
+
+# Download and load token mapping
+token_path = hf_hub_download(
+    repo_id=repo_id,
+    filename=f"tokens/{species_id}.csv",
+    repo_type="dataset"
+)
+tokens = pd.read_csv(token_path)
 ```
 
-## Citation
+### Batch Download
 
-If you use this dataset, please cite the DeepEarth project and DeepSeek model.
+```python
+from huggingface_hub import snapshot_download
+
+# Download entire dataset
+local_dir = snapshot_download(
+    repo_id="deepearth/central_florida_native_plants",
+    repo_type="dataset",
+    local_dir="./florida_plants"
+)
+```
+
+## Additional Information
+
+### Dataset Curators
+
+This dataset was created by the [DeepEarth Project](https://github.com/legel/deepearth) to enable machine learning research on biodiversity and ecology.
+
+### Licensing Information
+
+This dataset is licensed under the Creative Commons Attribution 4.0 International License (CC-BY-4.0).
+
+### Citation Information
+
+```bibtex
+@dataset{deepearth_florida_plants_2025,
+  title={Central Florida Native Plants Language Embeddings},
+  author={DeepEarth Project},
+  year={2025},
+  publisher={Hugging Face},
+  howpublished={\url{https://huggingface.co/datasets/deepearth/central_florida_native_plants}}
+}
+```
+
+### Contributions
+
+Thanks to [@legel](https://github.com/legel) for creating this dataset.

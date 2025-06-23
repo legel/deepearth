@@ -1,0 +1,9 @@
+# Ignore actual data files (they're on Hugging Face)
+embeddings/
+tokens/
+metadata.json
+
+# Keep only documentation and scripts
+!README.md
+!download_dataset.sh
+!dataset_viewer.py

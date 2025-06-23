@@ -328,10 +328,10 @@ DeepSeek-V3 is a large language model optimized for:
 
 **Model Details:**
 - Architecture: Transformer-based
-- Parameters: Varies by quantization
+- Parameters: 671B (4.5-bit quantized)
 - Embedding Dimension: 7168
 - Context Length: 2048 tokens
-- Quantization: 4-bit (Q4_K_XL)
+- Quantization: 4.5-bit (Q4_K_XL)
 
 ## Citation
 

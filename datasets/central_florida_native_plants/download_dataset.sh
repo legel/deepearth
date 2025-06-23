@@ -1,10 +1,8 @@
 #!/bin/bash
-# Download script for Central Florida Native Plants dataset
-# This script downloads language embeddings and token mappings from Google Cloud Storage
+# Download script for Central Florida Native Plants dataset from Hugging Face
 
 DATASET_NAME="central_florida_native_plants"
-GCS_BUCKET="gs://deepearth"
-GCS_PATH="${GCS_BUCKET}/encodings/language/taxa"
+REPO_ID="deepearth/central_florida_native_plants"
 LOCAL_DIR="$(dirname "$0")"
 
 echo "======================================"
@@ -12,51 +10,68 @@ echo "Central Florida Native Plants Dataset"
 echo "======================================"
 echo ""
 
-# Check if gsutil is installed
-if ! command -v gsutil &> /dev/null; then
-    echo "Error: gsutil is not installed."
-    echo "Please install Google Cloud SDK: https://cloud.google.com/sdk/install"
+# Check if Python and required packages are installed
+if ! command -v python3 &> /dev/null; then
+    echo "Error: Python 3 is not installed."
+    echo "Please install Python 3: https://www.python.org/downloads/"
     exit 1
 fi
 
-# Check authentication
-echo "Checking Google Cloud authentication..."
-if ! gsutil ls "$GCS_BUCKET" &> /dev/null; then
-    echo ""
-    echo "Authentication required. Please run:"
-    echo "  gcloud auth login"
-    echo ""
-    echo "Then try this script again."
-    exit 1
+# Create Python script for downloading
+cat > /tmp/download_hf_dataset.py << 'EOF'
+import os
+import sys
+from huggingface_hub import snapshot_download
+
+repo_id = sys.argv[1]
+local_dir = sys.argv[2]
+
+print(f"Downloading from Hugging Face: {repo_id}")
+print(f"Destination: {local_dir}")
+
+try:
+    # Download the dataset
+    snapshot_download(
+        repo_id=repo_id,
+        repo_type="dataset",
+        local_dir=local_dir,
+        resume_download=True
+    )
+    print("\nDownload complete!")
+    
+    # Count files
+    embeddings_count = len([f for f in os.listdir(os.path.join(local_dir, "embeddings")) if f.endswith('.pt')])
+    tokens_count = len([f for f in os.listdir(os.path.join(local_dir, "tokens")) if f.endswith('.csv')])
+    
+    print(f"Embeddings: {embeddings_count} files")
+    print(f"Token mappings: {tokens_count} files")
+    
+    # Calculate total size
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(local_dir):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if os.path.isfile(fp):
+                total_size += os.path.getsize(fp)
+    
+    print(f"\nTotal size: {total_size / (1024**2):.1f} MB")
+    
+except Exception as e:
+    print(f"Error downloading dataset: {e}")
+    print("\nPlease ensure huggingface-hub is installed:")
+    print("  pip install huggingface-hub")
+    sys.exit(1)
+EOF
+
+# Check if huggingface-hub is installed
+python3 -c "import huggingface_hub" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "Installing huggingface-hub..."
+    pip install huggingface-hub
 fi
 
-echo "Downloading ${DATASET_NAME} dataset..."
-echo "Source: ${GCS_PATH}"
-echo "Destination: ${LOCAL_DIR}"
+# Run the download
+python3 /tmp/download_hf_dataset.py "$REPO_ID" "$LOCAL_DIR"
 
-# Create local directories
-mkdir -p "${LOCAL_DIR}/embeddings"
-mkdir -p "${LOCAL_DIR}/tokens"
-
-# Download embeddings
-echo ""
-echo "Downloading embeddings (.pt files)..."
-gsutil -m cp "${GCS_PATH}/embeddings/*.pt" "${LOCAL_DIR}/embeddings/"
-
-# Download token mappings
-echo ""
-echo "Downloading token mappings (.csv files)..."
-gsutil -m cp "${GCS_PATH}/tokens/*.csv" "${LOCAL_DIR}/tokens/"
-
-# Download metadata
-echo ""
-echo "Downloading metadata..."
-gsutil cp "${GCS_PATH}/metadata.json" "${LOCAL_DIR}/"
-
-# Count downloaded files
-echo ""
-echo "Download complete!"
-echo "Embeddings: $(ls -1 ${LOCAL_DIR}/embeddings/*.pt 2>/dev/null | wc -l) files"
-echo "Token mappings: $(ls -1 ${LOCAL_DIR}/tokens/*.csv 2>/dev/null | wc -l) files"
-echo ""
-echo "Total size: $(du -sh ${LOCAL_DIR} | cut -f1)"
+# Clean up
+rm -f /tmp/download_hf_dataset.py
