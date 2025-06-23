@@ -2,6 +2,12 @@
 embeddings/
 tokens/
 metadata.json
+data/
+*.parquet
+
+# Python cache
+__pycache__/
+*.pyc
 
 # Keep only documentation and scripts
 !README.md

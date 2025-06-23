@@ -41,13 +41,29 @@ Each species is represented by:
 ### Embedding File Structure
 
 Each `.pt` file contains a dictionary with:
-- `mean_embedding`: Tensor of shape `[7168]` - mean-pooled embedding across all tokens
+- `mean_embedding`: Tensor of shape `[7168]` - mean-pooled embedding across all tokens (including prompt)
 - `token_embeddings`: Tensor of shape `[num_tokens, 7168]` - individual token embeddings
 - `species_name`: String - the species name
 - `taxon_id`: String - GBIF taxon ID
 - `num_tokens`: Integer - number of tokens (typically 18-20)
 - `embedding_stats`: Dictionary with embedding statistics
 - `timestamp`: String - when the embedding was created
+
+### Dataset Viewer Structure
+
+The Parquet files in the dataset viewer contain:
+- `taxon_id`: GBIF taxonomic identifier
+- `species_name`: Scientific name of the plant species
+- `timestamp`: When the embedding was created
+- `token_position`: Position of token in sequence
+- `token_id`: Token ID in model vocabulary
+- `token_str`: String representation of token
+- `is_species_token`: Whether this token is part of the species name
+- `token_embedding`: 7168-dimensional embedding vector for this specific token
+- `species_mean_embedding`: 7168-dimensional mean embedding of species name tokens only
+- `all_tokens_mean_embedding`: 7168-dimensional mean embedding across all tokens (including prompt)
+- `num_tokens`: Total number of tokens for this species
+- `num_species_tokens`: Number of tokens that are part of the species name
 
 ### Token Mapping Structure
 
@@ -59,6 +75,16 @@ Token mapping CSV files contain:
 ### Data Splits
 
 This dataset contains a single split with embeddings for all 232 species.
+
+## Important Note on Embeddings
+
+This dataset provides two types of mean embeddings:
+
+1. **`species_mean_embedding`** (in dataset viewer): The mean embedding calculated from ONLY the tokens that represent the species name itself. This provides a more focused representation of the species.
+
+2. **`all_tokens_mean_embedding`** or `mean_embedding` (in .pt files): The mean embedding calculated from ALL tokens in the prompt, including "Ecophysiology of", the species name, and the ":" token. This is the original embedding as extracted from the model.
+
+For most use cases, `species_mean_embedding` is recommended as it captures the semantic representation of the species name without the influence of the prompt template.
 
 ## Dataset Creation
 
@@ -98,13 +124,17 @@ embedding_path = hf_hub_download(
 data = torch.load(embedding_path)
 
 # Access embeddings
-mean_embedding = data['mean_embedding']  # Shape: [7168]
+mean_embedding = data['mean_embedding']  # Shape: [7168] - mean of all tokens
 token_embeddings = data['token_embeddings']  # Shape: [num_tokens, 7168]
 species_name = data['species_name']
 
 print(f"Species: {species_name}")
 print(f"Mean embedding shape: {mean_embedding.shape}")
 print(f"Token embeddings shape: {token_embeddings.shape}")
+
+# For species-only mean embedding, use the dataset viewer or compute from species tokens
+# The dataset viewer provides 'species_mean_embedding' which is the mean of only
+# the tokens that are part of the species name (excluding prompt tokens)
 
 # Download and load token mapping
 token_path = hf_hub_download(
