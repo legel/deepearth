@@ -7,7 +7,7 @@
     "scaleFactor": 3.0
   },
   "data": {
-    "sourceFile": "path/to/your/embeddings.json",
+    "sourceFile": "umap_3d_data.json",
     "fields": {
       "id": "id",
       "label": "name",
@@ -18,7 +18,7 @@
   "images": {
     "enabled": true,
     "sourcePath": "static/images",
-    "summaryFile": "path/to/your/image_summary.json",
+    "summaryFile": "species_summary.json",
     "urlPattern": "/static/images/{directory}/",
     "summaryKeyField": "name",
     "summaryImageField": "taxon_id",

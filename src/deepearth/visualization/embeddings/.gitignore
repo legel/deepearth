@@ -2,6 +2,8 @@
 *.json
 !config_schema.json
 !configs/*.json
+!umap_3d_data.json
+!species_summary.json
 
 # Static assets
 static/
