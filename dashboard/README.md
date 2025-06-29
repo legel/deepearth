@@ -1,4 +1,5 @@
 # DeepEarth Dashboard
+![DeepEarth Dashboard](https://github.com/legel/deepearth/blob/main/docs/deepearth_geospatial_vision_features.png)
 
 Interactive visualization and ML-ready data indexing for the DeepEarth Self-Supervised Spatiotemporal Multimodality Simulator.
 
