@@ -1,1 +1,0 @@
-"""DeepEarth visualization module."""
