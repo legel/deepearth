@@ -57,6 +57,24 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Pre-initialize and warm up UMAP to avoid first-run compilation delays
+def warmup_umap():
+    """Warm up UMAP with a small dataset to trigger JIT compilation"""
+    try:
+        logger.info("🔥 Warming up UMAP to pre-compile numba functions...")
+        # Create small random data
+        dummy_data = np.random.rand(100, 50)
+        # Run UMAP to trigger compilation
+        reducer = umap.UMAP(n_components=3, n_neighbors=15, n_epochs=50, 
+                           init='random', low_memory=True)
+        reducer.fit_transform(dummy_data)
+        logger.info("✅ UMAP warmup complete - numba functions compiled")
+    except Exception as e:
+        logger.warning(f"⚠️ UMAP warmup failed: {e}")
+
+# Run warmup on startup
+warmup_umap()
+
 # Configuration paths
 BASE_DIR = Path(__file__).parent
 CONFIG_PATH = BASE_DIR / "dataset_config.json"
@@ -1418,21 +1436,25 @@ def get_umap_rgb(image_id):
         
         logger.info("📉 Applying PCA for dimensionality reduction...")
         # First reduce dimensionality with PCA for speed
-        pca = PCA(n_components=50)
+        # For 576 points, 30 components is plenty
+        n_components = min(30, features_flat.shape[0] - 1)
+        pca = PCA(n_components=n_components)
         features_pca = pca.fit_transform(features_flat)
         logger.info(f"🔄 PCA reduced to: {features_pca.shape}")
         
         logger.info("🗺️ Applying UMAP with fast settings...")
-        # Apply UMAP with optimized settings for speed
+        # Apply UMAP with optimized settings for speed on small datasets
         reducer = umap.UMAP(
             n_components=3, 
-            n_neighbors=15, 
+            n_neighbors=15,  # Good for 576 points
             min_dist=0.1, 
             random_state=42,
-            n_epochs=100,  # Reduced from default 200-500 for speed
-            init='random',  # Faster than spectral initialization
-            low_memory=True,  # Use memory-efficient implementation
-            metric='euclidean'  # Faster than other metrics
+            n_epochs=30,  # Much lower for small dataset (576 points)
+            init='random',  # Faster than spectral
+            low_memory=False,  # Faster for small datasets
+            metric='euclidean',  # Fastest metric
+            n_jobs=1,  # Single thread is often faster for small data
+            transform_seed=42  # Consistent results
         )
         coords_3d = reducer.fit_transform(features_pca)
         logger.info(f"✅ UMAP coords shape: {coords_3d.shape}")
