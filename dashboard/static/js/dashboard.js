@@ -1411,6 +1411,11 @@ function initialize3DView() {
             });
         }
         
+        // Update expanded image orientation
+        if (window.expandedImage) {
+            window.expandedImage.lookAt(camera3D.position);
+        }
+        
         renderer3D.render(scene3D, camera3D);
     }
     animate();
@@ -1947,8 +1952,11 @@ function createTextLabel(text, position, italic = false) {
 
 // Create thumbnail sprite for vision embedding
 function createThumbnailSprite(emb, gbifId, imageNum) {
-    // Create a plane geometry for the thumbnail
-    const geometry = new THREE.PlaneGeometry(0.3, 0.3);
+    // Start with larger base size (25% increase)
+    const baseSize = 0.375; // was 0.3
+    
+    // Create a plane geometry for the thumbnail (will adjust aspect ratio later)
+    const geometry = new THREE.PlaneGeometry(baseSize, baseSize);
     
     // Create a basic material with a placeholder texture
     const material = new THREE.MeshBasicMaterial({
@@ -1973,8 +1981,19 @@ function createThumbnailSprite(emb, gbifId, imageNum) {
             material.map = texture;
             material.needsUpdate = true;
             
+            // Adjust geometry for proper aspect ratio
+            const aspect = texture.image.width / texture.image.height;
+            if (aspect > 1) {
+                // Landscape - keep width, adjust height
+                sprite.geometry = new THREE.PlaneGeometry(baseSize, baseSize / aspect);
+            } else {
+                // Portrait - keep height, adjust width
+                sprite.geometry = new THREE.PlaneGeometry(baseSize * aspect, baseSize);
+            }
+            
             // Store that image is loaded
             sprite.userData.imageLoaded = true;
+            sprite.userData.aspect = aspect;
         },
         undefined,
         (error) => {
@@ -1989,16 +2008,20 @@ function createThumbnailSprite(emb, gbifId, imageNum) {
 
 // Create expanded image view with animation
 function expandThumbnail(thumbnailSprite, embData) {
-    // Check if there's already an expanded view
+    // Check if there's already an expanded view - close it properly
     if (window.expandedImage) {
         collapseExpandedImage();
+        // Wait a bit for the collapse animation
+        setTimeout(() => expandThumbnail(thumbnailSprite, embData), 100);
+        return;
     }
     
     const gbifId = thumbnailSprite.userData.actualGbifId;
     const imageNum = thumbnailSprite.userData.imageNum;
     
-    // Create expanded image plane
-    const expandedGeometry = new THREE.PlaneGeometry(4, 4); // Much larger
+    // Create expanded image plane with larger base size
+    const baseExpandedSize = 5; // Increased from 4
+    const expandedGeometry = new THREE.PlaneGeometry(baseExpandedSize, baseExpandedSize);
     const expandedMaterial = new THREE.MeshBasicMaterial({
         side: THREE.DoubleSide,
         transparent: true,
@@ -2022,48 +2045,98 @@ function expandThumbnail(thumbnailSprite, embData) {
         expandedMaterial.map = texture;
         expandedMaterial.needsUpdate = true;
         
-        // Adjust aspect ratio
+        // Adjust geometry for proper aspect ratio
         const aspect = texture.image.width / texture.image.height;
         if (aspect > 1) {
-            expandedImage.scale.x *= aspect;
+            // Landscape
+            expandedImage.geometry = new THREE.PlaneGeometry(baseExpandedSize, baseExpandedSize / aspect);
         } else {
-            expandedImage.scale.y /= aspect;
+            // Portrait
+            expandedImage.geometry = new THREE.PlaneGeometry(baseExpandedSize * aspect, baseExpandedSize);
         }
+        expandedImage.userData.aspect = aspect;
     });
     
     scene3D.add(expandedImage);
     
-    // Create info overlay
-    const infoDiv = createImageInfoOverlay(embData, gbifId);
-    document.body.appendChild(infoDiv);
+    // Create info overlay with close button
+    const overlayContainer = createImageInfoOverlay(embData, gbifId);
+    document.body.appendChild(overlayContainer);
     
     // Animate expansion
     const targetPosition = new THREE.Vector3();
     targetPosition.copy(camera3D.position);
     targetPosition.sub(window.controls3D.target);
     targetPosition.normalize();
-    targetPosition.multiplyScalar(2);
+    targetPosition.multiplyScalar(3); // Slightly further from camera
     targetPosition.add(window.controls3D.target);
     
     // Store references for cleanup
     window.expandedImage = expandedImage;
-    window.expandedImageInfo = infoDiv;
+    window.expandedImageInfo = overlayContainer;
     window.expandedThumbnail = thumbnailSprite;
     
     // Animate
     animateImageExpansion(expandedImage, targetPosition, 1);
-    
-    // Add click handler to collapse
-    setTimeout(() => {
-        renderer3D.domElement.addEventListener('click', collapseExpandedImage, { once: true });
-    }, 500);
 }
 
 // Create info overlay for expanded image
 function createImageInfoOverlay(embData, gbifId) {
-    const div = document.createElement('div');
-    div.className = 'expanded-image-info';
-    div.style.cssText = `
+    // Create container div
+    const container = document.createElement('div');
+    container.className = 'expanded-image-container';
+    container.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 1000;
+        pointer-events: none;
+    `;
+    
+    // Create close button
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'expanded-image-close';
+    closeBtn.innerHTML = '×';
+    closeBtn.style.cssText = `
+        position: absolute;
+        top: -40px;
+        right: -40px;
+        width: 36px;
+        height: 36px;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        font-size: 24px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: all 0.3s ease;
+        pointer-events: auto;
+    `;
+    
+    closeBtn.onmouseover = () => {
+        closeBtn.style.background = 'rgba(255, 255, 255, 0.1)';
+        closeBtn.style.transform = 'scale(1.1)';
+    };
+    closeBtn.onmouseout = () => {
+        closeBtn.style.background = 'rgba(0, 0, 0, 0.8)';
+        closeBtn.style.transform = 'scale(1)';
+    };
+    closeBtn.onclick = (e) => {
+        e.stopPropagation();
+        collapseExpandedImage();
+    };
+    
+    container.appendChild(closeBtn);
+    
+    // Create info div
+    const infoDiv = document.createElement('div');
+    infoDiv.className = 'expanded-image-info';
+    infoDiv.style.cssText = `
         position: fixed;
         bottom: 20px;
         left: 50%;
@@ -2078,6 +2151,7 @@ function createImageInfoOverlay(embData, gbifId) {
         transition: opacity 0.3s ease;
         max-width: 80%;
         text-align: center;
+        pointer-events: auto;
     `;
     
     // Format date if available
@@ -2093,7 +2167,6 @@ function createImageInfoOverlay(embData, gbifId) {
         });
     } else if (embData.year) {
         // Construct date from components if eventDate not available
-        const parts = [];
         if (embData.month && embData.day) {
             const date = new Date(embData.year, embData.month - 1, embData.day);
             dateStr = date.toLocaleDateString('en-US', {
@@ -2115,18 +2188,25 @@ function createImageInfoOverlay(embData, gbifId) {
         }
     }
     
-    div.innerHTML = `
+    infoDiv.innerHTML = `
         <div style="font-size: 18px; font-style: italic; margin-bottom: 8px;">${embData.taxon_name}</div>
         <div style="font-size: 14px; opacity: 0.9;">${dateStr}</div>
         <div style="font-size: 12px; opacity: 0.7; margin-top: 5px;">GBIF: ${gbifId}</div>
     `;
     
-    // Fade in
+    // Add info div to document body separately
+    document.body.appendChild(infoDiv);
+    
+    // Fade in both elements
     setTimeout(() => {
-        div.style.opacity = '1';
+        infoDiv.style.opacity = '1';
+        closeBtn.style.opacity = '0.8';
     }, 100);
     
-    return div;
+    // Store reference to info div in container for cleanup
+    container.infoDiv = infoDiv;
+    
+    return container;
 }
 
 // Animate image expansion/collapse
@@ -2176,15 +2256,33 @@ function collapseExpandedImage(event) {
     }
     
     // Animate collapse
-    const thumbnailPos = window.expandedThumbnail.position;
+    const thumbnailPos = window.expandedThumbnail ? window.expandedThumbnail.position : new THREE.Vector3(0, 0, 0);
     animateImageExpansion(window.expandedImage, thumbnailPos, 0.1);
     
-    // Remove info overlay
+    // Remove info overlay and container
     if (window.expandedImageInfo) {
-        window.expandedImageInfo.style.opacity = '0';
+        // Fade out close button
+        const closeBtn = window.expandedImageInfo.querySelector('.expanded-image-close');
+        if (closeBtn) {
+            closeBtn.style.opacity = '0';
+        }
+        
+        // Fade out info div
+        if (window.expandedImageInfo.infoDiv) {
+            window.expandedImageInfo.infoDiv.style.opacity = '0';
+            setTimeout(() => {
+                if (window.expandedImageInfo && window.expandedImageInfo.infoDiv) {
+                    window.expandedImageInfo.infoDiv.remove();
+                }
+            }, 300);
+        }
+        
+        // Remove container
         setTimeout(() => {
-            window.expandedImageInfo.remove();
-            window.expandedImageInfo = null;
+            if (window.expandedImageInfo) {
+                window.expandedImageInfo.remove();
+                window.expandedImageInfo = null;
+            }
         }, 300);
     }
     
@@ -2202,44 +2300,31 @@ function setupThumbnailInteraction() {
     const mouse = new THREE.Vector2();
     let hoveredObject = null;
     
-    // Click handler
-    renderer3D.domElement.addEventListener('click', onMouseClick);
-    
-    // Hover handler
-    renderer3D.domElement.addEventListener('mousemove', onMouseMove);
-    
-    function onMouseMove(event) {
-        const rect = renderer3D.domElement.getBoundingClientRect();
-        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        
-        raycaster.setFromCamera(mouse, camera3D);
-        
-        const meshes = embeddingPoints.map(p => p.mesh);
-        const intersects = raycaster.intersectObjects(meshes);
-        
-        if (intersects.length > 0 && intersects[0].object !== hoveredObject) {
-            // Reset previous hover
-            if (hoveredObject) {
-                hoveredObject.scale.set(1, 1, 1);
-            }
-            
-            // Apply hover effect
-            hoveredObject = intersects[0].object;
-            hoveredObject.scale.set(1.2, 1.2, 1.2);
-            renderer3D.domElement.style.cursor = 'pointer';
-        } else if (intersects.length === 0 && hoveredObject) {
-            // Remove hover effect
-            hoveredObject.scale.set(1, 1, 1);
-            hoveredObject = null;
-            renderer3D.domElement.style.cursor = 'grab';
-        }
+    // Remove existing event listeners if any
+    if (window.thumbnailClickHandler) {
+        renderer3D.domElement.removeEventListener('click', window.thumbnailClickHandler);
+    }
+    if (window.thumbnailMoveHandler) {
+        renderer3D.domElement.removeEventListener('mousemove', window.thumbnailMoveHandler);
     }
     
+    // Click handler
     function onMouseClick(event) {
-        // Skip if clicking on expanded image
-        if (window.expandedImage && event.target === renderer3D.domElement) {
-            return;
+        // Skip if we have an expanded image and clicking outside it
+        if (window.expandedImage) {
+            const rect = renderer3D.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera3D);
+            
+            // Check if clicking on expanded image
+            const expandedIntersects = raycaster.intersectObject(window.expandedImage);
+            if (expandedIntersects.length === 0) {
+                // Clicked outside expanded image - close it
+                collapseExpandedImage(event);
+                return;
+            }
         }
         
         const rect = renderer3D.domElement.getBoundingClientRect();
@@ -2258,6 +2343,46 @@ function setupThumbnailInteraction() {
             }
         }
     }
+    
+    // Hover handler
+    function onMouseMove(event) {
+        const rect = renderer3D.domElement.getBoundingClientRect();
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera3D);
+        
+        const meshes = embeddingPoints.map(p => p.mesh);
+        const intersects = raycaster.intersectObjects(meshes);
+        
+        if (intersects.length > 0 && intersects[0].object !== hoveredObject) {
+            // Reset previous hover
+            if (hoveredObject && hoveredObject !== window.expandedImage) {
+                hoveredObject.scale.set(1, 1, 1);
+            }
+            
+            // Apply hover effect (but not to expanded image)
+            hoveredObject = intersects[0].object;
+            if (hoveredObject !== window.expandedImage) {
+                hoveredObject.scale.set(1.2, 1.2, 1.2);
+                renderer3D.domElement.style.cursor = 'pointer';
+            }
+        } else if (intersects.length === 0 && hoveredObject) {
+            // Remove hover effect
+            if (hoveredObject !== window.expandedImage) {
+                hoveredObject.scale.set(1, 1, 1);
+            }
+            hoveredObject = null;
+            renderer3D.domElement.style.cursor = 'grab';
+        }
+    }
+    
+    // Store handlers globally for cleanup
+    window.thumbnailClickHandler = onMouseClick;
+    window.thumbnailMoveHandler = onMouseMove;
+    
+    renderer3D.domElement.addEventListener('click', onMouseClick);
+    renderer3D.domElement.addEventListener('mousemove', onMouseMove);
 }
 
 // Setup raycaster for mouse interaction (fallback for non-thumbnail mode)
