@@ -1436,9 +1436,8 @@ def get_umap_rgb(image_id):
         
         logger.info("📉 Applying PCA for dimensionality reduction...")
         # First reduce dimensionality with PCA for speed
-        # For 576 points, 30 components is plenty
-        n_components = min(30, features_flat.shape[0] - 1)
-        pca = PCA(n_components=n_components)
+        # Just 5 components for maximum speed
+        pca = PCA(n_components=5)
         features_pca = pca.fit_transform(features_flat)
         logger.info(f"🔄 PCA reduced to: {features_pca.shape}")
         
