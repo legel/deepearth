@@ -206,15 +206,16 @@ class UnifiedDataCache:
         if progress_callback:
             progress_callback(total_taxa, total_taxa, "Computing UMAP projection...")
         
-        # Compute UMAP with very high n_neighbors to capture global structure
-        # This prevents any single genus from being isolated as an extreme outlier
+        # Compute UMAP with extremely high n_neighbors to force global connectivity
+        # Use nearly all samples as neighbors to prevent any outlier separation
         n_samples = len(embeddings)
         reducer = umap.UMAP(
             n_components=3,
-            n_neighbors=min(100, n_samples - 1),  # Very high for global view
-            min_dist=0.01,  # Small but not zero to allow some structure
+            n_neighbors=min(200, n_samples - 1),  # Nearly all samples as neighbors
+            min_dist=0.001,  # Very small to allow tight packing
             metric='cosine',  # Cosine for semantic similarity
-            random_state=42
+            random_state=42,
+            n_epochs=500  # More epochs for better convergence with high n_neighbors
         )
         coords_3d = reducer.fit_transform(embeddings)
         
@@ -325,14 +326,15 @@ class UnifiedDataCache:
             
             embeddings = np.array(embeddings)
             
-            # Compute UMAP with very high n_neighbors
+            # Compute UMAP with extremely high n_neighbors
             n_samples = len(embeddings)
             reducer = umap.UMAP(
                 n_components=3,
-                n_neighbors=min(100, n_samples - 1),  # Very high for global view
-                min_dist=0.01,  # Small but not zero
+                n_neighbors=min(200, n_samples - 1),  # Nearly all samples
+                min_dist=0.001,
                 metric='cosine',
-                random_state=42
+                random_state=42,
+                n_epochs=500
             )
             coords_3d = reducer.fit_transform(embeddings)
             
