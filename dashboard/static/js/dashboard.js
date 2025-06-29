@@ -48,6 +48,7 @@ let isUMAPActive = false;
 let umapRGBData = null;
 let currentObservationId = null;
 let currentImageAspectRatio = 1;
+let currentPCAData = null; // Store PCA data to avoid refetching
 
 // Performance monitoring for debugging
 const performanceMonitor = {
@@ -74,6 +75,117 @@ const performanceMonitor = {
         });
     }
 };
+
+// Colormap definitions for client-side rendering
+const colormaps = {
+    plasma: [
+        [0.050383, 0.029803, 0.527975],
+        [0.127568, 0.016298, 0.531895],
+        [0.201225, 0.018006, 0.526563],
+        [0.269783, 0.038571, 0.509394],
+        [0.332553, 0.068007, 0.481904],
+        [0.390164, 0.100235, 0.448018],
+        [0.443983, 0.133743, 0.410665],
+        [0.494897, 0.168256, 0.372237],
+        [0.543552, 0.203484, 0.334238],
+        [0.590404, 0.239464, 0.297772],
+        [0.635682, 0.276349, 0.263448],
+        [0.679483, 0.314346, 0.231674],
+        [0.721817, 0.353686, 0.202595],
+        [0.762651, 0.394583, 0.176184],
+        [0.801918, 0.437221, 0.152278],
+        [0.839510, 0.481759, 0.130609],
+        [0.875302, 0.528309, 0.110859],
+        [0.909146, 0.576936, 0.092590],
+        [0.940875, 0.627628, 0.074176],
+        [0.970296, 0.680267, 0.052675],
+        [0.997173, 0.734536, 0.021298],
+        [1.000000, 0.790520, 0.001221],
+        [0.998833, 0.845561, 0.024065],
+        [0.994155, 0.899392, 0.071417],
+        [0.988362, 0.951546, 0.131326]
+    ],
+    viridis: [
+        [0.267004, 0.004874, 0.329415],
+        [0.283072, 0.094955, 0.417331],
+        [0.262138, 0.185228, 0.489898],
+        [0.211718, 0.268184, 0.541921],
+        [0.151561, 0.343307, 0.576103],
+        [0.082666, 0.411685, 0.597681],
+        [0.003866, 0.474149, 0.610464],
+        [0.027384, 0.531497, 0.617578],
+        [0.187503, 0.585348, 0.620795],
+        [0.327672, 0.636058, 0.621700],
+        [0.453191, 0.684127, 0.621150],
+        [0.568113, 0.730104, 0.619330],
+        [0.673408, 0.774500, 0.615965],
+        [0.769767, 0.817316, 0.611152],
+        [0.857322, 0.858270, 0.604349],
+        [0.935582, 0.896747, 0.594943],
+        [0.998364, 0.931373, 0.581874]
+    ],
+    RdBu_r: [
+        [0.403922, 0.000000, 0.121569],
+        [0.698039, 0.094118, 0.168627],
+        [0.839216, 0.376471, 0.301961],
+        [0.956863, 0.647059, 0.509804],
+        [0.992157, 0.858824, 0.780392],
+        [0.968627, 0.968627, 0.968627],
+        [0.819608, 0.898039, 0.941176],
+        [0.572549, 0.772549, 0.870588],
+        [0.262745, 0.576471, 0.764706],
+        [0.129412, 0.400000, 0.674510],
+        [0.019608, 0.188235, 0.380392]
+    ]
+};
+
+// Client-side PCA overlay generation
+async function generatePCAOverlay(pcaGrid, colormap, alpha) {
+    const size = 384; // Display size
+    const scale = size / 24; // Scale from 24x24 to display size
+    
+    // Create canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    
+    // Get colormap - handle case variations
+    const cmapName = colormap === 'RdBu_r' ? 'RdBu_r' : colormap.toLowerCase();
+    const cmap = colormaps[cmapName] || colormaps.plasma;
+    
+    // Create ImageData
+    const imageData = ctx.createImageData(size, size);
+    const data = imageData.data;
+    
+    // Fill with PCA values using nearest neighbor upsampling
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const srcY = Math.floor(y / scale);
+            const srcX = Math.floor(x / scale);
+            
+            // Get PCA value
+            const value = pcaGrid[srcY][srcX];
+            
+            // Map to colormap
+            const cmapIdx = Math.floor(value * (cmap.length - 1));
+            const color = cmap[Math.min(cmapIdx, cmap.length - 1)];
+            
+            // Set pixel
+            const idx = (y * size + x) * 4;
+            data[idx] = Math.floor(color[0] * 255);
+            data[idx + 1] = Math.floor(color[1] * 255);
+            data[idx + 2] = Math.floor(color[2] * 255);
+            data[idx + 3] = Math.floor(alpha * 255);
+        }
+    }
+    
+    // Put image data
+    ctx.putImageData(imageData, 0, 0);
+    
+    // Convert to data URL
+    return canvas.toDataURL('image/png');
+}
 
 // Initialize vision feature UI defaults
 function initializeVisionFeatureDefaults() {
@@ -2560,23 +2672,9 @@ function setGalleryVisualizationMethod(method) {
     updateGalleryVisualization();
 }
 
-function setGalleryColormap(cmap) {
-    galleryColormap = cmap;
-    document.querySelectorAll('#vision-feature-panel .control-buttons button').forEach(btn => {
-        if (btn.textContent.includes(cmap) || btn.textContent.toLowerCase().includes(cmap.toLowerCase())) {
-            btn.classList.add('active');
-        } else {
-            btn.classList.remove('active');
-        }
-    });
-    updateGalleryVisualization();
-}
+// Removed duplicate - using unified function below
 
-function updateGalleryAlpha(value) {
-    galleryAlpha = value / 100;
-    document.getElementById('galleryAlphaValue').textContent = value + '%';
-    updateGalleryVisualization();
-}
+// Removed duplicate updateGalleryAlpha - using unified function below
 
 async function updateGalleryVisualization() {
     if (!window.currentGalleryImageId) return;
@@ -2716,6 +2814,7 @@ async function loadImageAndFeatures(imageId) {
         performanceMonitor.log('Starting vision features load', { imageId, currentSettings: { temporal: currentTemporalMode, colormap: currentColormap, alpha: currentAlpha, visualization: currentVisualization } });
         
         currentObservationId = imageId;
+        currentPCAData = null; // Clear previous PCA data
         
         // Clear previous overlay to prevent persistence
         const overlayContainer = document.getElementById('obs-attention-overlay');
@@ -2774,6 +2873,56 @@ async function loadImageAndFeatures(imageId) {
             visualization: currentVisualization
         });
         
+        // For PCA1, use the fast raw endpoint and generate visualization client-side
+        if (currentVisualization === 'pca1' || currentVisualization.startsWith('pca')) {
+            try {
+                const startTime = performance.now();
+                const response = await fetch(`/api/features/${imageId}/pca-raw`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    const fetchTime = performance.now() - startTime;
+                    console.log(`⚡ PCA raw data fetched in ${fetchTime.toFixed(1)}ms`);
+                    
+                    // Store PCA data for reuse
+                    currentPCAData = data;
+                    
+                    // Generate overlay client-side
+                    const overlayDataUrl = await generatePCAOverlay(data.pca_values, currentColormap, currentAlpha);
+                    
+                    if (overlayImg && overlayDataUrl) {
+                        overlayImg.src = overlayDataUrl;
+                        
+                        // Apply aspect ratio correction
+                        if (imageAspectRatio > 1) {
+                            overlayImg.style.transform = `scaleX(${imageAspectRatio})`;
+                        } else if (imageAspectRatio < 1) {
+                            overlayImg.style.transform = `scaleY(${1 / imageAspectRatio})`;
+                        } else {
+                            overlayImg.style.transform = 'none';
+                        }
+                        
+                        overlayContainer.style.display = 'block';
+                        overlayContainer.style.opacity = '1';
+                    }
+                    
+                    // Update stats
+                    updateFeatureStats({
+                        max_attention: data.stats.max.toFixed(3),
+                        mean_attention: data.stats.mean.toFixed(3),
+                        std_attention: data.stats.std.toFixed(3),
+                        explained_variance: (data.stats.explained_variance * 100).toFixed(1) + '%'
+                    });
+                    
+                    performanceMonitor.end('loadImageAndFeatures');
+                    return;
+                }
+            } catch (error) {
+                console.warn('Fast PCA endpoint failed, falling back to standard endpoint:', error);
+            }
+        }
+        
+        // Fall back to standard attention endpoint for other visualizations
         try {
             const startTime = performance.now();
             
@@ -2978,7 +3127,7 @@ function updateTemporalFrame(frame) {
 }
 
 // Set colormap
-function setColormap(colormap) {
+async function setColormap(colormap) {
     currentColormap = colormap;
     
     // Update UI
@@ -3008,8 +3157,20 @@ function setColormap(colormap) {
         }
     }
     
-    // Reload features if observation is open
-    if (currentObservationId) {
+    // For PCA visualization with cached data, just regenerate the overlay
+    if (currentObservationId && currentVisualization.startsWith('pca') && currentPCAData) {
+        console.log('🎨 Regenerating PCA overlay with new colormap (no refetch needed)');
+        const startTime = performance.now();
+        const overlayImg = document.getElementById('obs-attention-img');
+        const overlayDataUrl = await generatePCAOverlay(currentPCAData.pca_values, currentColormap, currentAlpha);
+        
+        if (overlayImg && overlayDataUrl) {
+            overlayImg.src = overlayDataUrl;
+            const regenTime = performance.now() - startTime;
+            console.log(`✅ Updated colormap without refetching data in ${regenTime.toFixed(1)}ms`);
+        }
+    } else if (currentObservationId) {
+        // Reload features for non-PCA visualizations
         loadImageAndFeatures(currentObservationId);
     }
 }
@@ -3046,13 +3207,25 @@ function updateAlpha(value) {
 }
 
 // Update overlay alpha without reloading features
-function updateOverlayAlpha() {
+async function updateOverlayAlpha() {
     const overlayContainer = document.getElementById('obs-attention-overlay');
     const overlayImg = document.getElementById('obs-attention-img');
     
     if (overlayContainer && overlayImg && overlayImg.src) {
-        // Simply update the opacity instead of reloading
-        overlayContainer.style.opacity = currentAlpha;
+        // For PCA visualization, regenerate the overlay with new alpha
+        if (currentVisualization.startsWith('pca') && currentPCAData) {
+            console.log('🎨 Regenerating PCA overlay with new alpha');
+            const startTime = performance.now();
+            const overlayDataUrl = await generatePCAOverlay(currentPCAData.pca_values, currentColormap, currentAlpha);
+            if (overlayDataUrl) {
+                overlayImg.src = overlayDataUrl;
+                const regenTime = performance.now() - startTime;
+                console.log(`⚡ PCA overlay regenerated in ${regenTime.toFixed(1)}ms`);
+            }
+        } else {
+            // For server-generated overlays, just update the container opacity
+            overlayContainer.style.opacity = currentAlpha;
+        }
         console.log(`✅ Updated overlay alpha to ${currentAlpha} without API call`);
     } else {
         console.log('⚠️ No existing overlay to update alpha for');
@@ -3319,19 +3492,32 @@ function updateGalleryTemporalFrame(frame) {
 // Duplicate removed - using the version above
 
 function setGalleryColormap(colormap) {
-    // Update UI
-    const buttons = document.querySelectorAll('#vision-feature-panel .control-buttons button');
-    buttons.forEach(btn => {
-        if (btn.textContent.toLowerCase().includes(colormap.toLowerCase())) {
-            btn.classList.add('active');
-        } else {
-            btn.classList.remove('active');
-        }
-    });
+    // Update UI using button IDs for reliable selection
+    document.getElementById('gallery-plasma-btn')?.classList.remove('active');
+    document.getElementById('gallery-viridis-btn')?.classList.remove('active');
+    document.getElementById('gallery-rdbu-btn')?.classList.remove('active');
     
-    // Update vision manager
+    // Add active class to the selected button
+    const btnIdMap = {
+        'plasma': 'gallery-plasma-btn',
+        'viridis': 'gallery-viridis-btn',
+        'RdBu_r': 'gallery-rdbu-btn'
+    };
+    
+    const btnId = btnIdMap[colormap];
+    if (btnId) {
+        document.getElementById(btnId)?.classList.add('active');
+    }
+    
+    // Update vision manager with normalized colormap name
     if (galleryVisionManager) {
-        galleryVisionManager.setColormap(colormap.toLowerCase());
+        galleryVisionManager.setColormap(colormap);
+    }
+    
+    // Update the old gallery visualization system if still in use
+    galleryColormap = colormap;
+    if (typeof updateGalleryVisualization === 'function') {
+        updateGalleryVisualization();
     }
 }
 
@@ -3341,6 +3527,12 @@ function updateGalleryAlpha(value) {
     // Update vision manager
     if (galleryVisionManager) {
         galleryVisionManager.setAlpha(value / 100);
+    }
+    
+    // Update the old gallery visualization system if still in use
+    galleryAlpha = value / 100;
+    if (typeof updateGalleryVisualization === 'function' && window.currentGalleryImageId) {
+        updateGalleryVisualization();
     }
 }
 

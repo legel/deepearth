@@ -881,8 +881,19 @@ def get_observation_details(gbif_id):
 
 @app.route('/api/image_proxy/<int:gbif_id>/<int:image_num>')
 def get_image_proxy(gbif_id, image_num):
-    """Proxy for serving images from remote URLs"""
+    """
+    Proxy for serving images from remote URLs.
+    
+    Automatically transforms iNaturalist images to use 'large' size (1024px)
+    instead of 'original' for faster loading.
+    
+    Optional query parameter:
+    - size: Image size preference (original, large, medium, small)
+    """
     try:
+        # Get optional size parameter
+        requested_size = request.args.get('size', 'large')
+        
         # Get observation
         obs_data = cache.loader.get_observation(gbif_id)
         if obs_data is None:
@@ -892,6 +903,23 @@ def get_image_proxy(gbif_id, image_num):
         image_urls = obs_data.get('image_urls', [])
         if isinstance(image_urls, list) and len(image_urls) >= image_num:
             url = image_urls[image_num - 1]
+            
+            # Transform iNaturalist URLs to requested size
+            if 'inaturalist' in url and '/photos/' in url:
+                # Extract current size from URL
+                import re
+                size_pattern = r'/([^/]+)\.(jpg|jpeg|png)$'
+                match = re.search(size_pattern, url)
+                
+                if match:
+                    current_size = match.group(1)
+                    extension = match.group(2)
+                    
+                    # Only transform if not already the requested size
+                    if current_size != requested_size:
+                        url = url.replace(f'/{current_size}.{extension}', f'/{requested_size}.{extension}')
+                        logger.info(f"Transformed iNaturalist image from {current_size} to {requested_size}: {url}")
+            
             return redirect(url)
         
         return "Image not found", 404
@@ -1242,8 +1270,6 @@ def generate_attention_overlay(attention_map, colormap='plasma', alpha=0.7):
     Returns:
         Base64 encoded PNG image string
     """
-    from scipy.ndimage import zoom
-    
     logger.info(f"🎨 Generating attention overlay: colormap={colormap}, alpha={alpha}")
     
     # Convert PyTorch tensor to numpy if needed
@@ -1271,24 +1297,48 @@ def generate_attention_overlay(attention_map, colormap='plasma', alpha=0.7):
     if attention_map.dtype == np.float16:
         attention_map = attention_map.astype(np.float32)
     
-    # Upsample with cubic interpolation for smooth visualization
-    attention_hr = zoom(attention_map, zoom_factor, order=3)
-    logger.info(f"✅ Upsampled to: {attention_hr.shape}, range: {attention_hr.min():.3f} to {attention_hr.max():.3f}")
+    # Upsample with PIL for better performance
+    import time
+    zoom_start = time.time()
+    
+    # Use PIL's resize for faster upsampling
+    # First normalize to [0, 255] for uint8
+    attention_norm = (attention_map - attention_map.min()) / (attention_map.max() - attention_map.min() + 1e-8)
+    attention_uint8 = (attention_norm * 255).astype(np.uint8)
+    
+    # Create PIL image and resize
+    img_small = Image.fromarray(attention_uint8, mode='L')
+    img_large = img_small.resize((384, 384), Image.BILINEAR)  # Bilinear is faster than cubic
+    
+    # Convert back to normalized float array
+    attention_hr = np.array(img_large).astype(np.float32) / 255.0
+    
+    zoom_time = time.time() - zoom_start
+    logger.info(f"✅ Upsampled to: {attention_hr.shape}, range: {attention_hr.min():.3f} to {attention_hr.max():.3f}, time: {zoom_time:.3f}s")
     
     # Apply colormap
+    cmap_start = time.time()
     cmap = plt.get_cmap(colormap)
     attention_colored = cmap(attention_hr)
+    cmap_time = time.time() - cmap_start
+    logger.info(f"🎨 Applied colormap in {cmap_time:.3f}s")
     
     # Set alpha channel
     attention_colored[:, :, 3] = attention_hr * alpha
     
     # Convert to image
+    img_start = time.time()
     img = Image.fromarray((attention_colored * 255).astype(np.uint8))
+    img_time = time.time() - img_start
+    logger.info(f"🖼️ Created PIL image in {img_time:.3f}s")
     
     # Convert to base64
+    b64_start = time.time()
     buffer = io.BytesIO()
     img.save(buffer, format='PNG')
     img_str = base64.b64encode(buffer.getvalue()).decode()
+    b64_time = time.time() - b64_start
+    logger.info(f"📦 Encoded to base64 in {b64_time:.3f}s")
     
     return f"data:image/png;base64,{img_str}"
 
@@ -1322,11 +1372,17 @@ def get_attention_map(image_id):
         
         logger.info(f"📋 Observation details: species='{obs_data['taxon_name']}', taxon_id={obs_data['taxon_id']}, has_vision={obs_data.get('has_vision', False)}")
         
+        # Add timing checkpoint
+        checkpoint_1 = datetime.now()
+        logger.info(f"⏱️ Time to check observation: {(checkpoint_1 - start_time).total_seconds():.2f}s")
+        
         features = cache.get_vision_embedding(gbif_id, obs_data['taxon_id'], 1)
         if features is None:
             logger.warning(f"❌ No vision features found for GBIF {gbif_id} (species: {obs_data['taxon_name']})")
             return jsonify({'error': 'Vision features not found'}), 404
         
+        checkpoint_2 = datetime.now()
+        logger.info(f"⏱️ Time to load embedding: {(checkpoint_2 - checkpoint_1).total_seconds():.2f}s")
         logger.info(f"✅ Loaded vision features for {obs_data['taxon_name']}, shape: {features.shape}, dtype: {features.dtype}")
         
         # Verify the feature values are reasonable
@@ -1353,20 +1409,26 @@ def get_attention_map(image_id):
         logger.info(f"🎛️ Parameters: temporal={temporal_mode}, viz={visualization}, colormap={colormap}, alpha={alpha}")
         
         # Compute attention using the cache method
+        checkpoint_3 = datetime.now()
         logger.info("🔥 Computing spatial attention...")
         attention = cache.compute_spatial_attention(features, temporal_mode, 'mean', visualization)
+        checkpoint_4 = datetime.now()
+        logger.info(f"⏱️ Time to compute attention: {(checkpoint_4 - checkpoint_3).total_seconds():.2f}s")
         logger.info(f"✅ Attention computed, shape: {attention.shape if hasattr(attention, 'shape') else type(attention)}")
         
         if temporal_mode == 'mean':
             # Generate visualization
             logger.info(f"🎨 Generating attention overlay with {colormap} colormap")
+            checkpoint_5 = datetime.now()
             attention_img = generate_attention_overlay(attention, colormap, alpha)
+            checkpoint_6 = datetime.now()
+            logger.info(f"⏱️ Time to generate overlay: {(checkpoint_6 - checkpoint_5).total_seconds():.2f}s")
             
             # Calculate processing time
             processing_time = (datetime.now() - start_time).total_seconds()
             logger.info(f"⚡ Attention map completed in {processing_time:.2f}s")
             
-            return jsonify({
+            response_data = {
                 'mode': 'spatial',
                 'attention_map': attention_img,
                 'stats': {
@@ -1374,7 +1436,12 @@ def get_attention_map(image_id):
                     'mean': float(attention.mean().item() if isinstance(attention, torch.Tensor) else attention.mean()),
                     'std': float(attention.std().item() if isinstance(attention, torch.Tensor) else attention.std())
                 }
-            })
+            }
+            
+            checkpoint_7 = datetime.now()
+            logger.info(f"⏱️ Time to prepare response: {(checkpoint_7 - checkpoint_6).total_seconds():.2f}s")
+            
+            return jsonify(response_data)
         else:
             # Return temporal sequence
             attention_frames = []
@@ -1390,6 +1457,7 @@ def get_attention_map(image_id):
             
     except Exception as e:
         logger.error(f"Error in get_attention_map: {str(e)}")
+        logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 
@@ -1600,6 +1668,83 @@ def get_feature_statistics(image_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/features/<image_id>/pca-raw')
+def get_pca_raw(image_id):
+    """
+    Fast PCA computation endpoint - returns raw PCA values without image generation.
+    This is optimized for instant response times.
+    """
+    try:
+        start_time = datetime.now()
+        
+        # Extract GBIF ID from image_id
+        import re
+        match = re.match(r'gbif_(\d+)_taxon_\d+_img_(\d+)', image_id)
+        
+        if not match:
+            return jsonify({'error': 'Invalid image_id format'}), 400
+            
+        gbif_id = int(match.group(1))
+        
+        # Get observation data
+        obs_data = cache.loader.get_observation(gbif_id)
+        if obs_data is None:
+            return jsonify({'error': 'Observation not found'}), 404
+        
+        # Load vision embedding
+        features = cache.get_vision_embedding(gbif_id, obs_data['taxon_id'], 1)
+        if features is None:
+            return jsonify({'error': 'Vision features not found'}), 404
+        
+        # Reshape and compute mean across temporal dimension
+        features = features.view(8, 576, 1408).mean(dim=0)  # [576, 1408]
+        
+        # Convert to numpy for sklearn
+        features_numpy = features.detach().cpu().numpy()
+        
+        # Compute PCA
+        from sklearn.decomposition import PCA
+        import time
+        
+        pca_start = time.time()
+        pca = PCA(n_components=1, svd_solver='randomized')
+        pca_result = pca.fit_transform(features_numpy)  # [576, 1]
+        pca_time = time.time() - pca_start
+        
+        # Get the first component values
+        pca_values = pca_result[:, 0]
+        
+        # Normalize to [0, 1]
+        pca_min = pca_values.min()
+        pca_max = pca_values.max()
+        pca_normalized = (pca_values - pca_min) / (pca_max - pca_min + 1e-8)
+        
+        # Reshape to 24x24 grid
+        pca_grid = pca_normalized.reshape(24, 24)
+        
+        total_time = (datetime.now() - start_time).total_seconds()
+        
+        return jsonify({
+            'pca_values': pca_grid.tolist(),
+            'stats': {
+                'min': float(pca_min),
+                'max': float(pca_max),
+                'mean': float(pca_values.mean()),
+                'std': float(pca_values.std()),
+                'explained_variance': float(pca.explained_variance_ratio_[0])
+            },
+            'timing': {
+                'pca_computation': pca_time,
+                'total': total_time
+            },
+            'shape': [24, 24]
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_pca_raw: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/health')
 def health_check():
     """Health check endpoint for monitoring"""
@@ -1691,6 +1836,12 @@ def get_species_observations(taxon_id):
     except Exception as e:
         logger.error(f"Error in get_species_observations: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/test_frontend.html')
+def test_frontend():
+    """Serve test frontend page"""
+    return send_from_directory('.', 'test_frontend.html')
 
 
 @app.route('/deepearth-static/<path:path>')
