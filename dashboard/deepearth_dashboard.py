@@ -206,28 +206,39 @@ class UnifiedDataCache:
         if progress_callback:
             progress_callback(total_taxa, total_taxa, "Computing UMAP projection...")
         
-        # Compute UMAP with cosine distance for semantic similarity
-        # Use higher n_neighbors and min_dist to discourage extreme outlier projections
-        # This creates more connected embeddings while still preserving cluster structure
+        # Compute UMAP with parameters specifically tuned to prevent extreme outliers
+        # Key insight: we need to force more global connectivity to prevent any single
+        # group (like Quercus) from being projected too far from the main cluster
+        n_samples = len(embeddings)
         reducer = umap.UMAP(
             n_components=3,
-            n_neighbors=min(30, len(embeddings) - 1),  # Increased from 15 to 30
-            min_dist=0.3,  # Increased from 0.1 to 0.3 for more connected structure
+            # Use very high n_neighbors to force global structure awareness
+            n_neighbors=min(int(n_samples * 0.5), n_samples - 1),  # 50% of samples
+            min_dist=0.5,  # Much higher to compress the embedding space
             metric='cosine',
             random_state=42,
-            spread=1.5,  # Add spread parameter to control embedding tightness
-            local_connectivity=2.0  # Ensure local connections are preserved
+            spread=1.0,  # Lower spread to keep points closer
+            local_connectivity=5.0,  # Force strong local connections
+            # Additional parameters to control outliers
+            set_op_mix_ratio=0.8,  # Favor intersection over union in fuzzy set operations
+            negative_sample_rate=10,  # More negative sampling to pull outliers in
+            transform_queue_size=8.0,  # Larger queue for better global optimization
+            repulsion_strength=0.5  # Lower repulsion to keep outliers closer
         )
         coords_3d = reducer.fit_transform(embeddings)
         
         # Compute HDBSCAN clusters for ecological communities
+        # With better UMAP projection, we can use more sensitive clustering
         clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=3,
+            min_cluster_size=5,  # Slightly larger minimum cluster
             min_samples=2,
             metric='euclidean',
             cluster_selection_method='eom',
-            cluster_selection_epsilon=0.3,
-            prediction_data=True
+            cluster_selection_epsilon=0.5,  # Higher epsilon for more merging
+            prediction_data=True,
+            alpha=1.0,  # Standard alpha
+            algorithm='best',
+            leaf_size=40
         )
         cluster_labels = clusterer.fit_predict(coords_3d)
         
@@ -323,15 +334,20 @@ class UnifiedDataCache:
             
             embeddings = np.array(embeddings)
             
-            # Compute UMAP with parameters to discourage extreme outliers
+            # Compute UMAP with parameters to prevent extreme outliers
+            n_samples = len(embeddings)
             reducer = umap.UMAP(
                 n_components=3,
-                n_neighbors=min(30, len(embeddings) - 1),  # Higher for more connectivity
-                min_dist=0.3,  # Higher to prevent extreme separations
+                n_neighbors=min(int(n_samples * 0.5), n_samples - 1),  # 50% of samples
+                min_dist=0.5,
                 metric='cosine',
                 random_state=42,
-                spread=1.5,
-                local_connectivity=2.0
+                spread=1.0,
+                local_connectivity=5.0,
+                set_op_mix_ratio=0.8,
+                negative_sample_rate=10,
+                transform_queue_size=8.0,
+                repulsion_strength=0.5
             )
             coords_3d = reducer.fit_transform(embeddings)
             
