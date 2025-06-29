@@ -1445,8 +1445,8 @@ def get_umap_rgb(image_id):
             n_neighbors=15,  # Good for 576 points
             min_dist=0.1, 
             random_state=42,
-            n_epochs=200,  # More epochs needed for high-dimensional data
-            init='spectral',  # Better initialization for high-D
+            n_epochs=30,  # Fewer epochs for faster computation on small dataset
+            init='random',  # Faster than spectral
             low_memory=False,  # Faster for small datasets
             metric='cosine',  # Better for high-dimensional data
             n_jobs=1,  # Single thread is often faster for small data
