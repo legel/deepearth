@@ -356,6 +356,16 @@ class VisionFeatureManager {
                 this.umapRGBData = data.rgb_values;
                 this.isUMAPActive = true;
                 
+                console.log('UMAP data received:', {
+                    rgbLength: this.umapRGBData.length,
+                    expectedLength: 24 * 24 * 3,
+                    firstRGB: [
+                        this.umapRGBData[0], 
+                        this.umapRGBData[1], 
+                        this.umapRGBData[2]
+                    ]
+                });
+                
                 // Apply UMAP visualization
                 this.applyUMAPVisualization();
                 
@@ -393,9 +403,10 @@ class VisionFeatureManager {
                 const srcIdx = srcY * 24 + srcX;
                 
                 const dstIdx = (y * size + x) * 4;
-                data[dstIdx] = this.umapRGBData[srcIdx * 3];      // R
-                data[dstIdx + 1] = this.umapRGBData[srcIdx * 3 + 1];  // G
-                data[dstIdx + 2] = this.umapRGBData[srcIdx * 3 + 2];  // B
+                // RGB values from server are in [0,1] range, scale to [0,255]
+                data[dstIdx] = Math.floor(this.umapRGBData[srcIdx * 3] * 255);      // R
+                data[dstIdx + 1] = Math.floor(this.umapRGBData[srcIdx * 3 + 1] * 255);  // G
+                data[dstIdx + 2] = Math.floor(this.umapRGBData[srcIdx * 3 + 2] * 255);  // B
                 data[dstIdx + 3] = Math.floor(this.alpha * 255);  // A
             }
         }
