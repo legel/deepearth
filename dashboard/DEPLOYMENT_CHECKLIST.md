@@ -6,15 +6,16 @@ This checklist ensures a smooth deployment of the DeepEarth Multimodal Geospatia
 
 ### 1. System Requirements
 - [ ] Python 3.8 or higher installed
-- [ ] 32GB+ RAM available
+- [ ] 32GB+ RAM recommended (minimum 16GB, conversion will be slower)
 - [ ] 250GB+ disk space (for embeddings.mmap file)
 - [ ] Modern web browser with WebGL support
 
 ### 2. Download Dataset
 - [ ] Download from HuggingFace and prepare embeddings:
   ```bash
-  python prepare_embeddings.py --download deepearth/central-florida-native-plants
+  python3 prepare_embeddings.py --download deepearth/central-florida-native-plants
   ```
+  **Note**: Use `python3` explicitly, not `python`
 - [ ] Verify dataset structure includes:
   - [ ] `observations.parquet`
   - [ ] `vision_embeddings/` directory with 159 parquet files
@@ -34,7 +35,7 @@ This checklist ensures a smooth deployment of the DeepEarth Multimodal Geospatia
 ### 5. Install Dependencies
 - [ ] Create virtual environment:
   ```bash
-  python -m venv venv
+  python3 -m venv venv
   source venv/bin/activate  # On Windows: venv\Scripts\activate
   ```
 - [ ] Install requirements:
@@ -47,7 +48,7 @@ This checklist ensures a smooth deployment of the DeepEarth Multimodal Geospatia
 ### 6. Run Setup Validation
 - [ ] Execute validation script:
   ```bash
-  python setup_dashboard.py
+  python3 setup_dashboard.py
   ```
 - [ ] Address any reported issues
 - [ ] All critical checks should pass
@@ -55,7 +56,7 @@ This checklist ensures a smooth deployment of the DeepEarth Multimodal Geospatia
 ### 7. Test Dashboard
 - [ ] Start in development mode:
   ```bash
-  python deepearth_dashboard.py
+  python3 deepearth_dashboard.py
   ```
 - [ ] Open http://localhost:5000 in browser
 - [ ] Verify:
@@ -131,6 +132,25 @@ When moving to the final repository location:
 2. [ ] Update any absolute paths in configuration
 3. [ ] Re-run `setup_dashboard.py` to validate
 4. [ ] Update any external references/links
+
+## Known Deployment Issues
+
+### Python Command
+- **Issue**: Script fails with "Please install the datasets library" even when installed
+- **Solution**: Use `python3` instead of `python` in all commands
+- **Affected files**: All Python scripts should be run with `python3`
+
+### Memory Constraints
+- **Issue**: Server has less than 32GB RAM (e.g., 15GB)
+- **Impact**: Conversion process may be slower or require swap space
+- **Solution**: Monitor memory usage during conversion, consider adding swap if needed
+
+### DNS Configuration
+- **Issue**: Need to set up subdomain for deepearth.ecodash.ai
+- **Solution**: Use Google Cloud DNS to add A record:
+  ```bash
+  gcloud dns record-sets create deepearth.ecodash.ai. --zone=ecodash-ai-zone --type=A --ttl=300 --rrdatas=YOUR_SERVER_IP
+  ```
 
 ---
 

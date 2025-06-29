@@ -6,7 +6,7 @@ Converts vision embeddings from HuggingFace Parquet format to high-performance
 memory-mapped binary format for the DeepEarth dashboard.
 
 This script:
-1. Downloads the dataset from HuggingFace (if needed)
+1. Downloads the complete dataset from HuggingFace (if needed) using snapshot_download
 2. Converts 159 Parquet files to a single memory-mapped file
 3. Creates SQLite index for fast lookups
 4. Validates the conversion
@@ -384,34 +384,73 @@ class EmbeddingConverter:
 def download_dataset(dataset_name: str = "deepearth/central-florida-native-plants", 
                     output_dir: str = "huggingface_dataset"):
     """
-    Download dataset from HuggingFace.
+    Download dataset from HuggingFace using snapshot_download to get ALL files.
+    
+    This downloads the complete dataset including:
+    - observations.parquet
+    - vision_embeddings/ directory with all embedding files
+    - vision_index.parquet
+    - dataset_info.json
+    - Any other files in the repository
     
     Args:
         dataset_name: HuggingFace dataset identifier
         output_dir: Where to save the dataset
     """
     try:
-        from datasets import load_dataset
+        from huggingface_hub import snapshot_download
         
         print(f"📥 Downloading {dataset_name} from HuggingFace...")
+        print("This will download ALL files including vision embeddings...")
         print("This may take a while for large datasets...")
         
-        # Load dataset
-        dataset = load_dataset(dataset_name)
-        
-        # Save to disk
+        # Create output directory
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         
-        dataset.save_to_disk(str(output_path))
+        # Download complete snapshot of the dataset repository
+        snapshot_download(
+            repo_id=dataset_name,
+            repo_type="dataset",
+            local_dir=str(output_path),
+            resume_download=True  # Allow resuming interrupted downloads
+        )
+        
         print(f"✅ Dataset saved to {output_path}")
+        
+        # Verify critical files exist
+        critical_files = [
+            "observations.parquet",
+            "vision_index.parquet",
+            "vision_embeddings"
+        ]
+        
+        missing_files = []
+        for file_name in critical_files:
+            file_path = output_path / file_name
+            if not file_path.exists():
+                missing_files.append(file_name)
+        
+        if missing_files:
+            print(f"⚠️ Warning: Some expected files are missing: {missing_files}")
+            print("The dataset may be incomplete or have a different structure.")
+        else:
+            print("✅ All critical files downloaded successfully!")
+            
+            # Count vision embedding files
+            vision_dir = output_path / "vision_embeddings"
+            if vision_dir.exists() and vision_dir.is_dir():
+                embedding_files = list(vision_dir.glob("embeddings_*.parquet"))
+                print(f"📊 Found {len(embedding_files)} vision embedding files")
         
         return True
     except ImportError:
-        print("❌ Please install the datasets library: pip install datasets")
+        print("❌ Please install huggingface-hub: pip install huggingface-hub")
         return False
     except Exception as e:
         print(f"❌ Error downloading dataset: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -436,7 +475,7 @@ Examples:
     parser.add_argument('dataset_dir', nargs='?', 
                        help='Path to HuggingFace dataset directory')
     parser.add_argument('--download', type=str,
-                       help='Download dataset from HuggingFace first')
+                       help='Download complete dataset from HuggingFace first (uses snapshot_download)')
     parser.add_argument('--output-dir', type=str, default='.',
                        help='Output directory for mmap files (default: current directory)')
     parser.add_argument('--verify-samples', type=int, default=50,

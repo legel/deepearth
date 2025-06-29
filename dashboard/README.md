@@ -35,14 +35,24 @@ This example demonstrates the dashboard using the Central Florida Native Plants 
 
 ```bash
 # Download dataset and prepare ML-ready embeddings
-python prepare_embeddings.py --download deepearth/central-florida-native-plants
+python3 prepare_embeddings.py --download deepearth/central-florida-native-plants
 ```
 
-This creates:
-- `embeddings.mmap` (206GB) - Direct-access tensor storage for ML pipelines
-- `embeddings_index.db` - Spatiotemporal index for efficient queries
+**Note**: Use `python3` explicitly, not `python`
 
-**Processing time**: ~50 minutes (indexes 7,949 vision embeddings)
+This will:
+1. Download the complete dataset from HuggingFace (~51GB)
+   - Main observations data
+   - 159 vision embedding files
+   - Vision index and metadata
+2. Convert to memory-mapped format:
+   - `embeddings.mmap` (206GB) - Direct-access tensor storage for ML pipelines
+   - `embeddings_index.db` - Spatiotemporal index for efficient queries
+
+**Requirements**:
+- ~300GB free disk space (51GB dataset + 206GB mmap + temporary space)
+- 32GB RAM recommended (16GB minimum, conversion will be slower)
+- **Processing time**: ~50 minutes (indexes 7,949 vision embeddings)
 
 ### 2. Install Dependencies
 
@@ -64,7 +74,7 @@ The dataset configuration will be automatically set to use the downloaded data i
 
 ```bash
 # Development mode
-python deepearth_dashboard.py
+python3 deepearth_dashboard.py
 
 # Production mode with Gunicorn
 ./run_production.sh
