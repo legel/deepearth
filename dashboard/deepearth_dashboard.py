@@ -683,46 +683,53 @@ def get_progress():
 @app.route('/api/species_umap_colors')
 def get_species_umap_colors():
     """
-    Get RGB colors for all species based on their UMAP positions.
+    Get colors for all species based on their HDBSCAN cluster assignments.
     
     This endpoint provides consistent colors across the map and 3D visualization
-    by mapping UMAP coordinates to RGB values.
+    by using the cluster colors from the precomputed HDBSCAN results.
     """
     try:
-        # Use precomputed language UMAP if available
-        if cache.precomputed_language_umap:
+        # Use precomputed language UMAP and clusters if available
+        if cache.precomputed_language_umap and cache.language_clusters:
             umap_data = cache.precomputed_language_umap
+            clusters = cache.language_clusters
         else:
             # Compute if not available
             cache.compute_and_cache_language_umap_clusters()
             umap_data = cache.precomputed_language_umap
+            clusters = cache.language_clusters
         
-        if not umap_data:
-            return jsonify({'error': 'UMAP data not available'}), 500
+        if not umap_data or not clusters:
+            return jsonify({'error': 'UMAP/cluster data not available'}), 500
         
-        # Extract coordinates
-        coords = np.array([[pt['x'], pt['y'], pt['z']] for pt in umap_data])
-        
-        # Normalize coordinates to [0, 1] range
-        coords_min = coords.min(axis=0)
-        coords_max = coords.max(axis=0)
-        coords_normalized = (coords - coords_min) / (coords_max - coords_min + 1e-8)
-        
-        # Convert to RGB (0-255)
-        rgb_values = (coords_normalized * 255).astype(int)
-        
-        # Create taxon_id to RGB mapping
+        # Use cluster colors directly from the precomputed data
         taxon_colors = {}
-        for i, pt in enumerate(umap_data):
-            taxon_colors[pt['taxon_id']] = {
-                'r': int(rgb_values[i, 0]),
-                'g': int(rgb_values[i, 1]),
-                'b': int(rgb_values[i, 2]),
-                'hex': '#{:02x}{:02x}{:02x}'.format(
-                    int(rgb_values[i, 0]),
-                    int(rgb_values[i, 1]),
-                    int(rgb_values[i, 2])
-                )
+        for pt in umap_data:
+            taxon_id = pt['taxon_id']
+            cluster = pt.get('cluster', -1)
+            color = pt.get('color', '#666666')  # Default gray for unclustered
+            
+            # Convert color to hex and RGB formats
+            if color.startswith('rgb('):
+                # Parse rgb(r, g, b) format
+                rgb_vals = color[4:-1].split(', ')
+                r, g, b = int(rgb_vals[0]), int(rgb_vals[1]), int(rgb_vals[2])
+                hex_color = '#{:02x}{:02x}{:02x}'.format(r, g, b)
+            else:
+                # Assume it's already hex
+                hex_color = color
+                # Convert hex to RGB
+                hex_clean = hex_color.lstrip('#')
+                r = int(hex_clean[0:2], 16)
+                g = int(hex_clean[2:4], 16)
+                b = int(hex_clean[4:6], 16)
+            
+            taxon_colors[taxon_id] = {
+                'r': r,
+                'g': g,
+                'b': b,
+                'hex': hex_color,
+                'cluster': cluster
             }
         
         return jsonify({
