@@ -50,6 +50,79 @@ let currentObservationId = null;
 let currentImageAspectRatio = 1;
 let currentPCAData = null; // Store PCA data to avoid refetching
 
+// Persistent vision settings
+let persistentVisionSettings = {
+    colormap: 'plasma',
+    alpha: 0.7,
+    showUMAP: false,
+    visualization: 'pca1'
+};
+
+// Apply persistent vision settings to UI
+function applyPersistentVisionSettings() {
+    // Apply colormap
+    if (persistentVisionSettings.colormap !== currentColormap) {
+        setColormap(persistentVisionSettings.colormap);
+    }
+    
+    // Apply alpha
+    if (persistentVisionSettings.alpha !== currentAlpha) {
+        const alphaPercent = Math.round(persistentVisionSettings.alpha * 100);
+        document.getElementById('alphaSlider').value = alphaPercent;
+        updateAlpha(alphaPercent);
+    }
+    
+    // Apply visualization method
+    if (persistentVisionSettings.visualization !== currentVisualization) {
+        const vizSelect = document.getElementById('visualizationMethod');
+        if (vizSelect) {
+            vizSelect.value = persistentVisionSettings.visualization;
+            setVisualizationMethod(persistentVisionSettings.visualization);
+        }
+    }
+    
+    // Apply UMAP state if it was on
+    if (persistentVisionSettings.showUMAP && !isUMAPActive) {
+        // Delay to ensure image is loaded
+        setTimeout(() => {
+            if (currentObservationId) {
+                toggleUMAP();
+            }
+        }, 500);
+    }
+}
+
+// Apply persistent vision settings to gallery UI
+function applyPersistentGallerySettings() {
+    // Apply colormap
+    setGalleryColormap(persistentVisionSettings.colormap);
+    
+    // Apply alpha
+    const alphaPercent = Math.round(persistentVisionSettings.alpha * 100);
+    const alphaSlider = document.getElementById('galleryAlphaSlider');
+    if (alphaSlider) {
+        alphaSlider.value = alphaPercent;
+        updateGalleryAlpha(alphaPercent);
+    }
+    
+    // Apply visualization method
+    const vizSelect = document.getElementById('galleryVisualizationMethod');
+    if (vizSelect) {
+        vizSelect.value = persistentVisionSettings.visualization;
+        setGalleryVisualizationMethod(persistentVisionSettings.visualization);
+    }
+    
+    // Apply UMAP state if it was on
+    if (persistentVisionSettings.showUMAP && !galleryIsUMAPActive) {
+        // Delay to ensure image is loaded
+        setTimeout(() => {
+            if (window.currentGalleryImageId) {
+                toggleGalleryUMAP();
+            }
+        }, 500);
+    }
+}
+
 // Performance monitoring for debugging
 const performanceMonitor = {
     timers: {},
@@ -2072,6 +2145,9 @@ function expandThumbnail(thumbnailSprite, embData) {
     // Load vision features
     window.visionManager.loadImage(embData.gbif_id, gbifId);
     
+    // Apply persistent vision settings
+    applyPersistentVisionSettings();
+    
     // Show the panel
     panel.style.display = 'block';
     
@@ -2756,6 +2832,8 @@ function updateGalleryDisplay() {
         // Load image with vision features using the unified manager
         if (galleryVisionManager && currentImage.image_id) {
             galleryVisionManager.loadImage(currentImage.image_id, galleryCurrentObservationId);
+            // Apply persistent settings after loading
+            applyPersistentGallerySettings();
         }
     }
 }
@@ -2962,6 +3040,9 @@ async function loadImageAndFeatures(imageId) {
         if (container) {
             container.style.aspectRatio = 'auto';
         }
+        
+        // Apply persistent vision settings
+        applyPersistentVisionSettings();
         
         // Load original image
         const img = document.getElementById('obs-image');
@@ -3261,6 +3342,7 @@ function updateTemporalFrame(frame) {
 // Set colormap
 async function setColormap(colormap) {
     currentColormap = colormap;
+    persistentVisionSettings.colormap = colormap; // Persist the setting
     
     // Update UI
     document.querySelectorAll('#plasma-btn, #viridis-btn, #rdbu-btn').forEach(btn => {
@@ -3313,6 +3395,7 @@ let alphaUpdateTimer = null;
 // Update alpha
 function updateAlpha(value) {
     currentAlpha = value / 100;
+    persistentVisionSettings.alpha = currentAlpha; // Persist the setting
     document.getElementById('alphaValue').textContent = `${value}%`;
     
     console.log(`🎚️ Alpha changed to: ${currentAlpha}`);
@@ -3367,6 +3450,7 @@ async function updateOverlayAlpha() {
 // Set visualization method
 function setVisualizationMethod(method) {
     currentVisualization = method;
+    persistentVisionSettings.visualization = method; // Persist the setting
     
     // Reload features if observation is open
     if (currentObservationId) {
@@ -3394,9 +3478,22 @@ async function toggleUMAP() {
         // Turn off UMAP
         isUMAPActive = false;
         autoShowUMAP = false;
+        persistentVisionSettings.showUMAP = false; // Persist the setting
         umapRGBData = null;
         btnText.textContent = 'Show UMAP RGB';
         description.style.display = 'none';
+        
+        // Remove UMAP from visualization dropdown and restore previous visualization
+        const vizSelect = document.getElementById('visualizationMethod');
+        if (vizSelect) {
+            const umapOption = vizSelect.querySelector('option[value="umap"]');
+            if (umapOption) {
+                umapOption.remove();
+            }
+            // Restore to persistent visualization setting
+            vizSelect.value = persistentVisionSettings.visualization;
+            currentVisualization = persistentVisionSettings.visualization;
+        }
         
         // Restore previous visualization
         loadImageAndFeatures(currentObservationId);
@@ -3433,6 +3530,7 @@ async function toggleUMAP() {
             // Show UMAP visualization
             isUMAPActive = true;
             autoShowUMAP = true;
+            persistentVisionSettings.showUMAP = true; // Persist the setting
             applyUMAPAlpha();
             
             btnText.textContent = 'Hide UMAP RGB';
@@ -3606,6 +3704,7 @@ function setGalleryTemporalMode(mode) {
 
 function setGalleryVisualizationMethod(method) {
     galleryCurrentVisualization = method;
+    persistentVisionSettings.visualization = method; // Persist the setting
     if (galleryVisionManager) {
         galleryVisionManager.setVisualization(method);
     }
@@ -3624,6 +3723,8 @@ function updateGalleryTemporalFrame(frame) {
 // Duplicate removed - using the version above
 
 function setGalleryColormap(colormap) {
+    persistentVisionSettings.colormap = colormap; // Persist the setting
+    
     // Update UI using button IDs for reliable selection
     document.getElementById('gallery-plasma-btn')?.classList.remove('active');
     document.getElementById('gallery-viridis-btn')?.classList.remove('active');
@@ -3654,15 +3755,17 @@ function setGalleryColormap(colormap) {
 }
 
 function updateGalleryAlpha(value) {
+    const alpha = value / 100;
+    persistentVisionSettings.alpha = alpha; // Persist the setting
     document.getElementById('galleryAlphaValue').textContent = value + '%';
     
     // Update vision manager
     if (galleryVisionManager) {
-        galleryVisionManager.setAlpha(value / 100);
+        galleryVisionManager.setAlpha(alpha);
     }
     
     // Update the old gallery visualization system if still in use
-    galleryAlpha = value / 100;
+    galleryAlpha = alpha;
     if (typeof updateGalleryVisualization === 'function' && window.currentGalleryImageId) {
         updateGalleryVisualization();
     }
@@ -3691,6 +3794,21 @@ async function toggleGalleryUMAP() {
         description.style.display = wasActive ? 'block' : 'none';
         
         galleryIsUMAPActive = wasActive;
+        persistentVisionSettings.showUMAP = wasActive; // Persist the setting
+        
+        // Update visualization dropdown to remove/restore UMAP option
+        const vizSelect = document.getElementById('galleryVisualizationMethod');
+        if (vizSelect) {
+            if (!wasActive) {
+                // Remove UMAP option
+                const umapOption = vizSelect.querySelector('option[value="umap"]');
+                if (umapOption) {
+                    umapOption.remove();
+                }
+                // Restore to persistent visualization setting
+                vizSelect.value = persistentVisionSettings.visualization;
+            }
+        }
     } catch (error) {
         console.error('Error toggling UMAP:', error);
         loader.style.display = 'none';
