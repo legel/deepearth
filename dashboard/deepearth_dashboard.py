@@ -207,12 +207,16 @@ class UnifiedDataCache:
             progress_callback(total_taxa, total_taxa, "Computing UMAP projection...")
         
         # Compute UMAP with cosine distance for semantic similarity
+        # Use higher n_neighbors and min_dist to discourage extreme outlier projections
+        # This creates more connected embeddings while still preserving cluster structure
         reducer = umap.UMAP(
             n_components=3,
-            n_neighbors=min(15, len(embeddings) - 1),
-            min_dist=0.1,
+            n_neighbors=min(30, len(embeddings) - 1),  # Increased from 15 to 30
+            min_dist=0.3,  # Increased from 0.1 to 0.3 for more connected structure
             metric='cosine',
-            random_state=42
+            random_state=42,
+            spread=1.5,  # Add spread parameter to control embedding tightness
+            local_connectivity=2.0  # Ensure local connections are preserved
         )
         coords_3d = reducer.fit_transform(embeddings)
         
@@ -319,13 +323,15 @@ class UnifiedDataCache:
             
             embeddings = np.array(embeddings)
             
-            # Compute UMAP
+            # Compute UMAP with parameters to discourage extreme outliers
             reducer = umap.UMAP(
                 n_components=3,
-                n_neighbors=min(15, len(embeddings) - 1),
-                min_dist=0.1,
+                n_neighbors=min(30, len(embeddings) - 1),  # Higher for more connectivity
+                min_dist=0.3,  # Higher to prevent extreme separations
                 metric='cosine',
-                random_state=42
+                random_state=42,
+                spread=1.5,
+                local_connectivity=2.0
             )
             coords_3d = reducer.fit_transform(embeddings)
             
@@ -1392,9 +1398,18 @@ def get_umap_rgb(image_id):
         features_pca = pca.fit_transform(features_flat)
         logger.info(f"🔄 PCA reduced to: {features_pca.shape}")
         
-        logger.info("🗺️ Applying UMAP...")
-        # Then apply UMAP
-        reducer = umap.UMAP(n_components=3, n_neighbors=15, min_dist=0.1, random_state=42)
+        logger.info("🗺️ Applying UMAP with fast settings...")
+        # Apply UMAP with optimized settings for speed
+        reducer = umap.UMAP(
+            n_components=3, 
+            n_neighbors=15, 
+            min_dist=0.1, 
+            random_state=42,
+            n_epochs=100,  # Reduced from default 200-500 for speed
+            init='random',  # Faster than spectral initialization
+            low_memory=True,  # Use memory-efficient implementation
+            metric='euclidean'  # Faster than other metrics
+        )
         coords_3d = reducer.fit_transform(features_pca)
         logger.info(f"✅ UMAP coords shape: {coords_3d.shape}")
         logger.info(f"📊 UMAP range: min={coords_3d.min(axis=0)}, max={coords_3d.max(axis=0)}")
