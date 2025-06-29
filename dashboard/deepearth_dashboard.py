@@ -48,6 +48,7 @@ import hashlib
 import pickle
 from huggingface_data_loader import HuggingFaceDataLoader
 from mmap_embedding_loader import MMapEmbeddingLoader
+from umap_optimized import OptimizedUMAP, warm_up_umap
 
 # Initialize Flask application
 app = Flask(__name__)
@@ -1521,7 +1522,9 @@ def get_umap_rgb(image_id):
         logger.info("🗺️ Applying UMAP directly to high-dimensional features...")
         # Apply UMAP directly to the full 1408-dimensional features
         # This preserves all the information without PCA compression
-        reducer = umap.UMAP(
+        # Use OptimizedUMAP for faster performance with caching
+        reducer = OptimizedUMAP(
+            cache_dir="/tmp/deepearth_umap_cache",
             n_components=3, 
             n_neighbors=15,  # Good for 576 points
             min_dist=0.1, 
@@ -1856,7 +1859,13 @@ if __name__ == '__main__':
     print("="*80)
     print(f"Dataset: {CONFIG['dataset_name']}")
     print(f"Data directory: {DATA_DIR}")
-    print(f"Starting server on http://localhost:5000")
+    
+    # Pre-warm UMAP JIT compilation
+    print("\n🔥 Pre-warming UMAP for faster first-run performance...")
+    warmup_time = warm_up_umap()
+    print(f"✅ UMAP ready! (warmup took {warmup_time:.1f}s)")
+    
+    print(f"\nStarting server on http://localhost:5000")
     print("="*80 + "\n")
     
     app.run(debug=True, host='0.0.0.0', port=5000)
