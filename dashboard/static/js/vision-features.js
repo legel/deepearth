@@ -168,16 +168,22 @@ class VisionFeatureManager {
     }
     
     async updatePCAVisualization() {
-        // Use cached data if available for the same image
-        if (this.cachedImageId === this.imageId && this.pcaDataCache) {
+        // Since the server returns different data for each PCA component,
+        // we can only cache data for colormap/alpha changes, not component changes
+        const cacheKey = `${this.imageId}_${this.visualization}`;
+        
+        if (this.cachedImageId === cacheKey && this.pcaDataCache) {
             console.log('Using cached PCA data for instant update');
             await this.renderPCAOverlay(this.pcaDataCache);
             return;
         }
         
-        // Fetch raw PCA data from fast endpoint
-        console.log(`Fetching PCA data for ${this.imageId}`);
-        const response = await fetch(`/api/features/${this.imageId}/pca-raw`);
+        // Extract component number from visualization (pca1, pca2, etc.)
+        const componentNum = parseInt(this.visualization.replace('pca', '')) || 1;
+        
+        // Fetch raw PCA data from fast endpoint with component parameter
+        console.log(`Fetching PCA component ${componentNum} for ${this.imageId}`);
+        const response = await fetch(`/api/features/${this.imageId}/pca-raw?component=${componentNum}`);
         
         if (!response.ok) {
             console.warn(`No PCA features available for ${this.imageId}`);
@@ -188,9 +194,9 @@ class VisionFeatureManager {
         
         const data = await response.json();
         
-        // Cache the data
+        // Cache the data with component-specific key
         this.pcaDataCache = data;
-        this.cachedImageId = this.imageId;
+        this.cachedImageId = cacheKey;
         
         // Render the overlay
         await this.renderPCAOverlay(data);
@@ -200,8 +206,8 @@ class VisionFeatureManager {
         const pcaValues = data.pca_values;
         if (!pcaValues || pcaValues.length === 0) return;
         
-        // Extract the requested PCA component
-        const componentIndex = parseInt(this.visualization.replace('pca', '')) - 1;
+        // pcaValues is already a 24x24 grid of normalized values [0,1] for the requested component
+        // The server has already done the PCA computation and normalization
         
         // Create canvas for rendering
         const canvas = document.createElement('canvas');
@@ -212,14 +218,9 @@ class VisionFeatureManager {
         // Get colormap
         const cmap = window.colormaps[this.colormap] || window.colormaps.plasma;
         
-        // Find min/max for normalization
-        let minVal = Infinity, maxVal = -Infinity;
-        for (let i = 0; i < 24; i++) {
-            for (let j = 0; j < 24; j++) {
-                const val = pcaValues[i][j][componentIndex];
-                minVal = Math.min(minVal, val);
-                maxVal = Math.max(maxVal, val);
-            }
+        if (!cmap) {
+            console.error('Colormap not found:', this.colormap);
+            return;
         }
         
         // Render the heatmap
@@ -230,14 +231,21 @@ class VisionFeatureManager {
             for (let x = 0; x < 384; x++) {
                 const srcY = Math.floor(y * 24 / 384);
                 const srcX = Math.floor(x * 24 / 384);
-                const value = pcaValues[srcY][srcX][componentIndex];
                 
-                // Normalize to 0-1
-                const normalized = (value - minVal) / (maxVal - minVal);
+                // Get the normalized value [0,1] from the server
+                const normalized = pcaValues[srcY][srcX];
                 
                 // Get color from colormap
-                const cmapIndex = Math.floor(normalized * (cmap.length - 1));
+                const cmapIndex = Math.min(
+                    Math.floor(normalized * (cmap.length - 1)), 
+                    cmap.length - 1
+                );
                 const color = cmap[cmapIndex];
+                
+                if (!color) {
+                    console.error('Color not found at index:', cmapIndex, 'for colormap:', this.colormap);
+                    continue;
+                }
                 
                 const idx = (y * 384 + x) * 4;
                 data_array[idx] = Math.floor(color[0] * 255);
@@ -463,21 +471,11 @@ class VisionFeatureManager {
     }
     
     setVisualization(method) {
-        const wasPCA = this.visualization.startsWith('pca');
         this.visualization = method;
         if (!this.isUMAPActive) {
-            // If switching between PCA components and we have cached data, just re-render
-            if (method.startsWith('pca') && this.pcaDataCache && wasPCA) {
-                console.log('Switching PCA component with cached data');
-                this.renderPCAOverlay(this.pcaDataCache);
-            } else {
-                // Clear cache if switching away from PCA
-                if (!method.startsWith('pca')) {
-                    this.pcaDataCache = null;
-                    this.cachedImageId = null;
-                }
-                this.updateVisualization();
-            }
+            // Always need to fetch new data when switching visualization methods
+            // because each PCA component requires different data from server
+            this.updateVisualization();
         }
     }
     
