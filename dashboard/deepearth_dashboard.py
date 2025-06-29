@@ -204,33 +204,37 @@ class UnifiedDataCache:
         embeddings = np.array(embeddings)
         
         if progress_callback:
+            progress_callback(total_taxa, total_taxa, "Standardizing embeddings...")
+        
+        # Standardize embeddings to prevent any features from dominating
+        # This is crucial when some embeddings (like Quercus) have very different scales
+        from sklearn.preprocessing import StandardScaler
+        scaler = StandardScaler()
+        embeddings_scaled = scaler.fit_transform(embeddings)
+        
+        if progress_callback:
             progress_callback(total_taxa, total_taxa, "Computing UMAP projection...")
         
-        # Compute UMAP with extremely high n_neighbors to force global connectivity
-        # Use nearly all samples as neighbors to prevent any outlier separation
+        # Compute UMAP on standardized embeddings
         n_samples = len(embeddings)
         reducer = umap.UMAP(
             n_components=3,
-            n_neighbors=min(200, n_samples - 1),  # Nearly all samples as neighbors
-            min_dist=0.001,  # Very small to allow tight packing
-            metric='cosine',  # Cosine for semantic similarity
-            random_state=42,
-            n_epochs=500  # More epochs for better convergence with high n_neighbors
+            n_neighbors=min(30, n_samples - 1),  # Moderate neighbors for balanced view
+            min_dist=0.1,  # Standard distance for good clustering
+            metric='euclidean',  # Euclidean on standardized data
+            random_state=42
         )
-        coords_3d = reducer.fit_transform(embeddings)
+        coords_3d = reducer.fit_transform(embeddings_scaled)
         
         # Compute HDBSCAN clusters for ecological communities
-        # With better UMAP projection, we can use more sensitive clustering
+        # Adjust parameters for standardized UMAP space
         clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=5,  # Slightly larger minimum cluster
-            min_samples=2,
+            min_cluster_size=3,  # Smaller minimum for more granular clusters
+            min_samples=1,  # Allow single-linkage for better connectivity
             metric='euclidean',
             cluster_selection_method='eom',
-            cluster_selection_epsilon=0.5,  # Higher epsilon for more merging
-            prediction_data=True,
-            alpha=1.0,  # Standard alpha
-            algorithm='best',
-            leaf_size=40
+            cluster_selection_epsilon=0.3,  # Lower epsilon for more clusters
+            prediction_data=True
         )
         cluster_labels = clusterer.fit_predict(coords_3d)
         
@@ -326,17 +330,21 @@ class UnifiedDataCache:
             
             embeddings = np.array(embeddings)
             
-            # Compute UMAP with extremely high n_neighbors
+            # Standardize embeddings first
+            from sklearn.preprocessing import StandardScaler
+            scaler = StandardScaler()
+            embeddings_scaled = scaler.fit_transform(embeddings)
+            
+            # Compute UMAP on standardized embeddings
             n_samples = len(embeddings)
             reducer = umap.UMAP(
                 n_components=3,
-                n_neighbors=min(200, n_samples - 1),  # Nearly all samples
-                min_dist=0.001,
-                metric='cosine',
-                random_state=42,
-                n_epochs=500
+                n_neighbors=min(30, n_samples - 1),
+                min_dist=0.1,
+                metric='euclidean',  # Euclidean on standardized data
+                random_state=42
             )
-            coords_3d = reducer.fit_transform(embeddings)
+            coords_3d = reducer.fit_transform(embeddings_scaled)
             
             # Create result with metadata
             result = []
