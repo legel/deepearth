@@ -2657,63 +2657,21 @@ let galleryTemporalMode = 'mean';
 let galleryVisualization = 'l2norm';
 let galleryColormap = 'plasma';
 let galleryAlpha = 0.7;
+let galleryVisionManager = null; // Initialized in document ready
 
-function setGalleryTemporalMode(mode) {
-    galleryTemporalMode = mode;
-    document.querySelectorAll('#vision-feature-panel .control-btn').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    event.target.classList.add('active');
-    
-    document.getElementById('galleryTemporalSlider').style.display = 
-        mode === 'temporal' ? 'block' : 'none';
-    
-    updateGalleryVisualization();
-}
-
-function setGalleryVisualizationMethod(method) {
-    galleryVisualization = method;
-    updateGalleryVisualization();
-}
+// These old functions are replaced by the VisionFeatureManager-based versions below
 
 // Removed duplicate - using unified function below
 
 // Removed duplicate updateGalleryAlpha - using unified function below
 
+// Legacy updateGalleryVisualization - now just triggers vision manager update
 async function updateGalleryVisualization() {
-    if (!window.currentGalleryImageId) return;
+    if (!window.currentGalleryImageId || !galleryVisionManager) return;
     
-    try {
-        const url = `/api/features/${window.currentGalleryImageId}/attention?` +
-            `temporal=${galleryTemporalMode}&visualization=${galleryVisualization}&` +
-            `colormap=${galleryColormap}&alpha=${galleryAlpha}`;
-            
-        const response = await fetch(url);
-        const data = await response.json();
-        
-        const overlay = document.getElementById('gallery-attention-overlay');
-        const overlayImg = document.getElementById('gallery-attention-img');
-        
-        if (data.mode === 'spatial' || data.mode === 'mean') {
-            overlayImg.src = data.attention_map;
-            overlay.style.display = 'block';
-            
-            // Apply aspect ratio stretching
-            const img = document.getElementById('gallery-image');
-            const aspectRatio = img.naturalWidth / img.naturalHeight;
-            
-            if (aspectRatio > 1) {
-                overlayImg.style.transform = `scaleX(${aspectRatio})`;
-            } else if (aspectRatio < 1) {
-                overlayImg.style.transform = `scaleY(${1 / aspectRatio})`;
-            } else {
-                overlayImg.style.transform = 'none';
-            }
-        }
-        
-    } catch (error) {
-        console.error('Error updating gallery visualization:', error);
-    }
+    // The vision manager handles all visualization updates
+    // This function is kept for backward compatibility with old code paths
+    await galleryVisionManager.updateVisualization();
 }
 
 // Gallery UMAP is now handled by the async toggleGalleryUMAP function below
@@ -3442,7 +3400,7 @@ function toggleOverlay(show) {
 let galleryCurrentVisualization = 'pca1';
 let galleryIsUMAPActive = false;
 let galleryCurrentObservationId = null;
-let galleryVisionManager = null;
+// galleryVisionManager is already initialized in document ready
 
 // Gallery vision feature control functions
 function setGalleryTemporalMode(mode) {
