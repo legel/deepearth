@@ -4,10 +4,11 @@
 class FilterStateManager {
     constructor() {
         // Initialize filter state with defaults
+        // These will be updated with actual data ranges when data loads
         this.defaultState = {
             temporal: {
-                yearMin: 2010,
-                yearMax: 2025,
+                yearMin: null, // Will be set from data
+                yearMax: null, // Will be set from data
                 monthMin: 1,
                 monthMax: 12,
                 hourMin: 0,
@@ -24,30 +25,38 @@ class FilterStateManager {
         // Callbacks for filter changes
         this.listeners = [];
         
-        // Load saved state from localStorage
-        this.loadState();
+        // Do NOT load from localStorage - keep filters session-specific
+        // this.loadState(); // REMOVED to prevent cross-session/cross-user persistence
+        
+        // Clean up any existing localStorage data
+        if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('deepearth_filters');
+        }
     }
     
-    // State management
+    // State management - NO LONGER PERSISTS TO DISK
     saveState() {
-        localStorage.setItem('deepearth_filters', JSON.stringify(this.state));
+        // Do nothing - we don't want to persist across sessions
+        // This method is kept for compatibility but does not save to localStorage
     }
     
     loadState() {
-        const saved = localStorage.getItem('deepearth_filters');
-        if (saved) {
-            try {
-                const savedState = JSON.parse(saved);
-                // Only load saved state if it's valid
-                // For now, don't load saved geographic filters to ensure clean start
-                this.state.temporal = savedState.temporal || this.defaultState.temporal;
-                // Don't load geographic, species, or gridCell filters
-                this.state.geographic = null;
-                this.state.species = null;
-                this.state.gridCell = null;
-            } catch (e) {
-                console.warn('Failed to load saved filter state');
-            }
+        // Do nothing - we don't want to load from previous sessions
+        // This method is kept for compatibility but does not load from localStorage
+    }
+    
+    // Initialize temporal filters from actual data range
+    initializeFromDataRange(minYear, maxYear) {
+        if (this.defaultState.temporal.yearMin === null) {
+            this.defaultState.temporal.yearMin = minYear;
+            this.defaultState.temporal.yearMax = maxYear;
+            this.state.temporal.yearMin = minYear;
+            this.state.temporal.yearMax = maxYear;
+            
+            console.log(`Initialized temporal filters from data: ${minYear} - ${maxYear}`);
+            
+            // Apply to UI
+            this.applyToUI();
         }
     }
     
@@ -100,7 +109,9 @@ class FilterStateManager {
         const parts = [];
         
         // Temporal filter
-        if (this.state.temporal.yearMin !== 2010 || this.state.temporal.yearMax !== 2025) {
+        if (this.defaultState.temporal.yearMin !== null && 
+            (this.state.temporal.yearMin !== this.defaultState.temporal.yearMin || 
+             this.state.temporal.yearMax !== this.defaultState.temporal.yearMax)) {
             parts.push(`Years: ${this.state.temporal.yearMin}-${this.state.temporal.yearMax}`);
         }
         
@@ -182,6 +193,12 @@ class FilterStateManager {
         // Check temporal filters
         const temporal = this.state.temporal;
         const defaultTemporal = this.defaultState.temporal;
+        
+        // If defaults haven't been initialized yet, no filters are active
+        if (defaultTemporal.yearMin === null || defaultTemporal.yearMax === null) {
+            return false;
+        }
+        
         const hasTemporalFilter = (
             temporal.yearMin !== defaultTemporal.yearMin ||
             temporal.yearMax !== defaultTemporal.yearMax ||

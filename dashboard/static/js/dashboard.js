@@ -797,6 +797,16 @@ async function loadObservations() {
         console.log(`Loaded ${observationsData.length} observations`);
         console.log(`Loaded colors for ${Object.keys(speciesUmapColors).length} species`);
         
+        // Initialize filter state with actual data range
+        if (observationsData.length > 0 && window.filterState) {
+            const years = observationsData.map(o => o.year).filter(y => y != null);
+            if (years.length > 0) {
+                const minYear = Math.min(...years);
+                const maxYear = Math.max(...years);
+                window.filterState.initializeFromDataRange(minYear, maxYear);
+            }
+        }
+        
         // Update statistics
         updateStatistics();
         
@@ -1687,16 +1697,8 @@ async function loadLanguageEmbeddings(focusSpecies = null, forceRecompute = fals
         // Now filter the precomputed data based on current filters
         let filteredEmbeddings = precomputedLanguageEmbeddings.embeddings;
         
-        // Check if we have filters
-        const hasFilters = window.filterState && (
-            window.filterState.state.geographic ||
-            window.filterState.state.temporal.yearMin !== 2010 ||
-            window.filterState.state.temporal.yearMax !== 2025 ||
-            window.filterState.state.temporal.monthMin !== 1 ||
-            window.filterState.state.temporal.monthMax !== 12 ||
-            window.filterState.state.temporal.hourMin !== 0 ||
-            window.filterState.state.temporal.hourMax !== 23
-        );
+        // Check if we have filters using the hasNonDefaultFilters method
+        const hasFilters = window.filterState && window.filterState.hasNonDefaultFilters();
         
         if (hasFilters && observationsData && observationsData.length > 0) {
             // Get taxon IDs that match the current filters
