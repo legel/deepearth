@@ -1,5 +1,5 @@
 # DeepEarth Dashboard
-![DeepEarth Dashboard](https://github.com/legel/deepearth/blob/main/docs/deepearth_geospatial_vision_features.png)
+![DeepEarth Dashboard: Geospatial Vision Features](https://github.com/legel/deepearth/blob/main/docs/deepearth_geospatial_vision_features.png)
 
 Interactive visualization and ML-ready data indexing for the DeepEarth Self-Supervised Spatiotemporal Multimodality Simulator.
 
@@ -93,6 +93,7 @@ Access the dashboard at http://localhost:5000
 - **Thread-Safe Access**: Concurrent data loading for distributed training
 
 ### 🗺️ Spatiotemporal Exploration
+![DeepEarth Dashboard: Embedding Analysis](https://github.com/legel/deepearth/blob/main/docs/spatiotemporal_filtering.png)
 
 - **Interactive Mapping**: Visualize 33,665 observations with multimodal features
 - **Temporal Dynamics**: Filter by year, month, day, hour for time-series analysis
@@ -102,10 +103,14 @@ Access the dashboard at http://localhost:5000
 ### 🔍 Embedding Space Analysis
 
 - **Vision Feature Visualization**: 
+   ![DeepEarth Dashboard: Embedding Analysis](https://github.com/legel/deepearth/blob/main/docs/geospatial_vision_embedding_analysis.png)
+
   - Spatial attention maps from V-JEPA-2 (8×24×24×1408 features)
   - Multiple analysis methods (L2 norm, PCA, variance, entropy)
   - Temporal frame navigation for video understanding
+    
 - **Language Embedding Navigation**:
+  ![DeepEarth Dashboard: Embedding Analysis](https://github.com/legel/deepearth/blob/main/docs/deepearth_language_embeddings.png)
   - 3D UMAP projections of DeepSeek-V3 embeddings (7,168 dims)
   - HDBSCAN clustering for community detection
   - Interactive exploration of semantic relationships
