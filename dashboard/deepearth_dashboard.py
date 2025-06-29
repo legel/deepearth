@@ -616,10 +616,16 @@ class UnifiedDataCache:
             
             # Convert to numpy for sklearn
             features_numpy = spatial_features.detach().cpu().numpy()
-            pca = PCA(n_components=n_component)
+            # Need to fit PCA with at least as many components as requested
+            pca = PCA(n_components=max(n_component, 1))
             pca_features = pca.fit_transform(features_numpy)
             # Get the requested component (0-indexed)
-            attention = torch.from_numpy(pca_features[:, n_component-1])
+            component_idx = n_component - 1
+            if component_idx < pca_features.shape[1]:
+                attention = torch.from_numpy(pca_features[:, component_idx])
+            else:
+                # If requested component doesn't exist, use the last available
+                attention = torch.from_numpy(pca_features[:, -1])
             
         elif visualization == 'variance':
             # Feature variance: shows diversity of activations
@@ -1431,31 +1437,22 @@ def get_umap_rgb(image_id):
         features_flat = features.detach().cpu().numpy()  # [576, 1408]
         logger.info(f"📊 Feature range: min={features_flat.min():.3f}, max={features_flat.max():.3f}, mean={features_flat.mean():.3f}")
         
-        # Apply UMAP to reduce to 3D
-        from sklearn.decomposition import PCA
-        
-        logger.info("📉 Applying PCA for dimensionality reduction...")
-        # First reduce dimensionality with PCA for speed
-        # Just 5 components for maximum speed
-        pca = PCA(n_components=5)
-        features_pca = pca.fit_transform(features_flat)
-        logger.info(f"🔄 PCA reduced to: {features_pca.shape}")
-        
-        logger.info("🗺️ Applying UMAP with fast settings...")
-        # Apply UMAP with optimized settings for speed on small datasets
+        logger.info("🗺️ Applying UMAP directly to high-dimensional features...")
+        # Apply UMAP directly to the full 1408-dimensional features
+        # This preserves all the information without PCA compression
         reducer = umap.UMAP(
             n_components=3, 
             n_neighbors=15,  # Good for 576 points
             min_dist=0.1, 
             random_state=42,
-            n_epochs=30,  # Much lower for small dataset (576 points)
-            init='random',  # Faster than spectral
+            n_epochs=200,  # More epochs needed for high-dimensional data
+            init='spectral',  # Better initialization for high-D
             low_memory=False,  # Faster for small datasets
-            metric='euclidean',  # Fastest metric
+            metric='cosine',  # Better for high-dimensional data
             n_jobs=1,  # Single thread is often faster for small data
             transform_seed=42  # Consistent results
         )
-        coords_3d = reducer.fit_transform(features_pca)
+        coords_3d = reducer.fit_transform(features_flat)
         logger.info(f"✅ UMAP coords shape: {coords_3d.shape}")
         logger.info(f"📊 UMAP range: min={coords_3d.min(axis=0)}, max={coords_3d.max(axis=0)}")
         
