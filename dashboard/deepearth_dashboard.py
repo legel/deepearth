@@ -609,6 +609,10 @@ class UnifiedDataCache:
             
         elif visualization.startswith('pca'):
             # PCA components show principal directions of variation
+            import time
+            start_time = time.time()
+            logger.info(f"🔧 Starting PCA computation for {visualization}")
+            
             from sklearn.decomposition import PCA
             
             # Extract component number (e.g., 'pca1' -> 1)
@@ -616,9 +620,13 @@ class UnifiedDataCache:
             
             # Convert to numpy for sklearn
             features_numpy = spatial_features.detach().cpu().numpy()
+            logger.info(f"📊 PCA input shape: {features_numpy.shape}, dtype: {features_numpy.dtype}")
+            
             # Need to fit PCA with at least as many components as requested
-            pca = PCA(n_components=max(n_component, 1))
+            pca = PCA(n_components=max(n_component, 1), svd_solver='randomized')  # Use randomized for speed
             pca_features = pca.fit_transform(features_numpy)
+            logger.info(f"✅ PCA computed in {time.time() - start_time:.2f}s")
+            
             # Get the requested component (0-indexed)
             component_idx = n_component - 1
             if component_idx < pca_features.shape[1]:
@@ -1436,6 +1444,11 @@ def get_umap_rgb(image_id):
         # Convert to numpy for sklearn operations
         features_flat = features.detach().cpu().numpy()  # [576, 1408]
         logger.info(f"📊 Feature range: min={features_flat.min():.3f}, max={features_flat.max():.3f}, mean={features_flat.mean():.3f}")
+        
+        # Free the torch tensor to save memory
+        del features
+        import gc
+        gc.collect()
         
         logger.info("🗺️ Applying UMAP directly to high-dimensional features...")
         # Apply UMAP directly to the full 1408-dimensional features

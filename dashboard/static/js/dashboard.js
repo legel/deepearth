@@ -2776,7 +2776,16 @@ async function loadImageAndFeatures(imageId) {
         
         try {
             const startTime = performance.now();
-            const response = await fetch(`/api/features/${imageId}/attention?temporal=${currentTemporalMode}&colormap=${currentColormap}&alpha=${currentAlpha}&visualization=${currentVisualization}`);
+            
+            // Add timeout to prevent hanging requests
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+            
+            const response = await fetch(`/api/features/${imageId}/attention?temporal=${currentTemporalMode}&colormap=${currentColormap}&alpha=${currentAlpha}&visualization=${currentVisualization}`, {
+                signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
             const fetchTime = performance.now() - startTime;
             console.log(`⚡ Vision features fetch completed in ${fetchTime.toFixed(1)}ms, status: ${response.status}`);
             
@@ -2883,7 +2892,14 @@ async function loadImageAndFeatures(imageId) {
                 stack: error.stack,
                 currentSettings: { temporal: currentTemporalMode, colormap: currentColormap, alpha: currentAlpha, visualization: currentVisualization }
             });
-            console.error('❌ Error loading features:', error);
+            
+            if (error.name === 'AbortError') {
+                console.error('⏱️ Vision features request timed out after 30 seconds');
+                alert('Vision features computation timed out. This may be due to server load. Please try again.');
+            } else {
+                console.error('❌ Error loading features:', error);
+            }
+            
             const overlayContainer = document.getElementById('obs-attention-overlay');
             if (overlayContainer) overlayContainer.style.display = 'none';
             performanceMonitor.end('loadImageAndFeatures');
