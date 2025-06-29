@@ -1559,9 +1559,9 @@ def health_check():
         }), 500
 
 
-@app.route('/static/<path:path>')
+@app.route('/deepearth-static/<path:path>')
 def serve_static(path):
-    """Serve static files"""
+    """Serve static files from a unique path to avoid conflicts with main site"""
     return send_from_directory('static', path)
 
 
