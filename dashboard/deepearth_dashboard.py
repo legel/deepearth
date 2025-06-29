@@ -1592,6 +1592,62 @@ def health_check():
         }), 500
 
 
+@app.route('/api/species/<taxon_id>/observations')
+def get_species_observations(taxon_id):
+    """
+    Get all observations for a specific species with vision embeddings.
+    
+    This is much more efficient than loading all observations and filtering client-side.
+    """
+    try:
+        obs = cache.load_observations()
+        vision_meta = cache.load_vision_metadata()
+        
+        # Filter observations for this taxon
+        species_obs = obs[obs['taxon_id'] == taxon_id]
+        
+        # Get vision-enabled observations
+        vision_gbif_ids = set()
+        if vision_meta is not None:
+            vision_gbif_ids = set(vision_meta['gbif_id'].unique())
+        
+        # Prepare observation data
+        observations = []
+        for _, row in species_obs.iterrows():
+            has_vision = row.get('has_vision', False) or int(row['gbif_id']) in vision_gbif_ids
+            if has_vision:
+                observations.append({
+                    'gbif_id': int(row['gbif_id']),
+                    'lat': float(row['latitude']),
+                    'lon': float(row['longitude']),
+                    'year': int(row['year']),
+                    'month': int(row.get('month', 0)) if pd.notna(row.get('month')) else None,
+                    'has_vision': True
+                })
+        
+        # Since we're loading on-demand, we can return more observations
+        max_observations = 1000  # Increased from 50
+        if len(observations) > max_observations:
+            observations = observations[:max_observations]
+            truncated = True
+        else:
+            truncated = False
+        
+        return jsonify({
+            'taxon_id': taxon_id,
+            'taxon_name': species_obs.iloc[0]['taxon_name'] if len(species_obs) > 0 else 'Unknown',
+            'total_observations': len(species_obs),
+            'observations_with_vision': len(observations),
+            'observations': observations,
+            'truncated': truncated,
+            'max_returned': max_observations if truncated else len(observations)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_species_observations: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/deepearth-static/<path:path>')
 def serve_static(path):
     """Serve static files from a unique path to avoid conflicts with main site"""

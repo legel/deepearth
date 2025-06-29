@@ -29,6 +29,7 @@ let animationParams = {
 let debugMode = false;
 let currentPointData = null;
 let galleryImages = [];
+let galleryObservations = []; // Store observation list for on-demand loading
 let galleryIndex = 0;
 
 // Vision embeddings preloading
@@ -861,6 +862,14 @@ async function showObservationDetails(obs, marker) {
         
         const response = await fetch(`/api/observation/${obs.gbif_id}`);
         const details = await response.json();
+        
+        // Log all metadata to console for feature development
+        console.log('🔍 GBIF Observation Metadata:', {
+            ...obs,  // Original observation data
+            ...details,  // Detailed API response
+            _timestamp: new Date().toISOString(),
+            _source: 'geospatial_click'
+        });
         
         currentObservation = details;
         // Store last selected species and GBIF ID
@@ -2332,31 +2341,55 @@ function showPointInfo(data, type) {
 // Load species images
 async function loadSpeciesImages(taxonId) {
     try {
-        // Get all observations for this species
-        const obsResponse = await fetch('/api/observations');
-        const obsData = await obsResponse.json();
+        // Show loading state
+        const gallery = document.getElementById('point-image-gallery');
+        gallery.style.display = 'block';
+        document.getElementById('gallery-image').src = '';
+        document.getElementById('gallery-image').alt = 'Loading...';
         
-        const speciesObs = obsData.observations.filter(o => o.taxon_id === taxonId && o.has_vision);
+        // Use efficient species-specific endpoint
+        const speciesResponse = await fetch(`/api/species/${taxonId}/observations`);
+        const speciesData = await speciesResponse.json();
         
-        if (speciesObs.length === 0) {
-            document.getElementById('point-image-gallery').style.display = 'none';
+        if (speciesData.observations_with_vision === 0) {
+            gallery.style.display = 'none';
             return;
+        }
+        
+        console.log(`Loading images for species ${speciesData.taxon_name}: ${speciesData.observations.length} of ${speciesData.observations_with_vision} observations with vision`);
+        
+        if (speciesData.truncated) {
+            console.log(`Note: Results limited to ${speciesData.max_returned} observations for performance`);
         }
         
         // Get images for each observation
         galleryImages = [];
-        for (const obs of speciesObs) { // Show all images
-            const detailResponse = await fetch(`/api/observation/${obs.gbif_id}`);
-            const detail = await detailResponse.json();
-            
-            if (detail.images && detail.images.length > 0) {
-                galleryImages.push({
-                    ...detail.images[0],
-                    gbif_id: obs.gbif_id,
-                    observation: obs
-                });
+        
+        // Use Promise.all for parallel loading (much faster)
+        const imagePromises = speciesData.observations.map(async (obs) => {
+            try {
+                const detailResponse = await fetch(`/api/observation/${obs.gbif_id}`);
+                const detail = await detailResponse.json();
+                
+                if (detail.images && detail.images.length > 0) {
+                    return {
+                        ...detail.images[0],
+                        gbif_id: obs.gbif_id,
+                        observation: obs
+                    };
+                }
+            } catch (error) {
+                console.error(`Failed to load observation ${obs.gbif_id}:`, error);
             }
-        }
+            return null;
+        });
+        
+        // Wait for all images to load in parallel
+        const results = await Promise.all(imagePromises);
+        galleryImages = results.filter(img => img !== null);
+        
+        console.log(`Successfully loaded ${galleryImages.length} images`);
+        // (This section was replaced by Promise.all above)
         
         if (galleryImages.length > 0) {
             galleryIndex = 0;
@@ -2402,16 +2435,35 @@ async function loadObservationImages(gbifId) {
 
 // Update gallery display
 function updateGalleryDisplay() {
-    if (galleryImages.length === 0) return;
+    if (!galleryObservations || galleryObservations.length === 0) return;
     
     const currentImage = galleryImages[galleryIndex];
-    document.getElementById('gallery-image').src = currentImage.url;
+    const imgElement = document.getElementById('gallery-image');
+    
+    if (!currentImage) {
+        // Image not loaded yet
+        imgElement.src = '';
+        imgElement.alt = 'Loading...';
+        imgElement.style.opacity = '0.5';
+    } else if (currentImage.error) {
+        // Failed to load
+        imgElement.src = '';
+        imgElement.alt = 'Failed to load image';
+        imgElement.style.opacity = '0.5';
+    } else {
+        // Successfully loaded
+        imgElement.src = currentImage.url;
+        imgElement.alt = `${currentImage.taxon_name || 'Species'} observation`;
+        imgElement.style.opacity = '1';
+    }
+    
     document.getElementById('gallery-current').textContent = galleryIndex + 1;
-    document.getElementById('gallery-total').textContent = galleryImages.length;
+    document.getElementById('gallery-total').textContent = galleryObservations.length;
     
     // Show/hide navigation
-    document.querySelector('.gallery-nav.prev').style.display = galleryImages.length > 1 ? 'flex' : 'none';
-    document.querySelector('.gallery-nav.next').style.display = galleryImages.length > 1 ? 'flex' : 'none';
+    const showNav = galleryObservations.length > 1;
+    document.querySelector('.gallery-nav.prev').style.display = showNav ? 'flex' : 'none';
+    document.querySelector('.gallery-nav.next').style.display = showNav ? 'flex' : 'none';
     
     // Store current image ID for vision features
     window.currentGalleryImageId = currentImage.image_id;
@@ -2426,12 +2478,57 @@ function updateGalleryDisplay() {
     }
 }
 
-// Navigate gallery
-function navigateGallery(direction) {
-    if (galleryImages.length <= 1) return;
+// Load a single gallery image on demand
+async function loadGalleryImage(index) {
+    if (!galleryObservations || index >= galleryObservations.length) return;
     
-    galleryIndex = (galleryIndex + direction + galleryImages.length) % galleryImages.length;
+    // Check if already loaded
+    if (galleryImages[index] !== null) return;
+    
+    try {
+        const obs = galleryObservations[index];
+        const detailResponse = await fetch(`/api/observation/${obs.gbif_id}`);
+        const detail = await detailResponse.json();
+        
+        if (detail.images && detail.images.length > 0) {
+            galleryImages[index] = {
+                ...detail.images[0],
+                gbif_id: obs.gbif_id,
+                observation: obs,
+                taxon_name: detail.taxon_name
+            };
+        }
+    } catch (error) {
+        console.error(`Failed to load observation at index ${index}:`, error);
+        galleryImages[index] = { error: true }; // Mark as attempted
+    }
+}
+
+// Navigate gallery with on-demand loading
+async function navigateGallery(direction) {
+    if (!galleryObservations || galleryObservations.length === 0) return;
+    if (galleryObservations.length <= 1) return;
+    
+    const newIndex = (galleryIndex + direction + galleryObservations.length) % galleryObservations.length;
+    
+    // Show loading state immediately
+    const img = document.getElementById('gallery-image');
+    if (img) {
+        img.style.opacity = '0.5';
+        img.alt = 'Loading...';
+    }
+    
+    // Load the image if not already loaded
+    await loadGalleryImage(newIndex);
+    
+    galleryIndex = newIndex;
     updateGalleryDisplay();
+    
+    // Preload next/previous images in background
+    const preloadNext = (newIndex + 1) % galleryObservations.length;
+    const preloadPrev = (newIndex - 1 + galleryObservations.length) % galleryObservations.length;
+    loadGalleryImage(preloadNext); // Don't await - load in background
+    loadGalleryImage(preloadPrev); // Don't await - load in background
 }
 
 // Close point panel
@@ -2439,6 +2536,7 @@ function closePointPanel() {
     document.getElementById('point-info-panel').style.display = 'none';
     currentPointData = null;
     galleryImages = [];
+    galleryObservations = [];
 }
 
 // Gallery vision feature controls
