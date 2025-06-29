@@ -2,7 +2,8 @@
 // This module provides a consistent vision feature interface for both Geospatial and Embeddings views
 
 // Colormap definitions for client-side rendering
-const colormaps = {
+// Made global so dashboard.js can use them too
+window.colormaps = {
     plasma: [
         [0.050383, 0.029803, 0.527975],
         [0.127568, 0.016298, 0.531895],
@@ -209,7 +210,7 @@ class VisionFeatureManager {
         const ctx = canvas.getContext('2d');
         
         // Get colormap
-        const cmap = colormaps[this.colormap] || colormaps.plasma;
+        const cmap = window.colormaps[this.colormap] || window.colormaps.plasma;
         
         // Find min/max for normalization
         let minVal = Infinity, maxVal = -Infinity;
