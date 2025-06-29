@@ -347,19 +347,22 @@ function switchView(view) {
             window.filterState.applyToUI();
         }
         
-        // Force currentEmbeddingView to language before selecting
-        currentEmbeddingView = 'language';
-        console.log('Forcing embedding view to language');
+        // Check if we have a specific embedding view requested (e.g., from Vision Embedding Analysis)
+        const requestedView = currentEmbeddingView;
         
         // Cancel any pending vision operations
         loadGeneration++;
         
-        // Always default to language embeddings when switching to embeddings view
-        selectEmbeddingType('language');
+        // If no specific view was requested, default to language
+        if (requestedView !== 'vision') {
+            currentEmbeddingView = 'language';
+            console.log('Defaulting to language embeddings');
+        }
         
-        // Don't preload vision embeddings when switching to embeddings view
-        // User should explicitly click on vision embeddings button
-        console.log('Switched to embeddings view, showing language embeddings');
+        // Select the appropriate embedding type
+        selectEmbeddingType(currentEmbeddingView);
+        
+        console.log(`Switched to embeddings view, showing ${currentEmbeddingView} embeddings`);
         
         // Mark that we're now in embeddings view
         window.lastViewWasGeospatial = false;
@@ -1313,18 +1316,15 @@ async function launchEcosystemAnalysis(type) {
             return;
         }
         
-        // Switch to ecological view - this will default to language embeddings
-        switchView('ecological');
-        
-        // Only override if specifically requesting vision
+        // Switch to ecological view - specify which embedding type we want
         if (type === 'vision') {
-            // Wait a bit for the view switch to complete
-            setTimeout(() => {
-                selectEmbeddingType('vision');
-                displayVisionEmbeddings(data.embeddings);
-            }, 100);
+            // Set the embedding type before switching views
+            currentEmbeddingView = 'vision';
+            switchView('ecological');
+            // The view switch will now load vision embeddings automatically
+        } else {
+            switchView('ecological');
         }
-        // Language will already be loaded by switchView
         
         showLoading(false);
     } catch (error) {
@@ -1411,10 +1411,7 @@ function initialize3DView() {
             });
         }
         
-        // Update expanded image orientation
-        if (window.expandedImage) {
-            window.expandedImage.lookAt(camera3D.position);
-        }
+        // No longer need to update expanded image orientation
         
         renderer3D.render(scene3D, camera3D);
     }
@@ -2006,288 +2003,87 @@ function createThumbnailSprite(emb, gbifId, imageNum) {
     return sprite;
 }
 
-// Create expanded image view with animation
+// Show thumbnail details in side panel
 function expandThumbnail(thumbnailSprite, embData) {
-    // Check if there's already an expanded view - close it properly
-    if (window.expandedImage) {
-        collapseExpandedImage();
-        // Wait a bit for the collapse animation
-        setTimeout(() => expandThumbnail(thumbnailSprite, embData), 100);
-        return;
-    }
-    
     const gbifId = thumbnailSprite.userData.actualGbifId;
     const imageNum = thumbnailSprite.userData.imageNum;
     
-    // Create expanded image plane with larger base size
-    const baseExpandedSize = 5; // Increased from 4
-    const expandedGeometry = new THREE.PlaneGeometry(baseExpandedSize, baseExpandedSize);
-    const expandedMaterial = new THREE.MeshBasicMaterial({
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0,
-        depthTest: false,
-        depthWrite: false
-    });
+    // Show the observation panel (reuse existing panel from geospatial view)
+    const panel = document.getElementById('observation-panel');
+    if (!panel) return;
     
-    const expandedImage = new THREE.Mesh(expandedGeometry, expandedMaterial);
-    expandedImage.renderOrder = 1000; // Render on top
+    // Update panel content
+    document.getElementById('obs-species-name').textContent = embData.taxon_name;
+    document.getElementById('obs-location').textContent = `${embData.lat.toFixed(4)}°N, ${embData.lon.toFixed(4)}°E`;
     
-    // Position at thumbnail location initially
-    expandedImage.position.copy(thumbnailSprite.position);
-    expandedImage.scale.set(0.1, 0.1, 0.1);
-    
-    // Load large image
-    const loader = new THREE.TextureLoader();
-    const largeImageUrl = `/api/image_proxy/${gbifId}/${imageNum}?size=large`;
-    
-    loader.load(largeImageUrl, (texture) => {
-        expandedMaterial.map = texture;
-        expandedMaterial.needsUpdate = true;
-        
-        // Adjust geometry for proper aspect ratio
-        const aspect = texture.image.width / texture.image.height;
-        if (aspect > 1) {
-            // Landscape
-            expandedImage.geometry = new THREE.PlaneGeometry(baseExpandedSize, baseExpandedSize / aspect);
-        } else {
-            // Portrait
-            expandedImage.geometry = new THREE.PlaneGeometry(baseExpandedSize * aspect, baseExpandedSize);
-        }
-        expandedImage.userData.aspect = aspect;
-    });
-    
-    scene3D.add(expandedImage);
-    
-    // Create info overlay with close button
-    const overlayContainer = createImageInfoOverlay(embData, gbifId);
-    document.body.appendChild(overlayContainer);
-    
-    // Animate expansion
-    const targetPosition = new THREE.Vector3();
-    targetPosition.copy(camera3D.position);
-    targetPosition.sub(window.controls3D.target);
-    targetPosition.normalize();
-    targetPosition.multiplyScalar(3); // Slightly further from camera
-    targetPosition.add(window.controls3D.target);
-    
-    // Store references for cleanup
-    window.expandedImage = expandedImage;
-    window.expandedImageInfo = overlayContainer;
-    window.expandedThumbnail = thumbnailSprite;
-    
-    // Animate
-    animateImageExpansion(expandedImage, targetPosition, 1);
-}
-
-// Create info overlay for expanded image
-function createImageInfoOverlay(embData, gbifId) {
-    // Create container div
-    const container = document.createElement('div');
-    container.className = 'expanded-image-container';
-    container.style.cssText = `
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        z-index: 1000;
-        pointer-events: none;
-    `;
-    
-    // Create close button
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'expanded-image-close';
-    closeBtn.innerHTML = '×';
-    closeBtn.style.cssText = `
-        position: absolute;
-        top: -40px;
-        right: -40px;
-        width: 36px;
-        height: 36px;
-        background: rgba(0, 0, 0, 0.8);
-        color: white;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-        border-radius: 50%;
-        font-size: 24px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        opacity: 0;
-        transition: all 0.3s ease;
-        pointer-events: auto;
-    `;
-    
-    closeBtn.onmouseover = () => {
-        closeBtn.style.background = 'rgba(255, 255, 255, 0.1)';
-        closeBtn.style.transform = 'scale(1.1)';
-    };
-    closeBtn.onmouseout = () => {
-        closeBtn.style.background = 'rgba(0, 0, 0, 0.8)';
-        closeBtn.style.transform = 'scale(1)';
-    };
-    closeBtn.onclick = (e) => {
-        e.stopPropagation();
-        collapseExpandedImage();
-    };
-    
-    container.appendChild(closeBtn);
-    
-    // Create info div
-    const infoDiv = document.createElement('div');
-    infoDiv.className = 'expanded-image-info';
-    infoDiv.style.cssText = `
-        position: fixed;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(0, 0, 0, 0.8);
-        color: white;
-        padding: 15px 25px;
-        border-radius: 8px;
-        font-family: 'Inter', sans-serif;
-        z-index: 1000;
-        opacity: 0;
-        transition: opacity 0.3s ease;
-        max-width: 80%;
-        text-align: center;
-        pointer-events: auto;
-    `;
-    
-    // Format date if available
-    let dateStr = 'Date unknown';
+    // Format date
+    let dateStr = 'Unknown';
+    let timeStr = 'Unknown';
     if (embData.eventDate) {
         const date = new Date(embData.eventDate);
-        dateStr = date.toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+        dateStr = date.toLocaleDateString();
+        timeStr = date.toLocaleTimeString();
     } else if (embData.year) {
-        // Construct date from components if eventDate not available
+        dateStr = embData.year.toString();
         if (embData.month && embData.day) {
-            const date = new Date(embData.year, embData.month - 1, embData.day);
-            dateStr = date.toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
-            if (embData.hour !== null && embData.hour !== undefined) {
-                dateStr += ` at ${embData.hour.toString().padStart(2, '0')}:00`;
-            }
-        } else if (embData.month) {
-            const date = new Date(embData.year, embData.month - 1, 1);
-            dateStr = date.toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long'
-            });
-        } else {
-            dateStr = embData.year.toString();
+            dateStr = `${embData.month}/${embData.day}/${embData.year}`;
+        }
+        if (embData.hour !== null && embData.hour !== undefined) {
+            timeStr = `${embData.hour.toString().padStart(2, '0')}:00`;
         }
     }
     
-    infoDiv.innerHTML = `
-        <div style="font-size: 18px; font-style: italic; margin-bottom: 8px;">${embData.taxon_name}</div>
-        <div style="font-size: 14px; opacity: 0.9;">${dateStr}</div>
-        <div style="font-size: 12px; opacity: 0.7; margin-top: 5px;">GBIF: ${gbifId}</div>
-    `;
+    document.getElementById('obs-date').textContent = dateStr;
+    document.getElementById('obs-time').textContent = timeStr;
     
-    // Add info div to document body separately
-    document.body.appendChild(infoDiv);
+    // Load the image
+    const imageUrl = `/api/image_proxy/${gbifId}/${imageNum}?size=large`;
+    const imgElement = document.getElementById('obs-image');
+    imgElement.src = imageUrl;
     
-    // Fade in both elements
-    setTimeout(() => {
-        infoDiv.style.opacity = '1';
-        closeBtn.style.opacity = '0.8';
-    }, 100);
+    // Store current observation data for vision features
+    currentObservation = {
+        gbif_id: gbifId,
+        taxon_id: embData.taxon_id,
+        taxon_name: embData.taxon_name,
+        images: [{
+            image_id: embData.gbif_id,  // This is the formatted ID from backend
+            image_num: imageNum,
+            url: imageUrl
+        }]
+    };
     
-    // Store reference to info div in container for cleanup
-    container.infoDiv = infoDiv;
+    currentObservationId = embData.gbif_id;  // Use the formatted ID
     
-    return container;
+    // Initialize vision feature manager if not already done
+    if (!window.visionManager) {
+        window.visionManager = new VisionFeatureManager({
+            container: document.querySelector('.image-container'),
+            imageElement: document.getElementById('obs-image'),
+            overlayElement: document.getElementById('obs-attention-img'),
+            overlayContainer: document.getElementById('obs-attention-overlay'),
+            statsContainer: document.querySelector('.stats-grid'),
+            onUpdate: (data) => {
+                console.log('Vision features updated:', data);
+            }
+        });
+    }
+    
+    // Load vision features
+    window.visionManager.loadImage(embData.gbif_id, gbifId);
+    
+    // Show the panel
+    panel.style.display = 'block';
+    
+    // Highlight the selected thumbnail
+    embeddingPoints.forEach(point => {
+        if (point.thumbnail) {
+            point.thumbnail.material.opacity = point.thumbnail === thumbnailSprite ? 1.0 : 0.5;
+        }
+    });
 }
 
-// Animate image expansion/collapse
-function animateImageExpansion(image, targetPosition, targetScale) {
-    const startPosition = image.position.clone();
-    const startScale = image.scale.x;
-    const startOpacity = image.material.opacity;
-    const targetOpacity = targetScale > 0.5 ? 1 : 0;
-    
-    const duration = 500;
-    const startTime = Date.now();
-    
-    function animate() {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-        const eased = easeInOutCubic(progress);
-        
-        // Interpolate position
-        image.position.lerpVectors(startPosition, targetPosition, eased);
-        
-        // Interpolate scale
-        const scale = startScale + (targetScale - startScale) * eased;
-        image.scale.set(scale, scale, scale);
-        
-        // Interpolate opacity
-        image.material.opacity = startOpacity + (targetOpacity - startOpacity) * eased;
-        
-        if (progress < 1) {
-            requestAnimationFrame(animate);
-        } else if (targetScale < 0.5) {
-            // Remove after collapse
-            scene3D.remove(image);
-            window.expandedImage = null;
-        }
-    }
-    
-    animate();
-}
-
-// Collapse expanded image
-function collapseExpandedImage(event) {
-    if (!window.expandedImage) return;
-    
-    // Prevent triggering on the image itself
-    if (event && event.stopPropagation) {
-        event.stopPropagation();
-    }
-    
-    // Animate collapse
-    const thumbnailPos = window.expandedThumbnail ? window.expandedThumbnail.position : new THREE.Vector3(0, 0, 0);
-    animateImageExpansion(window.expandedImage, thumbnailPos, 0.1);
-    
-    // Remove info overlay and container
-    if (window.expandedImageInfo) {
-        // Fade out close button
-        const closeBtn = window.expandedImageInfo.querySelector('.expanded-image-close');
-        if (closeBtn) {
-            closeBtn.style.opacity = '0';
-        }
-        
-        // Fade out info div
-        if (window.expandedImageInfo.infoDiv) {
-            window.expandedImageInfo.infoDiv.style.opacity = '0';
-            setTimeout(() => {
-                if (window.expandedImageInfo && window.expandedImageInfo.infoDiv) {
-                    window.expandedImageInfo.infoDiv.remove();
-                }
-            }, 300);
-        }
-        
-        // Remove container
-        setTimeout(() => {
-            if (window.expandedImageInfo) {
-                window.expandedImageInfo.remove();
-                window.expandedImageInfo = null;
-            }
-        }, 300);
-    }
-    
-    window.expandedThumbnail = null;
-}
+// No longer needed - using side panel instead
 
 // Easing function for smooth animation
 function easeInOutCubic(t) {
@@ -2310,23 +2106,6 @@ function setupThumbnailInteraction() {
     
     // Click handler
     function onMouseClick(event) {
-        // Skip if we have an expanded image and clicking outside it
-        if (window.expandedImage) {
-            const rect = renderer3D.domElement.getBoundingClientRect();
-            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-            
-            raycaster.setFromCamera(mouse, camera3D);
-            
-            // Check if clicking on expanded image
-            const expandedIntersects = raycaster.intersectObject(window.expandedImage);
-            if (expandedIntersects.length === 0) {
-                // Clicked outside expanded image - close it
-                collapseExpandedImage(event);
-                return;
-            }
-        }
-        
         const rect = renderer3D.domElement.getBoundingClientRect();
         mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -2357,21 +2136,17 @@ function setupThumbnailInteraction() {
         
         if (intersects.length > 0 && intersects[0].object !== hoveredObject) {
             // Reset previous hover
-            if (hoveredObject && hoveredObject !== window.expandedImage) {
+            if (hoveredObject) {
                 hoveredObject.scale.set(1, 1, 1);
             }
             
-            // Apply hover effect (but not to expanded image)
+            // Apply hover effect
             hoveredObject = intersects[0].object;
-            if (hoveredObject !== window.expandedImage) {
-                hoveredObject.scale.set(1.2, 1.2, 1.2);
-                renderer3D.domElement.style.cursor = 'pointer';
-            }
+            hoveredObject.scale.set(1.2, 1.2, 1.2);
+            renderer3D.domElement.style.cursor = 'pointer';
         } else if (intersects.length === 0 && hoveredObject) {
             // Remove hover effect
-            if (hoveredObject !== window.expandedImage) {
-                hoveredObject.scale.set(1, 1, 1);
-            }
+            hoveredObject.scale.set(1, 1, 1);
             hoveredObject = null;
             renderer3D.domElement.style.cursor = 'grab';
         }
