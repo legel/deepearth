@@ -206,24 +206,15 @@ class UnifiedDataCache:
         if progress_callback:
             progress_callback(total_taxa, total_taxa, "Computing UMAP projection...")
         
-        # Compute UMAP with parameters specifically tuned to prevent extreme outliers
-        # Key insight: we need to force more global connectivity to prevent any single
-        # group (like Quercus) from being projected too far from the main cluster
+        # Compute UMAP with very high n_neighbors to capture global structure
+        # This prevents any single genus from being isolated as an extreme outlier
         n_samples = len(embeddings)
         reducer = umap.UMAP(
             n_components=3,
-            # Use very high n_neighbors to force global structure awareness
-            n_neighbors=min(int(n_samples * 0.5), n_samples - 1),  # 50% of samples
-            min_dist=0.5,  # Much higher to compress the embedding space
-            metric='cosine',
-            random_state=42,
-            spread=1.0,  # Lower spread to keep points closer
-            local_connectivity=5.0,  # Force strong local connections
-            # Additional parameters to control outliers
-            set_op_mix_ratio=0.8,  # Favor intersection over union in fuzzy set operations
-            negative_sample_rate=10,  # More negative sampling to pull outliers in
-            transform_queue_size=8.0,  # Larger queue for better global optimization
-            repulsion_strength=0.5  # Lower repulsion to keep outliers closer
+            n_neighbors=min(100, n_samples - 1),  # Very high for global view
+            min_dist=0.01,  # Small but not zero to allow some structure
+            metric='cosine',  # Cosine for semantic similarity
+            random_state=42
         )
         coords_3d = reducer.fit_transform(embeddings)
         
@@ -334,20 +325,14 @@ class UnifiedDataCache:
             
             embeddings = np.array(embeddings)
             
-            # Compute UMAP with parameters to prevent extreme outliers
+            # Compute UMAP with very high n_neighbors
             n_samples = len(embeddings)
             reducer = umap.UMAP(
                 n_components=3,
-                n_neighbors=min(int(n_samples * 0.5), n_samples - 1),  # 50% of samples
-                min_dist=0.5,
+                n_neighbors=min(100, n_samples - 1),  # Very high for global view
+                min_dist=0.01,  # Small but not zero
                 metric='cosine',
-                random_state=42,
-                spread=1.0,
-                local_connectivity=5.0,
-                set_op_mix_ratio=0.8,
-                negative_sample_rate=10,
-                transform_queue_size=8.0,
-                repulsion_strength=0.5
+                random_state=42
             )
             coords_3d = reducer.fit_transform(embeddings)
             
