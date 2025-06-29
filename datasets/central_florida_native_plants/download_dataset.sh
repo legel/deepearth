@@ -40,11 +40,21 @@ try:
     print("\nDownload complete!")
     
     # Count files
-    embeddings_count = len([f for f in os.listdir(os.path.join(local_dir, "embeddings")) if f.endswith('.pt')])
-    tokens_count = len([f for f in os.listdir(os.path.join(local_dir, "tokens")) if f.endswith('.csv')])
+    vision_embeddings_dir = os.path.join(local_dir, "vision_embeddings")
+    if os.path.exists(vision_embeddings_dir):
+        embeddings_count = len([f for f in os.listdir(vision_embeddings_dir) if f.endswith('.parquet')])
+    else:
+        embeddings_count = 0
     
-    print(f"Embeddings: {embeddings_count} files")
-    print(f"Token mappings: {tokens_count} files")
+    print(f"Vision embeddings: {embeddings_count} parquet files")
+    
+    # Check for other key files
+    if os.path.exists(os.path.join(local_dir, "observations.parquet")):
+        print("✓ observations.parquet found")
+    if os.path.exists(os.path.join(local_dir, "vision_index.parquet")):
+        print("✓ vision_index.parquet found")
+    if os.path.exists(os.path.join(local_dir, "dataset_info.json")):
+        print("✓ dataset_info.json found")
     
     # Calculate total size
     total_size = 0
