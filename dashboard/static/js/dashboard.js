@@ -2362,46 +2362,30 @@ async function loadSpeciesImages(taxonId) {
             console.log(`Note: Results limited to ${speciesData.max_returned} observations for performance`);
         }
         
-        // Get images for each observation
-        galleryImages = [];
+        // Store observation list for on-demand loading
+        galleryObservations = speciesData.observations;
+        galleryImages = new Array(galleryObservations.length).fill(null);
+        galleryIndex = 0;
         
-        // Use Promise.all for parallel loading (much faster)
-        const imagePromises = speciesData.observations.map(async (obs) => {
-            try {
-                const detailResponse = await fetch(`/api/observation/${obs.gbif_id}`);
-                const detail = await detailResponse.json();
-                
-                if (detail.images && detail.images.length > 0) {
-                    return {
-                        ...detail.images[0],
-                        gbif_id: obs.gbif_id,
-                        observation: obs
-                    };
-                }
-            } catch (error) {
-                console.error(`Failed to load observation ${obs.gbif_id}:`, error);
+        // Load only the first image immediately
+        await loadGalleryImage(0);
+        
+        // Update display
+        updateGalleryDisplay();
+        document.getElementById('point-image-gallery').style.display = 'block';
+        document.getElementById('vision-feature-panel').style.display = 'block';
+        
+        // Initialize gallery feature controls
+        galleryCurrentVisualization = 'pca1';
+        document.getElementById('galleryVisualizationMethod').value = 'pca1';
+        galleryIsUMAPActive = false;
+        document.getElementById('galleryUmapBtnText').textContent = 'Show UMAP RGB';
+        
+        // Preload next few images in background
+        if (galleryObservations.length > 1) {
+            for (let i = 1; i <= Math.min(3, galleryObservations.length - 1); i++) {
+                loadGalleryImage(i); // Don't await - load in background
             }
-            return null;
-        });
-        
-        // Wait for all images to load in parallel
-        const results = await Promise.all(imagePromises);
-        galleryImages = results.filter(img => img !== null);
-        
-        console.log(`Successfully loaded ${galleryImages.length} images`);
-        // (This section was replaced by Promise.all above)
-        
-        if (galleryImages.length > 0) {
-            galleryIndex = 0;
-            updateGalleryDisplay();
-            document.getElementById('point-image-gallery').style.display = 'block';
-            document.getElementById('vision-feature-panel').style.display = 'block';
-            
-            // Initialize gallery feature controls
-            galleryCurrentVisualization = 'pca1';
-            document.getElementById('galleryVisualizationMethod').value = 'pca1';
-            galleryIsUMAPActive = false;
-            document.getElementById('galleryUmapBtnText').textContent = 'Show UMAP RGB';
         }
         
     } catch (error) {
@@ -2465,16 +2449,18 @@ function updateGalleryDisplay() {
     document.querySelector('.gallery-nav.prev').style.display = showNav ? 'flex' : 'none';
     document.querySelector('.gallery-nav.next').style.display = showNav ? 'flex' : 'none';
     
-    // Store current image ID for vision features
-    window.currentGalleryImageId = currentImage.image_id;
-    galleryCurrentObservationId = currentImage.gbif_id || currentImage.observation_id;
-    
-    // Store for view switching
-    window.lastSelectedGbifId = galleryCurrentObservationId;
-    
-    // Load image with vision features using the unified manager
-    if (galleryVisionManager && currentImage.image_id) {
-        galleryVisionManager.loadImage(currentImage.image_id, galleryCurrentObservationId);
+    // Store current image ID for vision features if loaded
+    if (currentImage && !currentImage.error) {
+        window.currentGalleryImageId = currentImage.image_id;
+        galleryCurrentObservationId = currentImage.gbif_id || currentImage.observation_id;
+        
+        // Store for view switching
+        window.lastSelectedGbifId = galleryCurrentObservationId;
+        
+        // Load image with vision features using the unified manager
+        if (galleryVisionManager && currentImage.image_id) {
+            galleryVisionManager.loadImage(currentImage.image_id, galleryCurrentObservationId);
+        }
     }
 }
 
@@ -2487,6 +2473,8 @@ async function loadGalleryImage(index) {
     
     try {
         const obs = galleryObservations[index];
+        console.log(`Loading image ${index + 1}/${galleryObservations.length} for observation ${obs.gbif_id}`);
+        
         const detailResponse = await fetch(`/api/observation/${obs.gbif_id}`);
         const detail = await detailResponse.json();
         
@@ -2497,6 +2485,15 @@ async function loadGalleryImage(index) {
                 observation: obs,
                 taxon_name: detail.taxon_name
             };
+            console.log(`Successfully loaded image at index ${index}:`, galleryImages[index].url);
+            
+            // If this is the currently displayed image, update the display
+            if (index === galleryIndex) {
+                updateGalleryDisplay();
+            }
+        } else {
+            console.log(`No images found for observation ${obs.gbif_id}`);
+            galleryImages[index] = { error: true, message: 'No images available' };
         }
     } catch (error) {
         console.error(`Failed to load observation at index ${index}:`, error);

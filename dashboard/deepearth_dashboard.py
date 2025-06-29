@@ -1374,6 +1374,12 @@ def get_umap_rgb(image_id):
         start_time = datetime.now()
         logger.info(f"🌈 Computing UMAP RGB for image: {image_id}")
         
+        # Check cache first
+        cache_key = f"umap_rgb_{image_id}"
+        if hasattr(cache, '_umap_rgb_cache') and cache_key in cache._umap_rgb_cache:
+            logger.info(f"✅ Using cached UMAP RGB for {image_id}")
+            return jsonify(cache._umap_rgb_cache[cache_key])
+        
         # Extract GBIF ID from image_id
         import re
         match = re.match(r'gbif_(\d+)_taxon_\d+_img_(\d+)', image_id)
@@ -1487,12 +1493,20 @@ def get_umap_rgb(image_id):
         rgb_values_list = coords_normalized.flatten().tolist()  # Flatten to 1D array for JS
         logger.info(f"📊 Returning {len(rgb_values_list)} RGB values (flattened {rgb_spatial.shape} -> 1D)")
         
-        return jsonify({
+        result = {
             'umap_rgb': f"data:image/png;base64,{img_str}",
             'rgb_values': rgb_values_list,  # Raw RGB values for client-side alpha blending
             'coords_3d': coords_3d.tolist(),
             'shape': [24, 24, 3]
-        })
+        }
+        
+        # Cache the result
+        if not hasattr(cache, '_umap_rgb_cache'):
+            cache._umap_rgb_cache = {}
+        cache._umap_rgb_cache[cache_key] = result
+        logger.info(f"💾 Cached UMAP RGB result for {image_id}")
+        
+        return jsonify(result)
         
     except Exception as e:
         logger.error(f"Error in get_umap_rgb: {str(e)}")
