@@ -1,0 +1,113 @@
+{
+  "dataset_name": "Central Florida Native Plants v0.2.0",
+  "dataset_version": "0.2.0",
+  "description": "A comprehensive multimodal dataset featuring 33,665 observations of 232 native plant species from Central Florida",
+  
+  "data_paths": {
+    "base_dir": "./huggingface_dataset",
+    "observations": "observations.parquet",
+    "vision_embeddings_dir": "vision_embeddings",
+    "vision_index": "vision_index.parquet",
+    "vision_metadata": "vision_metadata.json",
+    "dataset_info": "dataset_info.json"
+  },
+  
+  "data_schema": {
+    "observations": {
+      "primary_key": "gbif_id",
+      "required_columns": [
+        "gbif_id",
+        "taxon_id", 
+        "taxon_name",
+        "latitude",
+        "longitude",
+        "year",
+        "month",
+        "day",
+        "image_urls",
+        "has_vision",
+        "language_embedding",
+        "split"
+      ]
+    },
+    "vision_embeddings": {
+      "structure": "parquet_files",
+      "embedding_dimensions": [8, 24, 24, 1408],
+      "flattened_size": 6488064,
+      "validated_structure": {
+        "step_1": "reshape to (4608, 1408)",
+        "step_2": "reshape to (8, 576, 1408)", 
+        "step_3": "reshape to (8, 24, 24, 1408)"
+      }
+    },
+    "language_embeddings": {
+      "dimensions": 7168,
+      "embedding_model": "DeepSeek-V3",
+      "coverage": "all_species"
+    }
+  },
+  
+  "features": {
+    "multimodal": true,
+    "vision_transformer": "V-JEPA-2",
+    "language_model": "DeepSeek-V3", 
+    "spatiotemporal_splits": true,
+    "geographic_bounds": {
+      "north": 28.978,
+      "south": 28.033,
+      "east": -80.902,
+      "west": -81.934
+    },
+    "temporal_range": {
+      "start": 2010,
+      "end": 2025
+    }
+  },
+  
+  "splits": {
+    "train": {
+      "description": "Training observations (2010-2024)",
+      "count": 30935,
+      "percentage": 91.9
+    },
+    "temporal_test": {
+      "description": "Future temporal generalization (all 2025 observations)",
+      "count": 2730,
+      "percentage": 8.1
+    }
+  },
+  
+  "statistics": {
+    "total_observations": 33665,
+    "total_species": 232,
+    "observations_with_images": 31136,
+    "observations_with_vision_embeddings": 7113,
+    "total_size_gb": 51
+  },
+  
+  "urls": {
+    "huggingface": "https://huggingface.co/datasets/deepearth/central-florida-native-plants",
+    "github": "https://github.com/legel/deepearth/datasets/central_florida_native_plants",
+    "paper": null
+  },
+  
+  "visualization": {
+    "default_colormap": "plasma",
+    "attention_methods": ["l2norm", "pca1", "pca2", "pca3", "variance", "entropy"],
+    "temporal_modes": ["mean", "temporal"],
+    "clustering_methods": ["hdbscan", "kmeans"],
+    "umap_settings": {
+      "n_components": 3,
+      "n_neighbors": 15,
+      "min_dist": 0.1,
+      "metric": "cosine"
+    }
+  },
+  
+  "caching": {
+    "enable_embedding_cache": true,
+    "max_embedding_cache_size": 10000,
+    "precompute_language_umap": true,
+    "cache_vision_umap": true
+  }
+}

@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepEarth - Central Florida Native Plants</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Three.js for 3D visualization -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- Chart.js for statistics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    
+    <!-- Vision Features Module -->
+    <script src="/static/js/vision-features.js"></script>
+    
+    <!-- Filter State Management -->
+    <script src="/static/js/filter-state.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <h1 class="header-title">
+                <span class="logo">🌍</span>
+                DeepEarth Multimodal Explorer
+            </h1>
+            <div class="header-subtitle">Central Florida Native Plants Dataset</div>
+        </div>
+        <div class="header-controls">
+            <div class="view-switcher">
+                <button class="view-btn active" data-view="geospatial">
+                    <span class="icon">🗺️</span> Geospatial
+                </button>
+                <button class="view-btn" data-view="ecological">
+                    <span class="icon">🧬</span> Embeddings
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>Data Layers</h2>
+            </div>
+            
+            <!-- Geospatial Controls -->
+            <div class="sidebar-section" id="geospatial-controls">
+                <h3>Map Controls</h3>
+                
+                <!-- Map Bounds Display -->
+                <div class="control-group map-bounds-display">
+                    <label>Current View Bounds</label>
+                    <div class="bounds-info">
+                        <div class="bounds-row">
+                            <span class="bounds-label">Lat:</span>
+                            <span class="bounds-value" id="lat-bounds">-</span>
+                        </div>
+                        <div class="bounds-row">
+                            <span class="bounds-label">Lon:</span>
+                            <span class="bounds-value" id="lon-bounds">-</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <label>Base Layer</label>
+                    <select id="base-layer-select" class="control-select">
+                        <option value="satellite">Satellite</option>
+                        <option value="terrain">Terrain</option>
+                        <option value="streets">Streets</option>
+                    </select>
+                </div>
+                
+                <div class="control-group">
+                    <label>
+                        <input type="checkbox" id="show-observations" checked>
+                        Show Observations
+                    </label>
+                </div>
+                
+                <div class="control-group">
+                    <label>
+                        <input type="checkbox" id="show-grid">
+                        Geospatial Filter
+                    </label>
+                </div>
+                
+                <div class="grid-controls" style="display: none;">
+                    <div class="grid-instructions">
+                        Click any grid cell to filter statistics and embedding analysis to that area
+                    </div>
+                    <label>Grid Size (km)</label>
+                    <input type="range" id="grid-size" min="1" max="20" value="5" class="control-slider">
+                    <span id="grid-size-value">5 km</span>
+                </div>
+                
+                <div class="control-group">
+                    <label>Filter by Year Range</label>
+                    <div class="range-inputs">
+                        <input type="number" id="year-min" min="2010" max="2025" value="2010" class="range-input">
+                        <span class="range-separator">to</span>
+                        <input type="number" id="year-max" min="2010" max="2025" value="2025" class="range-input">
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <label>Filter by Month Range</label>
+                    <div class="range-inputs">
+                        <input type="number" id="month-min" min="1" max="12" value="1" class="range-input">
+                        <span class="range-separator">to</span>
+                        <input type="number" id="month-max" min="1" max="12" value="12" class="range-input">
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <label>Filter by Hour Range</label>
+                    <div class="range-inputs">
+                        <input type="number" id="hour-min" min="0" max="23" value="0" class="range-input">
+                        <span class="range-separator">to</span>
+                        <input type="number" id="hour-max" min="0" max="23" value="23" class="range-input">
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <label>
+                        <input type="checkbox" id="show-vision-only" checked>
+                        Only with Images
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Embeddings Controls -->
+            <div class="sidebar-section" id="ecological-controls" style="display: none;">
+                <!-- Embedding Type Selector -->
+                <div class="embedding-type-selector">
+                    <button class="embedding-type-btn active" onclick="selectEmbeddingType('language')" data-type="language">
+                        <span class="icon">🧬</span>
+                        <span class="type-name">Language</span>
+                        <span class="type-desc">DeepSeek V3 features</span>
+                    </button>
+                    <button class="embedding-type-btn" onclick="selectEmbeddingType('vision')" data-type="vision" 
+                            onmouseover="if(!window.availableVisionEmbeddings && window.preloadAvailableVisionEmbeddings) window.preloadAvailableVisionEmbeddings()">
+                        <span class="icon">👁️</span>
+                        <span class="type-name">Vision</span>
+                        <span class="type-desc">V-JEPA 2 features</span>
+                    </button>
+                </div>
+                
+                <!-- Temporal Filters (synced with geospatial) -->
+                <div class="control-group">
+                    <label>Filter by Year Range</label>
+                    <div class="range-inputs">
+                        <input type="number" id="emb-year-min" min="2010" max="2025" value="2010" class="range-input">
+                        <span class="range-separator">to</span>
+                        <input type="number" id="emb-year-max" min="2010" max="2025" value="2025" class="range-input">
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <label>Filter by Month Range</label>
+                    <div class="range-inputs">
+                        <input type="number" id="emb-month-min" min="1" max="12" value="1" class="range-input">
+                        <span class="range-separator">to</span>
+                        <input type="number" id="emb-month-max" min="1" max="12" value="12" class="range-input">
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <label>Filter by Hour Range</label>
+                    <div class="range-inputs">
+                        <input type="number" id="emb-hour-min" min="0" max="23" value="0" class="range-input">
+                        <span class="range-separator">to</span>
+                        <input type="number" id="emb-hour-max" min="0" max="23" value="23" class="range-input">
+                    </div>
+                </div>
+                
+                <!-- Geographic Filter -->
+                <div class="control-group geographic-filter">
+                    <label class="control-label">Geographic Filter</label>
+                    <div id="filter-status" class="filter-status">
+                        <span class="filter-label">Showing: </span>
+                        <span class="filter-value" id="filter-value">All Data</span>
+                        <button class="filter-clear" id="clear-filter" style="display: none;">&times;</button>
+                    </div>
+                    
+                    <div class="filter-inputs" style="display: none;">
+                        <div class="coord-inputs">
+                            <div class="coord-group">
+                                <label>Min Lat</label>
+                                <input type="number" id="min-lat" class="coord-input" step="0.01" min="-90" max="90">
+                            </div>
+                            <div class="coord-group">
+                                <label>Max Lat</label>
+                                <input type="number" id="max-lat" class="coord-input" step="0.01" min="-90" max="90">
+                            </div>
+                            <div class="coord-group">
+                                <label>Min Lon</label>
+                                <input type="number" id="min-lon" class="coord-input" step="0.01" min="-180" max="180">
+                            </div>
+                            <div class="coord-group">
+                                <label>Max Lon</label>
+                                <input type="number" id="max-lon" class="coord-input" step="0.01" min="-180" max="180">
+                            </div>
+                        </div>
+                        <button class="apply-filter-btn" onclick="applyGeographicFilter()">Apply Filter</button>
+                    </div>
+                    
+                    <button class="filter-toggle-btn" onclick="toggleFilterInputs()">
+                        <span class="icon">📍</span> Set Geographic Bounds
+                    </button>
+                </div>
+                
+                <!-- Recompute Button -->
+                <div class="control-group" id="recompute-control" style="display: none;">
+                    <button class="recompute-btn" onclick="recomputeCurrentEmbedding()" id="recompute-btn">
+                        <span class="icon">🔄</span> Recompute Vision UMAP
+                    </button>
+                </div>
+                
+                <!-- Vision Settings (shown when in vision mode) -->
+                <div class="vision-controls" id="vision-controls" style="display: none;">
+                    <div class="control-group">
+                        <label class="control-label">Maximum Images</label>
+                        <input type="range" id="max-images-slider" min="10" max="1000" value="250" class="control-slider">
+                        <span class="slider-value" id="max-images-value">250</span>
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <label>Point Size</label>
+                    <input type="range" id="point-size" min="0.1" max="2" step="0.1" value="0.5" class="control-slider">
+                </div>
+                
+                <div class="control-group">
+                    <label>
+                        <input type="checkbox" id="show-labels" checked>
+                        Show Species Names
+                    </label>
+                </div>
+                
+                <!-- Debug Controls -->
+                <div class="debug-controls" id="debug-controls" style="display: none;">
+                    <h4>Animation Parameters</h4>
+                    <div class="control-group">
+                        <label>Animation Speed (ms)</label>
+                        <input type="range" id="animation-speed" min="500" max="5000" value="2000" step="100">
+                        <span class="debug-value" id="speed-value">2000ms</span>
+                    </div>
+                    <div class="control-group">
+                        <label>Curve Loopiness</label>
+                        <input type="range" id="curve-loopiness" min="0" max="2" value="0.5" step="0.1">
+                        <span class="debug-value" id="loopiness-value">0.5</span>
+                    </div>
+                    <div class="control-group">
+                        <label>Stagger Delay (ms)</label>
+                        <input type="range" id="stagger-delay" min="0" max="100" value="20" step="5">
+                        <span class="debug-value" id="stagger-value">20ms</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Statistics Panel -->
+            <div class="sidebar-section">
+                <h3>Dataset Statistics</h3>
+                <div class="stats-panel">
+                    <div class="stat-item">
+                        <div class="stat-value" id="total-observations">-</div>
+                        <div class="stat-label">Observations</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="total-species">-</div>
+                        <div class="stat-label">Species</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="total-images">-</div>
+                        <div class="stat-label">Images</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Geospatial View -->
+            <div id="geospatial-view" class="view-container active">
+                <div id="map" class="map-container"></div>
+                
+                <!-- Grid Statistics Overlay -->
+                <div id="grid-stats-overlay" class="overlay-panel" style="display: none;">
+                    <button class="close-btn">&times;</button>
+                    <h3>Grid Cell Analysis</h3>
+                    <div class="grid-stats-content">
+                        <div class="stats-summary">
+                            <div class="stat">
+                                <span class="stat-label">Species:</span>
+                                <span class="stat-value" id="grid-species-count">-</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">Observations:</span>
+                                <span class="stat-value" id="grid-obs-count">-</span>
+                            </div>
+                        </div>
+                        
+                        <div class="chart-container">
+                            <canvas id="yearly-chart"></canvas>
+                        </div>
+                        
+                        <div class="species-table-container">
+                            <table class="species-table">
+                                <thead>
+                                    <tr>
+                                        <th>Species</th>
+                                        <th>Count</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="species-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="analysis-buttons">
+                            <button class="analysis-btn" onclick="launchEcosystemAnalysis('vision')">
+                                👁️ Vision Embedding Analysis
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Embeddings View -->
+            <div id="ecological-view" class="view-container">
+                <div id="embedding-3d" class="embedding-container"></div>
+                
+                <!-- Enhanced 3D Point Info Panel -->
+                <div id="point-info-panel" class="info-panel" style="display: none;">
+                    <button class="close-btn" onclick="closePointPanel()">&times;</button>
+                    <h3 id="point-title" style="font-style: italic;">-</h3>
+                    
+                    <div class="point-details" id="point-details">
+                        <!-- Dynamic content based on point type -->
+                    </div>
+                    
+                    <!-- Enhanced Image Gallery -->
+                    <div class="image-gallery" id="point-image-gallery" style="display: none;">
+                        <div class="gallery-container">
+                            <div class="image-display">
+                                <img id="gallery-image" src="" alt="">
+                                <div class="attention-overlay" id="gallery-attention-overlay" style="display: none;">
+                                    <img id="gallery-attention-img" src="" alt="" style="width: 100%; height: 100%; object-fit: contain; transform-origin: center center;">
+                                </div>
+                            </div>
+                            
+                            <div class="gallery-navigation">
+                                <button class="gallery-nav prev" onclick="navigateGallery(-1)" style="display: none;">
+                                    <span style="font-size: 24px;">‹</span>
+                                </button>
+                                <button class="gallery-nav next" onclick="navigateGallery(1)" style="display: none;">
+                                    <span style="font-size: 24px;">›</span>
+                                </button>
+                                <div class="gallery-counter">
+                                    <span id="gallery-current">1</span> / <span id="gallery-total">1</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Vision Feature Controls (for species view) -->
+                        <div class="vision-feature-panel" id="vision-feature-panel" style="display: none;">
+                            <h4>Vision Features</h4>
+                            <!-- Copy of feature controls from observation panel -->
+                            <div class="control-group">
+                                <label class="control-label">Feature Visualization</label>
+                                <div class="control-buttons">
+                                    <button class="control-btn active" onclick="setGalleryTemporalMode('mean')">Compressed</button>
+                                    <button class="control-btn" onclick="setGalleryTemporalMode('temporal')">Temporal</button>
+                                </div>
+                                <input type="range" class="temporal-slider" id="galleryTemporalSlider" 
+                                       min="0" max="7" value="0" style="display: none;"
+                                       oninput="updateGalleryTemporalFrame(this.value)">
+                            </div>
+                            
+                            <div class="control-group">
+                                <label class="control-label">Visualization Method</label>
+                                <select class="control-select" id="galleryVisualizationMethod" onchange="setGalleryVisualizationMethod(this.value)">
+                                    <option value="pca1" selected>PCA Component 1</option>
+                                    <option value="l2norm">L2 Norm</option>
+                                    <option value="pca2">PCA Component 2</option>
+                                    <option value="pca3">PCA Component 3</option>
+                                    <option value="pca4">PCA Component 4</option>
+                                    <option value="pca5">PCA Component 5</option>
+                                    <option value="variance">Feature Variance</option>
+                                    <option value="entropy">Feature Entropy</option>
+                                </select>
+                            </div>
+                            
+                            <div class="control-group">
+                                <label class="control-label">Colormap</label>
+                                <div class="control-buttons">
+                                    <button class="control-btn" onclick="setGalleryColormap('plasma')">Plasma</button>
+                                    <button class="control-btn active" onclick="setGalleryColormap('viridis')">Viridis</button>
+                                    <button class="control-btn" onclick="setGalleryColormap('RdBu_r')">RdBu</button>
+                                </div>
+                            </div>
+                            
+                            <div class="control-group">
+                                <label class="control-label">Opacity: <span id="galleryAlphaValue">70%</span></label>
+                                <input type="range" class="opacity-slider" id="galleryAlphaSlider" 
+                                       min="0" max="100" value="70"
+                                       oninput="updateGalleryAlpha(this.value)">
+                            </div>
+                            
+                            <div class="control-group">
+                                <button class="control-btn umap-btn" onclick="toggleGalleryUMAP()">
+                                    <span id="galleryUmapBtnText">Show UMAP RGB</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+        
+        <!-- Observation Detail Panel -->
+        <div id="observation-panel" class="detail-panel" style="display: none;">
+            <div class="resize-handle" id="panel-resize-handle"></div>
+            <button class="close-btn" onclick="closeObservationPanel()">&times;</button>
+            <h3 id="obs-species-name">-</h3>
+            
+            <div class="observation-details">
+                <div class="detail-item">
+                    <span class="label">Location:</span>
+                    <span id="obs-location">-</span>
+                </div>
+                <div class="detail-item">
+                    <span class="label">Date:</span>
+                    <span id="obs-date">-</span>
+                </div>
+                <div class="detail-item">
+                    <span class="label">Time:</span>
+                    <span id="obs-time">-</span>
+                </div>
+            </div>
+            
+            <!-- Enhanced Image Viewer with Vision Features -->
+            <div class="enhanced-image-viewer">
+                <div class="image-container">
+                    <img id="obs-image" src="" alt="">
+                    <div class="attention-overlay" id="obs-attention-overlay" style="display: none;">
+                        <img id="obs-attention-img" src="" alt="" style="width: 100%; height: 100%; object-fit: contain; transform-origin: center center;">
+                    </div>
+                </div>
+                
+                <!-- Feature Controls from Original Dashboard -->
+                <div class="feature-controls-panel">
+                    <!-- Temporal Mode -->
+                    <div class="control-group">
+                        <label class="control-label">Feature Visualization</label>
+                        <div class="control-buttons">
+                            <button class="control-btn active" onclick="setTemporalMode('mean')">Compressed</button>
+                            <button class="control-btn" onclick="setTemporalMode('temporal')">Temporal</button>
+                        </div>
+                        <input type="range" class="temporal-slider" id="temporalSlider" 
+                               min="0" max="7" value="0" style="display: none;"
+                               oninput="updateTemporalFrame(this.value)">
+                    </div>
+                    
+                    <!-- Visualization Method -->
+                    <div class="control-group">
+                        <label class="control-label">Visualization Method</label>
+                        <select class="control-select" id="visualizationMethod" onchange="setVisualizationMethod(this.value)">
+                            <option value="pca1" selected>PCA Component 1</option>
+                            <option value="l2norm">L2 Norm</option>
+                            <option value="pca2">PCA Component 2</option>
+                            <option value="pca3">PCA Component 3</option>
+                            <option value="pca4">PCA Component 4</option>
+                            <option value="pca5">PCA Component 5</option>
+                            <option value="variance">Feature Variance</option>
+                            <option value="entropy">Feature Entropy</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Colormap -->
+                    <div class="control-group">
+                        <label class="control-label">Colormap</label>
+                        <div class="control-buttons">
+                            <button class="control-btn" id="plasma-btn" onclick="setColormap('plasma')">Plasma</button>
+                            <button class="control-btn active" id="viridis-btn" onclick="setColormap('viridis')">Viridis</button>
+                            <button class="control-btn" id="rdbu-btn" onclick="setColormap('RdBu_r')">RdBu</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Opacity -->
+                    <div class="control-group">
+                        <label class="control-label">Opacity: <span id="alphaValue">70%</span></label>
+                        <input type="range" class="opacity-slider" id="alphaSlider" 
+                               min="0" max="100" value="70"
+                               oninput="updateAlpha(this.value)">
+                    </div>
+                    
+                    <!-- Toggle Overlay -->
+                    <div class="control-group">
+                        <label class="control-label">
+                            <input type="checkbox" id="toggle-overlay" checked onchange="toggleOverlay(this.checked)">
+                            Show Attention Overlay
+                        </label>
+                    </div>
+                    
+                    <!-- UMAP Button -->
+                    <div class="control-group">
+                        <label class="control-label">Advanced Visualization</label>
+                        <button class="control-btn umap-btn" id="umapBtn" onclick="toggleUMAP()">
+                            <span id="umapBtnText">Show UMAP RGB</span>
+                            <span id="umapLoader" style="display: none;">Computing UMAP...</span>
+                        </button>
+                        <div id="umapDescription" class="umap-description" style="display: none;">
+                            UMAP maps high-dimensional features to 3D color space. Similar patches have similar colors.
+                        </div>
+                    </div>
+                    
+                    <!-- Feature Statistics -->
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-label">Max Attention</div>
+                            <div class="stat-value" id="maxAttention">-</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Mean Attention</div>
+                            <div class="stat-value" id="meanAttention">-</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Spatial Diversity</div>
+                            <div class="stat-value" id="spatialDiversity">-</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Temporal Stability</div>
+                            <div class="stat-value" id="temporalStability">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Indicator -->
+    <div id="loading" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading DeepEarth data...</div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
