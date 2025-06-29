@@ -429,7 +429,12 @@ class UnifiedDataCache:
                         'taxon_id': taxon_id,
                         'taxon_name': row['taxon_name'],
                         'lat': row['latitude'],
-                        'lon': row['longitude']
+                        'lon': row['longitude'],
+                        'eventDate': row.get('eventDate', None),
+                        'year': row.get('year', None),
+                        'month': row.get('month', None),
+                        'day': row.get('day', None),
+                        'hour': row.get('hour', None)
                     })
         
         if len(embeddings) < 3:
@@ -454,8 +459,11 @@ class UnifiedDataCache:
         # Create result
         result = []
         for i, meta in enumerate(metadata):
+            # Create proper image ID format for frontend
+            image_id = f"gbif_{meta['gbif_id']}_taxon_{meta['taxon_id']}_img_1"
             result.append({
                 **meta,
+                'gbif_id': image_id,  # Use formatted ID for frontend compatibility
                 'x': float(coords_3d[i, 0]),
                 'y': float(coords_3d[i, 1]),
                 'z': float(coords_3d[i, 2]),

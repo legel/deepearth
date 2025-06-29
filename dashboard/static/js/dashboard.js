@@ -1401,6 +1401,16 @@ function initialize3DView() {
     function animate() {
         requestAnimationFrame(animate);
         window.controls3D.update();
+        
+        // Update thumbnail orientations in vision mode
+        if (currentEmbeddingView === 'vision' && embeddingPoints.length > 0) {
+            embeddingPoints.forEach(point => {
+                if (point.thumbnail) {
+                    point.thumbnail.lookAt(camera3D.position);
+                }
+            });
+        }
+        
         renderer3D.render(scene3D, camera3D);
     }
     animate();
@@ -1818,7 +1828,7 @@ function updateEmbeddingsStatistics(stats) {
     }
 }
 
-// Display vision embeddings in 3D
+// Display vision embeddings in 3D with thumbnail images
 function displayVisionEmbeddings(embeddings) {
     // Update statistics
     const uniqueSpecies = new Set(embeddings.map(e => e.taxon_id)).size;
@@ -1831,6 +1841,7 @@ function displayVisionEmbeddings(embeddings) {
     embeddingPoints.forEach(point => {
         scene3D.remove(point.mesh);
         if (point.label) scene3D.remove(point.label);
+        if (point.thumbnail) scene3D.remove(point.thumbnail);
     });
     embeddingPoints = [];
     
@@ -1858,48 +1869,58 @@ function displayVisionEmbeddings(embeddings) {
     window.controls3D.update();
     camera3D.lookAt(center.x, center.y, center.z);
     
-    // Create points with species-specific colors
-    embeddings.forEach(emb => {
-        // Create sphere with enhanced material
-        const geometry = new THREE.SphereGeometry(0.05, 24, 24);
-        const color = new THREE.Color(emb.color);
-        const material = new THREE.MeshPhysicalMaterial({ 
-            color: color,
-            metalness: 0.1,
-            roughness: 0.4,
-            clearcoat: 0.3,
-            clearcoatRoughness: 0.4,
-            emissive: color,
-            emissiveIntensity: 0.05
-        });
-        const sphere = new THREE.Mesh(geometry, material);
-        sphere.position.set(emb.x * 3, emb.y * 3, emb.z * 3);
-        sphere.castShadow = true;
-        sphere.receiveShadow = true;
+    // Create thumbnail sprites for each observation
+    embeddings.forEach((emb, index) => {
+        // Extract image details from embedding data
+        const match = emb.gbif_id.match(/gbif_(\d+)_taxon_\d+_img_(\d+)/);
+        let actualGbifId, imageNum;
         
-        // Store data
-        sphere.userData = emb;
-        
-        // Add to scene
-        scene3D.add(sphere);
-        
-        // Create label with species name
-        if (document.getElementById('show-labels').checked) {
-            const label = createTextLabel(emb.taxon_name, sphere.position, true);
-            scene3D.add(label);
-            embeddingPoints.push({ mesh: sphere, label: label, data: emb, type: 'vision' });
+        if (match) {
+            actualGbifId = match[1];
+            imageNum = match[2];
         } else {
-            embeddingPoints.push({ mesh: sphere, data: emb, type: 'vision' });
+            actualGbifId = emb.gbif_id;
+            imageNum = 1;
         }
         
-        // Add click handler
-        sphere.callback = () => {
-            showPointInfo(emb, 'vision');
-            flyToObject(sphere);
+        // Create thumbnail sprite with placeholder
+        const thumbnailSprite = createThumbnailSprite(emb, actualGbifId, imageNum);
+        thumbnailSprite.position.set(emb.x * scale, emb.y * scale, emb.z * scale);
+        scene3D.add(thumbnailSprite);
+        
+        // Store data for interaction
+        thumbnailSprite.userData = {
+            ...emb,
+            actualGbifId,
+            imageNum,
+            index
+        };
+        
+        // Create label if enabled
+        let label = null;
+        if (document.getElementById('show-labels').checked) {
+            label = createTextLabel(emb.taxon_name, thumbnailSprite.position, true);
+            label.position.y += 0.3; // Position above thumbnail
+            scene3D.add(label);
+        }
+        
+        embeddingPoints.push({ 
+            mesh: thumbnailSprite, 
+            thumbnail: thumbnailSprite,
+            label: label, 
+            data: emb, 
+            type: 'vision',
+            actualGbifId,
+            imageNum
+        });
+        
+        // Add click handler for expansion
+        thumbnailSprite.callback = () => {
+            expandThumbnail(thumbnailSprite, emb);
         };
     });
     
-    setupRaycaster();
+    setupThumbnailInteraction();
 }
 
 // Create text label
@@ -1924,8 +1945,328 @@ function createTextLabel(text, position, italic = false) {
     return sprite;
 }
 
-// Setup raycaster for mouse interaction
+// Create thumbnail sprite for vision embedding
+function createThumbnailSprite(emb, gbifId, imageNum) {
+    // Create a plane geometry for the thumbnail
+    const geometry = new THREE.PlaneGeometry(0.3, 0.3);
+    
+    // Create a basic material with a placeholder texture
+    const material = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.9
+    });
+    
+    const sprite = new THREE.Mesh(geometry, material);
+    sprite.lookAt(camera3D.position); // Face the camera
+    
+    // Load the actual thumbnail image asynchronously
+    const loader = new THREE.TextureLoader();
+    const imageUrl = `/api/image_proxy/${gbifId}/${imageNum}?size=small`;
+    
+    loader.load(
+        imageUrl,
+        (texture) => {
+            // Success - update material with loaded texture
+            texture.needsUpdate = true;
+            material.map = texture;
+            material.needsUpdate = true;
+            
+            // Store that image is loaded
+            sprite.userData.imageLoaded = true;
+        },
+        undefined,
+        (error) => {
+            // Error - show colored placeholder
+            console.warn(`Failed to load thumbnail for ${gbifId}:`, error);
+            material.color = new THREE.Color(emb.color || 0x888888);
+        }
+    );
+    
+    return sprite;
+}
+
+// Create expanded image view with animation
+function expandThumbnail(thumbnailSprite, embData) {
+    // Check if there's already an expanded view
+    if (window.expandedImage) {
+        collapseExpandedImage();
+    }
+    
+    const gbifId = thumbnailSprite.userData.actualGbifId;
+    const imageNum = thumbnailSprite.userData.imageNum;
+    
+    // Create expanded image plane
+    const expandedGeometry = new THREE.PlaneGeometry(4, 4); // Much larger
+    const expandedMaterial = new THREE.MeshBasicMaterial({
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0,
+        depthTest: false,
+        depthWrite: false
+    });
+    
+    const expandedImage = new THREE.Mesh(expandedGeometry, expandedMaterial);
+    expandedImage.renderOrder = 1000; // Render on top
+    
+    // Position at thumbnail location initially
+    expandedImage.position.copy(thumbnailSprite.position);
+    expandedImage.scale.set(0.1, 0.1, 0.1);
+    
+    // Load large image
+    const loader = new THREE.TextureLoader();
+    const largeImageUrl = `/api/image_proxy/${gbifId}/${imageNum}?size=large`;
+    
+    loader.load(largeImageUrl, (texture) => {
+        expandedMaterial.map = texture;
+        expandedMaterial.needsUpdate = true;
+        
+        // Adjust aspect ratio
+        const aspect = texture.image.width / texture.image.height;
+        if (aspect > 1) {
+            expandedImage.scale.x *= aspect;
+        } else {
+            expandedImage.scale.y /= aspect;
+        }
+    });
+    
+    scene3D.add(expandedImage);
+    
+    // Create info overlay
+    const infoDiv = createImageInfoOverlay(embData, gbifId);
+    document.body.appendChild(infoDiv);
+    
+    // Animate expansion
+    const targetPosition = new THREE.Vector3();
+    targetPosition.copy(camera3D.position);
+    targetPosition.sub(window.controls3D.target);
+    targetPosition.normalize();
+    targetPosition.multiplyScalar(2);
+    targetPosition.add(window.controls3D.target);
+    
+    // Store references for cleanup
+    window.expandedImage = expandedImage;
+    window.expandedImageInfo = infoDiv;
+    window.expandedThumbnail = thumbnailSprite;
+    
+    // Animate
+    animateImageExpansion(expandedImage, targetPosition, 1);
+    
+    // Add click handler to collapse
+    setTimeout(() => {
+        renderer3D.domElement.addEventListener('click', collapseExpandedImage, { once: true });
+    }, 500);
+}
+
+// Create info overlay for expanded image
+function createImageInfoOverlay(embData, gbifId) {
+    const div = document.createElement('div');
+    div.className = 'expanded-image-info';
+    div.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 15px 25px;
+        border-radius: 8px;
+        font-family: 'Inter', sans-serif;
+        z-index: 1000;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        max-width: 80%;
+        text-align: center;
+    `;
+    
+    // Format date if available
+    let dateStr = 'Date unknown';
+    if (embData.eventDate) {
+        const date = new Date(embData.eventDate);
+        dateStr = date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    } else if (embData.year) {
+        // Construct date from components if eventDate not available
+        const parts = [];
+        if (embData.month && embData.day) {
+            const date = new Date(embData.year, embData.month - 1, embData.day);
+            dateStr = date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            if (embData.hour !== null && embData.hour !== undefined) {
+                dateStr += ` at ${embData.hour.toString().padStart(2, '0')}:00`;
+            }
+        } else if (embData.month) {
+            const date = new Date(embData.year, embData.month - 1, 1);
+            dateStr = date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long'
+            });
+        } else {
+            dateStr = embData.year.toString();
+        }
+    }
+    
+    div.innerHTML = `
+        <div style="font-size: 18px; font-style: italic; margin-bottom: 8px;">${embData.taxon_name}</div>
+        <div style="font-size: 14px; opacity: 0.9;">${dateStr}</div>
+        <div style="font-size: 12px; opacity: 0.7; margin-top: 5px;">GBIF: ${gbifId}</div>
+    `;
+    
+    // Fade in
+    setTimeout(() => {
+        div.style.opacity = '1';
+    }, 100);
+    
+    return div;
+}
+
+// Animate image expansion/collapse
+function animateImageExpansion(image, targetPosition, targetScale) {
+    const startPosition = image.position.clone();
+    const startScale = image.scale.x;
+    const startOpacity = image.material.opacity;
+    const targetOpacity = targetScale > 0.5 ? 1 : 0;
+    
+    const duration = 500;
+    const startTime = Date.now();
+    
+    function animate() {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const eased = easeInOutCubic(progress);
+        
+        // Interpolate position
+        image.position.lerpVectors(startPosition, targetPosition, eased);
+        
+        // Interpolate scale
+        const scale = startScale + (targetScale - startScale) * eased;
+        image.scale.set(scale, scale, scale);
+        
+        // Interpolate opacity
+        image.material.opacity = startOpacity + (targetOpacity - startOpacity) * eased;
+        
+        if (progress < 1) {
+            requestAnimationFrame(animate);
+        } else if (targetScale < 0.5) {
+            // Remove after collapse
+            scene3D.remove(image);
+            window.expandedImage = null;
+        }
+    }
+    
+    animate();
+}
+
+// Collapse expanded image
+function collapseExpandedImage(event) {
+    if (!window.expandedImage) return;
+    
+    // Prevent triggering on the image itself
+    if (event && event.stopPropagation) {
+        event.stopPropagation();
+    }
+    
+    // Animate collapse
+    const thumbnailPos = window.expandedThumbnail.position;
+    animateImageExpansion(window.expandedImage, thumbnailPos, 0.1);
+    
+    // Remove info overlay
+    if (window.expandedImageInfo) {
+        window.expandedImageInfo.style.opacity = '0';
+        setTimeout(() => {
+            window.expandedImageInfo.remove();
+            window.expandedImageInfo = null;
+        }, 300);
+    }
+    
+    window.expandedThumbnail = null;
+}
+
+// Easing function for smooth animation
+function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// Setup thumbnail interaction with hover effects
+function setupThumbnailInteraction() {
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let hoveredObject = null;
+    
+    // Click handler
+    renderer3D.domElement.addEventListener('click', onMouseClick);
+    
+    // Hover handler
+    renderer3D.domElement.addEventListener('mousemove', onMouseMove);
+    
+    function onMouseMove(event) {
+        const rect = renderer3D.domElement.getBoundingClientRect();
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera3D);
+        
+        const meshes = embeddingPoints.map(p => p.mesh);
+        const intersects = raycaster.intersectObjects(meshes);
+        
+        if (intersects.length > 0 && intersects[0].object !== hoveredObject) {
+            // Reset previous hover
+            if (hoveredObject) {
+                hoveredObject.scale.set(1, 1, 1);
+            }
+            
+            // Apply hover effect
+            hoveredObject = intersects[0].object;
+            hoveredObject.scale.set(1.2, 1.2, 1.2);
+            renderer3D.domElement.style.cursor = 'pointer';
+        } else if (intersects.length === 0 && hoveredObject) {
+            // Remove hover effect
+            hoveredObject.scale.set(1, 1, 1);
+            hoveredObject = null;
+            renderer3D.domElement.style.cursor = 'grab';
+        }
+    }
+    
+    function onMouseClick(event) {
+        // Skip if clicking on expanded image
+        if (window.expandedImage && event.target === renderer3D.domElement) {
+            return;
+        }
+        
+        const rect = renderer3D.domElement.getBoundingClientRect();
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera3D);
+        
+        const meshes = embeddingPoints.map(p => p.mesh);
+        const intersects = raycaster.intersectObjects(meshes);
+        
+        if (intersects.length > 0) {
+            const clicked = intersects[0].object;
+            if (clicked.callback) {
+                clicked.callback();
+            }
+        }
+    }
+}
+
+// Setup raycaster for mouse interaction (fallback for non-thumbnail mode)
 function setupRaycaster() {
+    // This is now handled by setupThumbnailInteraction for vision mode
+    if (currentEmbeddingView === 'vision') {
+        return;
+    }
+    
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     
