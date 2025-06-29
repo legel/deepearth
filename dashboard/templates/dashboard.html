@@ -380,9 +380,9 @@
                         </div>
                         
                         <!-- Vision Feature Controls (for species view) -->
-                        <div class="vision-feature-panel" id="vision-feature-panel" style="display: none;">
+                        <div class="feature-controls-panel" id="vision-feature-panel" style="display: none;">
                             <h4>Vision Features</h4>
-                            <!-- Copy of feature controls from observation panel -->
+                            <!-- Temporal Mode -->
                             <div class="control-group">
                                 <label class="control-label">Feature Visualization</label>
                                 <div class="control-buttons">
@@ -394,6 +394,7 @@
                                        oninput="updateGalleryTemporalFrame(this.value)">
                             </div>
                             
+                            <!-- Visualization Method -->
                             <div class="control-group">
                                 <label class="control-label">Visualization Method</label>
                                 <select class="control-select" id="galleryVisualizationMethod" onchange="setGalleryVisualizationMethod(this.value)">
@@ -408,6 +409,7 @@
                                 </select>
                             </div>
                             
+                            <!-- Colormap -->
                             <div class="control-group">
                                 <label class="control-label">Colormap</label>
                                 <div class="control-buttons">
@@ -417,6 +419,7 @@
                                 </div>
                             </div>
                             
+                            <!-- Opacity -->
                             <div class="control-group">
                                 <label class="control-label">Opacity: <span id="galleryAlphaValue">70%</span></label>
                                 <input type="range" class="opacity-slider" id="galleryAlphaSlider" 
@@ -424,10 +427,44 @@
                                        oninput="updateGalleryAlpha(this.value)">
                             </div>
                             
+                            <!-- Toggle Overlay -->
                             <div class="control-group">
-                                <button class="control-btn umap-btn" onclick="toggleGalleryUMAP()">
+                                <label class="control-label">
+                                    <input type="checkbox" id="toggle-gallery-overlay" checked onchange="toggleGalleryOverlay(this.checked)">
+                                    Show Attention Overlay
+                                </label>
+                            </div>
+                            
+                            <!-- UMAP Button -->
+                            <div class="control-group">
+                                <label class="control-label">Advanced Visualization</label>
+                                <button class="control-btn umap-btn" id="galleryUmapBtn" onclick="toggleGalleryUMAP()">
                                     <span id="galleryUmapBtnText">Show UMAP RGB</span>
+                                    <span id="galleryUmapLoader" style="display: none;">Computing UMAP...</span>
                                 </button>
+                                <div id="galleryUmapDescription" class="umap-description" style="display: none;">
+                                    UMAP maps high-dimensional features to 3D color space. Similar patches have similar colors.
+                                </div>
+                            </div>
+                            
+                            <!-- Feature Statistics -->
+                            <div class="stats-grid">
+                                <div class="stat-box">
+                                    <div class="stat-label">Max Attention</div>
+                                    <div class="stat-value" id="galleryMaxAttention">-</div>
+                                </div>
+                                <div class="stat-box">
+                                    <div class="stat-label">Mean Attention</div>
+                                    <div class="stat-value" id="galleryMeanAttention">-</div>
+                                </div>
+                                <div class="stat-box">
+                                    <div class="stat-label">Spatial Diversity</div>
+                                    <div class="stat-value" id="gallerySpatialDiversity">-</div>
+                                </div>
+                                <div class="stat-box">
+                                    <div class="stat-label">Temporal Stability</div>
+                                    <div class="stat-value" id="galleryTemporalStability">-</div>
+                                </div>
                             </div>
                         </div>
                     </div>

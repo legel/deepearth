@@ -323,9 +323,13 @@ document.addEventListener('DOMContentLoaded', function() {
             imageElement: document.getElementById('gallery-image'),
             overlayElement: document.getElementById('gallery-attention-img'),
             overlayContainer: document.getElementById('gallery-attention-overlay'),
-            statsContainer: null, // Gallery doesn't have stats display
+            statsContainer: null, // Will be set dynamically when stats are available
             onUpdate: (data) => {
                 console.log('Gallery vision features updated', data);
+                // Update gallery stats if available
+                if (data && data.stats) {
+                    updateGalleryStats(data.stats);
+                }
             }
         });
     }
@@ -2712,17 +2716,7 @@ async function updateGalleryVisualization() {
     }
 }
 
-function toggleGalleryUMAP() {
-    // Similar to main UMAP toggle
-    const btn = document.getElementById('galleryUmapBtnText');
-    if (btn.textContent === 'Show UMAP RGB') {
-        btn.textContent = 'Hide UMAP RGB';
-        // Load UMAP visualization
-    } else {
-        btn.textContent = 'Show UMAP RGB';
-        updateGalleryVisualization();
-    }
-}
+// Gallery UMAP is now handled by the async toggleGalleryUMAP function below
 
 // Change base layer
 function changeBaseLayer(layer) {
@@ -3540,18 +3534,74 @@ async function toggleGalleryUMAP() {
     if (!galleryVisionManager) return;
     
     const btnText = document.getElementById('galleryUmapBtnText');
+    const loader = document.getElementById('galleryUmapLoader');
+    const description = document.getElementById('galleryUmapDescription');
     
     try {
-        btnText.textContent = galleryVisionManager.isUMAPActive ? 'Show UMAP RGB' : 'Computing UMAP...';
+        // Show loader, hide text
+        btnText.style.display = 'none';
+        loader.style.display = 'inline';
         
         const wasActive = await galleryVisionManager.toggleUMAP();
         
+        // Hide loader, show text
+        loader.style.display = 'none';
+        btnText.style.display = 'inline';
         btnText.textContent = wasActive ? 'Hide UMAP RGB' : 'Show UMAP RGB';
+        
+        // Show/hide description
+        description.style.display = wasActive ? 'block' : 'none';
+        
         galleryIsUMAPActive = wasActive;
     } catch (error) {
         console.error('Error toggling UMAP:', error);
+        loader.style.display = 'none';
+        btnText.style.display = 'inline';
         btnText.textContent = 'Show UMAP RGB';
     }
+}
+
+function updateGalleryStats(stats) {
+    // Update gallery statistics display
+    if (stats.max_attention !== undefined) {
+        document.getElementById('galleryMaxAttention').textContent = stats.max_attention;
+    }
+    if (stats.mean_attention !== undefined) {
+        document.getElementById('galleryMeanAttention').textContent = stats.mean_attention;
+    }
+    if (stats.spatial_diversity !== undefined) {
+        document.getElementById('gallerySpatialDiversity').textContent = stats.spatial_diversity;
+    }
+    if (stats.temporal_stability !== undefined) {
+        document.getElementById('galleryTemporalStability').textContent = stats.temporal_stability;
+    }
+}
+
+function setGalleryTemporalMode(mode) {
+    if (!galleryVisionManager) return;
+    
+    // Update button states
+    document.querySelectorAll('#vision-feature-panel .control-buttons button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    // Show/hide temporal slider
+    const slider = document.getElementById('galleryTemporalSlider');
+    slider.style.display = mode === 'temporal' ? 'block' : 'none';
+    
+    // Update vision manager
+    galleryVisionManager.setTemporalMode(mode);
+}
+
+function updateGalleryTemporalFrame(value) {
+    if (!galleryVisionManager) return;
+    galleryVisionManager.setTemporalFrame(parseInt(value));
+}
+
+function setGalleryVisualizationMethod(method) {
+    if (!galleryVisionManager) return;
+    galleryVisionManager.setVisualization(method);
 }
 
 // Gallery UMAP visualization is now handled by galleryVisionManager
