@@ -12,7 +12,13 @@ import numpy as np
 # Import vision backbones
 from encoders.vision.vjepa2_extractor import VJEPA2Extractor
 
-from deepseek.modeling import DeepSeekTransformer, DeepSeekConfig
+from deepseek_components import DeepSeekConfig, DeepSeekTransformer, DeepSeekMLP
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# Load DeepSeek model
+model = AutoModelForCausalLM.from_pretrained("deepseek-ai/DeepSeek-V3")
+tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/DeepSeek-V3")
+DeepSeekConfig = model.config
 
 
 @dataclass  

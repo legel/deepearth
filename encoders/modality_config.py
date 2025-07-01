@@ -3,8 +3,8 @@ Shared configuration for modality decoders using DeepSeek Transformers
 """
 
 from dataclasses import dataclass
-from typing import Optional
-from transformers import BertConfig as DeepSeekConfig
+from typing import Optional, Dict, Any
+from encoders.deepseek_components import DeepSeekConfig
 
 
 @dataclass
@@ -25,45 +25,53 @@ class ModalityDecoderConfig:
     # DeepSeek Transformer config
     num_layers: int = 4
     num_heads: int = 8
+    num_key_value_heads: Optional[int] = None  # For GQA
     intermediate_size: int = 2048
     hidden_dropout_prob: float = 0.1
     attention_dropout_prob: float = 0.1
+    rms_norm_eps: float = 1e-6
+    rope_theta: float = 10000.0
     
     # MoE settings (for complex modalities)
     use_moe: bool = False  # Use Mixture of Experts
     num_experts: int = 8
     num_experts_per_tok: int = 2
-    expert_capacity_factor: float = 1.25
+    moe_intermediate_size: Optional[int] = None
+    n_shared_experts: Optional[int] = None
+    norm_topk_prob: bool = True
+    moe_layer_freq: int = 1  # MoE every N layers
     
     # Additional settings
     use_gate: bool = True  # Use gated projections
     use_normalization: bool = True
-    activation: str = "gelu"
-    layer_norm_eps: float = 1e-6
+    activation: str = "silu"
     
-    def to_deepseek_config(self) -> "DeepSeekConfig":
+    # Token generation settings
+    use_cross_attention: bool = True  # For multi-token generation
+    use_position_encoding: bool = True
+    input_use_moe: bool = False  # Use MoE for input projection
+    output_use_moe: bool = False  # Use MoE for output generation
+    
+    def to_deepseek_config(self) -> DeepSeekConfig:
         """Convert to DeepSeek configuration object"""
-        config_dict = {
-            "hidden_size": self.output_dim,
-            "num_hidden_layers": self.num_layers,
-            "num_attention_heads": self.num_heads,
-            "intermediate_size": self.intermediate_size,
-            "hidden_dropout_prob": self.hidden_dropout_prob,
-            "attention_dropout_prob": self.attention_dropout_prob,
-            "hidden_act": self.activation,
-            "layer_norm_eps": self.layer_norm_eps,
-        }
-        
-        # Add MoE settings if enabled
-        if self.use_moe:
-            config_dict.update({
-                "use_moe": True,
-                "num_experts": self.num_experts,
-                "num_experts_per_tok": self.num_experts_per_tok,
-                "expert_capacity_factor": self.expert_capacity_factor,
-            })
-        
-        return DeepSeekConfig(**config_dict)
+        config = DeepSeekConfig(
+            hidden_size=self.output_dim,
+            num_hidden_layers=self.num_layers,
+            num_attention_heads=self.num_heads,
+            num_key_value_heads=self.num_key_value_heads or self.num_heads,
+            intermediate_size=self.intermediate_size,
+            hidden_act=self.activation,
+            rms_norm_eps=self.rms_norm_eps,
+            rope_theta=self.rope_theta,
+            attention_dropout=self.attention_dropout_prob,
+            # MoE settings
+            n_routed_experts=self.num_experts if self.use_moe else None,
+            num_experts_per_tok=self.num_experts_per_tok,
+            moe_intermediate_size=self.moe_intermediate_size or (self.intermediate_size // 4),
+            n_shared_experts=self.n_shared_experts,
+            norm_topk_prob=self.norm_topk_prob,
+        )
+        return config
     
     @classmethod
     def create_default(cls, name: str, input_dim: int, output_dim: int = 2048) -> "ModalityDecoderConfig":
@@ -75,7 +83,8 @@ class ModalityDecoderConfig:
             num_tokens=1,
             num_layers=4,
             num_heads=max(8, output_dim // 256),
-            intermediate_size=output_dim * 4
+            intermediate_size=output_dim * 4,
+            moe_intermediate_size=output_dim // 2
         )
     
     @classmethod
@@ -88,8 +97,12 @@ class ModalityDecoderConfig:
             num_tokens=num_tokens,
             num_layers=6,  # Deeper for spatial relationships
             num_heads=16,
+            num_key_value_heads=4,  # GQA for efficiency
             intermediate_size=output_dim * 4,
-            use_moe=num_tokens > 4  # Use MoE for many tokens
+            use_moe=num_tokens > 4,  # Use MoE for many tokens
+            n_shared_experts=1,
+            use_cross_attention=True,
+            use_position_encoding=True
         )
     
     @classmethod
@@ -103,7 +116,10 @@ class ModalityDecoderConfig:
             num_layers=4,
             num_heads=16,
             intermediate_size=output_dim * 4,
-            attention_dropout_prob=0.1  # Higher dropout for language
+            attention_dropout_prob=0.1,  # Higher dropout for language
+            use_moe=num_tokens > 2,
+            input_use_moe=True,  # MoE for diverse text inputs
+            moe_layer_freq=2  # MoE every other layer
         )
     
     @classmethod
@@ -120,7 +136,8 @@ class ModalityDecoderConfig:
             num_layers=4,
             num_heads=8,
             intermediate_size=output_dim * 3,
-            use_moe=sequence_length > 200
+            use_moe=sequence_length > 200,
+            use_position_encoding=True
         )
     
     @classmethod
@@ -133,7 +150,29 @@ class ModalityDecoderConfig:
             num_tokens=1,
             num_layers=3,  # Shallower for tabular
             num_heads=8,
-            intermediate_size=output_dim * 3
+            intermediate_size=output_dim * 3,
+            use_moe=False  # Usually not needed for tabular
+        )
+    
+    @classmethod
+    def create_satellite_config(cls, input_dim: int = 1024, output_dim: int = 2048) -> "ModalityDecoderConfig":
+        """Create config for satellite imagery"""
+        return cls(
+            name="satellite",
+            input_dim=input_dim,
+            output_dim=output_dim,
+            num_tokens=64,  # 8x8 grid for high resolution
+            num_layers=8,  # Deeper for complex spatial patterns
+            num_heads=16,
+            num_key_value_heads=4,  # GQA for efficiency with many tokens
+            intermediate_size=output_dim * 4,
+            use_moe=True,
+            num_experts=16,  # More experts for diverse terrain
+            num_experts_per_tok=4,
+            n_shared_experts=2,
+            use_cross_attention=True,
+            use_position_encoding=True,
+            output_use_moe=True  # MoE for token specialization
         )
     
     def scale_for_precision(self, precision_level: str = "standard"):
@@ -163,12 +202,12 @@ class ModalityDecoderConfig:
 PRESET_CONFIGS = {
     # Vision presets
     "vision_standard": ModalityDecoderConfig.create_vision_config(),
-    "vision_satellite": ModalityDecoderConfig.create_vision_config(num_tokens=16).scale_for_precision("high"),
+    "vision_satellite": ModalityDecoderConfig.create_satellite_config(),
     "vision_realtime": ModalityDecoderConfig.create_vision_config(num_tokens=1).scale_for_precision("low"),
     
     # Language presets
     "language_standard": ModalityDecoderConfig.create_language_config(),
-    "language_agricultural": ModalityDecoderConfig.create_language_config().scale_for_precision("high"),
+    "language_agricultural": ModalityDecoderConfig.create_language_config(num_tokens=4).scale_for_precision("high"),
     "language_chat": ModalityDecoderConfig.create_language_config(num_tokens=2),
     
     # Earth observation presets
@@ -177,6 +216,16 @@ PRESET_CONFIGS = {
     "soil": ModalityDecoderConfig.create_tabular_config(input_dim=10),
     "species": ModalityDecoderConfig.create_tabular_config(input_dim=64).scale_for_precision("high"),
     "ndvi_timeseries": ModalityDecoderConfig.create_timeseries_config(input_dim=1, sequence_length=365),
+    "hyperspectral": ModalityDecoderConfig(
+        name="hyperspectral",
+        input_dim=224,  # 224 spectral bands
+        output_dim=2048,
+        num_tokens=8,
+        num_layers=6,
+        use_moe=True,
+        num_experts=8,
+        input_use_moe=True  # MoE for complex spectral patterns
+    ),
 }
 
 

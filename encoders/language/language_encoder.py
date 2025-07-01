@@ -8,13 +8,15 @@ import torch
 import torch.nn as nn
 from typing import Dict, Optional, Tuple, Union, List
 from dataclasses import dataclass
-from transformers import AutoModel, AutoTokenizer, LlamaModel, LlamaTokenizer
+from transformers import AutoModel, AutoTokenizer, LlamaModel
 import os
-
-from deepseek.modeling import DeepSeekTransformer, DeepSeekConfig
-from deepseek.modules import DeepSeekMLP, DeepSeekMoE
-
-
+from deepseek_components import (
+    DeepSeekConfig, 
+    DeepSeekTransformer, 
+    DeepSeekMLP, 
+    DeepSeekMoE,
+    DeepseekV3RMSNorm
+)
 
 @dataclass
 class LanguageModelConfig:
@@ -62,12 +64,26 @@ class ModalityDecoderConfig:
     # DeepSeek Transformer config
     num_layers: int = 4
     num_heads: int = 8
+    num_key_value_heads: Optional[int] = None  # For GQA
     intermediate_size: int = 2048
     hidden_dropout_prob: float = 0.1
     attention_dropout_prob: float = 0.1
+    rms_norm_eps: float = 1e-6
+    rope_theta: float = 10000.0
+    
+    # MoE configuration
     use_moe: bool = False  # Use Mixture of Experts
     num_experts: int = 8
     num_experts_per_tok: int = 2
+    moe_intermediate_size: Optional[int] = None
+    n_shared_experts: Optional[int] = None
+    moe_layer_freq: int = 1  # MoE every N layers
+    
+    # Additional MoE configs
+    scoring_func: str = "softmax"
+    norm_topk_prob: bool = True
+    input_use_moe: bool = False  # Use MoE for input projection
+    output_use_moe: bool = False  # Use MoE for output generation
     
     def to_deepseek_config(self) -> "DeepSeekConfig":
         """Convert to DeepSeek configuration"""
@@ -75,12 +91,21 @@ class ModalityDecoderConfig:
             hidden_size=self.output_dim,
             num_hidden_layers=self.num_layers,
             num_attention_heads=self.num_heads,
+            num_key_value_heads=self.num_key_value_heads or self.num_heads,
             intermediate_size=self.intermediate_size,
             hidden_dropout_prob=self.hidden_dropout_prob,
             attention_dropout_prob=self.attention_dropout_prob,
-            use_moe=self.use_moe,
-            num_experts=self.num_experts,
+            rms_norm_eps=self.rms_norm_eps,
+            rope_theta=self.rope_theta,
+            # MoE configs
+            n_routed_experts=self.num_experts if self.use_moe else None,
             num_experts_per_tok=self.num_experts_per_tok,
+            moe_intermediate_size=self.moe_intermediate_size or (self.intermediate_size // 4),
+            n_shared_experts=self.n_shared_experts,
+            moe_layer_freq=self.moe_layer_freq,
+            first_k_dense_replace=0,
+            scoring_func=self.scoring_func,
+            norm_topk_prob=self.norm_topk_prob,
         )
 
 
@@ -222,9 +247,9 @@ class FlexibleLanguageEncoder(nn.Module):
         )
 
 
-class DeepSeekModalityDecoder(nn.Module):
+class DeepSeekLanguageDecoder(nn.Module):
     """
-    Modality decoder using DeepSeek Transformer architecture
+    Language modality decoder using DeepSeek Transformer architecture
     Decodes native embeddings into universal token space with attention
     """
     
@@ -232,34 +257,88 @@ class DeepSeekModalityDecoder(nn.Module):
         super().__init__()
         self.config = config
         
-        # Input projection to match DeepSeek hidden size
-        self.input_projection = nn.Linear(config.input_dim, config.output_dim)
+        # Input projection - can use MoE for diverse language inputs
+        if config.input_use_moe and config.use_moe:
+            input_moe_config = DeepSeekConfig(
+                hidden_size=config.input_dim,
+                n_routed_experts=min(config.num_experts // 2, 4),
+                num_experts_per_tok=2,
+                moe_intermediate_size=config.intermediate_size // 2,
+                n_shared_experts=1,
+                scoring_func=config.scoring_func,
+                norm_topk_prob=config.norm_topk_prob,
+            )
+            self.input_projection = DeepSeekMoE(input_moe_config)
+            # Additional linear to match dimensions
+            self.dim_match = nn.Linear(config.input_dim, config.output_dim)
+        else:
+            # Standard linear projection
+            self.input_projection = nn.Linear(config.input_dim, config.output_dim)
+            self.dim_match = None
+        
+        # Position embeddings for sequence modeling
+        self.position_embeddings = nn.Parameter(
+            torch.randn(1, 512, config.output_dim) * 0.02  # Max 512 tokens
+        )
         
         # DeepSeek Transformer for decoding
         deepseek_config = config.to_deepseek_config()
         self.transformer = DeepSeekTransformer(deepseek_config)
         
-        # Learnable query tokens if generating multiple outputs
+        # Token generation mechanism
         if config.num_tokens > 1:
+            # Learnable query tokens
             self.query_tokens = nn.Parameter(
                 torch.randn(1, config.num_tokens, config.output_dim) * 0.02
             )
+            
+            # MoE for token specialization if configured
+            if config.output_use_moe and config.use_moe:
+                token_moe_config = DeepSeekConfig(
+                    hidden_size=config.output_dim,
+                    n_routed_experts=min(config.num_experts, config.num_tokens * 2),
+                    num_experts_per_tok=2,
+                    moe_intermediate_size=config.output_dim,
+                    scoring_func=config.scoring_func,
+                )
+                self.token_specializer = DeepSeekMoE(token_moe_config)
+            else:
+                # MLP for token specialization
+                token_mlp_config = DeepSeekConfig(
+                    hidden_size=config.output_dim,
+                    intermediate_size=config.output_dim * 2,
+                )
+                self.token_specializer = DeepSeekMLP(token_mlp_config)
+            
+            # Cross attention for query-to-sequence
+            self.cross_attention = nn.MultiheadAttention(
+                config.output_dim,
+                config.num_heads,
+                dropout=config.attention_dropout_prob,
+                batch_first=True
+            )
+            self.cross_norm = DeepseekV3RMSNorm(config.output_dim)
         
-        # Output layer normalization
-        self.output_norm = nn.LayerNorm(config.output_dim)
+        # Output normalization
+        self.output_norm = DeepseekV3RMSNorm(config.output_dim)
         
-        # Initialize weights
-        self.apply(self._init_weights)
-    
-    def _init_weights(self, module):
-        """Initialize weights"""
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.LayerNorm):
-            torch.nn.init.ones_(module.weight)
-            torch.nn.init.zeros_(module.bias)
+        # Pooling strategy for single token
+        if config.num_tokens == 1:
+            if config.use_moe:
+                # MoE for different pooling strategies
+                pool_moe_config = DeepSeekConfig(
+                    hidden_size=config.output_dim,
+                    n_routed_experts=4,  # Different aggregation strategies
+                    num_experts_per_tok=1,
+                    moe_intermediate_size=config.output_dim // 2,
+                )
+                self.pool_module = DeepSeekMoE(pool_moe_config)
+            else:
+                pool_mlp_config = DeepSeekConfig(
+                    hidden_size=config.output_dim,
+                    intermediate_size=config.output_dim,
+                )
+                self.pool_module = DeepSeekMLP(pool_mlp_config)
     
     def forward(
         self,
@@ -278,42 +357,104 @@ class DeepSeekModalityDecoder(nn.Module):
         """
         B, N, _ = native_embeddings.shape
         
-        # Project to DeepSeek dimension
-        hidden_states = self.input_projection(native_embeddings)  # (B, N, D_universal)
-        
-        if self.config.num_tokens > 1:
-            # Prepend learnable query tokens
-            queries = self.query_tokens.expand(B, -1, -1)  # (B, K, D_universal)
-            hidden_states = torch.cat([queries, hidden_states], dim=1)  # (B, K+N, D_universal)
-            
-            # Adjust attention mask
-            if attention_mask is not None:
-                query_mask = torch.ones(B, self.config.num_tokens, device=attention_mask.device)
-                attention_mask = torch.cat([query_mask, attention_mask], dim=1)
-        
-        # Apply DeepSeek Transformer
-        transformer_outputs = self.transformer(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask
-        )
-        
-        # Extract output tokens
-        if self.config.num_tokens > 1:
-            # Take the query tokens as output
-            output_tokens = transformer_outputs[:, :self.config.num_tokens]
+        # Project to universal dimension
+        if self.config.input_use_moe and self.config.use_moe:
+            hidden_states = self.input_projection(native_embeddings)
+            hidden_states = self.dim_match(hidden_states)
         else:
-            # Pool all tokens for single output
-            if attention_mask is not None:
-                # Masked mean pooling
-                mask = attention_mask.unsqueeze(-1).float()
-                output_tokens = (transformer_outputs * mask).sum(dim=1, keepdim=True) / mask.sum(dim=1, keepdim=True)
-            else:
-                output_tokens = transformer_outputs.mean(dim=1, keepdim=True)
+            hidden_states = self.input_projection(native_embeddings)
+        
+        # Add position embeddings
+        if N <= self.position_embeddings.shape[1]:
+            hidden_states = hidden_states + self.position_embeddings[:, :N]
+        else:
+            # Interpolate for longer sequences
+            pos_embed = nn.functional.interpolate(
+                self.position_embeddings.transpose(1, 2),
+                size=N,
+                mode='linear',
+                align_corners=False
+            ).transpose(1, 2)
+            hidden_states = hidden_states + pos_embed
+        
+        # Apply transformer with potential MoE layers
+        if attention_mask is not None:
+            # Convert to transformer format
+            attention_mask = attention_mask.float()
+            attention_mask = attention_mask.masked_fill(attention_mask == 0, float('-inf'))
+            attention_mask = attention_mask.masked_fill(attention_mask == 1, float(0.0))
+            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        
+        transformed = self.transformer(hidden_states, attention_mask=attention_mask)
+        
+        # Generate output tokens
+        if self.config.num_tokens > 1:
+            output_tokens = self._generate_multi_tokens(transformed, attention_mask)
+        else:
+            output_tokens = self._generate_single_token(transformed, attention_mask)
         
         # Final normalization
         output_tokens = self.output_norm(output_tokens)
         
         return output_tokens
+    
+    def _generate_multi_tokens(
+        self, 
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Generate multiple specialized tokens"""
+        B = hidden_states.shape[0]
+        
+        # Expand query tokens
+        queries = self.query_tokens.expand(B, -1, -1)
+        
+        # Cross-attention to sequence
+        if attention_mask is not None:
+            key_padding_mask = attention_mask.squeeze(1).squeeze(1) == float('-inf')
+        else:
+            key_padding_mask = None
+        
+        attended, _ = self.cross_attention(
+            query=queries,
+            key=hidden_states,
+            value=hidden_states,
+            key_padding_mask=key_padding_mask
+        )
+        
+        # Residual and normalize
+        attended = self.cross_norm(queries + attended)
+        
+        # Specialize tokens through MoE/MLP
+        specialized = self.token_specializer(attended)
+        output_tokens = attended + specialized  # Residual
+        
+        return output_tokens
+    
+    def _generate_single_token(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Generate single aggregated token"""
+        B, N, D = hidden_states.shape
+        
+        # Intelligent pooling
+        if attention_mask is not None and attention_mask.numel() > 0:
+            # Masked pooling
+            mask = (attention_mask.squeeze(1).squeeze(1) != float('-inf')).float()
+            mask = mask.unsqueeze(-1)
+            pooled = (hidden_states * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-6)
+        else:
+            # Attention-weighted pooling based on norm
+            weights = torch.softmax(hidden_states.norm(dim=-1), dim=-1)
+            pooled = torch.einsum('bn,bnd->bd', weights, hidden_states)
+        
+        # Process through MoE/MLP
+        refined = self.pool_module(pooled)
+        output = pooled + refined  # Residual
+        
+        return output.unsqueeze(1)  # (B, 1, D)
 
 
 class LanguageModalityProcessor(nn.Module):
@@ -334,7 +475,11 @@ class LanguageModalityProcessor(nn.Module):
         
         # DeepSeek decoder to universal space
         decoder_config.input_dim = self.encoder.native_dim
-        self.decoder = DeepSeekModalityDecoder(decoder_config)
+        self.decoder = DeepSeekLanguageDecoder(decoder_config)
+        
+        # Store configs
+        self.language_config = language_config
+        self.decoder_config = decoder_config
     
     def forward(
         self,
@@ -389,7 +534,9 @@ def create_language_processor(
     precision: str = "int8",
     num_universal_tokens: int = 1,
     universal_dim: int = 2048,
-    device: str = "auto"
+    device: str = "auto",
+    use_moe: bool = False,
+    num_experts: int = 8
 ) -> LanguageModalityProcessor:
     """
     Create a language processor with sensible defaults
@@ -401,6 +548,8 @@ def create_language_processor(
         num_universal_tokens: Number of universal tokens to generate
         universal_dim: Dimension of universal token space
         device: Device placement strategy
+        use_moe: Whether to use MoE in the decoder
+        num_experts: Number of experts if using MoE
         
     Returns:
         LanguageModalityProcessor ready for use
@@ -414,7 +563,7 @@ def create_language_processor(
         freeze_backbone=True
     )
     
-    # Decoder config
+    # Decoder config with MoE options
     decoder_config = ModalityDecoderConfig(
         name="language",
         input_dim=language_config.get_hidden_size(),
@@ -423,7 +572,13 @@ def create_language_processor(
         num_layers=4,
         num_heads=16 if universal_dim >= 1024 else 8,
         intermediate_size=universal_dim * 4,
-        use_moe=False  # Can enable for larger decoders
+        use_moe=use_moe,
+        num_experts=num_experts,
+        num_experts_per_tok=2,
+        moe_intermediate_size=universal_dim // 2,
+        input_use_moe=use_moe and num_universal_tokens > 1,
+        output_use_moe=use_moe and num_universal_tokens > 1,
+        moe_layer_freq=2 if use_moe else 1,  # MoE every other layer
     )
     
     return LanguageModalityProcessor(language_config, decoder_config)
@@ -435,6 +590,7 @@ def create_local_language_processor(**kwargs) -> LanguageModalityProcessor:
     return create_language_processor(
         model_size="7b",
         precision="int8",
+        use_moe=False,  # Keep simple for edge
         **kwargs
     )
 
@@ -444,6 +600,8 @@ def create_cloud_language_processor(**kwargs) -> LanguageModalityProcessor:
     return create_language_processor(
         model_size="70b",
         precision="fp16",
+        use_moe=True,  # Can afford MoE in cloud
+        num_experts=8,
         **kwargs
     )
 
@@ -455,6 +613,20 @@ def create_agricultural_language_processor(**kwargs) -> LanguageModalityProcesso
         model_family="deepseek",
         precision="fp32",
         num_universal_tokens=4,  # More tokens for detailed analysis
+        use_moe=True,  # MoE for diverse agricultural contexts
+        num_experts=8,  # Different crop types, conditions, etc.
+        **kwargs
+    )
+
+
+def create_multilingual_processor(**kwargs) -> LanguageModalityProcessor:
+    """Create processor optimized for multilingual content"""
+    return create_language_processor(
+        model_size="13b",
+        precision="fp16",
+        num_universal_tokens=2,
+        use_moe=True,  # MoE helps with language diversity
+        num_experts=16,  # More experts for language variety
         **kwargs
     )
 
@@ -464,7 +636,7 @@ if __name__ == "__main__":
     # Development setup - small and fast
     dev_processor = create_local_language_processor()
     
-    # Production setup - large and accurate
+    # Production setup - large and accurate with MoE
     prod_processor = create_cloud_language_processor()
     
     # Test processing
