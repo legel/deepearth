@@ -10,7 +10,7 @@ from typing import Dict, Optional, Tuple, Union, List
 from dataclasses import dataclass
 from transformers import AutoModel, AutoTokenizer, LlamaModel
 import os
-from deepseek_components import (
+from ..deepseek_components import (
     DeepSeekConfig, 
     DeepSeekTransformer, 
     DeepSeekMLP, 

@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import logging
 
-from deepseek_components import (
+from encoders.deepseek_components import (
     DeepSeekConfig,
     DeepSeekTransformer,
     DeepSeekMLP,
@@ -221,6 +221,7 @@ class LanguageModelExtractor(BaseModalityExtractor):
         self.model = AutoModel.from_pretrained(
             self.model_name,
             torch_dtype=torch_dtype,
+            use_safetensors=True,
             device_map=self.device,
             trust_remote_code=True
         )
