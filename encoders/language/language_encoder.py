@@ -11,15 +11,9 @@ from dataclasses import dataclass
 from transformers import AutoModel, AutoTokenizer, LlamaModel, LlamaTokenizer
 import os
 
-# Import DeepSeek components (assuming they're available)
-try:
-    from deepseek.modeling import DeepSeekTransformer, DeepSeekConfig
-    from deepseek.modules import DeepSeekMLP, DeepSeekMoE
-except ImportError:
-    print("Warning: DeepSeek modules not found. Using placeholder.")
-    # Placeholder for testing
-    class DeepSeekTransformer(nn.TransformerEncoder):
-        pass
+from deepseek.modeling import DeepSeekTransformer, DeepSeekConfig
+from deepseek.modules import DeepSeekMLP, DeepSeekMoE
+
 
 
 @dataclass

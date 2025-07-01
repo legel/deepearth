@@ -12,8 +12,7 @@ import numpy as np
 # Import vision backbones
 from encoders.vision.vjepa2_extractor import VJEPA2Extractor
 
-from transformers.models.bert.modeling_bert import BertEncoder as DeepSeekTransformer
-from transformers import BertConfig as DeepSeekConfig
+from deepseek.modeling import DeepSeekTransformer, DeepSeekConfig
 
 
 @dataclass  
