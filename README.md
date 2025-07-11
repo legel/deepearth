@@ -1,10 +1,14 @@
-# DeepEarth: Self-Supervised Spatiotemporal Multimodality Simulator 
+# DeepEarth: Planetary Simulator for Ecological Intelligence 
 
-DeepEarth is an AI foundation model for deep multimodal spatiotemporal simulation of physical systems.  It can learn to reconstruct masked spatiotemporal distributions of datasets from physics, chemistry, biology, geology, and ecology.  DeepEarth integrates [Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main) (_x_, _y_, _z_, _t_) deep spacetime encoding with [V-JEPA 2](https://ai.meta.com/vjepa/) (vision) and [DeepSeek V3](https://github.com/deepseek-ai/DeepSeek-V3) (language + latent attention) world models.
+DeepEarth is a new AI foundation model that fuses deep neural networks, multimodal datasets, and spatiotemporal simulation techniques, for scientific modeling of physical systems across the planet.  Similar to how ChatGPT was originally trained to reconstruct masked language datasets, DeepEarth will initially learn by reconstructing masked spatiotemporal distributions of vast and varied earth science datasets, including from fields of physics, chemistry, biology, geology, and ecology.  The vision for the DeepEarth project is to ultimately lead a new open source consortium for AI that radically improves global sustainability and ecological intelligence.
+
+![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_inductive_simulator.png)
+
+The first prototype version of DeepEarth is now in development, focused on native plant species distributed across Central Florida between 2010-2025 (see a live demo of initial AI feature extractions [here](https://deepearth.ecodash.ai)).  This first model integrates [Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main) (_x_, _y_, _z_, _t_) deep spacetime encoding with [V-JEPA 2](https://ai.meta.com/vjepa/) (vision) and [DeepSeek V3](https://github.com/deepseek-ai/DeepSeek-V3) (language + latent attention) world models: all of these "encoders" represent state-of-the-art ways of revealing the structure of space, time, vision, and language to deep neural networks.  Through this approach, DeepEarth will machine learn breakthrough new AI representations for global scientific simulation and discovery.  
 
 ![DeepEarth Grid4D spacetime encoding](https://github.com/legel/deepearth/blob/main/docs/deepearth_spacetime_encoder_grid4d.png) 
 
-![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_inductive_simulator.png)
+Below you can discover more about the core model architecture and features.  Currently, active contributors to DeepEarth include scientists from Stanford University and the University of Florida, as well as AI engineers from Meta and Google DeepMind.  For collaboration and partnership, please reach out to the DeepEarth principal investigator, Lance Legel (lance@ecodash.ai).
 
 ### NSF DeepEarth Workshop
 We hosted an [NSF I-GUIDE workshop on DeepEarth](https://i-guide.io/forum/forum-2025/workshops/) this summer.  See a detailed summary [here](https://github.com/legel/deepearth/blob/main/docs/NSF_DeepEarth_Workshop.pdf).  
@@ -31,7 +35,7 @@ Design and development of DeepEarth is led by award-winning scientists and engin
 DeepEarth is an MIT-licensed open source project designed and built to solve planetary-scale problems 🌎, especially through AI-powered maximization of ecosystem services – _e.g._ optimizing AI for sustainable agriculture, environmental restoration, & ecological landscape design.
 
 #### NSF summer program in AI for disaster resilience, August 4-8, 2025
-5 PhD students will join us for a 5 day program in Boulder, Colorado on ["Spatial AI for Extreme Events and Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/).  We will geospatially and temporally simulate fire and flood responses of plants at sub-meter scale.
+5 PhD students will join us for a 5 day program in Boulder, Colorado on ["Spatial AI for Extreme Events and Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/).  We will geospatially and temporally simulate fire responses of plants (live fuel moisture content) at sub-meter scale.
 
 # Code Implementation Preview
 See [SPECIFICATIONS.md](https://github.com/legel/deepearth/blob/main/SPECIFICATIONS.MD) for a full preview of the entire DeepEarth architecture.  Below is a sample focused on the core model architecture.
