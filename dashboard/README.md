@@ -2,43 +2,11 @@
 
 ![DeepEarth Dashboard: Geospatial Vision Features](https://github.com/legel/deepearth/blob/main/docs/deepearth_geospatial_vision_features.png)
 
-Interactive visualization and ML-ready data orchestration for the DeepEarth Self-Supervised Spatiotemporal Multimodality Simulator.
+ML-ready data orchestration and visualization for the DeepEarth spatiotemporal modeling system.
 
 ![DeepEarth Dashboard](https://img.shields.io/badge/DeepEarth-Dashboard-green)
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
-
-## Overview
-
-The DeepEarth Dashboard is a production-ready ML orchestration system designed for multimodal biodiversity research. Built with a service-oriented architecture, it transitions seamlessly from interactive data exploration to automated machine learning pipeline control.
-
-### 🧠 ML-Native Architecture
-
-**Service Layer Design**: Each capability encapsulated in focused, testable modules
-- **12 Specialized Services**: Vision processing, UMAP computation, ecosystem analysis
-- **4 Error Handling Decorators**: Consistent API responses across all endpoints  
-- **9 Request Parsing Utilities**: Consolidated parameter validation and extraction
-- **Memory-Mapped Tensors**: Direct PyTorch access for real-time model integration
-
-### Core Capabilities
-
-- **🔍 Interactive Data Exploration**: Spatiotemporal filtering with sub-100ms response
-- **🧠 ML Pipeline Integration**: Direct tensor operations, batch sampling, streaming data
-- **🎨 Multimodal Visualization**: V-JEPA-2 attention maps, DeepSeek-V3 semantic spaces
-- **🚀 Automated System Control**: Training loop integration, model deployment, monitoring
-- **📊 Performance Analytics**: 21x faster than vector DBs, intelligent caching
-
-### Vision: Beyond Visualization to ML Control
-
-This dashboard architecture enables the transition from exploratory research to production ML systems:
-
-```
-🔬 Research Phase          🤖 Production Phase
-├── Data Exploration  ──►  ├── Automated Sampling
-├── Pattern Discovery ──►  ├── Model Training Control  
-├── Hypothesis Testing ──► ├── Real-time Inference
-└── Manual Analysis   ──►  └── Autonomous Discovery
-```
 
 ## Quick Start
 

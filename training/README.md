@@ -27,7 +27,23 @@ The system establishes patterns for the broader DeepEarth project:
 
 ## Quick Start
 
-### 1. Generate Dataset Split
+**Prerequisites**: Complete the [DeepEarth Dashboard setup](../dashboard/README.md) first to download and index the dataset.
+
+### 1. Verify Dashboard Setup
+
+Ensure you have completed the dashboard setup:
+
+```bash
+cd /path/to/deepearth/dashboard
+
+# This should already be done - downloads ~206GB dataset and creates ML-ready indices
+python3 prepare_embeddings.py --download deepearth/central-florida-native-plants
+
+# Verify dashboard works
+python3 deepearth_dashboard.py
+```
+
+### 2. Generate Dataset Split
 
 ```bash
 cd /path/to/deepearth/dashboard
@@ -39,7 +55,7 @@ python3 ../training/scripts/create_train_test_split.py
 - **Testing**: 2025 + 5 spatial regions (674 obs, 9.5%)
 - **Spatial Strategy**: 10×10 km regions, ≥15 km apart
 
-### 2. Train Species Classifiers
+### 3. Train Reference Models
 
 ```bash
 cd /path/to/deepearth/training
@@ -51,7 +67,7 @@ python3 train_classifier.py --mode language --epochs 10 --batch-size 32
 python3 train_classifier.py --mode vision --epochs 10 --batch-size 16
 ```
 
-### 3. Benchmark Performance
+### 4. Benchmark Performance
 
 ```bash
 # Test data loading performance
