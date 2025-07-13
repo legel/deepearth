@@ -245,37 +245,13 @@ for epoch in range(epochs):
     # Automatic visualization generation
 ```
 
-### 🗺️ Dataset Split Generator (`create_train_test_split.py`)
+### Dataset Split Generator (`create_train_test_split.py`)
 
-**Sophisticated Split Algorithm:**
-1. **Spatial Analysis**: Geodesic distance calculations for region separation
-2. **Species Balance**: Ensures representative species distribution across splits
-3. **Temporal Stratification**: Clean temporal boundaries preventing data leakage
-4. **Visualization**: Comprehensive matplotlib visualizations with publication-quality aesthetics
+Generates spatiotemporal dataset splits using geodesic distance calculations and temporal stratification. Most users will use the pre-generated split configuration.
 
-**Generated Visualization Components:**
-- **Spatial Distribution**: Geographic scatter plot with test region overlays
-- **Temporal Analysis**: Year-wise observation counts by split
-- **Species Coverage**: Analysis of species representation across train/test
+### Performance Benchmarking (`benchmark_data_access.py`)
 
-### ⚡ Performance Benchmarking (`benchmark_data_access.py`)
-
-**Comprehensive Testing Framework:**
-- **Method Comparison**: Direct Python import vs Flask API access
-- **Data Validation**: Ensures consistency between access methods
-- **Performance Metrics**: Latency, memory usage, throughput analysis
-- **Automated Reporting**: Summary statistics and recommendations
-
-**Benchmark Output:**
-```
-🎯 BENCHMARK SUMMARY
-Direct Import:  14.6ms ± 2.1ms
-Flask API:      35.2ms ± 4.8ms
-API Overhead:   +20.6ms (141%)
-
-✅ Direct import meets <50ms target
-✅ Flask API meets <100ms target
-```
+Tests data loading performance between direct Python import vs Flask API access. Direct import achieves ~15ms per observation.
 
 ## Advanced Usage
 
@@ -323,41 +299,69 @@ for batch_idx, batch in enumerate(dataloader):
 
 ### Multimodal Research Directions
 
-The training infrastructure supports development of advanced multimodal architectures for earth system modeling. Areas of particular interest include:
+The training infrastructure supports development of advanced multimodal architectures for earth system modeling, following the DeepEarth foundation model approach of learning unified representations through masked reconstruction.
 
 **Self-Supervised Multimodal Masked Autoencoding**
-- Masked reconstruction across vision and language embedding spaces
-- Cross-modal prediction tasks between V-JEPA-2 and DeepSeek-V3 representations  
-- Contrastive learning objectives for aligned multimodal representations
-- Integration pathways toward full DeepEarth Grid4D spatiotemporal fusion
+- Cross-modal reconstruction: predict masked vision features from language embeddings and vice versa
+- Spatiotemporal context integration: leverage Grid4D coordinate encoding for earth system modeling
+- Modality-agnostic learning: foundation for integrating arbitrary earth observation data types
+- Pathway toward full DeepEarth transformer architecture with hierarchical cross-modal fusion
 
 ```python
 class MultimodalMaskedAutoencoder(nn.Module):
     """
-    Self-supervised multimodal masked autoencoding framework
-    Foundation component for DeepEarth cross-modal fusion research
+    Self-supervised cross-modal reconstruction for earth system modeling
+    
+    Inspired by DeepEarth's approach: learn by predicting one modality from another,
+    enabling the model to discover deep relationships between vision and language
+    representations of ecological phenomena.
     """
     
-    def __init__(self, vision_dim: int = 1408, language_dim: int = 7168, hidden_dim: int = 512):
+    def __init__(self, vision_dim: int = 1408, language_dim: int = 7168, fusion_dim: int = 512):
         super().__init__()
         
-        # Cross-modal encoders for V-JEPA-2 and DeepSeek-V3 integration
-        self.vision_to_shared = nn.Linear(vision_dim, hidden_dim)
-        self.language_to_shared = nn.Linear(language_dim, hidden_dim)
+        # Modality encoders: project to shared representation space
+        self.vision_encoder = nn.Sequential(
+            nn.Linear(vision_dim, fusion_dim),
+            nn.LayerNorm(fusion_dim),
+            nn.ReLU()
+        )
+        self.language_encoder = nn.Sequential(
+            nn.Linear(language_dim, fusion_dim), 
+            nn.LayerNorm(fusion_dim),
+            nn.ReLU()
+        )
         
-        # Masked autoencoding heads
-        self.vision_decoder = nn.Linear(hidden_dim, vision_dim)
-        self.language_decoder = nn.Linear(hidden_dim, language_dim)
+        # Cross-modal prediction heads
+        self.vision_predictor = nn.Linear(fusion_dim, vision_dim)
+        self.language_predictor = nn.Linear(fusion_dim, language_dim)
         
     def forward(self, vision_emb, language_emb, vision_mask=None, language_mask=None):
-        # Cross-modal encoding and reconstruction
-        vision_shared = self.vision_to_shared(vision_emb)
-        language_shared = self.language_to_shared(language_emb)
+        """
+        Cross-modal reconstruction training:
+        - Encode each modality to shared space
+        - Predict masked modality from unmasked modality
+        - Learn unified earth system representations
+        """
+        # Encode to shared representation space
+        vision_shared = self.vision_encoder(vision_emb)
+        language_shared = self.language_encoder(language_emb)
         
-        # Cross-modal reconstruction objectives
-        vision_recon = self.vision_decoder(language_shared)
-        language_recon = self.language_decoder(vision_shared)
+        # Cross-modal prediction: use one modality to reconstruct the other
+        vision_recon = self.vision_predictor(language_shared)  # Language → Vision
+        language_recon = self.language_predictor(vision_shared)  # Vision → Language
         
-        return vision_recon, language_recon
+        # Apply masks during training to force cross-modal learning
+        if vision_mask is not None:
+            vision_recon = vision_recon * vision_mask.unsqueeze(-1)
+        if language_mask is not None:
+            language_recon = language_recon * language_mask.unsqueeze(-1)
+            
+        return {
+            'vision_reconstruction': vision_recon,
+            'language_reconstruction': language_recon,
+            'shared_vision': vision_shared,
+            'shared_language': language_shared
+        }
 ```
 
