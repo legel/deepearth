@@ -1,0 +1,32 @@
+[Unit]
+Description=DeepEarth Dashboard Flask Application (Optimized)
+After=network.target
+
+[Service]
+Type=simple
+User=photon
+Group=www-data
+WorkingDirectory=/var/www/ecodash/private/deepearth/dashboard
+Environment=PATH=/var/www/ecodash/private/deepearth/dashboard/venv/bin
+Environment=FLASK_ENV=production
+# Increased timeout to 300s, removed --preload to reduce memory usage per worker
+# Added --worker-tmp-dir to use /dev/shm for better performance
+ExecStart=/var/www/ecodash/private/deepearth/dashboard/venv/bin/gunicorn \
+    -w 2 \
+    -b 127.0.0.1:5003 \
+    --timeout 300 \
+    --worker-tmp-dir /dev/shm \
+    --max-requests 1000 \
+    --max-requests-jitter 50 \
+    deepearth_dashboard:app \
+    --access-logfile /var/www/ecodash/private/logs/deepearth-access.log \
+    --error-logfile /var/www/ecodash/private/logs/deepearth-error.log
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+# Increase memory limit
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

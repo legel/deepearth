@@ -93,7 +93,8 @@ dashboard/
 │   ├── color_processing.py        #   Species cluster colors
 │   ├── image_processing.py        #   Image proxy functionality
 │   ├── ecosystem_processing.py    #   Ecosystem analysis
-│   └── umap_processing.py         #   Language UMAP processing
+│   ├── umap_processing.py         #   Language UMAP processing
+│   └── training_data.py           #   ML training batch operations
 ├── api/                           # 🛡️ API Infrastructure
 │   └── error_handling.py          #   Unified error handling decorators
 ├── utils/                         # 🔧 Common Utilities
@@ -194,15 +195,16 @@ The service architecture enables seamless expansion into automated ML workflows:
 
 ### **Training Loop Integration**
 ```python
-# Real-time model training visualization
-@app.route('/api/training/status')
-def get_training_status():
-    return process_training_metrics(cache, model_state)
+# ML Training Data Pipeline (existing endpoint)
+@app.route('/api/training/batch', methods=['POST'])
+def get_training_data_batch():
+    from services.training_data import get_training_batch
+    # Returns PyTorch-ready tensors for direct model consumption
+    return get_training_batch(cache, observation_ids, include_vision=True, include_language=True)
 
-# Automated sample selection during training
-@app.route('/api/training/sample_batch')  
-def get_training_batch():
-    return select_optimal_samples(cache, active_learning_criteria)
+# Training script integration (../training/train_classifier.py)
+from services.training_data import get_training_batch, get_available_observation_ids
+batch_data = get_training_batch(cache, filtered_train_ids, include_vision=True)
 ```
 
 ### **Model Deployment Services**

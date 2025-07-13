@@ -65,6 +65,7 @@ from services.image_processing import proxy_image_request
 from services.ecosystem_processing import perform_ecosystem_analysis
 from services.health_monitoring import generate_health_status
 from services.vision_features import process_vision_features_request
+from services.training_data import get_training_batch
 
 # Suppress known warnings from dependencies
 warnings.filterwarnings("ignore", message="'force_all_finite' was renamed to 'ensure_all_finite'")
@@ -366,6 +367,66 @@ def get_species_observations(taxon_id):
     """
     result = get_species_observation_summary(cache, taxon_id)
     return jsonify(result)
+
+
+@app.route('/api/training/batch', methods=['POST'])
+@handle_api_error
+def get_training_data_batch():
+    """
+    🚀 ML Training Data Pipeline
+    
+    High-performance batch loading endpoint optimized for PyTorch training.
+    Returns multimodal data tensors for direct model consumption.
+    
+    Expected JSON payload:
+        {
+            "observation_ids": ["4024234567_1", "4024234568_1", ...],
+            "include_vision": true,
+            "include_language": true
+        }
+    
+    Returns PyTorch-ready tensors with species, images, coordinates, 
+    timestamps, and embeddings for seamless ML integration.
+    """
+    if not request.is_json:
+        raise ValueError("Request must be JSON")
+    
+    data = request.get_json()
+    observation_ids = data.get('observation_ids', [])
+    include_vision = data.get('include_vision', True)
+    include_language = data.get('include_language', True)
+    
+    if not observation_ids:
+        raise ValueError("observation_ids cannot be empty")
+    
+    if len(observation_ids) > 1000:
+        raise ValueError("Batch size cannot exceed 1000 observations")
+    
+    # Get training batch (returns dict with numpy arrays)
+    batch_data = get_training_batch(
+        cache, 
+        observation_ids,
+        include_vision=include_vision,
+        include_language=include_language,
+        device='cpu'  # API returns CPU tensors for JSON serialization
+    )
+    
+    # Convert tensors to lists for JSON serialization
+    json_data = {
+        'species': batch_data['species'],
+        'image_urls': batch_data['image_urls'],
+        'locations': batch_data['locations'].tolist(),
+        'timestamps': batch_data['timestamps'].tolist(),
+        'metadata': batch_data['metadata']
+    }
+    
+    if include_language:
+        json_data['language_embeddings'] = batch_data['language_embeddings'].tolist()
+    
+    if include_vision:
+        json_data['vision_embeddings'] = batch_data['vision_embeddings'].tolist()
+    
+    return jsonify(json_data)
 
 
 @app.route('/test_frontend.html')
