@@ -105,55 +105,24 @@ The training infrastructure implements a scientifically rigorous split strategy 
    └─ Temporal: 490 obs (2025) • Spatial: 184 obs (5 regions)
 ```
 
-### 🏷️ OBSERVATION_ID Schema
+### OBSERVATION_ID Schema
 
-The training system uses a consistent identifier format:
-
-```python
-# Format: "{gbif_id}_{image_index}"
-OBSERVATION_ID = "4171912265_1"  # GBIF ID 4171912265, image 1
-
-# Utility functions
-from services.training_data import create_observation_id, parse_observation_id
-
-obs_id = create_observation_id(gbif_id=4171912265, image_index=1)  # → "4171912265_1"
-gbif_id, img_idx = parse_observation_id("4171912265_1")           # → (4171912265, 1)
-```
+Training data uses `"{gbif_id}_{image_index}"` format (e.g., `"4171912265_1"`). Utility functions in `services.training_data` handle ID creation and parsing.
 
 ## Training Data Pipeline
 
-### 🚀 High-Performance Batch Loading
+### High-Performance Batch Loading
 
 ```python
 from services.training_data import get_training_batch
 
-# Load multimodal training batch
 batch_data = get_training_batch(
-    cache,
-    observation_ids=["4171912265_1", "2596344055_1", ...],
-    include_vision=True,      # V-JEPA-2 embeddings (8×24×24×1408)
-    include_language=True,    # DeepSeek-V3 embeddings (7168D)
-    device='cuda'            # Direct GPU placement
+    cache, observation_ids, include_vision=True, include_language=True, device='cuda'
 )
-
-# Returns PyTorch-ready tensors:
-# ├── species: List[str] - Latin species names
-# ├── image_urls: List[str] - Direct image URLs
-# ├── locations: torch.Tensor [N, 3] - (latitude, longitude, elevation)
-# ├── timestamps: torch.Tensor [N, 6] - (year, month, day, hour, minute, second)
-# ├── language_embeddings: torch.Tensor [N, 7168] - Species semantic embeddings
-# └── vision_embeddings: torch.Tensor [N, 8, 24, 24, 1408] - Spatiotemporal image features
+# Returns PyTorch-ready tensors: species, locations, timestamps, embeddings
 ```
 
-### ⚡ Performance Benchmarks
-
-| **Metric** | **Direct Import** | **Flask API** | **Notes** |
-|------------|------------------|---------------|-----------|
-| **Batch Size 32** | 17.9ms/obs | ~50ms/obs | <50ms target ✅ |
-| **Batch Size 64** | 14.6ms/obs | ~35ms/obs | Optimal batch size |
-| **Batch Size 128** | 14.0ms/obs | ~30ms/obs | Memory intensive |
-
-**Key Insight**: Larger batches provide better efficiency due to improved memory utilization patterns.
+**Performance**: ~15ms per observation for batch loading, optimal at 64+ batch sizes.
 
 ## Model Architectures
 
