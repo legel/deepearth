@@ -312,56 +312,88 @@ class MultimodalMaskedAutoencoder(nn.Module):
     """
     Self-supervised cross-modal reconstruction for earth system modeling
     
-    Inspired by DeepEarth's approach: learn by predicting one modality from another,
-    enabling the model to discover deep relationships between vision and language
-    representations of ecological phenomena.
+    Projects pre-trained V-JEPA-2 and DeepSeek-V3 features into shared universal 
+    representation space, applies masking, and reconstructs masked modalities.
+    Following DeepEarth inductive simulator architecture principles.
     """
     
-    def __init__(self, vision_dim: int = 1408, language_dim: int = 7168, fusion_dim: int = 512):
+    def __init__(self, vision_dim: int = 1408, language_dim: int = 7168, universal_dim: int = 512):
         super().__init__()
         
-        # Modality encoders: project to shared representation space
-        self.vision_encoder = nn.Sequential(
-            nn.Linear(vision_dim, fusion_dim),
-            nn.LayerNorm(fusion_dim),
-            nn.ReLU()
-        )
-        self.language_encoder = nn.Sequential(
-            nn.Linear(language_dim, fusion_dim), 
-            nn.LayerNorm(fusion_dim),
-            nn.ReLU()
+        # Modality decoders: project pre-trained features to shared universal space
+        self.vision_decoder = nn.Linear(vision_dim, universal_dim)
+        self.language_decoder = nn.Linear(language_dim, universal_dim)
+        
+        # Cross-attention fusion MLP (4 layers of 256 each)
+        self.fusion_mlp = nn.Sequential(
+            nn.Linear(universal_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256), 
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, universal_dim)
         )
         
-        # Cross-modal prediction heads
-        self.vision_predictor = nn.Linear(fusion_dim, vision_dim)
-        self.language_predictor = nn.Linear(fusion_dim, language_dim)
+        # Modality reconstruction heads: universal space back to original dimensions
+        self.vision_reconstructor = nn.Linear(universal_dim, vision_dim)
+        self.language_reconstructor = nn.Linear(universal_dim, language_dim)
         
     def forward(self, vision_emb, language_emb, vision_mask=None, language_mask=None):
         """
-        Cross-modal reconstruction training:
-        - Encode each modality to shared space
-        - Predict masked modality from unmasked modality
-        - Learn unified earth system representations
+        Multimodal masked autoencoding:
+        1. Project modalities to universal embedding space
+        2. Apply masking to force cross-modal learning
+        3. Fuse features through cross-attention MLP
+        4. Reconstruct original modality representations
         """
-        # Encode to shared representation space
-        vision_shared = self.vision_encoder(vision_emb)
-        language_shared = self.language_encoder(language_emb)
+        batch_size = vision_emb.size(0)
         
-        # Cross-modal prediction: use one modality to reconstruct the other
-        vision_recon = self.vision_predictor(language_shared)  # Language → Vision
-        language_recon = self.language_predictor(vision_shared)  # Vision → Language
+        # Project to shared universal embedding space
+        vision_universal = self.vision_decoder(vision_emb)      # (B, universal_dim)
+        language_universal = self.language_decoder(language_emb)  # (B, universal_dim)
         
-        # Apply masks during training to force cross-modal learning
+        # Apply masking by zeroing out masked modalities
         if vision_mask is not None:
-            vision_recon = vision_recon * vision_mask.unsqueeze(-1)
+            vision_universal = vision_universal * vision_mask.unsqueeze(-1).float()
         if language_mask is not None:
-            language_recon = language_recon * language_mask.unsqueeze(-1)
-            
+            language_universal = language_universal * language_mask.unsqueeze(-1).float()
+        
+        # Stack modalities: (B, 2, universal_dim) where 2 = vision + language
+        multimodal_features = torch.stack([vision_universal, language_universal], dim=1)
+        
+        # Cross-attention fusion through MLP
+        # Process each sample through the fusion network
+        fused_features = []
+        for i in range(batch_size):
+            sample_features = multimodal_features[i]  # (2, universal_dim)
+            fused_sample = self.fusion_mlp(sample_features)  # (2, universal_dim)
+            fused_features.append(fused_sample)
+        
+        fused_features = torch.stack(fused_features, dim=0)  # (B, 2, universal_dim)
+        
+        # Separate modalities after fusion
+        vision_fused = fused_features[:, 0]    # (B, universal_dim)
+        language_fused = fused_features[:, 1]  # (B, universal_dim)
+        
+        # Reconstruct original modality representations
+        vision_reconstructed = self.vision_reconstructor(vision_fused)      # (B, vision_dim)
+        language_reconstructed = self.language_reconstructor(language_fused) # (B, language_dim)
+        
         return {
-            'vision_reconstruction': vision_recon,
-            'language_reconstruction': language_recon,
-            'shared_vision': vision_shared,
-            'shared_language': language_shared
+            'vision_reconstruction': vision_reconstructed,
+            'language_reconstruction': language_reconstructed,
+            'vision_universal': vision_universal,
+            'language_universal': language_universal
         }
+
+# Next steps for training implementation:
+# 1. Compute reconstruction loss (MSE) between original unmasked embeddings 
+#    and reconstructed embeddings for masked modalities only
+# 2. Implement random masking strategy (e.g., 50% probability per modality)
+# 3. Add training loop with optimizer and loss computation
+# 4. Validate reconstruction quality on held-out data
+#
+# Note: Above code is not yet tested and requires integration with training pipeline
 ```
 
