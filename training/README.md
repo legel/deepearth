@@ -1,6 +1,6 @@
-# DeepEarth ML Training System
+# DeepEarth Training Infrastructure
 
-**Multimodal Training Infrastructure for Biodiversity Research**
+**Foundation Training Components for Multimodal Earth System Modeling**
 
 ![Training](https://img.shields.io/badge/Training-Infrastructure-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-orange)
@@ -8,22 +8,22 @@
 
 ## Overview
 
-The DeepEarth Training System provides foundational infrastructure and reference implementations for machine learning research on multimodal biodiversity data. The system includes skeleton training scripts, dataset splitting utilities, and performance benchmarking tools designed to serve as starting points for more sophisticated ML architectures.
+The DeepEarth Training Infrastructure provides foundational components and reference implementations for developing machine learning models on multimodal earth system data. This system includes skeleton training scripts, dataset splitting utilities, and performance benchmarking tools designed to serve as starting points for building sophisticated spatiotemporal modeling architectures.
 
 ### Training Infrastructure Components
 
 - **Reference Training Scripts**: Basic PyTorch implementations demonstrating data pipeline integration
-- **Dataset Splitting**: Spatial-temporal split generation with scientific rigor
+- **Spatiotemporal Dataset Splitting**: Geographic and temporal split generation with scientific rigor  
 - **Performance Benchmarking**: Data loading optimization and timing analysis
 - **Multimodal Data Pipeline**: High-performance batch loading for vision and language embeddings
 
 ### Architecture Foundation
 
-The system establishes patterns for:
-- **Spatial-Temporal Data Splits**: Preventing overfitting through geographic and temporal boundaries
-- **Memory-Mapped Access**: Efficient data loading with <50ms batch times
-- **Modular Design**: Service-oriented architecture enabling research extension
-- **Multimodal Integration**: Foundation for advanced fusion architectures
+The system establishes patterns for the broader DeepEarth project:
+- **Spatiotemporal Data Handling**: Geographic and temporal boundaries for robust model evaluation
+- **Memory-Mapped Access**: Efficient data loading with <50ms batch times for large earth system datasets
+- **Modular Design**: Service-oriented architecture enabling research extension and integration
+- **Multimodal Integration**: Foundation for V-JEPA-2 + DeepSeek-V3 + Grid4D fusion architectures
 
 ## Quick Start
 
@@ -62,11 +62,11 @@ python3 scripts/benchmark_data_access.py --batch-size 64 --runs 10
 
 ## Dataset Architecture
 
-### 🗺️ Spatial-Temporal Split Strategy
+### Spatiotemporal Split Strategy
 
 ![Dataset Split Visualization](docs/train_test_split_visualization.png)
 
-The training system implements a scientifically rigorous split strategy designed to test both **geographic** and **temporal generalization**:
+The training infrastructure implements a scientifically rigorous split strategy designed to test both **geographic** and **temporal generalization** for earth system models:
 
 #### Temporal Split
 - **Training**: All observations from 2010-2024 (15 years)
@@ -338,23 +338,25 @@ for batch_idx, batch in enumerate(dataloader):
 
 ### Multimodal Research Directions
 
-The training infrastructure supports development of advanced multimodal architectures. Areas of particular interest include:
+The training infrastructure supports development of advanced multimodal architectures for earth system modeling. Areas of particular interest include:
 
 **Self-Supervised Multimodal Masked Autoencoding**
 - Masked reconstruction across vision and language embedding spaces
-- Cross-modal prediction tasks between V-JEPA-2 and DeepSeek-V3 representations
+- Cross-modal prediction tasks between V-JEPA-2 and DeepSeek-V3 representations  
 - Contrastive learning objectives for aligned multimodal representations
+- Integration pathways toward full DeepEarth Grid4D spatiotemporal fusion
 
 ```python
 class MultimodalMaskedAutoencoder(nn.Module):
     """
     Self-supervised multimodal masked autoencoding framework
+    Foundation component for DeepEarth cross-modal fusion research
     """
     
     def __init__(self, vision_dim: int = 1408, language_dim: int = 7168, hidden_dim: int = 512):
         super().__init__()
         
-        # Cross-modal encoders
+        # Cross-modal encoders for V-JEPA-2 and DeepSeek-V3 integration
         self.vision_to_shared = nn.Linear(vision_dim, hidden_dim)
         self.language_to_shared = nn.Linear(language_dim, hidden_dim)
         
