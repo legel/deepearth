@@ -26,7 +26,7 @@ Input any number of datasets distributed across space and time (_e.g._  satellit
 One of the great lessons from Einstein's _relativity_ is that _space_ and _time_ are not independent variables.  DeepEarth learns unified (x,y,z,t) deep vector representations from _[Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main)_ as ["multi-resolution hash encodings"](https://graphics.stanford.edu/courses/cs348n-22-winter/LectureSlides/FinalSlides/ING.pdf).  This enables deep learning of complex spatiotemporal distributions.
 
 #### Built for Lightspeed 
- DeepEarth is built on the [57x](https://www.youtube.com/watch?v=0VLAoVGf_74&ab_channel=WelchLabs) more memory-efficient Transformer architecture of _[DeepSeek](https://github.com/deepseek-ai/DeepSeek-V3)_ to unlock next-generation speed, accuracy, and scalability of multimodal cross-fusion attention.
+ DeepEarth is built on the [57x](https://www.youtube.com/watch?v=0VLAoVGf_74&ab_channel=WelchLabs) more memory-efficient Transformer architecture of _[DeepSeek](https://github.com/deepseek-ai/DeepSeek-V3)_ to unlock next-generation speed, accuracy, and scalability of multimodal cross-attention fusion.
 
 #### Top of the Class
 Design and development of DeepEarth is led by award-winning scientists and engineers from Stanford University, University of Florida, and Ecodash.ai, along with one of the first engineers from Google DeepMind.  
