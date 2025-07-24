@@ -1,0 +1,25 @@
+# Core dependencies
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+pillow>=9.5.0
+tqdm>=4.65.0
+
+# Data processing
+scikit-learn>=1.2.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+umap-learn>=0.5.3
+
+# Logging
+tensorboard>=2.13.0
+
+# HuggingFace datasets
+datasets>=2.12.0
+transformers
+
+# Development tools
+jupyter>=1.0.0
+ipython>=8.12.0
