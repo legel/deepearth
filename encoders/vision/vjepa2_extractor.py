@@ -102,10 +102,12 @@ class VJEPA2Extractor:
         if self.use_fp16:
             self.model = AutoModel.from_pretrained(
                 self.model_name, 
-                torch_dtype=torch.float16
+                torch_dtype=torch.float16,
+                use_safetensors=True,
+
             ).to(self.device)
         else:
-            self.model = AutoModel.from_pretrained(self.model_name).to(self.device)
+            self.model = AutoModel.from_pretrained(self.model_name,use_safetensors=True).to(self.device)
             
         self.processor = AutoVideoProcessor.from_pretrained(self.model_name)
         self.model.eval()
