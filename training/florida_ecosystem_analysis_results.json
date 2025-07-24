@@ -1,0 +1,45 @@
+{
+  "total_observations": 437,
+  "unique_species": 167,
+  "ecosystem_distribution": {
+    "Other": 437
+  },
+  "top_similar_pairs": [
+    {
+      "species1": "Liatris gracilis",
+      "species2": "Vernonia angustifolia",
+      "similarity": 0.995
+    },
+    {
+      "species1": "Morus rubra",
+      "species2": "Itea virginica",
+      "similarity": 0.995
+    },
+    {
+      "species1": "Tripsacum dactyloides",
+      "species2": "Pinus clausa",
+      "similarity": 0.995
+    },
+    {
+      "species1": "Morella cerifera",
+      "species2": "Sericocarpus tortifolius",
+      "similarity": 0.995
+    },
+    {
+      "species1": "Palafoxia feayi",
+      "species2": "Ximenia americana",
+      "similarity": 0.994
+    }
+  ],
+  "habitat_summary": {
+    "most_observations_in": "Central Florida",
+    "note": "Most species in this sample were found in Central Florida",
+    "top_species_by_count": [
+      "Asclepias tuberosa",
+      "Bacopa monnieri",
+      "Chamaecrista fasciculata",
+      "Ampelaster carolinianus",
+      "Ctenium aromaticum"
+    ]
+  }
+}
