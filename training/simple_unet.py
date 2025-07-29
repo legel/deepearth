@@ -53,13 +53,7 @@ class DeepSeekTokenizerWrapper:
     def __init__(self, model_name='deepseek-ai/deepseek-moe-16b-base', max_length=64):
         from transformers import AutoTokenizer
         
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        except:
-            # Fallback to BERT tokenizer if DeepSeek not available
-            logger.warning(f"Could not load tokenizer for {model_name}, using BERT tokenizer")
-            self.tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
-            
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.max_length = max_length
         self.vocab_size = len(self.tokenizer)
         
