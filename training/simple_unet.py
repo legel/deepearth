@@ -86,6 +86,8 @@ class VisionPatchProjector(nn.Module):
         self.pos_emb = nn.Parameter(torch.randn(1, num_patches, out_dim) * 0.02)
         
     def forward(self, x):
+        #once we have good test step for this thing 
+        # want to perserve spatial features 
         # x: (B, 8, 24, 24, 1408) - VJEPA2 patch embeddings
         B, T, H, W, C = x.shape
         x = x.view(B, T*H*W, C)  # (B, 4608, 1408)
