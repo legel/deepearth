@@ -23,6 +23,7 @@ from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 import os
 import random
+from tqdm import tqdm
 
 # Add dashboard to path
 dashboard_path = Path(__file__).parent.parent / "dashboard"
@@ -390,14 +391,57 @@ class DeepEarthStreamingDataset(IterableDataset):
     
     # Class-level cache storage to persist across epochs
     _worker_caches = {}
+    _preloaded_data = {}  # Store preloaded embeddings
     
     def __init__(self, observation_ids: List[str], cache_config_path: str = "dataset_config.json", 
-                 batch_size: int = 8, shared_cache=None):
+                 batch_size: int = 8, shared_cache=None, preload=True):
         self.observation_ids = observation_ids
         self.cache_config_path = cache_config_path
         self.batch_size = batch_size
         self.epoch = 0
         self.shared_cache = shared_cache  # For single-process mode
+        self.preload = preload
+        
+        # Preload data if requested
+        if preload and not self._is_data_preloaded():
+            self._preload_all_data()
+        
+    def _is_data_preloaded(self):
+        """Check if data is already preloaded"""
+        return len(self._preloaded_data) > 0
+    
+    def _preload_all_data(self):
+        """Preload all embeddings into memory for fast access"""
+        logger.info(f"Preloading {len(self.observation_ids)} observations into memory...")
+        
+        # Initialize cache for preloading
+        cache = UnifiedDataCache(self.cache_config_path)
+        
+        # Load in batches to manage memory
+        batch_size = 64
+        for i in tqdm(range(0, len(self.observation_ids), batch_size), desc="Preloading"):
+            batch_ids = self.observation_ids[i:i + batch_size]
+            
+            try:
+                batch_data = get_training_batch(
+                    cache,
+                    batch_ids,
+                    include_vision=True,
+                    include_language=True,
+                    device='cpu'
+                )
+                
+                # Store each observation's data
+                for j, obs_id in enumerate(batch_ids):
+                    self._preloaded_data[obs_id] = {
+                        'vision_embedding': batch_data['vision_embeddings'][j],
+                        'language_embedding': batch_data['language_embeddings'][j]
+                    }
+                    
+            except Exception as e:
+                logger.warning(f"Error preloading batch starting at {batch_ids[0]}: {e}")
+        
+        logger.info(f"Preloaded {len(self._preloaded_data)} observations")
         
     def set_epoch(self, epoch):
         """Set epoch for proper shuffling across epochs"""
@@ -409,6 +453,10 @@ class DeepEarthStreamingDataset(IterableDataset):
     
     def _get_cache(self):
         """Get or create cache for current worker, reusing across epochs"""
+        # If using preloaded data, no need for cache
+        if self.preload and self._is_data_preloaded():
+            return None
+            
         worker_info = torch.utils.data.get_worker_info()
         
         # Single process mode - use shared cache if provided
@@ -429,9 +477,6 @@ class DeepEarthStreamingDataset(IterableDataset):
         return DeepEarthStreamingDataset._worker_caches[worker_id]
         
     def __iter__(self):
-        # Get or reuse cache for this worker
-        cache = self._get_cache()
-        
         # Get worker info for distributed loading
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
@@ -454,30 +499,45 @@ class DeepEarthStreamingDataset(IterableDataset):
         rng = random.Random(self.epoch + worker_id)
         rng.shuffle(shuffled_ids)
         
-        # Stream in small batches
-        for i in range(0, len(shuffled_ids), self.batch_size):
-            batch_ids = shuffled_ids[i:i + self.batch_size]
-            
-            try:
-                # Load batch from cache
-                batch_data = get_training_batch(
-                    cache,
-                    batch_ids,
-                    include_vision=True,
-                    include_language=True,
-                    device='cpu'  # Always load to CPU for DataLoader
-                )
-                
-                # Yield individual samples
-                for j in range(len(batch_ids)):
+        # Use preloaded data if available
+        if self.preload and self._is_data_preloaded():
+            # Yield from preloaded data
+            for obs_id in shuffled_ids:
+                if obs_id in self._preloaded_data:
+                    data = self._preloaded_data[obs_id]
                     yield {
-                        'vision_embedding': batch_data['vision_embeddings'][j],
-                        'language_embedding': batch_data['language_embeddings'][j],
-                        'obs_id': batch_ids[j]
+                        'vision_embedding': data['vision_embedding'],
+                        'language_embedding': data['language_embedding'],
+                        'obs_id': obs_id
                     }
-            except Exception as e:
-                logger.warning(f"Error loading batch starting at {batch_ids[0]}: {e}")
-                continue
+        else:
+            # Original streaming approach
+            cache = self._get_cache()
+            
+            # Stream in small batches
+            for i in range(0, len(shuffled_ids), self.batch_size):
+                batch_ids = shuffled_ids[i:i + self.batch_size]
+                
+                try:
+                    # Load batch from cache
+                    batch_data = get_training_batch(
+                        cache,
+                        batch_ids,
+                        include_vision=True,
+                        include_language=True,
+                        device='cpu'  # Always load to CPU for DataLoader
+                    )
+                    
+                    # Yield individual samples
+                    for j in range(len(batch_ids)):
+                        yield {
+                            'vision_embedding': batch_data['vision_embeddings'][j],
+                            'language_embedding': batch_data['language_embeddings'][j],
+                            'obs_id': batch_ids[j]
+                        }
+                except Exception as e:
+                    logger.warning(f"Error loading batch starting at {batch_ids[0]}: {e}")
+                    continue
 
 
 def visualize_embeddings(original, reconstructed, name, epoch, save_dir):
@@ -1048,17 +1108,32 @@ def main():
         
         # Create streaming datasets
         logger.info("Creating streaming datasets...")
+        
+        # Determine whether to preload based on dataset size
+        preload_train = len(train_obs_ids) < 10000  # Preload if < 10k samples
+        preload_test = True  # Always preload test set (smaller)
+        
         train_dataset = DeepEarthStreamingDataset(
             observation_ids=train_obs_ids, 
             cache_config_path="dataset_config.json",
-            batch_size=8
+            batch_size=8,
+            shared_cache=None,  # Let workers create their own caches
+            preload=preload_train
         )
         test_dataset = DeepEarthStreamingDataset(
             observation_ids=test_obs_ids, 
             cache_config_path="dataset_config.json",
             batch_size=8,
-            shared_cache=shared_cache  # Use shared cache for test set
+            shared_cache=shared_cache,  # Use shared cache for test set
+            preload=preload_test
         )
+        
+        if preload_train:
+            logger.info(f"Train data preloaded into memory ({len(train_obs_ids)} samples)")
+        else:
+            logger.info(f"Train data will stream from disk ({len(train_obs_ids)} samples)")
+            
+        logger.info(f"Test data preloaded into memory ({len(test_obs_ids)} samples)")
         
         # Create loaders with proper settings for streaming
         train_loader = DataLoader(
