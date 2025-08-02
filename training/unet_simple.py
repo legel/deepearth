@@ -372,7 +372,7 @@ def compare_language_reconstructions(vis_samples, epoch, save_dir):
         axes[1, i].axis('off')
     
     plt.suptitle(f'Language Reconstruction Comparison - Epoch {epoch}\n' + 
-                 'If all reconstructions look identical, model is outputting the mean', 
+                 'check if model is outputting mean', 
                  fontsize=14)
     plt.tight_layout()
     
@@ -434,7 +434,7 @@ def compare_vision_reconstructions(vis_samples, epoch, save_dir):
         axes[1, i].axis('off')
     
     plt.suptitle(f'Vision Reconstruction Comparison - Epoch {epoch}\n' + 
-                 'Vision should show more diversity than language', 
+                 'Vision samples', 
                  fontsize=14)
     plt.tight_layout()
     
