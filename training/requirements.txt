@@ -1,0 +1,21 @@
+# Core deep learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Numerical computing
+numpy>=1.24.0
+
+# Visualization
+matplotlib>=3.6.0
+Pillow>=9.0.0
+
+# Progress bars
+tqdm>=4.64.0
+
+# For CUDA support (optional, install based on your CUDA version)
+# torch==2.0.0+cu118  # For CUDA 11.8
+# torch==2.0.0+cu121  # For CUDA 12.1
+
+# Additional utilities that might be needed based on your imports
+# pandas>=1.5.0  # If you use pandas for data handling
+# scikit-learn>=1.2.0  # If you need additional ML utilities
