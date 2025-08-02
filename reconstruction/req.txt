@@ -1,0 +1,29 @@
+# requirements_fixed.txt - Compatible versions for all packages
+
+# Core ML packages
+torch==2.0.1
+torchvision==0.15.2
+numpy==1.24.3  # Works with both PyTorch 2.0 and matplotlib
+
+# Visualization
+matplotlib==3.7.2
+umap-learn==0.5.4
+
+# Transformers and NLP
+transformers==4.35.2
+datasets==2.14.7
+huggingface-hub==0.19.4
+
+# Image processing
+Pillow==10.0.1
+
+# Scientific computing
+scikit-learn==1.3.2
+scipy==1.11.4  # Required by scikit-learn
+
+# Utilities
+tqdm==4.66.1
+
+# Optional but recommended
+tensorboard==2.14.0
+wandb==0.16.1

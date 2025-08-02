@@ -1,0 +1,41 @@
+# DeepEarth Multimodal Training Configuration
+data:
+  dashboard_config: "../dashboard/dataset_config.json"
+  max_samples: 10000
+  train_split: 0.8
+  batch_size: 32
+  
+model:
+  vision_dim: 1408      # V-JEPA2 output dimension
+  language_dim: 7168    # DeepSeek output dimension
+  hidden_dim: 256       # MLP hidden dimension
+  universal_dim: 2048   # Universal embedding dimension
+  dropout: 0.1
+  
+training:
+  epochs: 50
+  learning_rate: 0.001
+  device: "auto"
+  mask_language: true
+  mask_prob: 0.5
+  visualize_every: 10
+  
+species:
+  # Central Florida species to focus on
+  target_species:
+    - "Quercus virginiana"      # Southern live oak
+    - "Serenoa repens"          # Saw palmetto
+    - "Sabal palmetto"          # Cabbage palm
+    - "Pinus elliottii"         # Slash pine
+    - "Tillandsia usneoides"    # Spanish moss
+    - "Zamia integrifolia"      # Coontie
+    - "Magnolia grandiflora"    # Southern magnolia
+    - "Ilex vomitoria"          # Yaupon holly
+    - "Juniperus virginiana"    # Eastern red cedar
+    - "Vaccinium darrowii"      # Darrow's blueberry
+    
+logging:
+  use_tensorboard: true
+  use_wandb: false
+  log_dir: "logs/"
+  checkpoint_dir: "models/checkpoints/"

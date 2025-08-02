@@ -19,7 +19,13 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+*.pkt
+*.zip
+*.tar.gz
+*.mp4
+*.ckpt
+*.pth
+vjepa2/
 # Virtual Environment
 venv/
 env/
@@ -60,7 +66,45 @@ Thumbs.db
 
 # Logs
 *.log
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
 
+# Data (too large for git)
+data/embeddings/
+data/raw/
+*.npy
+*.pt
+*.pth
+
+# Model checkpoints
+training/models/checkpoints/
+training/models/final/
+*.ckpt
+
+# Results
+training/results/
+*.png
+*.jpg
+
+# Notebooks
+notebooks/.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
 # Environment variables
 .env
 .env.local
