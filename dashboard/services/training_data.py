@@ -294,10 +294,59 @@ def _load_vision_embeddings_batch(
     gbif_ids: List[int],
     device: str
 ) -> torch.Tensor:
-    """Load vision embeddings for batch of GBIF IDs."""
+    """Load vision embeddings for batch of GBIF IDs using optimized batch loading."""
     embeddings = []
+    errors_count = 0
+    missing_count = 0
     
-    for gbif_id in gbif_ids:
+    # Use optimized batch loading if available
+    if hasattr(cache, 'mmap_loader') and cache.mmap_loader:
+        try:
+            # Single optimized batch query
+            batch_embeddings = cache.mmap_loader.get_vision_embeddings_batch(gbif_ids)
+            
+            for gbif_id in gbif_ids:
+                if gbif_id in batch_embeddings:
+                    # Reshape to 4D: [8, 24, 24, 1408]
+                    vision_emb_4d = cache.loader.reshape_vision_embedding(batch_embeddings[gbif_id])
+                    embeddings.append(vision_emb_4d)
+                else:
+                    # Create zero tensor for missing embeddings
+                    zero_emb = np.zeros((8, 24, 24, 1408), dtype=np.float32)
+                    embeddings.append(zero_emb)
+                    missing_count += 1
+                    
+            # Log summary for batch method
+            if missing_count > 0:
+                success_count = len(gbif_ids) - missing_count
+                logger.info(f"Batch vision embedding summary: {success_count}/{len(gbif_ids)} successful, {missing_count} missing")
+                
+        except Exception as e:
+            logger.error(f"Batch loading failed, falling back to individual loading: {e}")
+            # Fall back to individual loading
+            return _load_vision_embeddings_individual(cache, observations, gbif_ids, device)
+    else:
+        # Fall back to individual loading if no mmap loader
+        return _load_vision_embeddings_individual(cache, observations, gbif_ids, device)
+    
+    # Stack into batch tensor [N, 8, 24, 24, 1408]
+    embeddings_tensor = torch.tensor(np.stack(embeddings), dtype=torch.float32, device=device)
+    
+    return embeddings_tensor
+
+
+def _load_vision_embeddings_individual(
+    cache, 
+    observations: pd.DataFrame,
+    gbif_ids: List[int],
+    device: str
+) -> torch.Tensor:
+    """Individual vision embedding loading (fallback method)."""
+    embeddings = []
+    errors_count = 0
+    missing_count = 0
+    
+    for i, gbif_id in enumerate(gbif_ids):
         try:
             # Get taxon_id for this observation
             obs_row = observations[observations['gbif_id'] == gbif_id].iloc[0]
@@ -314,13 +363,35 @@ def _load_vision_embeddings_batch(
                 # Create zero tensor for missing embeddings
                 zero_emb = np.zeros((8, 24, 24, 1408), dtype=np.float32)
                 embeddings.append(zero_emb)
-                logger.warning(f"Missing vision embedding for GBIF ID {gbif_id}, using zeros")
+                missing_count += 1
+                # Rate-limit missing embedding warnings
+                if missing_count <= 3:
+                    logger.warning(f"Missing vision embedding for GBIF ID {gbif_id}, using zeros")
+                elif missing_count == 4:
+                    logger.warning(f"Additional missing embeddings detected, suppressing further warnings for this batch...")
         
         except Exception as e:
-            logger.error(f"Failed to load vision embedding for GBIF ID {gbif_id}: {e}")
+            errors_count += 1
+            # Rate-limit error messages to prevent log flooding
+            if errors_count <= 3:
+                logger.error(f"Failed to load vision embedding for GBIF ID {gbif_id}: {e}")
+            elif errors_count == 4:
+                logger.error(f"Multiple embedding errors detected, suppressing further error messages for this batch...")
+            
             # Create zero tensor as fallback
             zero_emb = np.zeros((8, 24, 24, 1408), dtype=np.float32)
             embeddings.append(zero_emb)
+        
+        # Progress indicator for large batches
+        if len(gbif_ids) > 32 and (i + 1) % 16 == 0:
+            success_rate = ((len(gbif_ids) - errors_count - missing_count) / len(gbif_ids)) * 100
+            logger.info(f"Vision embedding progress: {i+1}/{len(gbif_ids)} ({success_rate:.1f}% success rate)")
+    
+    # Summary logging
+    if errors_count > 0 or missing_count > 0:
+        success_count = len(gbif_ids) - errors_count - missing_count
+        logger.warning(f"Vision embedding individual summary: {success_count}/{len(gbif_ids)} successful, "
+                      f"{missing_count} missing, {errors_count} errors")
     
     # Stack into batch tensor [N, 8, 24, 24, 1408]
     embeddings_tensor = torch.tensor(np.stack(embeddings), dtype=torch.float32, device=device)

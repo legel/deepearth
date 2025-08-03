@@ -162,9 +162,13 @@ class MMapEmbeddingLoader:
             return embedding
             
         except Exception as e:
-            logger.error(f"Error loading embedding for GBIF {gbif_id}: {e}")
             with self._lock:
                 self.stats['errors'] += 1
+                # Rate-limit error logging to prevent flooding
+                if self.stats['errors'] <= 5:
+                    logger.error(f"Error loading embedding for GBIF {gbif_id}: {e}")
+                elif self.stats['errors'] == 6:
+                    logger.error(f"Multiple embedding errors detected ({self.stats['errors']} total), suppressing further error logs...")
             return None
     
     def get_vision_embedding(self, gbif_id: int) -> Optional[torch.Tensor]:
@@ -191,9 +195,9 @@ class MMapEmbeddingLoader:
         Get multiple vision embeddings efficiently.
         
         This method is optimized for batch retrieval by:
-        1. Checking cache for all IDs first
-        2. Querying database once for all cache misses
-        3. Reading from mmap in offset order (better OS page cache usage)
+        1. Single database query for all IDs
+        2. Reading from mmap in offset order (better OS page cache usage)
+        3. Minimal memory copies using views instead of full copies
         
         Args:
             gbif_ids: List of GBIF identifiers
@@ -204,43 +208,36 @@ class MMapEmbeddingLoader:
         start_time = time.time()
         results = {}
         
-        # Check cache first
-        cache_misses = []
-        for gbif_id in gbif_ids:
-            if gbif_id in self._cached_load.cache_info().currsize:
-                # Cache hit
-                embedding = self._cached_load(gbif_id)
-                if embedding is not None:
-                    results[gbif_id] = torch.from_numpy(embedding).float()
-            else:
-                cache_misses.append(gbif_id)
-        
-        if not cache_misses:
+        if not gbif_ids:
             return results
         
         # Get thread-local resources
         mmap_file, db_conn = self._get_thread_resources()
         
-        # Query all cache misses at once
-        placeholders = ','.join(['?'] * len(cache_misses))
+        # Single database query for all IDs
+        placeholders = ','.join(['?'] * len(gbif_ids))
         cursor = db_conn.cursor()
         cursor.execute(
             f"SELECT gbif_id, file_offset FROM embedding_index "
             f"WHERE gbif_id IN ({placeholders}) ORDER BY file_offset",
-            cache_misses
+            gbif_ids
         )
         
-        # Load embeddings in offset order
-        for gbif_id, file_offset in cursor.fetchall():
-            start_idx = file_offset // 4
-            end_idx = start_idx + self.embedding_size
-            
-            embedding = mmap_file[start_idx:end_idx].copy()
-            results[gbif_id] = torch.from_numpy(embedding).float()
-            
-            # Update cache
-            self._cached_load.cache_clear()  # Clear before adding to avoid size issues
-            self._cached_load(gbif_id)  # This will cache it
+        # Load embeddings in offset order for better cache performance
+        offset_data = cursor.fetchall()
+        
+        for gbif_id, file_offset in offset_data:
+            try:
+                start_idx = file_offset // 4
+                end_idx = start_idx + self.embedding_size
+                
+                # Use view instead of copy for performance - convert to tensor directly
+                embedding_view = mmap_file[start_idx:end_idx]
+                results[gbif_id] = torch.from_numpy(embedding_view).float().clone()
+                
+            except Exception as e:
+                logger.error(f"Error loading batch embedding for GBIF {gbif_id}: {e}")
+                continue
         
         # Update statistics
         batch_time = (time.time() - start_time) * 1000  # ms
@@ -333,6 +330,30 @@ class MMapEmbeddingLoader:
                 'batch_avg_time_per_embedding_ms': batch_avg_time,
                 'total_retrievals': self.stats['retrievals']
             }
+    
+    def get_performance_stats(self) -> dict:
+        """Get current performance statistics."""
+        with self._lock:
+            total_requests = self.stats['retrievals']
+            error_rate = (self.stats['errors'] / total_requests * 100) if total_requests > 0 else 0
+            avg_time = (self.stats['total_time_ms'] / self.stats['hits']) if self.stats['hits'] > 0 else 0
+            
+            return {
+                'total_requests': total_requests,
+                'successful_hits': self.stats['hits'],
+                'errors': self.stats['errors'],
+                'error_rate_percent': error_rate,
+                'average_time_ms': avg_time,
+                'cache_hits': self.stats.get('cache_hits', 0)
+            }
+    
+    def log_performance_summary(self):
+        """Log a performance summary to help with debugging."""
+        stats = self.get_performance_stats()
+        if stats['total_requests'] > 0:
+            logger.info(f"Embedding loader stats: {stats['successful_hits']}/{stats['total_requests']} successful "
+                       f"({stats['error_rate_percent']:.1f}% error rate), "
+                       f"avg: {stats['average_time_ms']:.1f}ms")
     
     def close(self):
         """Clean up resources"""

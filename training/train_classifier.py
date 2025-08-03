@@ -83,8 +83,13 @@ class DeepEarthDataset(Dataset):
         all_language_embs = []
         all_vision_embs = []
         
-        for i in range(0, len(self.observation_ids), batch_size):
-            batch_ids = self.observation_ids[i:i + batch_size]
+        total_batches = (len(self.observation_ids) + batch_size - 1) // batch_size
+        
+        for batch_idx in range(0, len(self.observation_ids), batch_size):
+            batch_ids = self.observation_ids[batch_idx:batch_idx + batch_size]
+            current_batch = (batch_idx // batch_size) + 1
+            
+            print(f"Loading batch {current_batch}/{total_batches} ({len(batch_ids)} observations)...")
             
             batch_data = get_training_batch(
                 self.cache,
@@ -409,7 +414,7 @@ def main():
     parser.add_argument('--mode', choices=['language', 'vision', 'both'], default='language',
                        help='Training mode: language, vision, or both modalities')
     parser.add_argument('--epochs', type=int, default=10, help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=32, help='Batch size for training')
+    parser.add_argument('--batch-size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--learning-rate', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--device', type=str, default='auto', help='Device: cuda, cpu, or auto')
     parser.add_argument('--config', type=str, help='Path to train/test split config')
@@ -550,6 +555,10 @@ def main():
         print(f"Epoch {epoch+1:2d}/{args.epochs}: "
               f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.1f}%, "
               f"Test Acc: {test_acc:.1f}%")
+        
+        # Log embedding loader performance every few epochs
+        if (epoch + 1) % 5 == 0 and hasattr(cache, 'mmap_loader') and cache.mmap_loader:
+            cache.mmap_loader.log_performance_summary()
     
     # Final results
     final_test_loss, final_test_acc = evaluate_model(model, test_loader, criterion, device)

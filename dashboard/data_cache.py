@@ -61,7 +61,15 @@ class UnifiedDataCache:
         
         # Initialize memory-mapped loader for fast vision embedding access
         try:
-            self.mmap_loader = MMapEmbeddingLoader()
+            # Use absolute paths to avoid working directory issues
+            dashboard_dir = Path(__file__).parent
+            embeddings_file = dashboard_dir / "embeddings.mmap"
+            index_db = dashboard_dir / "embeddings_index.db"
+            
+            self.mmap_loader = MMapEmbeddingLoader(
+                embeddings_file=str(embeddings_file),
+                index_db=str(index_db)
+            )
             logger.info("✅ Memory-mapped vision embedding loader initialized")
         except Exception as e:
             logger.warning(f"⚠️ Memory-mapped loader failed to initialize: {e}")
