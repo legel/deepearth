@@ -1,6 +1,6 @@
 # DeepEarth: Planetary Simulator for Ecological Intelligence 
 
-DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemporal simulation for scientific modeling of physical systems across the planet.  Similar to how ChatGPT was trained to reconstruct masked language datasets, DeepEarth learns to reconstruct masked earth science datasets, including from fields of physics, chemistry, biology, geology, and ecology.  DeepEarth welcomes contributors to a new open source consortium for AI that radically improves global sustainability and ecological intelligence.
+DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemporal simulation for scientific modeling of physical systems across the planet.  Similar to how ChatGPT was trained to reconstruct masked language datasets, DeepEarth learns to reconstruct masked earth science datasets, including from fields of physics, chemistry, biology, geology, and ecology.  DeepEarth welcomes contributors to a new open source project for AI that radically improves global sustainability and ecological intelligence.
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_inductive_simulator.png)
 
