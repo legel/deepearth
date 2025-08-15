@@ -209,8 +209,16 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
     frame_dir = Path(frame_dir)
     output_dir = Path(output_dir)
     
-    # Load original frames
-    frame_files = sorted(frame_dir.glob("*_frame_*.tif"))[:16]
+    # Load original frames (frames 616-631)
+    frame_files = []
+    for i in range(616, 632):  # 616 to 631 inclusive
+        frame_file = frame_dir / f"NCAR_frame_{i:04d}.tif"
+        if frame_file.exists():
+            frame_files.append(frame_file)
+    
+    if len(frame_files) != 16:
+        raise ValueError(f"Expected 16 frames, found {len(frame_files)}")
+    
     original_frames = []
     for f in frame_files:
         img = Image.open(f).convert("RGB")
