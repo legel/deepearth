@@ -2,8 +2,27 @@
 
 This module provides comprehensive infrastructure for extracting, processing, and visualizing visual embeddings using state-of-the-art self-supervised models: **V-JEPA 2** and **DINOv3**, optimized for Earth observation and biodiversity monitoring.
 
-![V-JEPA 2 Demo](vjepa2_demo.gif)
-*Example: NAIP aerial RGB imagery (sub-meter scale) with UMAP-reduced embeddings (top: original, bottom: with UMAP overlay)*
+## Visual Comparison
+
+<table>
+<tr>
+<td align="center"><b>V-JEPA 2 (1B params)</b></td>
+<td align="center"><b>DINOv3 ViT-L (300M params)</b></td>
+<td align="center"><b>DINOv3 ViT-7B (6.7B params)</b></td>
+</tr>
+<tr>
+<td><img src="docs/comparisons/vjepa2_comparison.gif" width="300"></td>
+<td><img src="docs/comparisons/dinov3_vitl_comparison.gif" width="300"></td>
+<td><img src="docs/comparisons/dinov3_vit7b_comparison.gif" width="300"></td>
+</tr>
+<tr>
+<td align="center">Temporal-aware video encoder</td>
+<td align="center">Satellite-optimized (SAT-493M)</td>
+<td align="center">Highest accuracy satellite model</td>
+</tr>
+</table>
+
+*Comparison on NAIP aerial RGB imagery (sub-meter scale) with UMAP-reduced embeddings. Each model uses identical UMAP hyperparameters for fair comparison.*
 
 ## Overview
 
@@ -418,11 +437,11 @@ multimodal_embedding = fusion(
   year={2025}
 }
 
-@article{oquab2024dinov3,
+@article{simeoni2025dinov3,
   title={DINOv3: Self-Supervised Vision Transformers for Image Understanding},
-  author={Oquab, Maxime and Darcet, Timothée and Moutakanni, Theo and Vo, Huy and Szafraniec, Marc and Khalidov, Vasil and Fernandez, Pierre and Haziza, Daniel and Massa, Francisco and El-Nouby, Alaaeldin and others},
-  journal={arXiv preprint arXiv:2412.14964},
-  year={2024}
+  author={Siméoni, Oriane and Vo, Huy V. and Seitzer, Maximilian and Baldassarre, Federico and Oquab, Maxime and Jose, Cijo and Khalidov, Vasil and Szafraniec, Marc and Yi, Seungeun and Ramamonjisoa, Michaël and Massa, Francisco and Haziza, Daniel and Wehrstedt, Luca and Wang, Jianyuan and Darcet, Timothée and Moutakanni, Théo and Sentana, Leonel and Roberts, Claire and Vedaldi, Andrea and Tolan, Jamie and Brandt, John and Couprie, Camille and Mairal, Julien and Jégou, Hervé and Labatut, Patrick and Bojanowski, Piotr},
+  journal={arXiv preprint},
+  year={2025}
 }
 ```
 
