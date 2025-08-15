@@ -22,7 +22,7 @@ This module provides comprehensive infrastructure for extracting, processing, an
 </tr>
 </table>
 
-*Comparison on NAIP aerial RGB imagery (sub-meter scale) with UMAP-reduced embeddings. Each model uses identical UMAP hyperparameters for fair comparison.*
+*Visualization of NAIP aerial imagery (frames 616-631) showing NCAR facility. Features are reduced to RGB using UMAP with identical hyperparameters across all models. Each row shows: original frames, 50% alpha overlay, and UMAP-projected features.*
 
 ## Overview
 

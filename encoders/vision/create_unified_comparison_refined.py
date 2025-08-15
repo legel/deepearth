@@ -111,7 +111,7 @@ def extract_all_features(frame_dir, output_dir, first_frame=0, last_frame=15):
 def compute_consistent_umap(vjepa2_features, dinov3_vitl_features, dinov3_vit7b_features):
     """Compute UMAP projections on ALL patches across ALL frames for consistency"""
     print("\n" + "="*60)
-    print("Computing consistent UMAP projections across all frames...")
+    print("Computing UMAP projections across all frames...")
     print("="*60)
     
     # Define unified UMAP hyperparameters for fair comparison
@@ -139,11 +139,22 @@ def compute_consistent_umap(vjepa2_features, dinov3_vitl_features, dinov3_vit7b_
     # Reshape to [8, 576, 3] then to [8, 24, 24, 3]
     vjepa2_rgb = vjepa2_all_rgb.reshape(8, 576, 3).reshape(8, 24, 24, 3)
     
-    # Duplicate tokens for frames (each token covers 2 frames)
+    # Interpolate between tokens for smooth frame transitions
+    # Each token represents 2 frames, but we want unique visualizations for each frame
     vjepa2_frames = []
     for t in range(8):
+        # Add the main token embedding
         vjepa2_frames.append(vjepa2_rgb[t])
-        vjepa2_frames.append(vjepa2_rgb[t])  # Same embedding for both frames in pair
+        
+        # For the second frame in the pair, interpolate with the next token
+        # (except for the last token where we just repeat)
+        if t < 7:
+            # Linear interpolation between current and next token
+            interpolated = (vjepa2_rgb[t] * 0.5 + vjepa2_rgb[t + 1] * 0.5)
+            vjepa2_frames.append(interpolated)
+        else:
+            # For the last pair, just use the last token
+            vjepa2_frames.append(vjepa2_rgb[t])
     
     # Process DINOv3 ViT-L: [16, 196, 1024] - flatten to [16*196, 1024]
     print("\n2. Processing DINOv3 ViT-L SAT-493M (learning on all 3136 patches)...")
@@ -165,10 +176,10 @@ def compute_consistent_umap(vjepa2_features, dinov3_vitl_features, dinov3_vit7b_
     # Reshape back to [16, 14, 14, 3]
     dinov3_vit7b_frames = vit7b_all_rgb.reshape(16, 196, 3).reshape(16, 14, 14, 3)
     
-    print(f"\nConsistent UMAP projections complete:")
-    print(f"  V-JEPA 2: Learned on 4608 patches, applied to 8 tokens → 16 frames")
-    print(f"  DINOv3 ViT-L: Learned on 3136 patches across 16 frames")
-    print(f"  DINOv3 ViT-7B: Learned on 3136 patches across 16 frames")
+    print(f"\nUMAP projections complete:")
+    print(f"  V-JEPA 2: Learned on 4608 patches (8 temporal tokens × 576 spatial)")
+    print(f"  DINOv3 ViT-L: Learned on 3136 patches (16 frames × 196 spatial)")
+    print(f"  DINOv3 ViT-7B: Learned on 3136 patches (16 frames × 196 spatial)")
     
     return vjepa2_frames, dinov3_vitl_frames, dinov3_vit7b_frames
 
@@ -203,7 +214,7 @@ def create_overlay(original_img, umap_img, alpha=0.5):
 def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_vit7b_frames, output_dir):
     """Create individual GIFs with 3 rows: original, overlay, UMAP"""
     print("\n" + "="*60)
-    print("Creating refined comparison GIFs...")
+    print("Creating comparison GIFs...")
     print("="*60)
     
     frame_dir = Path(frame_dir)
@@ -240,7 +251,7 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
             
             # Row 1: Original
             axes[0].imshow(original_frames[i])
-            axes[0].set_title(f"NAIP Frame {i}", fontsize=10)
+            axes[0].set_title(f"NAIP Frame {616+i}", fontsize=10)
             axes[0].axis('off')
             
             # Row 2: Overlay (50% alpha composite)
@@ -286,7 +297,7 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
         # Row 1 - original frames
         for j in range(3):
             axes[0, j].imshow(original_frames[i])
-            axes[0, j].set_title(f"NAIP Frame {i}", fontsize=10)
+            axes[0, j].set_title(f"NAIP Frame {616+i}", fontsize=10)
             axes[0, j].axis('off')
         
         # Row 2 - overlays
@@ -370,13 +381,13 @@ def main():
     )
     
     print("\n" + "="*60)
-    print("✅ Refined comparison complete!")
+    print("✅ Comparison complete!")
     print("="*60)
-    print(f"\nKey improvements:")
-    print(f"  - Consistent UMAP: Learned on ALL patches across ALL frames")
-    print(f"  - 3 rows: Original → Overlay (50% alpha) → UMAP features")
-    print(f"  - Animation FPS: 1.0 fps")
-    print(f"  - Clarified SAT-493M training for DINOv3 models")
+    print(f"\nVisualization details:")
+    print(f"  - UMAP: Learned on all patches across all frames")
+    print(f"  - Layout: Original → Overlay (50% alpha) → UMAP features")
+    print(f"  - Animation: 1.0 fps")
+    print(f"  - DINOv3 models: SAT-493M satellite pretrained")
     print(f"\nIndividual GIFs:")
     print(f"  - V-JEPA 2: {gif1}")
     print(f"  - DINOv3 ViT-L SAT-493M: {gif2}")
