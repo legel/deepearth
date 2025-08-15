@@ -1,0 +1,20 @@
+# Large test data
+images/
+outputs/
+test_*/
+*.zip
+
+# DINOv3 weights (too large)
+dinov3/dinov3/weights/*.pth
+dinov3/weights/
+
+# Temporary files
+*.log
+nohup.out
+__pycache__/
+*.pyc
+.DS_Store
+
+# Demo outputs (keep only essential ones)
+demo_gif/videos/
+full_stack/videos/
