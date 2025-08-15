@@ -135,7 +135,7 @@ class VJEPA2Extractor:
             
             # Process image - V-JEPA 2 expects video format
             pixel_values = self.processor(image, return_tensors="pt").to(self.device)["pixel_values_videos"]
-            
+           
             # Repeat for temporal dimension (simulate video from single image)
             pixel_values = pixel_values.repeat(1, self.num_frames, 1, 1, 1)
             
