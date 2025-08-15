@@ -251,26 +251,28 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
             
             # Row 1: Original
             axes[0].imshow(original_frames[i])
-            axes[0].set_title(f"NAIP Frame {616+i}", fontsize=10)
+            axes[0].set_title(f"Frame {i+1}", fontsize=10)
             axes[0].axis('off')
             
             # Row 2: Overlay (50% alpha composite)
             features_rgb = model_frames[i]
             overlay = create_overlay(original_frames[i], features_rgb, alpha=0.5)
             axes[1].imshow(overlay)
-            axes[1].set_title(f"Overlay (50% alpha)", fontsize=10)
+            # Set overlay title based on model
+            if model_name == "vjepa2":
+                axes[1].set_title(f"V-JEPA 2 Overlay (50% alpha)", fontsize=10)
+            elif model_name == "dinov3_vitl":
+                axes[1].set_title(f"DINOv3 ViT-L SAT-493M Overlay (50% alpha)", fontsize=10)
+            else:
+                axes[1].set_title(f"DINOv3 ViT-7B SAT-493M Overlay (50% alpha)", fontsize=10)
             axes[1].axis('off')
             
             # Row 3: UMAP features
             features_resized = np.array(Image.fromarray((features_rgb * 255).astype(np.uint8)).resize((224, 224), Image.NEAREST))
             axes[2].imshow(features_resized)
             
-            # Add annotation for V-JEPA 2 temporal compression
-            if model_name == "vjepa2":
-                token_idx = i // 2
-                axes[2].set_title(f"{title} (Token {token_idx})", fontsize=10)
-            else:
-                axes[2].set_title(f"{title}", fontsize=10)
+            # Set title for UMAP visualization
+            axes[2].set_title(f"RGB Dimensionality Reduction from Deep Vision Embeddings", fontsize=9)
             axes[2].axis('off')
             
             plt.tight_layout()
@@ -284,7 +286,7 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
         
         # Save GIF with slower FPS (1/3 of original speed: 2 fps → 0.67 fps)
         gif_path = output_dir / f"{model_name}_comparison.gif"
-        imageio.mimsave(gif_path, frames, fps=1.0, loop=0)
+        imageio.mimsave(gif_path, frames, fps=1.5, loop=0)
         print(f"Saved {gif_path}")
     
     # Create combined side-by-side comparison
@@ -297,7 +299,7 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
         # Row 1 - original frames
         for j in range(3):
             axes[0, j].imshow(original_frames[i])
-            axes[0, j].set_title(f"NAIP Frame {616+i}", fontsize=10)
+            axes[0, j].set_title(f"Frame {i+1}", fontsize=10)
             axes[0, j].axis('off')
         
         # Row 2 - overlays
@@ -310,13 +312,13 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
         # DINOv3 ViT-L
         vitl_overlay = create_overlay(original_frames[i], dinov3_vitl_frames[i], alpha=0.5)
         axes[1, 1].imshow(vitl_overlay)
-        axes[1, 1].set_title(f"DINOv3 ViT-L Overlay", fontsize=10)
+        axes[1, 1].set_title(f"DINOv3 ViT-L SAT-493M Overlay", fontsize=10)
         axes[1, 1].axis('off')
         
         # DINOv3 ViT-7B
         vit7b_overlay = create_overlay(original_frames[i], dinov3_vit7b_frames[i], alpha=0.5)
         axes[1, 2].imshow(vit7b_overlay)
-        axes[1, 2].set_title(f"DINOv3 ViT-7B Overlay", fontsize=10)
+        axes[1, 2].set_title(f"DINOv3 ViT-7B SAT-493M Overlay", fontsize=10)
         axes[1, 2].axis('off')
         
         # Row 3 - UMAP features
@@ -324,7 +326,7 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
         vjepa2_rgb = vjepa2_frames[i]
         vjepa2_resized = np.array(Image.fromarray((vjepa2_rgb * 255).astype(np.uint8)).resize((224, 224), Image.NEAREST))
         axes[2, 0].imshow(vjepa2_resized)
-        axes[2, 0].set_title(f"V-JEPA 2 (Token {i//2})", fontsize=10)
+        axes[2, 0].set_title(f"V-JEPA 2", fontsize=10)
         axes[2, 0].axis('off')
         
         # DINOv3 ViT-L
@@ -341,7 +343,7 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
         axes[2, 2].set_title(f"DINOv3 ViT-7B SAT-493M", fontsize=10)
         axes[2, 2].axis('off')
         
-        plt.suptitle("Vision Encoder Comparison - Consistent UMAP Projection", fontsize=12, fontweight='bold')
+        plt.suptitle("Vision Encoder Comparison - RGB Dimensionality Reduction from Deep Vision Embeddings", fontsize=11, fontweight='bold')
         plt.tight_layout()
         
         # Save to buffer
@@ -353,7 +355,7 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
     
     # Save combined GIF with slower FPS
     combined_path = output_dir / "all_models_comparison.gif"
-    imageio.mimsave(combined_path, combined_frames, fps=1.0, loop=0)
+    imageio.mimsave(combined_path, combined_frames, fps=1.5, loop=0)
     print(f"Saved combined comparison: {combined_path}")
     
     return output_dir / "vjepa2_comparison.gif", output_dir / "dinov3_vitl_comparison.gif", output_dir / "dinov3_vit7b_comparison.gif"
@@ -386,7 +388,7 @@ def main():
     print(f"\nVisualization details:")
     print(f"  - UMAP: Learned on all patches across all frames")
     print(f"  - Layout: Original → Overlay (50% alpha) → UMAP features")
-    print(f"  - Animation: 1.0 fps")
+    print(f"  - Animation: 1.5 fps")
     print(f"  - DINOv3 models: SAT-493M satellite pretrained")
     print(f"\nIndividual GIFs:")
     print(f"  - V-JEPA 2: {gif1}")
