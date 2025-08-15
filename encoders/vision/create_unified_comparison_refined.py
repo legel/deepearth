@@ -265,7 +265,7 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
         
         # Save GIF with slower FPS (1/3 of original speed: 2 fps → 0.67 fps)
         gif_path = output_dir / f"{model_name}_comparison.gif"
-        imageio.mimsave(gif_path, frames, fps=0.67, loop=0)
+        imageio.mimsave(gif_path, frames, fps=1.0, loop=0)
         print(f"Saved {gif_path}")
     
     # Create combined side-by-side comparison
@@ -334,7 +334,7 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
     
     # Save combined GIF with slower FPS
     combined_path = output_dir / "all_models_comparison.gif"
-    imageio.mimsave(combined_path, combined_frames, fps=0.67, loop=0)
+    imageio.mimsave(combined_path, combined_frames, fps=1.0, loop=0)
     print(f"Saved combined comparison: {combined_path}")
     
     return output_dir / "vjepa2_comparison.gif", output_dir / "dinov3_vitl_comparison.gif", output_dir / "dinov3_vit7b_comparison.gif"
@@ -342,13 +342,13 @@ def create_comparison_gifs(frame_dir, vjepa2_frames, dinov3_vitl_frames, dinov3_
 
 def main():
     """Main execution"""
-    frame_dir = Path("images/NCAR_frames_superlong")
-    output_dir = Path("outputs/unified_comparison_refined")
+    frame_dir = Path("/home/lance/deepearth/encoders/vision/images/NCAR_frames_superlong")
+    output_dir = Path("outputs/ncar_frames_616_631")
     output_dir.mkdir(exist_ok=True, parents=True)
     
     # Extract features (will reuse if already exists)
     vjepa2_features, dinov3_vitl_features, dinov3_vit7b_features = extract_all_features(
-        frame_dir, output_dir, first_frame=0, last_frame=15
+        frame_dir, output_dir, first_frame=616, last_frame=631
     )
     
     # Compute consistent UMAP across all frames
@@ -367,13 +367,13 @@ def main():
     print(f"\nKey improvements:")
     print(f"  - Consistent UMAP: Learned on ALL patches across ALL frames")
     print(f"  - 3 rows: Original → Overlay (50% alpha) → UMAP features")
-    print(f"  - Slower FPS: 0.67 fps (was 2 fps)")
+    print(f"  - Animation FPS: 1.0 fps")
     print(f"  - Clarified SAT-493M training for DINOv3 models")
     print(f"\nIndividual GIFs:")
     print(f"  - V-JEPA 2: {gif1}")
     print(f"  - DINOv3 ViT-L SAT-493M: {gif2}")
     print(f"  - DINOv3 ViT-7B SAT-493M: {gif3}")
-    print(f"\nCombined comparison: outputs/unified_comparison_refined/all_models_comparison.gif")
+    print(f"\nCombined comparison: outputs/ncar_frames_616_631/all_models_comparison.gif")
 
 
 if __name__ == "__main__":
