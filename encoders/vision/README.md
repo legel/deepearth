@@ -3,7 +3,7 @@
 This module provides comprehensive infrastructure for extracting, processing, and visualizing V-JEPA 2 (Video Joint Embedding Predictive Architecture) visual embeddings for Earth observation and biodiversity monitoring.
 
 ![V-JEPA 2 Demo](vjepa2_demo.gif)
-*Example: NCAR atmospheric data with UMAP-reduced embeddings (top: original, bottom: with UMAP overlay)*
+*Example: NAIP aerial RGB imagery (sub-meter scale) with UMAP-reduced embeddings (top: original, bottom: with UMAP overlay)*
 
 ## Overview
 
