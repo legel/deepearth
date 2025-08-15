@@ -61,14 +61,17 @@ We provide two complementary vision encoders:
 
 ### DINOv3
 - **Models Available**:
-  - ViT-L/16: 300M parameters (satellite-optimized)
-  - ViT-7B/16: 6.7B parameters (satellite-optimized)
+  - ViT-L/16: 300M parameters (distilled from ViT-7B for efficiency)
+  - ViT-7B/16: 6.7B parameters (highest accuracy)
 - **Architecture**: Vision Transformer with self-distillation
-- **Input**: Images at 224×224 resolution
+- **Input**: Images at 224×224 resolution (trained on 512×512)
 - **Output**: 196 patches × feature dimension (1024 for ViT-L, 1536 for ViT-7B)
-- **Pretraining Datasets**:
-  - SAT-493M: Satellite imagery (recommended for Earth observation)
-  - LVD-1689M: Web images (for general computer vision)
+- **Satellite Pretraining (SAT-493M)**:
+  - 493 million 512×512 images from Maxar RGB ortho-rectified imagery
+  - 0.6 meter resolution satellite data
+  - Adapted RGB normalization for satellite imagery
+  - Training: 100k iterations base + 10k with Gram regularization + 8k high-res fine-tuning
+- **Web Pretraining (LVD-1689M)**: Available for general computer vision tasks
 
 ## Installation
 
@@ -410,6 +413,13 @@ multimodal_embedding = fusion(
 - **Single Image Analysis**: Superior for static scene understanding
 - **Classification Tasks**: Strong performance on land cover/land use
 - **Scalability**: Models from 300M to 6.7B parameters for different compute budgets
+
+### Proven Applications
+DINOv3 satellite models have been evaluated on:
+- **Canopy Height Mapping**: Global and national-scale forest monitoring
+- **Land Cover Segmentation**: High-resolution semantic segmentation
+- **Object Detection**: Infrastructure and environmental feature detection
+- **Multi-band Adaptation**: Supports infrared and other spectral channels
 
 ### Comparative Performance
 | Model | Parameters | Pretraining | Patch Dims | Best For |
