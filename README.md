@@ -13,6 +13,9 @@ Below you can discover more about the core model architecture and features.  Cur
 ### NSF DeepEarth Workshop
 We hosted an [NSF I-GUIDE workshop on DeepEarth](https://i-guide.io/forum/forum-2025/workshops/) this summer.  See a detailed summary [here](https://github.com/legel/deepearth/blob/main/docs/NSF_DeepEarth_Workshop.pdf).  
 
+#### DeepEarth🔥
+5 PhD students met for a 5 day NSF program in Boulder, Colorado on ["Spatial AI for Extreme Events and Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/).  The team simulated _live fuel moisture content_, and saw spectacular results from Grid4D.  See a detailed summary [here](https://github.com/legel/deepearth/blob/main/docs/DeepEarth🔥_NSF_I-GUIDE_Final_Presentation.pdf).
+
 #### Deep Physical Simulation  
 DeepEarth is designed to deliver state-of-the-art modeling representations that can directly answer classical Bayesian questions, _e.g._ "As variable X changes across space S and time T, how is variable Y most likely to change, given all available evidence?"
 
@@ -33,9 +36,6 @@ Design and development of DeepEarth is led by award-winning scientists and engin
 
 #### Planetary Intelligence for Everyone
 DeepEarth is an MIT-licensed open source project designed and built to solve planetary-scale problems 🌎, especially through AI-powered maximization of ecosystem services – _e.g._ optimizing AI for sustainable agriculture, environmental restoration, & ecological landscape design.
-
-#### NSF summer program in AI for disaster resilience, August 4-8, 2025
-5 PhD students will join us for a 5 day program in Boulder, Colorado on ["Spatial AI for Extreme Events and Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/).  We will geospatially and temporally simulate fire responses of plants (live fuel moisture content) at sub-meter scale.
 
 # Code Implementation Preview
 See [SPECIFICATIONS.md](https://github.com/legel/deepearth/blob/main/SPECIFICATIONS.MD) for a full preview of the entire DeepEarth architecture.  Below is a sample focused on the core model architecture.
