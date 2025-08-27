@@ -381,6 +381,225 @@ class DINOv3Extractor:
         similarities = torch.matmul(features_norm, query.T).squeeze()
         
         return similarities
+    
+    def extract_spatial_features(self, 
+                                 image_path: Union[str, Path, Image.Image]) -> Tuple[np.ndarray, Tuple[int, int], Image.Image]:
+        """
+        Extract spatial patch features for visualization.
+        
+        Args:
+            image_path: Path to image or PIL Image
+            
+        Returns:
+            Tuple of:
+                - features: Numpy array of patch features [N, D]
+                - grid_shape: (H, W) shape of the patch grid
+                - original_image: PIL Image object
+        """
+        # Load image with support for various formats
+        if isinstance(image_path, (str, Path)):
+            image_path = Path(image_path)
+            
+            # Check if file exists
+            if not image_path.exists():
+                raise FileNotFoundError(f"Image file not found: {image_path}")
+            
+            # Get file extension
+            ext = image_path.suffix.lower()
+            
+            # Handle different file types
+            if ext in ['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp']:
+                original_image = Image.open(image_path).convert("RGB")
+            elif ext in ['.tif', '.tiff']:
+                # Handle TIFF files which may have multiple bands
+                original_image = Image.open(image_path)
+                if original_image.mode not in ['RGB', 'RGBA']:
+                    # Convert multi-band or single-band to RGB
+                    if original_image.mode == 'L':  # Grayscale
+                        original_image = original_image.convert("RGB")
+                    elif hasattr(original_image, 'n_frames') and original_image.n_frames > 1:
+                        # Multi-frame TIFF, use first frame
+                        original_image.seek(0)
+                        original_image = original_image.convert("RGB")
+                    else:
+                        # For multi-band images, take first 3 bands or duplicate if single band
+                        original_image = original_image.convert("RGB")
+                else:
+                    original_image = original_image.convert("RGB")
+            elif ext in ['.npy', '.npz']:
+                # Handle numpy arrays
+                import numpy as np
+                array = np.load(image_path)
+                if ext == '.npz':
+                    # Get first array from npz file
+                    array = array[list(array.keys())[0]]
+                
+                # Normalize and convert to image
+                if array.ndim == 2:  # Grayscale
+                    array = np.stack([array] * 3, axis=-1)
+                elif array.ndim == 3 and array.shape[-1] > 3:
+                    # Multi-band, take first 3
+                    array = array[:, :, :3]
+                elif array.ndim == 3 and array.shape[-1] < 3:
+                    # Less than 3 bands, duplicate to make RGB
+                    if array.shape[-1] == 1:
+                        array = np.repeat(array, 3, axis=-1)
+                    elif array.shape[-1] == 2:
+                        array = np.concatenate([array, array[:, :, :1]], axis=-1)
+                
+                # Normalize to 0-255 range
+                array = array.astype(float)
+                array -= array.min()
+                if array.max() > 0:
+                    array = (array / array.max() * 255).astype(np.uint8)
+                else:
+                    array = array.astype(np.uint8)
+                
+                original_image = Image.fromarray(array, mode='RGB')
+            else:
+                # Try to open with PIL anyway
+                try:
+                    original_image = Image.open(image_path).convert("RGB")
+                except Exception as e:
+                    raise ValueError(f"Unsupported image format: {ext}. Error: {e}")
+            
+            self.logger.info(f"Loaded image: {image_path}, format: {ext}, size: {original_image.size}")
+        else:
+            # Assume it's already a PIL Image
+            original_image = image_path
+            if original_image.mode != 'RGB':
+                original_image = original_image.convert("RGB")
+        
+        # Extract features
+        result = self.extract_features(original_image)
+        patch_features = result['patch_features'].numpy()
+        
+        # Calculate grid shape
+        num_patches = patch_features.shape[0]
+        grid_size = int(np.sqrt(num_patches))
+        grid_shape = (grid_size, grid_size)
+        
+        self.logger.info(f"Extracted {num_patches} patches in {grid_shape} grid")
+        
+        return patch_features, grid_shape, original_image
+    
+    def visualize_with_umap(self,
+                           image_path: Union[str, Path, Image.Image],
+                           output_path: Optional[Union[str, Path]] = None,
+                           n_neighbors: int = 15,
+                           min_dist: float = 0.1,
+                           save_components: bool = True) -> Dict:
+        """
+        Extract features and create UMAP visualization.
+        
+        Args:
+            image_path: Path to image or PIL Image
+            output_path: Path to save visualization (optional)
+            n_neighbors: UMAP n_neighbors parameter
+            min_dist: UMAP min_dist parameter
+            save_components: Whether to save individual component images
+            
+        Returns:
+            Dictionary with visualization data
+        """
+        try:
+            import umap
+            import matplotlib.pyplot as plt
+            import matplotlib.gridspec as gridspec
+        except ImportError:
+            self.logger.error("Please install umap-learn and matplotlib: pip install umap-learn matplotlib")
+            raise
+        
+        # Extract spatial features
+        features, grid_shape, original_img = self.extract_spatial_features(image_path)
+        
+        # Compute UMAP reduction
+        self.logger.info(f"Computing UMAP reduction: {features.shape[1]} -> 3 dimensions")
+        reducer = umap.UMAP(
+            n_components=3,
+            n_neighbors=n_neighbors,
+            min_dist=min_dist,
+            random_state=42,
+            metric='cosine',
+            verbose=False
+        )
+        
+        features_rgb = reducer.fit_transform(features)
+        
+        # Normalize to [0, 1]
+        features_rgb -= features_rgb.min(axis=0)
+        max_vals = features_rgb.max(axis=0)
+        max_vals[max_vals == 0] = 1
+        features_rgb /= max_vals
+        
+        # Reshape to grid
+        H, W = grid_shape
+        features_grid = features_rgb.reshape(H, W, 3)
+        
+        # Convert to images
+        features_img = (features_grid * 255).astype(np.uint8)
+        features_pil = Image.fromarray(features_img, mode='RGB')
+        
+        # Resize to match original
+        features_resized = features_pil.resize(original_img.size, Image.NEAREST)
+        
+        # Create overlay
+        overlay = Image.blend(original_img, features_resized, alpha=0.5)
+        
+        # Create visualization
+        if output_path:
+            output_path = Path(output_path)
+            output_dir = output_path.parent
+            output_dir.mkdir(exist_ok=True, parents=True)
+            
+            # Create 3-row figure
+            fig = plt.figure(figsize=(10, 24))
+            gs = gridspec.GridSpec(3, 1, height_ratios=[1, 1, 1], hspace=0.02)
+            
+            # Original
+            ax1 = fig.add_subplot(gs[0])
+            ax1.imshow(original_img)
+            ax1.set_title('Original Image', fontsize=14, pad=10)
+            ax1.axis('off')
+            
+            # Overlay
+            ax2 = fig.add_subplot(gs[1])
+            ax2.imshow(overlay)
+            ax2.set_title('50% UMAP Overlay', fontsize=14, pad=10)
+            ax2.axis('off')
+            
+            # UMAP features
+            ax3 = fig.add_subplot(gs[2])
+            ax3.imshow(features_resized)
+            ax3.set_title('UMAP Features (RGB)', fontsize=14, pad=10)
+            ax3.axis('off')
+            
+            plt.suptitle(f'DINOv3 Feature Visualization\n{self.model_name.split("/")[-1]}\nGrid: {H}×{W} patches', 
+                        fontsize=16, y=0.995)
+            
+            # Save visualization
+            plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
+            self.logger.info(f"Saved visualization to: {output_path}")
+            plt.close()
+            
+            # Save components if requested
+            if save_components:
+                base_name = output_path.stem
+                original_img.save(output_dir / f"{base_name}_1_original.png")
+                overlay.save(output_dir / f"{base_name}_2_overlay.png")
+                features_resized.save(output_dir / f"{base_name}_3_umap.png")
+                features_pil.save(output_dir / f"{base_name}_patches_{H}x{W}.png")
+                self.logger.info(f"Saved component images to: {output_dir}")
+        
+        return {
+            'features': features,
+            'features_rgb': features_rgb,
+            'grid_shape': grid_shape,
+            'original_image': original_img,
+            'umap_image': features_resized,
+            'overlay_image': overlay,
+            'patch_image': features_pil
+        }
 
 
 class BatchDINOv3Extractor(DINOv3Extractor):

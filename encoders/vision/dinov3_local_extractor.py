@@ -46,13 +46,47 @@ class DINOv3LocalExtractor:
         
         # Setup weights path
         if weights_path is None:
-            weights_dir = Path("/home/lance/deepearth/encoders/vision/dinov3/dinov3/weights")
-            if model_size == "vitl16":
-                weights_path = weights_dir / "dinov3_vitl16_pretrain_sat493m.pth"
-            elif model_size == "vit7b16":
+            # Check multiple possible weight directories
+            possible_dirs = [
+                Path("/opt/ecodash/deepearth/encoders/vision/dinov3_weights"),
+                Path("/home/lance/deepearth/encoders/vision/dinov3/dinov3/weights"),
+                Path(__file__).parent / "dinov3_weights"
+            ]
+            
+            weights_dir = None
+            for d in possible_dirs:
+                if d.exists():
+                    weights_dir = d
+                    break
+            
+            if weights_dir is None:
+                raise ValueError(f"No weights directory found. Tried: {possible_dirs}")
+            
+            # Map model sizes to available weight files
+            if model_size == "vitl16" or model_size == "vitl":
+                # Check for satellite or general model
+                sat_path = weights_dir / "dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+                lvd_path = weights_dir / "dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+                
+                if sat_path.exists():
+                    weights_path = sat_path
+                    print(f"Using SAT-493M satellite-pretrained model")
+                elif lvd_path.exists():
+                    weights_path = lvd_path
+                    print(f"Using LVD-1689M general-pretrained model")
+                else:
+                    raise FileNotFoundError(f"No ViT-L weights found in {weights_dir}")
+                    
+            elif model_size == "vit7b16" or model_size == "vit7b":
                 weights_path = weights_dir / "dinov3_vit7b16_pretrain_sat493m.pth"
             else:
-                raise ValueError(f"Unknown model size: {model_size}")
+                # Try to find any matching weight file
+                available_weights = list(weights_dir.glob("dinov3_*.pth"))
+                if available_weights:
+                    weights_path = available_weights[0]
+                    print(f"Using available weights: {weights_path.name}")
+                else:
+                    raise ValueError(f"No weights found for model size: {model_size} in {weights_dir}")
         
         self.weights_path = Path(weights_path)
         if not self.weights_path.exists():
@@ -63,14 +97,54 @@ class DINOv3LocalExtractor:
         
     def _load_model(self):
         """Load DINOv3 model using torch hub with local weights"""
+        # Try multiple possible dinov3 locations
+        dinov3_paths = [
+            Path("/opt/ecodash/dinov3"),
+            Path("/opt/ecodash/deepearth/encoders/vision/dinov3"),
+            Path("/home/lance/deepearth/encoders/vision/dinov3"),
+            Path(__file__).parent / "dinov3"
+        ]
+        
+        dinov3_dir = None
+        for p in dinov3_paths:
+            if p.exists() and (p / "hubconf.py").exists():
+                dinov3_dir = str(p)
+                break
+        
+        if dinov3_dir is None:
+            raise ValueError(f"DINOv3 repository not found. Tried: {dinov3_paths}")
+        
         # Load model architecture from hub
-        model_name = f"dinov3_{self.model_size}"
-        self.model = torch.hub.load(
-            repo_or_dir="/home/lance/deepearth/encoders/vision/dinov3",
-            model=model_name,
-            source="local",
-            pretrained=False  # Don't download weights
-        )
+        # Map model sizes to hub function names - use correct names!
+        if self.model_size in ["vitl16", "vitl"]:
+            model_fn = "dinov3_vitl16"  # Correct function name
+        elif self.model_size in ["vit7b16", "vit7b"]:
+            model_fn = "dinov3_vit7b16"  # Correct function name
+        else:
+            model_fn = f"dinov3_{self.model_size}"
+        
+        try:
+            self.model = torch.hub.load(
+                repo_or_dir=dinov3_dir,
+                model=model_fn,
+                source="local",
+                pretrained=False  # Don't download weights
+            )
+        except Exception as e:
+            print(f"Failed to load {model_fn}, trying alternative loading method: {e}")
+            # Try direct model loading
+            sys.path.insert(0, dinov3_dir)
+            import hubconf
+            # Use the correct model function directly
+            if self.model_size in ["vitl16", "vitl"]:
+                self.model = hubconf.dinov3_vitl16(pretrained=False)
+            elif self.model_size in ["vit7b16", "vit7b"]:
+                self.model = hubconf.dinov3_vit7b16(pretrained=False)
+            else:
+                # List available models as fallback
+                available = [attr for attr in dir(hubconf) if attr.startswith('dinov3_')]
+                print(f"Available models in hubconf: {available}")
+                raise ValueError(f"Cannot find model for {self.model_size}")
         
         # Load local weights
         print(f"Loading weights from {self.weights_path}")
