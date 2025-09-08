@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools", "wheel", "torch", "ninja"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hashencoder"
+version = "1.0.0"
+description = "CUDA hash encoder for Earth4D spatiotemporal encoding"
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=1.10.0",
+    "numpy",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hashencoder*"]
