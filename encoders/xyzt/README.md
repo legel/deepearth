@@ -1,4 +1,4 @@
-# Earth4D: Deep Spacetime Encoder for Planetary (_x_,_y_,_z_,_t_) Deep Learning
+# Earth4D: Deep Spacetime Encoder for Planetary Simulation
 
 Earth4D is a spatiotemporal encoder built on a 4D extension of NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) (specifically, _[Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main)_).  It is designed to accelerate and optimize planetary-scale deep learning tasks, involving latitude, longitude, elevation, and time coordinates.
 
