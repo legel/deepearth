@@ -1,10 +1,10 @@
-# Earth4D: Grid4D Encoder for Planetary (X,Y,Z,T) Deep Learning
+# Earth4D: Grid4D Encoder for Planetary (_x_,_y_,_z_,_t_) Deep Learning
 
-Earth4D provides a Grid4D-based spatiotemporal encoder for planetary-scale deep learning tasks involving latitude, longitude, elevation, and time coordinates.
+Earth4D is a spatiotemporal encoder built on a 4D extension of NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) (specifically, _[Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main)_).  It is designed to accelerate and optimize planetary-scale deep learning tasks, involving latitude, longitude, elevation, and time coordinates.
 
 ## Overview
 
-Earth4D transforms your Grid4D LFMC prediction model into a general-purpose encoder for any spatiotemporal prediction task. It uses decomposed hash encoding with separate spatial (xyz) and temporal (xyt, yzt, xzt) projections for efficient 4D representation learning.
+Earth4D is a general-purpose encoder for any spatiotemporal prediction task. It uses decomposed hash encoding with separate spatial (xyz) and temporal (xyt, yzt, xzt) projections for efficient 4D representation learning.
 
 ## Key Features
 
@@ -13,21 +13,6 @@ Earth4D transforms your Grid4D LFMC prediction model into a general-purpose enco
 - **Optional automatic ECEF coordinate conversion** (lat/lon/elevation → normalized ECEF)
 - **Configurable multi-resolution scales** in meters and seconds
 - **Designed for planetary-scale spatiotemporal modeling**
-
-## Installation
-
-```bash
-# Clone the deepearth repository
-git clone https://github.com/legel/deepearth
-cd deepearth
-
-# Install dependencies
-pip install torch torchvision
-pip install numpy
-
-# Install hash encoder (adjust based on your setup)
-pip install hashencoder  # or your specific hash encoding library
-```
 
 ## Usage
 
@@ -169,42 +154,3 @@ This decomposition enables efficient learning of spatiotemporal patterns while m
 2. **Coordinate Normalization**: Ensure coordinates are properly normalized to [0, 1]
 3. **Memory Usage**: Adjust hash map sizes (`spatial_hashmap`, `temporal_hashmap`) based on available memory
 4. **Resolution Tuning**: Start with default resolutions and adjust based on your data scale
-
-## Examples
-
-See the [examples](examples/) directory for complete working examples:
-- LFMC prediction with Earth4D
-- Climate modeling with multi-scale features
-- Species distribution modeling with raw coordinates
-
-## Citation
-
-If you use Earth4D in your research, please cite:
-
-```bibtex
-@software{earth4d2024,
-  title={Earth4D: Grid4D Encoder for Planetary Deep Learning},
-  author={Grid4D LFMC Team},
-  year={2024},
-  url={https://github.com/legel/deepearth}
-}
-```
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## Support
-
-For questions and support:
-- Create an issue on GitHub
-- Check the [DeepEarth documentation](https://deepearth.readthedocs.io)
-- Join the DeepEarth community discussions
