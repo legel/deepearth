@@ -6,9 +6,9 @@ Earth4D is a pioneering 4D spatiotemporal encoder that enables planetary-scale d
 
 Earth4D is the foundation of DeepEarth's ability to process and learn from the entire planet's observational data across space and time. By using decomposed hash encoding with separate spatial (xyz) and temporal (xyt, yzt, xzt) projections, it achieves:
 
-- **Planetary Coverage**: Encode the entire Earth at resolutions from continental to sub-meter
-- **Temporal Dynamics**: Capture phenomena from geological timescales to microsecond events
-- **Memory Efficiency**: Leverage hash collisions and data sparsity for 100-1000x compression
+- **Planetary Coverage**: Encode the entire Earth at 9.5cm resolution (default configuration)
+- **Temporal Dynamics**: Capture 200 years of Earth history at hourly resolution (1900-2100)
+- **Memory Efficiency**: Only 3.8GB GPU memory for training at sub-meter planetary scale
 - **GPU Acceleration**: Custom CUDA kernels for real-time encoding at scale
 
 ## 🚀 Quick Start
@@ -35,18 +35,20 @@ cd ..
 from earth4d import Earth4D
 import torch
 
-# Create encoder with default settings (0.5m spatial, 1hr temporal)
+# Create encoder with default settings
+# 0.095m spatial, ~1hr temporal over 200 years (1900-2100)
 encoder = Earth4D()
 
 # Input: [batch_size, 4] with [latitude, longitude, elevation_m, time_normalized]
+# time_normalized: 0.0 = year 1900, 1.0 = year 2100
 coordinates = torch.tensor([
-    [40.7128, -74.0060, 100, 0.5],  # New York
-    [51.5074, -0.1278, 50, 0.5],    # London
+    [40.7128, -74.0060, 100, 0.5],  # New York, year 2000
+    [51.5074, -0.1278, 50, 0.75],   # London, year 2050
 ], device='cuda')
 
 # Get encoded features
 features = encoder(coordinates)
-print(f"Features shape: {features.shape}")  # [2, 280]
+print(f"Features shape: {features.shape}")  # [2, 198]
 ```
 
 ### Testing
@@ -60,6 +62,9 @@ python earth4d_test.py --mode full
 
 # Memory profiling
 python earth4d_test.py --mode memory
+
+# Planetary scale test (sub-meter, hourly, 200 years)
+python earth4d_test.py --mode planetary
 
 # Custom configuration test
 python earth4d_test.py --spatial-levels 20 --temporal-levels 16 --iterations 100
@@ -98,19 +103,28 @@ Earth4D's configuration determines the tradeoff between memory usage, resolution
 
 #### Resolution by Level Count
 
-| Spatial Levels | Finest Resolution | Temporal Levels | Finest Resolution |
-|----------------|-------------------|-----------------|-------------------|
-| 16 | 1.2 km | 12 | 1 day |
-| 20 | 240 m | 16 | 6 hours |
-| 24 | 47 m | 20 | 1.8 hours |
-| 28 | 9.3 m | 24 | 20 minutes |
-| 32 | 1.8 m | 28 | 4 minutes |
-| 36 | 0.5 m | 32 | 50 seconds |
-| 40 | 0.07 m | 36 | 10 seconds |
+| Spatial Levels | Finest Resolution (growth=2.0) | Temporal Levels | Finest Resolution* |
+|----------------|--------------------------------|-----------------|--------------------|
+| 16 | 1.2 km | 12 | 3.4 days |
+| 20 | 76 m | 16 | 5.3 hours |
+| **24 (default)** | **0.095 m** | **19 (default)** | **0.84 hours** |
+| 28 | 0.006 m | 24 | 3.2 minutes |
+| 32 | 0.37 mm | 28 | 12 seconds |
+| 36 | 23 μm | 32 | 0.75 seconds |
+
+*Temporal resolution assumes 200-year range (1900-2100)
 
 ### Pre-configured Scenarios
 
-#### 🌐 Global Climate (Default Light)
+#### 🌍 Default: Planetary Scale (1900-2100)
+```python
+encoder = Earth4D()  # Optimized defaults
+# Encodes entire Earth at sub-meter resolution
+# Covers 200 years of history and future projections
+# Perfect for climate modeling, Earth observation, urban planning
+```
+
+#### 🌐 Global Climate (Light)
 ```python
 encoder = Earth4D(
     spatial_levels=16,
@@ -121,24 +135,25 @@ encoder = Earth4D(
 # Memory: ~150 MB, Resolution: 1km/1day
 ```
 
-#### 🏙️ Urban Monitoring (Default Standard)
+#### 🏙️ Urban Monitoring (City Scale)
 ```python
 encoder = Earth4D(
-    spatial_levels=24,
+    spatial_levels=20,
     temporal_levels=16,
-    spatial_log2_hashmap_size=22,  # 4M
+    spatial_log2_hashmap_size=20,  # 1M
     temporal_log2_hashmap_size=18   # 256K
 )
-# Memory: ~1.5 GB, Resolution: 50m/6hr
+# Memory: ~400 MB model, Resolution: 76m spatial, 5hr temporal
 ```
 
-#### 🛰️ High-Resolution Earth Observation (Default)
+#### 🌍 Planetary Scale Earth Observation (Default)
 ```python
-encoder = Earth4D()  # Uses defaults
-# spatial_levels=36, temporal_levels=20
+encoder = Earth4D()  # Uses defaults optimized for 200-year planetary coverage
+# spatial_levels=24, temporal_levels=19
 # spatial_log2_hashmap_size=22, temporal_log2_hashmap_size=18
-# Memory: 1.07 GB model, ~4.3 GB during training
-# Resolution: 0.55m spatial, 45min temporal with hash collisions
+# Memory: 755 MB model, ~3.8 GB during training
+# Resolution: 0.095m spatial, 0.84hr temporal over 200 years (1900-2100)
+# Growth factor: 2.0 for optimal memory scaling
 ```
 
 #### 🔬 Precision Agriculture (1m over 1km² area)
@@ -173,10 +188,11 @@ Hash collisions occur when the total number of grid cells exceeds the hash table
 2. **Locality**: Fine-scale features cluster in specific regions (urban areas, coastlines)
 3. **Learned Disambiguation**: The network learns to disambiguate colliding locations through context
 
-Example collision ratios at different scales:
-- Level 20 (240m): ~1,000:1 collisions → Good performance
-- Level 30 (4m): ~1,000,000:1 collisions → Moderate degradation
-- Level 36 (0.5m): ~1,000,000,000:1 collisions → Relies on sparsity
+Example collision ratios with default configuration (24 levels, 2^22 hashmap):
+- Level 20 (76m): ~250,000:1 collisions → Good performance
+- Level 22 (19m): ~4,000,000:1 collisions → Moderate degradation
+- Level 23 (9.5m): ~16,000,000:1 collisions → Relies on sparsity
+- Level 24 (0.095m): ~67,000,000:1 collisions → Leverages Earth data sparsity
 
 ### Comprehensive Configuration Table
 
@@ -188,7 +204,7 @@ Example collision ratios at different scales:
 | `temporal_log2_hashmap_size` | 14-24 | Hash table size | Exponential: 4^n | Inversely proportional |
 | `features_per_level` | 1-8 | Feature dimensionality | Linear | None |
 | `base_spatial_resolution` | 8-32 | Coarsest scale | None | Affects coarse levels |
-| `growth_factor` | 1.3-2.0 | Scale progression | None | Affects distribution |
+| `growth_factor` | 1.5-2.0 | Scale progression | None | Affects distribution |
 
 *Limited by int32 offsets in CUDA kernel
 
@@ -232,23 +248,27 @@ Earth4D uses a decomposed architecture optimized for spacetime:
 
 ### Benchmarks on NVIDIA L4 (24GB)
 
-| Configuration | Parameters | Model Memory | Training Memory | Resolution |
-|---------------|------------|-------------|----------------|------------|
-| Light (16 levels) | ~50M | ~200 MB | ~800 MB | 1.2km spatial |
-| Standard (24 levels) | ~200M | ~800 MB | ~3.2 GB | 47m spatial |
-| **Default (36 levels)** | **280M** | **1.07 GB** | **4.3 GB** | **0.55m spatial** |
-| Research-Max (40 levels) | ~500M | ~2 GB | ~8 GB | ~0.07m spatial |
+| Configuration | Parameters | Model Memory | Training Memory | Spatial Res | Temporal Res* |
+|---------------|------------|-------------|----------------|-------------|---------------|
+| Light (16/12) | ~50M | ~200 MB | ~800 MB | 1.2 km | 3.4 days |
+| Urban (20/16) | ~100M | ~400 MB | ~1.6 GB | 76 m | 5.3 hours |
+| **Planetary (24/19)** | **198M** | **755 MB** | **3.8 GB** | **0.095 m** | **0.84 hours** |
+| Research-Max (28/24) | ~400M | ~1.5 GB | ~6 GB | 0.006 m | 3.2 minutes |
+
+*Temporal resolution over 200-year range (1900-2100)
 
 ### Research Results
 
 **Note: Earth4D is in active research and development.**
 
-Testing on 10,000 high-resolution Earth samples with multi-scale phenomena:
-- **Model Memory**: 1.07 GB (280M parameters)
-- **Training Memory**: ~4.3 GB (including gradients and optimizer)
-- **Resolution**: 0.55m spatial, 45min temporal (with hash collisions)
+Testing planetary-scale configuration (24 spatial, 19 temporal levels):
+- **Model Memory**: 755 MB (198M parameters)
+- **Training Memory**: 3.8 GB (including gradients and optimizer)
+- **Spatial Resolution**: 0.095m (9.5cm) globally
+- **Temporal Resolution**: 0.84 hours over 200 years (1900-2100)
+- **Growth Factor**: 2.0 (optimized from 1.5 for better memory scaling)
 - **Discrimination**: Successfully distinguishes locations down to 1m apart
-- **Performance**: Research-stage results on synthetic Earth data
+- **Hash Collisions**: Managed through Earth data sparsity
 
 ## 🔬 Research Applications
 

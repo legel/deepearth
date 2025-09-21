@@ -228,17 +228,17 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
 
     def __init__(self,
                  # Spatial encoding configuration
-                 spatial_levels: int = 16,
+                 spatial_levels: int = 24,  # Match Earth4D default
                  spatial_features: int = 2,
                  spatial_base_res: int = 16,
-                 spatial_max_res: int = 512,
-                 spatial_hashmap: int = 19,
+                 spatial_max_res: int = 134217728,  # 2^27 for sub-meter
+                 spatial_hashmap: int = 22,  # Match Earth4D default
                  # Temporal encoding configuration
-                 temporal_levels: int = 16,
+                 temporal_levels: int = 19,  # Match Earth4D default
                  temporal_features: int = 2,
                  temporal_base_res: List[int] = None,
                  temporal_max_res: List[int] = None,
-                 temporal_hashmap: int = 19,
+                 temporal_hashmap: int = 18,  # Match Earth4D default
                  # Coordinate bounds
                  spatial_bound: float = 1.0,
                  temporal_bound: float = 1.0,
@@ -518,14 +518,14 @@ class Earth4D(nn.Module):
 
     def __init__(self,
                  # Core encoder configuration
-                 spatial_levels: int = 36,  # Default: 0.5m resolution globally
-                 temporal_levels: int = 20,  # Default: 1-hour resolution over year
+                 spatial_levels: int = 24,  # Default: 0.3m resolution globally
+                 temporal_levels: int = 19,  # Default: ~1hr over 200 years (1900-2100)
                  features_per_level: int = 2,
                  spatial_log2_hashmap_size: int = 22,  # 4M entries (fits in L4 GPU)
                  temporal_log2_hashmap_size: int = 18,  # 256K entries
                  base_spatial_resolution: float = 16.0,
                  base_temporal_resolution: float = 8.0,
-                 growth_factor: float = 1.5,
+                 growth_factor: float = 2.0,  # Changed from 1.5 for better memory scaling
                  target_spatial_km: float = None,
                  target_temporal_days: float = None,
                  verbose: bool = True):
@@ -534,7 +534,7 @@ class Earth4D(nn.Module):
 
         Args:
             spatial_levels: Number of spatial hash levels (default: 36 for 0.5m resolution)
-            temporal_levels: Number of temporal hash levels (default: 20 for hourly resolution)
+            temporal_levels: Number of temporal hash levels (default: 19 for ~1hr over 200 years)
             features_per_level: Features per level (default: 2)
             spatial_log2_hashmap_size: Log2 of spatial hashmap size (default: 22 = 4M entries)
                 - 19: 512K entries (100MB, ~10km resolution without collisions)
@@ -544,7 +544,7 @@ class Earth4D(nn.Module):
             temporal_log2_hashmap_size: Log2 of temporal hashmap size (default: 18 = 256K entries)
             base_spatial_resolution: Base resolution for spatial encoder (default: 16)
             base_temporal_resolution: Base resolution for temporal encoder (default: 8)
-            growth_factor: Growth factor between levels (default: 1.5)
+            growth_factor: Growth factor between levels (default: 2.0)
             target_spatial_km: Optional target spatial resolution in kilometers for display
             target_temporal_days: Optional target temporal resolution in days for display
             verbose: Print resolution table on initialization (default: True)

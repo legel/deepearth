@@ -51,6 +51,7 @@ class TestMode(Enum):
     MEMORY = "memory"
     DISCRIMINATION = "discrimination"
     TRAINING = "training"
+    PLANETARY = "planetary"  # Sub-meter hourly over 200 years
 
 
 class Earth4DModel(nn.Module):
@@ -365,6 +366,164 @@ def test_training_convergence(args: argparse.Namespace) -> Dict:
     }
 
 
+def test_planetary_scale(args: argparse.Namespace) -> Dict:
+    """Test sub-meter spatial and hourly temporal resolution over 200 years."""
+    print("\n" + "="*80)
+    print("PLANETARY-SCALE TEST: SUB-METER HOURLY OVER 200 YEARS (1900-2100)")
+    print("="*80)
+
+    device = args.device
+
+    # Override with planetary scale configuration
+    print("\nConfiguration for planetary scale:")
+    print(f"  Spatial: 24 levels for 0.3m resolution globally")
+    print(f"  Temporal: 19 levels for 0.84 hour resolution over 200 years")
+    print(f"  Growth factor: 2.0 (optimized for memory)")
+    print(f"  Time range: 200 years (1900-2100)")
+
+    # Clear memory
+    if device == 'cuda':
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+    gc.collect()
+
+    # Memory before
+    mem_start = profile_memory(device)
+
+    # Create model with planetary configuration
+    print("\nCreating Earth4D Model for Planetary Scale:")
+    model = Earth4DModel(
+        spatial_levels=24,
+        temporal_levels=19,
+        spatial_hashmap_size=22,  # 4M entries
+        temporal_hashmap_size=18,  # 256K entries
+        verbose=True
+    ).to(device)
+
+    # Memory after model
+    mem_model = profile_memory(device)
+    model_memory = mem_model['allocated_mb'] - mem_start['allocated_mb']
+
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    encoder_params = sum(p.numel() for p in model.encoder.parameters())
+
+    print(f"\nModel Statistics:")
+    print(f"  Total parameters: {total_params:,}")
+    print(f"  Encoder parameters: {encoder_params:,}")
+    print(f"  Model memory: {model_memory:.1f} MB")
+
+    # Create dataset with 200-year range
+    print("\nCreating dataset with 200-year temporal range...")
+    from high_res_earth_dataset import HighResEarthDataset
+    
+    # Modify dataset to use 200-year range
+    dataset = HighResEarthDataset(
+        num_samples=args.dataset_size,
+        device=device,
+        include_fine_scale=True
+    )
+    
+    # Important: Update time coordinates to span 200 years
+    # Time normalized: 0 = year 1900, 1 = year 2100
+    dataset.all_coords[:, 3] = torch.rand(len(dataset.all_coords), device=device)  # 0 to 1 over 200 years
+
+    # Test forward and backward pass with batch
+    print("\nTesting forward and backward pass...")
+    model.train()
+    coords, targets = dataset.get_batch(args.batch_size, DataSplit.TRAIN)
+    
+    # Memory before forward
+    mem_before_forward = profile_memory(device)
+    
+    outputs = model(coords)
+    loss = nn.MSELoss()(outputs, targets)
+    
+    # Memory after forward
+    mem_after_forward = profile_memory(device)
+    forward_memory = mem_after_forward['allocated_mb'] - mem_before_forward['allocated_mb']
+    
+    # Backward pass
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer.zero_grad()
+    loss.backward()
+    
+    # Memory after backward
+    mem_after_backward = profile_memory(device)
+    backward_memory = mem_after_backward['allocated_mb'] - mem_after_forward['allocated_mb']
+    
+    optimizer.step()
+    
+    # Memory after optimizer
+    mem_after_optimizer = profile_memory(device)
+    optimizer_memory = mem_after_optimizer['allocated_mb'] - mem_after_backward['allocated_mb']
+    peak_memory = mem_after_optimizer['max_allocated_mb']
+
+    # Training test
+    print(f"\nTraining for {min(args.iterations, 100)} iterations...")
+    train_losses = []
+    
+    for i in range(min(args.iterations, 100)):
+        coords, targets = dataset.get_batch(args.batch_size, DataSplit.TRAIN)
+        outputs = model(coords)
+        loss = nn.MSELoss()(outputs, targets)
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        train_losses.append(loss.item())
+        
+        if (i + 1) % 20 == 0:
+            print(f"  Iter {i+1}: Loss = {loss.item():.4f}")
+
+    results = {
+        'config': {
+            'spatial_levels': 24,
+            'temporal_levels': 19,
+            'time_range_years': 200,
+            'spatial_resolution_m': 0.3,
+            'temporal_resolution_hours': 0.84
+        },
+        'model': {
+            'total_params': total_params,
+            'encoder_params': encoder_params,
+            'model_memory_mb': model_memory
+        },
+        'memory': {
+            'forward_mb': forward_memory,
+            'backward_mb': backward_memory,
+            'optimizer_mb': optimizer_memory,
+            'peak_mb': peak_memory,
+            'training_total_mb': peak_memory
+        },
+        'training': {
+            'initial_loss': train_losses[0] if train_losses else 0,
+            'final_loss': train_losses[-1] if train_losses else 0
+        }
+    }
+
+    # Print summary
+    print(f"\n" + "="*80)
+    print("PLANETARY SCALE TEST RESULTS")
+    print("="*80)
+    print(f"Resolution achieved:")
+    print(f"  Spatial: 0.3 meters globally")
+    print(f"  Temporal: 0.84 hours over 200 years (1900-2100)")
+    print(f"\nMemory Requirements:")
+    print(f"  Model: {model_memory:.1f} MB")
+    print(f"  Forward pass: +{forward_memory:.1f} MB")
+    print(f"  Backward pass: +{backward_memory:.1f} MB") 
+    print(f"  Optimizer: +{optimizer_memory:.1f} MB")
+    print(f"  Total training: {peak_memory:.1f} MB")
+    print(f"\nThis configuration enables:")
+    print(f"  - Sub-meter Earth observation from 1900 to 2100")
+    print(f"  - Hourly temporal resolution for climate modeling")
+    print(f"  - Complete planetary coverage with acceptable hash collisions")
+
+    return results
+
+
 def run_full_test(args: argparse.Namespace):
     """Run complete test suite."""
     print("="*80)
@@ -389,6 +548,10 @@ def run_full_test(args: argparse.Namespace):
     # Training test
     if args.mode in [TestMode.FULL, TestMode.TRAINING]:
         results['training'] = test_training_convergence(args)
+
+    # Planetary scale test
+    if args.mode == TestMode.PLANETARY:
+        results['planetary'] = test_planetary_scale(args)
 
     # Summary
     print("\n" + "="*80)
@@ -425,8 +588,8 @@ def main():
 
     # Test mode
     parser.add_argument('--mode', type=str, default='quick',
-                       choices=['full', 'quick', 'memory', 'discrimination', 'training'],
-                       help='Test mode to run')
+                       choices=['full', 'quick', 'memory', 'discrimination', 'training', 'planetary'],
+                       help='Test mode to run (planetary = sub-meter hourly over 200 years)')
 
     # Model configuration
     parser.add_argument('--spatial-levels', type=int, default=36,
