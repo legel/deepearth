@@ -125,8 +125,12 @@ class HashEncoder(nn.Module):
                 assert len(desired_resolution) == input_dim
             per_level_scale = np.exp2(np.log2(desired_resolution / base_resolution) / (num_levels - 1))
         else:
-            assert len(per_level_scale) == input_dim
-            per_level_scale = np.array(per_level_scale, dtype=np.float64)
+            # Handle both scalar and array per_level_scale
+            if type(per_level_scale) is int or type(per_level_scale) is float:
+                per_level_scale = np.array([per_level_scale for _ in range(input_dim)], dtype=np.float64)
+            else:
+                assert len(per_level_scale) == input_dim
+                per_level_scale = np.array(per_level_scale, dtype=np.float64)
 
         self.input_dim = input_dim # coord dims, 2 or 3
         self.num_levels = num_levels # num levels, each level multiply resolution by 2
@@ -162,7 +166,9 @@ class HashEncoder(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        std = 1e-4
+        # With large hash tables and high collision ratios, we need stronger initialization
+        # to ensure gradients flow properly
+        std = 1e-1  # Increased to 0.1 for better gradient flow with large hash tables
         self.embeddings.data.uniform_(-std, std)
 
     def __repr__(self):
