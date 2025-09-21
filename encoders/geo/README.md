@@ -1,4 +1,4 @@
-# Pix4D to NerfStudio with Ecodash Data
+# Pix4D to NerfStudio with GeoFusion
 
 The primary goal of this document is to detail the current strategy and lessons learned in moving Pix4D data to Nerfstudio. Not everything is currently working and this document will be updated over time.
 
@@ -313,7 +313,7 @@ The primary goal of this document is to detail the current strategy and lessons 
 
 ## OPF Directory Structure
 
-Directory Structure from OPF seen in practice for the Ecodash data. Note that the OPF specification has more information: https://github.com/Pix4D/opf-spec.
+Directory Structure from OPF seen in practice for GeoFusion data. Note that the OPF specification has more information: https://github.com/Pix4D/opf-spec.
 ```
 ├── computed_depth_maps
 │   # Contains .tiff depth maps computed from the images (no lidar)
