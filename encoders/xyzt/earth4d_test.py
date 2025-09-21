@@ -207,12 +207,13 @@ def test_resolution_discrimination(args: argparse.Namespace) -> Dict:
     device = args.device
 
     # Create model
+    print(f"\nCreating Earth4D Model:")
     model = Earth4DModel(
         spatial_levels=args.spatial_levels,
         temporal_levels=args.temporal_levels,
         spatial_hashmap_size=args.spatial_hashmap,
         temporal_hashmap_size=args.temporal_hashmap,
-        verbose=False
+        verbose=True  # Show Earth4D resolution table
     ).to(device)
 
     model.eval()
@@ -275,12 +276,13 @@ def test_training_convergence(args: argparse.Namespace) -> Dict:
     device = args.device
 
     # Create model
+    print(f"\nCreating Earth4D Model:")
     model = Earth4DModel(
         spatial_levels=args.spatial_levels,
         temporal_levels=args.temporal_levels,
         spatial_hashmap_size=args.spatial_hashmap,
         temporal_hashmap_size=args.temporal_hashmap,
-        verbose=False
+        verbose=True  # Show Earth4D resolution table
     ).to(device)
 
     # Create dataset

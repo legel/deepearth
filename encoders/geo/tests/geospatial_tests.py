@@ -39,10 +39,10 @@ import os
 import csv
 import pathlib
 
-from geospatial.utils import _human_unit, wrap_lat, wrap_lon_error, wrap_lat_error
-from geospatial.data_structures import CoordinateSet, BoundingBox, GeoOrientation, GeoPoint
-from geospatial.geofusion import GeoFusionDataLoader
-from geospatial.geo2xyz import GeospatialConverter
+from encoders.geo.utils import _human_unit, wrap_lat, wrap_lon_error, wrap_lat_error
+from encoders.geo.data_structures import CoordinateSet, BoundingBox, GeoOrientation, GeoPoint
+from encoders.geo.geofusion import GeoFusionDataLoader
+from encoders.geo.geo2xyz import GeospatialConverter
 
 # --------------------------------------------------------------------------- #
 #  Precision test suite                                                       #

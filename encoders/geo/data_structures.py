@@ -23,7 +23,7 @@
 #
 #  Quick‑start
 #  -----------
-#  >>> from geospatial.data_structures import CoordinateSet
+#  >>> from encoders.geo.data_structures import CoordinateSet
 #  >>> coords = CoordinateSet(
 #  ...     lat=37.7749,
 #  ...     lon=-122.4194,

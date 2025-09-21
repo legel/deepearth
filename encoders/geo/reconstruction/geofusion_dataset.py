@@ -23,10 +23,10 @@ import numpy as np # For checking depth map shape
 
 from torch.utils.data import Dataset
 
-from geospatial.geo2xyz import GeospatialConverter
-from geospatial.geofusion import GeoFusionDataLoader
+from encoders.geo.geo2xyz import GeospatialConverter
+from encoders.geo.geofusion import GeoFusionDataLoader
 # Import utility functions
-from geospatial.utils import _safe_div # Import specifically for debug print
+from encoders.geo.utils import _safe_div # Import specifically for debug print
 # Import TIFF loading utility
 from .point_cloud_utils import load_tiff
 

@@ -137,7 +137,8 @@ encoder = Earth4D(
 encoder = Earth4D()  # Uses defaults
 # spatial_levels=36, temporal_levels=20
 # spatial_log2_hashmap_size=22, temporal_log2_hashmap_size=18
-# Memory: ~1.1 GB, Resolution: 0.5m/1hr with acceptable collisions
+# Memory: 1.07 GB model, ~4.3 GB during training
+# Resolution: 0.55m spatial, 45min temporal with hash collisions
 ```
 
 #### 🔬 Precision Agriculture (1m over 1km² area)
@@ -231,20 +232,23 @@ Earth4D uses a decomposed architecture optimized for spacetime:
 
 ### Benchmarks on NVIDIA L4 (24GB)
 
-| Configuration | Parameters | Memory | Throughput | Training |
-|---------------|------------|--------|------------|----------|
-| Light (16 levels) | 50M | 200 MB | 100K samples/sec | 5 min |
-| **Standard (24 levels)** | **200M** | **1 GB** | **50K samples/sec** | **15 min** |
-| **High-Res (36 levels)** | **280M** | **1.1 GB** | **20K samples/sec** | **30 min** |
-| Maximum (40 levels) | 500M | 2 GB | 10K samples/sec | 60 min |
+| Configuration | Parameters | Model Memory | Training Memory | Resolution |
+|---------------|------------|-------------|----------------|------------|
+| Light (16 levels) | ~50M | ~200 MB | ~800 MB | 1.2km spatial |
+| Standard (24 levels) | ~200M | ~800 MB | ~3.2 GB | 47m spatial |
+| **Default (36 levels)** | **280M** | **1.07 GB** | **4.3 GB** | **0.55m spatial** |
+| Research-Max (40 levels) | ~500M | ~2 GB | ~8 GB | ~0.07m spatial |
 
-### Real-World Results
+### Research Results
 
-Testing on 100,000 high-resolution Earth samples with multi-scale phenomena:
-- **Training MAPE**: 33% (good fit to training data)
-- **Validation MAPE**: 35% (excellent generalization)
-- **Spatial Holdout**: 40% (cross-region generalization)
-- **Temporal Holdout**: 35% (cross-time generalization)
+**Note: Earth4D is in active research and development.**
+
+Testing on 10,000 high-resolution Earth samples with multi-scale phenomena:
+- **Model Memory**: 1.07 GB (280M parameters)
+- **Training Memory**: ~4.3 GB (including gradients and optimizer)
+- **Resolution**: 0.55m spatial, 45min temporal (with hash collisions)
+- **Discrimination**: Successfully distinguishes locations down to 1m apart
+- **Performance**: Research-stage results on synthetic Earth data
 
 ## 🔬 Research Applications
 

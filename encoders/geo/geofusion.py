@@ -23,8 +23,8 @@
 #
 #  Quick‑start
 #  -----------
-#  >>> from geospatial.geofusion import GeoFusionDataLoader
-#  >>> from geospatial.geo2xyz import GeospatialConverter
+#  >>> from encoders.geo.geofusion import GeoFusionDataLoader
+#  >>> from encoders.geo.geo2xyz import GeospatialConverter
 #  >>> converter = GeospatialConverter()
 #  >>> loader = GeoFusionDataLoader(converter)
 #  >>> loader.load_csv("geofusion_data.csv")
@@ -41,7 +41,7 @@ import torch
 from typing import Optional, Tuple
 from dataclasses import dataclass
 
-from geospatial.data_structures import GeoOrientation
+from encoders.geo.data_structures import GeoOrientation
 
 # --------------------------------------------------------------------------- #
 #  GeoFusion data loader                                                       #
