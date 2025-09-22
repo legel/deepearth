@@ -184,15 +184,24 @@ encoder = Earth4D(
 
 Hash collisions occur when the total number of grid cells exceeds the hash table size. This is **expected and acceptable** for Earth data because:
 
-1. **Sparsity**: High-frequency spatial variations (like individual tree positions) don't occur uniformly across the planet
-2. **Locality**: Fine-scale features cluster in specific regions (urban areas, coastlines)
-3. **Learned Disambiguation**: The network learns to disambiguate colliding locations through context
+1. **Natural Sparsity**: Earth observations are inherently sparse
+   - Oceans, deserts, ice sheets have minimal observations
+   - Most fine-scale grid cells are empty
+   - Collisions between empty cells don't affect model performance
 
-Example collision ratios with default configuration (24 levels, 2^22 hashmap):
-- Level 20 (76m): ~250,000:1 collisions → Good performance
-- Level 22 (19m): ~4,000,000:1 collisions → Moderate degradation
-- Level 23 (9.5m): ~16,000,000:1 collisions → Relies on sparsity
-- Level 24 (0.095m): ~67,000,000:1 collisions → Leverages Earth data sparsity
+2. **Learned Disambiguation**: The model learns to resolve collisions
+   - MLP decoder disambiguates based on multi-scale context
+   - Coarse levels (collision-free) provide global context
+   - Fine levels (with collisions) add local detail
+
+3. **Collision Ratios** (24 levels, 2^22 hashmap):
+   - Level 10 (98km): No collisions (direct indexing)
+   - Level 15 (4.9km): ~1:1 (within hash table capacity)
+   - Level 20 (76m): ~33:1 collisions (manageable)
+   - Level 22 (19m): ~530:1 collisions (relies on sparsity)
+   - Level 24 (0.095m): ~33,000:1 collisions (extreme sparsity required)
+
+**Practical Impact**: The 3.61% MAPE achieved on AlphaEarth embeddings demonstrates successful collision handling at planetary scale.
 
 ### Comprehensive Configuration Table
 
@@ -226,10 +235,21 @@ Temporal_Params = 3 × min(2^temporal_hashmap, temporal_levels × grid_resolutio
 Earth4D uses a decomposed architecture optimized for spacetime:
 
 1. **Spatial Encoder (XYZ)**: 3D hash encoding of ECEF coordinates
-2. **Temporal Projections**: Three 3D encodings:
-   - XYT: Longitude-time patterns (weather systems)
-   - YZT: Latitude-elevation-time (seasonal variations)
-   - XZT: Cross-section-time (diurnal cycles)
+   - Encodes full 3D position in Earth-Centered Earth-Fixed frame
+   - 24 levels × 2 features = 48D output
+   - Hash table: 2^22 entries (4M)
+
+2. **Spatiotemporal Projections**: Three 3D encodings capturing orthogonal planes:
+   - **XYT**: Equatorial plane + time (X-Y plane through Earth's center)
+   - **YZT**: 90°E meridian plane + time (Y-Z plane through poles)
+   - **XZT**: Prime meridian plane + time (X-Z plane through 0° longitude)
+   - Each: 19 levels × 2 features = 38D output
+   - Hash table: 2^18 entries (256K) per projection
+
+Note: ECEF axes are NOT aligned with lat/lon/elevation:
+- X: Points through 0° lat, 0° lon (equator/prime meridian intersection)
+- Y: Points through 0° lat, 90°E lon (equator in Indian Ocean)
+- Z: Points through North Pole
 
 ### Coordinate System
 
@@ -237,12 +257,58 @@ Earth4D uses a decomposed architecture optimized for spacetime:
 - **Internal**: ECEF (Earth-Centered Earth-Fixed) for uniform spatial hashing
 - **Normalization**: Automatic scaling to [-1, 1] for hash encoding
 
-### Hash Encoding Properties
+### Hash Encoding Algorithm
 
-- **Multi-resolution**: Geometric series of grid resolutions
-- **Collision handling**: XOR-based hashing for uniform distribution
-- **Initialization**: Uniform random [-0.1, 0.1] for gradient flow
-- **Interpolation**: Trilinear for smooth gradients
+#### Multi-Resolution Decomposition
+For each level L (0 to 23 for spatial, 0 to 18 for temporal):
+- Resolution at level L = `base_resolution * (2^L)`
+- Creates progressively finer grids from 16 cells to 134M cells (spatial level 23)
+
+#### Grid Mapping & Hashing
+```cuda
+// For each coordinate at each level:
+1. Map to grid: pos_grid[d] = floor(input[d] * scale[d])
+2. Calculate grid index:
+   if (grid_size <= hashmap_size) {
+      // Direct indexing for coarse levels (no collisions)
+      index = x + y*stride_x + z*stride_xy
+   } else {
+      // Hash function for fine levels (with collisions)
+      index = fast_hash(pos_grid) % hashmap_size
+   }
+```
+
+#### XOR-Prime Hash Function
+```cuda
+uint32_t fast_hash(pos_grid[D]) {
+    // Large primes for mixing (first is 1 for memory coherence)
+    primes[] = {1, 2654435761, 805459861, 3674653429, ...}
+    result = 0
+    for d in D:
+        result ^= pos_grid[d] * primes[d]
+    return result
+}
+```
+
+#### Smoothstep Interpolation
+- Uses smoothstep function: `S(t) = 3t² - 2t³`
+- Provides C¹ continuous gradients (derivative: `6t(1-t)`)
+- Trilinear interpolation across 8 corners (2³ for 3D)
+- Better than linear for continuous Earth phenomena
+
+#### Feature Concatenation
+- XYZ encoder → 48D features (24 levels × 2 features)
+- XYT encoder → 38D features (19 levels × 2 features)
+- YZT encoder → 38D features (19 levels × 2 features)
+- XZT encoder → 38D features (19 levels × 2 features)
+- **Total**: 162D feature vector
+
+### Hash Table Properties
+
+- **No Explicit Regularization**: No sparsity enforcement or uniform distribution constraints
+- **Initialization**: Embeddings uniformly in [-0.1, 0.1] for strong gradient flow
+- **Collision Handling**: Learned disambiguation through MLP decoder
+- **Memory Efficiency**: 4M spatial + 3×256K temporal hash entries << theoretical grid size
 
 ## 📈 Performance
 
