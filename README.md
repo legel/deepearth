@@ -26,11 +26,11 @@ DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemp
 </div>
 
 ### Key Technical Specifications (Production-Tested):
-- **Spatial Resolution**: 24 levels with 2^22 hashmap (4M entries) - achieves ~1km resolution with acceptable collisions
-- **Temporal Resolution**: 19 levels with 2^18 hashmap (256K entries) - covers 200 years (1900-2100) at ~1hr precision
-- **Model Size**: ~17MB for Earth4D encoder, total ~20MB with MLP decoder
+- **Spatial Resolution**: 24 levels with 2^22 hashmap (4M entries) - achieves 0.095m (9.5cm) finest resolution globally
+- **Temporal Resolution**: 19 levels with 2^18 hashmap (256K entries) - covers 200 years (1900-2100) at 0.84hr precision
+- **Model Size**: 198M parameters (755MB) for Earth4D encoder, total model ~200M params
 - **Training Performance**: 200 epochs in <2 hours on single L4 GPU with 3.2M samples
-- **Memory Efficiency**: Full dataset + model fits in 24GB GPU memory
+- **Memory Usage**: ~3.8GB during training (includes model, gradients, optimizer states)
 
 The first prototype version of DeepEarth is now validated with Earth4D encoding planetary coordinates (_x_, _y_, _z_, _t_) for predicting AlphaEarth embeddings. Earth4D uses multi-resolution hash encoding for efficient spatiotemporal representation learning. Through this approach, DeepEarth enables breakthrough AI representations for global scientific simulation and discovery.
 
@@ -79,9 +79,9 @@ import torch
 
 # Initialize Earth4D with production-tested parameters
 encoder = Earth4D(
-    spatial_levels=24,              # 24 levels for ~1km to sub-meter resolution
-    temporal_levels=19,              # 19 levels for 200-year coverage at ~1hr precision  
-    spatial_log2_hashmap_size=22,   # 4M entries (1GB memory)
+    spatial_levels=24,              # 24 levels: 0.095m finest resolution globally
+    temporal_levels=19,              # 19 levels: 200-year coverage at 0.84hr precision  
+    spatial_log2_hashmap_size=22,   # 4M entries (755MB model memory)
     temporal_log2_hashmap_size=18,  # 256K entries
     verbose=True                     # Print resolution table
 )
@@ -163,12 +163,12 @@ optimizer.step()
 
 ### Memory and Performance Guidelines
 
-| Configuration | Hashmap Size | Memory | Resolution | Use Case |
-|--------------|-------------|--------|------------|----------|
-| Small (L=16, log2=19) | 512K | 100MB | ~10km | Regional models |
-| **Medium (L=24, log2=22)** | **4M** | **1GB** | **~1km** | **Continental (recommended)** |
-| Large (L=32, log2=24) | 16M | 4GB | ~100m | Country-scale |
-| Extreme (L=40, log2=26) | 64M | 14GB | ~10m | City-scale |
+| Configuration | Hashmap Size | Model Memory | Training Memory | Finest Resolution | Use Case |
+|--------------|-------------|--------------|-----------------|-------------------|----------|
+| Light (L=16, log2=19) | 512K | ~200MB | ~800MB | 1.2km | Regional models |
+| **Planetary (L=24, log2=22)** | **4M** | **755MB** | **3.8GB** | **0.095m** | **Global (default)** |
+| Research (L=28, log2=24) | 16M | ~1.5GB | ~6GB | 0.006m | High-precision |
+| Extreme (L=32, log2=26) | 64M | ~4GB | ~14GB | 0.37mm | Ultra-fine local |
 
 ### Coordinate Format
 
@@ -181,8 +181,10 @@ Earth4D expects input coordinates in the following format:
 The encoder automatically:
 1. Converts lat/lon/elevation to ECEF (Earth-Centered, Earth-Fixed) coordinates using WGS84
 2. Normalizes spatial coordinates for optimal hash encoding
-3. Applies multi-resolution encoding at specified levels
-4. Returns concatenated spatial and temporal features
+3. Applies multi-resolution encoding from coarse (km-scale) to fine (0.095m at level 24)
+4. Returns concatenated spatial (96D) and temporal (76D) features = 172D total
+
+Note: While the finest resolution is 0.095m, hash collisions are managed through learned disambiguation. The sparsity of Earth observation data (e.g., biodiversity observations) allows the model to effectively utilize the fine resolutions despite the 4M hash table limit.
 
 See [SPECIFICATIONS.md](https://github.com/legel/deepearth/blob/main/SPECIFICATIONS.MD) for full architectural details.
 
