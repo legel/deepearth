@@ -26,11 +26,11 @@ DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemp
 </div>
 
 ### Key Technical Specifications:
-- **Spatial Encoding (XYZ)**: 24 levels × 2 features = 48D - encodes 3D position (lat/lon/elevation)
+- **Spatial Encoding (XYZ)**: 24 levels × 2 features = 48D - encodes 3D ECEF position
 - **Spatiotemporal Encoding**: 19 levels × 2 features × 3 projections = 114D
-  - XYT projection: 38D - captures longitude-time patterns (e.g., weather systems moving east-west)
-  - YZT projection: 38D - captures latitude-elevation-time patterns (e.g., seasonal variations by latitude)
-  - XZT projection: 38D - captures cross-section-time patterns (e.g., diurnal cycles)
+  - XYT projection: 38D - captures patterns in the equatorial plane over time (X-Y plane through Earth's center)
+  - YZT projection: 38D - captures patterns in the 90°E meridian plane over time (Y-Z plane through poles)
+  - XZT projection: 38D - captures patterns in the prime meridian plane over time (X-Z plane through 0° longitude)
 - **Total Output**: 48D (spatial) + 114D (spatiotemporal) = 162D feature vector
 - **Resolution**: 0.095m spatial, 0.84hr temporal (finest levels with 2^22 spatial, 2^18 temporal hashmaps)
 - **Model Size**: 198M parameters (755MB) for Earth4D encoder
@@ -185,15 +185,18 @@ Earth4D expects input coordinates in the following format:
 
 The encoder automatically:
 1. Converts lat/lon/elevation to ECEF (Earth-Centered, Earth-Fixed) coordinates using WGS84
-2. Normalizes spatial coordinates for optimal hash encoding
+   - X axis: Points through 0° lat, 0° lon (intersection of equator and prime meridian)
+   - Y axis: Points through 0° lat, 90°E lon (equator in Indian Ocean)
+   - Z axis: Points through North Pole (90° lat)
+2. Normalizes ECEF coordinates for optimal hash encoding
 3. Applies multi-resolution encoding through four decomposed projections:
-   - **XYZ** (3D spatial): 24 levels × 2 features = 48D
-   - **XYT** (longitude-time): 19 levels × 2 features = 38D 
-   - **YZT** (latitude-elevation-time): 19 levels × 2 features = 38D
-   - **XZT** (cross-section-time): 19 levels × 2 features = 38D
+   - **XYZ** (3D spatial): 24 levels × 2 features = 48D - full 3D position
+   - **XYT** (equatorial plane + time): 19 levels × 2 features = 38D
+   - **YZT** (90°E meridian plane + time): 19 levels × 2 features = 38D
+   - **XZT** (prime meridian plane + time): 19 levels × 2 features = 38D
 4. Returns concatenated 162D feature vector (48D + 38D + 38D + 38D)
 
-Note: While the finest resolution is 0.095m spatially, hash collisions are managed through learned disambiguation. The sparsity of Earth observation data (e.g., biodiversity observations) allows the model to effectively utilize fine resolutions despite the 4M hash table limit.
+Note: The three spatiotemporal projections (XYT, YZT, XZT) capture dynamics in orthogonal planes through Earth's center, enabling the model to learn different patterns of movement and change across the planet. Hash collisions are managed through learned disambiguation, with Earth's sparse observation data allowing effective use of fine resolutions.
 
 See [SPECIFICATIONS.md](https://github.com/legel/deepearth/blob/main/SPECIFICATIONS.MD) for full architectural details.
 
