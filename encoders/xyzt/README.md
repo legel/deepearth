@@ -51,24 +51,6 @@ features = encoder(coordinates)
 print(f"Features shape: {features.shape}")  # [2, 198]
 ```
 
-### Testing
-
-```bash
-# Quick test with default configuration
-python earth4d_test.py --mode quick
-
-# Full test suite
-python earth4d_test.py --mode full
-
-# Memory profiling
-python earth4d_test.py --mode memory
-
-# Planetary scale test (sub-meter, hourly, 200 years)
-python earth4d_test.py --mode planetary
-
-# Custom configuration test
-python earth4d_test.py --spatial-levels 20 --temporal-levels 16 --iterations 100
-```
 
 ## 📊 Configuration Guide
 
