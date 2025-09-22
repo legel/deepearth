@@ -8,6 +8,23 @@ DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemp
 
 **Breakthrough Achievement**: Earth4D successfully trained to predict Google DeepMind's AlphaEarth 64D embeddings with **3.61% MAPE** (Mean Absolute Percentage Error) on biodiversity data around iNaturalist flower visitations. This demonstrates Earth4D's capability as a universal spatiotemporal encoder for planetary-scale ecological intelligence.
 
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <img src="https://github.com/legel/deepearth/blob/main/docs/earth4d_rgb_progression.gif" alt="Earth4D RGB Predictions" width="400"/>
+        <br/>
+        <sub><b>Earth4D learning to predict AlphaEarth RGB projections</b><br/>Bay Area biodiversity, epochs 0→200</sub>
+      </td>
+      <td align="center">
+        <img src="https://github.com/legel/deepearth/blob/main/docs/earth4d_error_progression.gif" alt="Earth4D Error Reduction" width="400"/>
+        <br/>
+        <sub><b>Prediction error reduction during training</b><br/>MAPE: 15%→3.61% over 200 epochs</sub>
+      </td>
+    </tr>
+  </table>
+</div>
+
 ### Key Technical Specifications (Production-Tested):
 - **Spatial Resolution**: 24 levels with 2^22 hashmap (4M entries) - achieves ~1km resolution with acceptable collisions
 - **Temporal Resolution**: 19 levels with 2^18 hashmap (256K entries) - covers 200 years (1900-2100) at ~1hr precision
@@ -474,7 +491,7 @@ While Earth4D has been validated on AlphaEarth embeddings, it can predict any sp
 - Human activity patterns (land use, population density)
 - Any georeferenced time-series data
 
-For more details see the [technical specifications](https://github.com/legel/deepearth/blob/main/SPECIFICATIONS.MD) and [pre-print](https://github.com/legel/deepearth/blob/main/docs/deepearth.pdf).
+For more details see the [technical specifications](https://github.com/legel/deepearth/blob/main/SPECIFICATIONS.MD).
 
 ## License
 
