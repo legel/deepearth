@@ -72,9 +72,9 @@ DeepEarth is an MIT-licensed open source project designed and built to solve pla
 
 # Code Implementation
 
-## Earth4D: Production-Ready Spatiotemporal Encoder
+## Earth4D: Spatiotemporal Encoder
 
-Earth4D provides efficient multi-resolution hash encoding for planetary-scale (x,y,z,t) coordinates. The encoder has been tested in production, achieving state-of-the-art results predicting AlphaEarth embeddings.
+Earth4D provides efficient multi-resolution hash encoding for planetary-scale (x,y,z,t) coordinates. The encoder achieves state-of-the-art results, successfully predicting AlphaEarth embeddings with 3.61% MAPE.
 
 ### Quick Start
 
@@ -82,12 +82,12 @@ Earth4D provides efficient multi-resolution hash encoding for planetary-scale (x
 from encoders.xyzt import Earth4D
 import torch
 
-# Initialize Earth4D with production-tested parameters
+# Initialize Earth4D with default parameters
 encoder = Earth4D(
-    spatial_levels=24,              # 24 levels: 0.095m finest resolution globally
-    temporal_levels=19,              # 19 levels: 200-year coverage at 0.84hr precision  
-    spatial_log2_hashmap_size=22,   # 4M entries (755MB model memory)
-    temporal_log2_hashmap_size=18,  # 256K entries
+    spatial_levels=24,              # 24 levels: 0.095m finest spatial resolution
+    temporal_levels=19,              # 19 levels: 0.84hr finest temporal resolution over 200 years
+    spatial_log2_hashmap_size=22,   # 4M spatial hash entries
+    temporal_log2_hashmap_size=18,  # 256K temporal hash entries per projection
     verbose=True                     # Print resolution table
 )
 
@@ -97,9 +97,9 @@ coordinates = torch.tensor([
     [40.7128, -74.0060, 100.0, 0.7],   # New York, later time
 ])
 
-# Get spatiotemporal features
-features = encoder(coordinates)  # Shape: [2, 162] 
-print(f"Output dimension: {encoder.get_output_dim()}")  # 162 features
+# Get encoded features: 48D spatial (XYZ) + 114D spatiotemporal (XYT+YZT+XZT)
+features = encoder(coordinates)  # Shape: [2, 162]
+print(f"Output dimension: {encoder.get_output_dim()}")  # 162 total features
 ```
 
 ### Training Example: Earth4D → AlphaEarth
@@ -186,10 +186,14 @@ Earth4D expects input coordinates in the following format:
 The encoder automatically:
 1. Converts lat/lon/elevation to ECEF (Earth-Centered, Earth-Fixed) coordinates using WGS84
 2. Normalizes spatial coordinates for optimal hash encoding
-3. Applies multi-resolution encoding from coarse (km-scale) to fine (0.095m at level 24)
-4. Returns concatenated features: 48D spatial (XYZ) + 114D spatiotemporal (XYT+YZT+XZT) = 162D total
+3. Applies multi-resolution encoding through four decomposed projections:
+   - **XYZ** (3D spatial): 24 levels × 2 features = 48D
+   - **XYT** (longitude-time): 19 levels × 2 features = 38D 
+   - **YZT** (latitude-elevation-time): 19 levels × 2 features = 38D
+   - **XZT** (cross-section-time): 19 levels × 2 features = 38D
+4. Returns concatenated 162D feature vector (48D + 38D + 38D + 38D)
 
-Note: While the finest resolution is 0.095m, hash collisions are managed through learned disambiguation. The sparsity of Earth observation data (e.g., biodiversity observations) allows the model to effectively utilize the fine resolutions despite the 4M hash table limit.
+Note: While the finest resolution is 0.095m spatially, hash collisions are managed through learned disambiguation. The sparsity of Earth observation data (e.g., biodiversity observations) allows the model to effectively utilize fine resolutions despite the 4M hash table limit.
 
 See [SPECIFICATIONS.md](https://github.com/legel/deepearth/blob/main/SPECIFICATIONS.MD) for full architectural details.
 
