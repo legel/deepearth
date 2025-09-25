@@ -1,53 +1,22 @@
 # DeepEarth: Planetary Simulator for Ecological Intelligence 
 
-DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemporal simulation for scientific modeling of physical systems across the planet.  Similar to how ChatGPT was trained to reconstruct masked language datasets, DeepEarth learns to reconstruct masked earth science datasets, including from fields of physics, chemistry, biology, geology, and ecology.  DeepEarth welcomes contributors to a new open source project for AI that radically improves global sustainability and ecological intelligence.
+DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemporal simulation for scientific modeling of physical systems across the planet.  Similar to how ChatGPT was trained to reconstruct masked language datasets, DeepEarth learns to reconstruct masked earth science datasets, including from fields of physics, chemistry, biology, geology, and ecology.
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_inductive_simulator.png)
-
-## Latest Results: Earth4D → AlphaEarth Integration
-
-**Breakthrough Achievement**: Earth4D successfully trained to predict Google DeepMind's AlphaEarth 64D embeddings with **3.61% MAPE** (Mean Absolute Percentage Error) on biodiversity data around iNaturalist flower visitations. This demonstrates Earth4D's capability as a universal spatiotemporal encoder for planetary-scale ecological intelligence.
-
-<div align="center">
-  <table>
-    <tr>
-      <td align="center">
-        <img src="https://github.com/legel/deepearth/blob/main/docs/earth4d_rgb_progression.gif" alt="Earth4D RGB Predictions" width="400"/>
-        <br/>
-        <sub><b>Earth4D learning to predict AlphaEarth RGB projections</b><br/>Bay Area biodiversity, epochs 0→200</sub>
-      </td>
-      <td align="center">
-        <img src="https://github.com/legel/deepearth/blob/main/docs/earth4d_error_progression.gif" alt="Earth4D Error Reduction" width="400"/>
-        <br/>
-        <sub><b>Prediction error reduction during training</b><br/>MAPE: 15%→3.61% over 200 epochs</sub>
-      </td>
-    </tr>
-  </table>
-</div>
-
-### Key Technical Specifications:
-- **Spatial Encoding (XYZ)**: 24 levels × 2 features = 48D - encodes 3D ECEF position
-- **Spatiotemporal Encoding**: 19 levels × 2 features × 3 projections = 114D
-  - XYT projection: 38D - captures patterns in the equatorial plane over time (X-Y plane through Earth's center)
-  - YZT projection: 38D - captures patterns in the 90°E meridian plane over time (Y-Z plane through poles)
-  - XZT projection: 38D - captures patterns in the prime meridian plane over time (X-Z plane through 0° longitude)
-- **Total Output**: 48D (spatial) + 114D (spatiotemporal) = 162D feature vector
-- **Resolution**: 0.095m spatial, 0.84hr temporal (finest levels with 2^22 spatial, 2^18 temporal hashmaps)
-- **Model Size**: 198M parameters (755MB) for Earth4D encoder
-- **Training Performance**: 200 epochs in <2 hours on L4 GPU with 3.2M samples
-- **Memory Usage**: ~3.8GB during training (includes model, gradients, optimizer states)
-
-The first prototype version of DeepEarth is now validated with Earth4D encoding planetary coordinates (_x_, _y_, _z_, _t_) for predicting AlphaEarth embeddings. Earth4D uses multi-resolution hash encoding for efficient spatiotemporal representation learning. Through this approach, DeepEarth enables breakthrough AI representations for global scientific simulation and discovery.
-
 ![DeepEarth Grid4D spacetime encoding](https://github.com/legel/deepearth/blob/main/docs/deepearth_spacetime_encoder_grid4d.png) 
 
-Below you can discover more about the core model architecture and features.  Currently, active contributors to DeepEarth include scientists from Stanford University and the University of Florida, as well as AI engineers from Meta and Google DeepMind.  For collaboration and partnership, please reach out to the DeepEarth principal investigator, Lance Legel (lance@ecodash.ai).
+## Exciting News:
+- _September 30, 2025_  
+  **Presentation at top AI lab.** [Lance Legel](https://www.linkedin.com/in/legel/) will present DeepEarth at the [Allen Institute for AI](https://allenai.org) in Seattle in a recorded 1 hour talk with Q&A.  Looking forward to discussions and collaborations with world leaders in [Earth System AI](https://allenai.org/earth-system).
 
-### NSF DeepEarth Workshop
-We hosted an [NSF I-GUIDE workshop on DeepEarth](https://i-guide.io/forum/forum-2025/workshops/) this summer.  See a detailed summary [here](https://github.com/legel/deepearth/blob/main/docs/NSF_DeepEarth_Workshop.pdf).  
+- _September 25, 2025_  
+  **Breakthrough (_x_, _y_, _z_, _t_) encoding!** Inspired by [NVIDIA AI for 3D digital twins](https://nvlabs.github.io/instant-ngp/), we trained [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) to predict Google DeepMind's AlphaEarth 64D embeddings with 3.6% mean absolute error.  This is less than 1/2 the error from a MLP.
 
-#### DeepEarth🔥
-5 PhD students met for a 5 day NSF program in Boulder, Colorado on ["Spatial AI for Extreme Events and Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/).  The team simulated _live fuel moisture content_, and saw spectacular results from Grid4D.  See a detailed summary [here](https://github.com/legel/deepearth/blob/main/docs/DeepEarth🔥_NSF_I-GUIDE_Final_Presentation.pdf).
+- _August 8, 2025_  
+  **Teamed up to save the world.** NSF and NCAR supported a week-long DeepEarth R&D program on ["Spatial AI for Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/) in Boulder, Colorado.  5 PhD students simulated fire ecology, and a few continue to collaborate on DeepEarth.  See summary [here](https://github.com/legel/deepearth/blob/main/docs/DeepEarth🔥_NSF_I-GUIDE_Final_Presentation.pdf).
+
+- _June 23, 2025_  
+  **Hashing it out with GeoAI leaders.** NSF supported a 3 hour workshop on DeepEarth in downtown Chicago, Illinois as part of a ["GeoAI for Sustainability"](https://i-guide.io/forum/forum-2025/workshops/) conference.  3 professors, 5 postdocs, and 2 PhD students worked on DeepEarth models.  See summary [here](https://github.com/legel/deepearth/blob/main/docs/NSF_DeepEarth_Workshop.pdf).  
 
 #### Deep Physical Simulation  
 DeepEarth is designed to deliver state-of-the-art modeling representations that can directly answer classical Bayesian questions, _e.g._ "As variable X changes across space S and time T, how is variable Y most likely to change, given all available evidence?"
@@ -59,146 +28,13 @@ DeepEarth is designed to deliver state-of-the-art modeling representations that 
 Input any number of datasets distributed across space and time (_e.g._  satellite imagery, geological surveys, biodiversity records) and then automatically learn deep inductive priors across modalities.  
 
 #### Deep Spacetime Manifold
-One of the great lessons from Einstein's _relativity_ is that _space_ and _time_ are not independent variables.  DeepEarth learns unified (x,y,z,t) deep vector representations from _[Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main)_ as ["multi-resolution hash encodings"](https://graphics.stanford.edu/courses/cs348n-22-winter/LectureSlides/FinalSlides/ING.pdf).  This enables deep learning of complex spatiotemporal distributions.
-
-#### Built for Lightspeed 
- DeepEarth is built on the [57x](https://www.youtube.com/watch?v=0VLAoVGf_74&ab_channel=WelchLabs) more memory-efficient Transformer architecture of _[DeepSeek](https://github.com/deepseek-ai/DeepSeek-V3)_ to unlock next-generation speed, accuracy, and scalability of multimodal cross-attention fusion.
+One of the great lessons from Einstein's _relativity_ is that _space_ and _time_ are not independent variables.  DeepEarth learns unified (x,y,z,t) deep vector representations as ["multi-resolution hash encodings"](https://graphics.stanford.edu/courses/cs348n-22-winter/LectureSlides/FinalSlides/ING.pdf).  This enables deep learning of complex spatiotemporal distributions.
 
 #### Top of the Class
 Design and development of DeepEarth is led by award-winning scientists and engineers from Stanford University, University of Florida, and Ecodash.ai, along with one of the first engineers from Google DeepMind.  
 
 #### Planetary Intelligence for Everyone
-DeepEarth is an MIT-licensed open source project designed and built to solve planetary-scale problems 🌎, especially through AI-powered maximization of ecosystem services – _e.g._ optimizing AI for sustainable agriculture, environmental restoration, & ecological landscape design.
-
-# Code Implementation
-
-## Earth4D: Spatiotemporal Encoder
-
-Earth4D provides efficient multi-resolution hash encoding for planetary-scale (x,y,z,t) coordinates. The encoder achieves state-of-the-art results, successfully predicting AlphaEarth embeddings with 3.61% MAPE.
-
-### Quick Start
-
-```python
-from encoders.xyzt import Earth4D
-import torch
-
-# Initialize Earth4D with default parameters
-encoder = Earth4D(
-    spatial_levels=24,              # 24 levels: 0.095m finest spatial resolution
-    temporal_levels=19,              # 19 levels: 0.84hr finest temporal resolution over 200 years
-    spatial_log2_hashmap_size=22,   # 4M spatial hash entries
-    temporal_log2_hashmap_size=18,  # 256K temporal hash entries per projection
-    verbose=True                     # Print resolution table
-)
-
-# Input: [latitude, longitude, elevation_m, time_normalized]
-coordinates = torch.tensor([
-    [37.7749, -122.4194, 50.0, 0.5],   # San Francisco, mid-timerange
-    [40.7128, -74.0060, 100.0, 0.7],   # New York, later time
-])
-
-# Get encoded features: 48D spatial (XYZ) + 114D spatiotemporal (XYT+YZT+XZT)
-features = encoder(coordinates)  # Shape: [2, 162]
-print(f"Output dimension: {encoder.get_output_dim()}")  # 162 total features
-```
-
-### Training Example: Earth4D → AlphaEarth
-
-```python
-import torch
-import torch.nn as nn
-from encoders.xyzt import Earth4D
-
-class DeepEarth(nn.Module):
-    """DeepEarth model using Earth4D to predict AlphaEarth embeddings."""
-    
-    def __init__(self, output_dim=64):
-        super().__init__()
-        
-        # Earth4D encoder with optimized parameters
-        self.earth4d = Earth4D(
-            spatial_levels=24,
-            temporal_levels=19,
-            spatial_log2_hashmap_size=22,
-            temporal_log2_hashmap_size=18,
-            verbose=False
-        )
-        
-        # Get encoder dimension and build MLP decoder
-        encoder_dim = self.earth4d.get_output_dim()  # 162
-        
-        # MLP with normalization for stability
-        self.decoder = nn.Sequential(
-            nn.LayerNorm(encoder_dim),
-            nn.Linear(encoder_dim, 256),
-            nn.ReLU(),
-            nn.LayerNorm(256),
-            nn.Dropout(0.1),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.LayerNorm(256),
-            nn.Dropout(0.1),
-            nn.Linear(256, output_dim),
-            nn.Tanh()  # Output in [-1, 1] for normalized embeddings
-        )
-        
-    def forward(self, coords):
-        # coords: [batch, 4] with [lat, lon, elev, time]
-        spacetime_features = self.earth4d(coords)
-        embeddings = self.decoder(spacetime_features)
-        return embeddings
-
-# Training setup
-model = DeepEarth(output_dim=64)
-optimizer = torch.optim.Adam([
-    {'params': model.earth4d.parameters(), 'lr': 1e-4},  # Lower LR for encoder
-    {'params': model.decoder.parameters(), 'lr': 1e-3}
-])
-criterion = nn.MSELoss()
-
-# Example training step
-coords = torch.randn(32, 4)  # Batch of 32 samples
-target_embeddings = torch.randn(32, 64)  # AlphaEarth targets
-
-predictions = model(coords)
-loss = criterion(predictions, target_embeddings)
-loss.backward()
-optimizer.step()
-```
-
-### Memory and Performance Guidelines
-
-| Configuration | Hashmap Size | Model Memory | Training Memory | Finest Resolution | Use Case |
-|--------------|-------------|--------------|-----------------|-------------------|----------|
-| Light (L=16, log2=19) | 512K | ~200MB | ~800MB | 1.2km | Regional models |
-| **Planetary (L=24, log2=22)** | **4M** | **755MB** | **3.8GB** | **0.095m** | **Global (default)** |
-| Research (L=28, log2=24) | 16M | ~1.5GB | ~6GB | 0.006m | High-precision |
-| Extreme (L=32, log2=26) | 64M | ~4GB | ~14GB | 0.37mm | Ultra-fine local |
-
-### Coordinate Format
-
-Earth4D expects input coordinates in the following format:
-- **Latitude**: -90 to 90 degrees
-- **Longitude**: -180 to 180 degrees  
-- **Elevation**: Meters above sea level
-- **Time**: Normalized to [0, 1] range (e.g., 0=year 1900, 1=year 2100)
-
-The encoder automatically:
-1. Converts lat/lon/elevation to ECEF (Earth-Centered, Earth-Fixed) coordinates using WGS84
-   - X axis: Points through 0° lat, 0° lon (intersection of equator and prime meridian)
-   - Y axis: Points through 0° lat, 90°E lon (equator in Indian Ocean)
-   - Z axis: Points through North Pole (90° lat)
-2. Normalizes ECEF coordinates for optimal hash encoding
-3. Applies multi-resolution encoding through four decomposed projections:
-   - **XYZ** (3D spatial): 24 levels × 2 features = 48D - full 3D position
-   - **XYT** (equatorial plane + time): 19 levels × 2 features = 38D
-   - **YZT** (90°E meridian plane + time): 19 levels × 2 features = 38D
-   - **XZT** (prime meridian plane + time): 19 levels × 2 features = 38D
-4. Returns concatenated 162D feature vector (48D + 38D + 38D + 38D)
-
-Note: The three spatiotemporal projections (XYT, YZT, XZT) capture dynamics in orthogonal planes through Earth's center, enabling the model to learn different patterns of movement and change across the planet. Hash collisions are managed through learned disambiguation, with Earth's sparse observation data allowing effective use of fine resolutions.
-
-See [SPECIFICATIONS.md](https://github.com/legel/deepearth/blob/main/SPECIFICATIONS.MD) for full architectural details.
+DeepEarth is an MIT-licensed open source project designed and built to solve planetary-scale problems 🌎, especially through AI-powered maximization of ecosystem services – _e.g._ for sustainable agriculture, environmental restoration, & ecological landscape design.
 
 ```python
 class DeepEarthModel(nn.Module):
@@ -486,26 +322,7 @@ class DeepEarthModel(nn.Module):
         raise ValueError(f"Modality {modality_name} not found in batch")
 ```
 
-## Development
-
-### Recent Achievements
-- ✅ Earth4D encoder validated with 3.61% MAPE on AlphaEarth prediction task
-- ✅ Optimized for single GPU training (200 epochs in <2 hours on L4)
-- ✅ Memory-efficient design fits 3.2M samples + model in 24GB GPU
-- ✅ Production-ready coordinate conversion with WGS84 ellipsoid
-
-Collaborators are invited to become core DeepEarth model contributors. The Earth4D encoder is now production-ready and can be used as a foundation for diverse spatiotemporal prediction tasks beyond AlphaEarth embeddings.
-
-### Applications
-
-While Earth4D has been validated on AlphaEarth embeddings, it can predict any spatiotemporal target:
-- Climate variables (temperature, precipitation, wind)
-- Biodiversity metrics (species occurrence, abundance)
-- Environmental indicators (vegetation indices, soil moisture)
-- Human activity patterns (land use, population density)
-- Any georeferenced time-series data
-
-For more details see the [technical specifications](https://github.com/legel/deepearth/blob/main/SPECIFICATIONS.MD).
+Contributors are welcomed! Please reach out to Lance Legel (lance@ecodash.ai) to organize collaboration.
 
 ## License
 
