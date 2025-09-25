@@ -13,10 +13,10 @@ DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemp
   **Breakthrough (_x_, _y_, _z_, _t_) encoding!** Inspired by [NVIDIA AI for 3D digital twins](https://nvlabs.github.io/instant-ngp/), [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) was trained to predict Google's AlphaEarth 64D embeddings with 3.6% absolute error, 2x better than a MLP.
 
 - _August 8, 2025_  
-  **Teamed up to save the world.** NSF funded a week-long DeepEarth R&D program on ["Spatial AI for Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/) in Colorado. 5 PhD students simulated fire ecology and continue to collaborate.  See summary [here](https://github.com/legel/deepearth/blob/main/docs/DeepEarth🔥_NSF_I-GUIDE_Final_Presentation.pdf).
+  **Teamed up to save the world.** NSF funded a week-long DeepEarth R&D program on ["Spatial AI for Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/) in Colorado. 5 PhD students simulated fire ecology and continue to collaborate.  [>> _Final Demos_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth🔥_NSF_I-GUIDE_Final_Presentation.pdf)
 
 - _June 23, 2025_  
-  **Joining forces with GeoAI leaders.** NSF funded a 3 hour workshop on DeepEarth in Chicago for a ["GeoAI for Sustainability"](https://i-guide.io/forum/forum-2025/workshops/) conference. 3 professors, 5 postdocs, and 2 PhD students contributed.  See summary [here](https://github.com/legel/deepearth/blob/main/docs/NSF_DeepEarth_Workshop.pdf).  
+  **Joining forces with GeoAI leaders.** NSF funded a 3 hour workshop on DeepEarth in Chicago for a ["GeoAI for Sustainability"](https://i-guide.io/forum/forum-2025/workshops/) conference. 3 professors, 5 postdocs, and 2 PhD students contributed.  [>> _Presentation_](https://github.com/legel/deepearth/blob/main/docs/NSF_DeepEarth_Workshop.pdf)
 
 #### Deep Physical Simulation  
 DeepEarth is designed to deliver state-of-the-art modeling representations that can directly answer classical Bayesian questions, _e.g._ "As variable X changes across space S and time T, how is variable Y most likely to change, given all available evidence?"
