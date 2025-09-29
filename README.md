@@ -7,10 +7,11 @@ DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemp
 
 ## Exciting News:
 
-- _September 30, 2025_
-  **Presentation at top AI lab.** [Lance Legel](https://www.linkedin.com/in/legel/) will present DeepEarth at the [Allen Institute for AI](https://allenai.org) in Seattle in a 1 hour talk.  Looking forward to discussions and collaborations with world leaders in [Earth System AI](https://allenai.org/earth-system).
+- _September 30, 2025_  
+  **Presentation at top AI lab.** 
+  [Lance Legel](https://www.linkedin.com/in/legel/) will present DeepEarth at the [Allen Institute for AI](https://allenai.org) in Seattle in a 1 hour talk.  Looking forward to discussions and collaborations with world leaders in [Earth System AI](https://allenai.org/earth-system).
 
-- _September 29, 2025_
+- _September 29, 2025_  
   **End-to-end training!** After months of preparation supported by over 20 collaborators, DeepEarth is now training!  See [hello_deepearth_training.txt](hello_deepearth_training.txt) for the first logs. All systems go! 🚀🌎
 
 - _September 25, 2025_  
