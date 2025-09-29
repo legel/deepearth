@@ -1,0 +1,112 @@
+# deepearth/models/flowering.yaml
+# DeepEarth Configuration for Angiosperm Flowering Dataset
+# ════════════════════════════════════════════════════════════════════════════
+
+# Architecture dimensions (do not reduce these)
+universal_dim: 1024
+spacetime_dim: 512
+# data_dim is computed automatically as: universal_dim - (spacetime_dim + metadata + positions)
+dataset_embed_dim: 2
+modality_embed_dim: 2
+encoder_embed_dim: 2
+mask_embed_dim: 6
+context_position_dim: 0
+modality_position_dim: 0
+
+# Training parameters
+batch_size: 16  # Reduced from 128 to fit in 24GB GPU memory
+learning_rate: 0.001
+weight_decay: 0.01
+num_epochs: 50
+gradient_clip: 1.0
+mixed_precision: true
+compile_model: false  # Disabled - Earth4D HashEncoder not compatible
+
+# Masking strategy
+mask_spacetime_prob: 0.10
+mask_data_prob: 0.15
+mask_dataset_prob: 0.02
+mask_modality_prob: 0.05
+mask_encoder_prob: 0.05
+
+# Main DeepEarth Perceiver architecture (heavy compute)
+context_window: 64  # Reduced from 128 to fit in 24GB GPU memory
+num_latents: 512
+latent_dim: 768
+num_blocks: 6
+num_cross_attention_heads: 8  # Must divide universal_dim (1024)
+num_self_attention_heads: 8   # Must divide latent_dim (768)
+dropout: 0.1
+
+# PerceiverProjector architecture (lightweight modality translation)
+# These are the "translators" that convert each expert's language to universal tokens
+projector_config:
+  num_latents: 64        # Much smaller than main perceiver
+  latent_dim: 64         # Lightweight intermediate representation
+  num_blocks: 2          # Just 2 blocks for simple projection
+  num_cross_attention_heads: 2  # Minimal attention heads
+  num_self_attention_heads: 2   # Minimal self-attention
+  dropout: 0.1
+
+# Maximum cardinalities
+max_datasets: 10
+max_modalities: 10
+max_encoders: 10
+
+# Sampling strategy
+sampling_strategy:
+  clusters_per_context: 8
+  samples_per_cluster: 32
+  time_of_day_weight: 0.05
+  time_of_year_weight: 0.35  # Critical for flowering
+  time_of_history_weight: 0.10
+  spatial_weight: 0.25
+  modality_weight: 0.15
+  universal_weight: 0.10
+  sampling_type: probabilistic
+
+# UMAP configuration
+umap_dim: 1
+umap_max_samples: 100000
+umap_n_neighbors: 15
+umap_min_dist: 0.1
+
+# Evaluation splits
+test_ratio: 0.2
+
+# Spatial holdouts for geographic generalization
+spatial_holdouts:
+  - type: percentage
+    lat_pct: 0.05
+    lon_pct: 0.05
+    min_separation_pct: 0.2
+
+# Temporal holdouts for future prediction
+temporal_holdouts:
+  - type: percentage
+    value: 0.15
+    position: end
+    min_separation_pct: 0.1
+
+# Coordinate system
+coordinate_system: ecef
+time_range: [1900, 2100]
+spatial_dims: 3  # 3D spatial coordinates
+
+# Earth4D configuration (using defaults)
+earth4d_config: {}
+
+# Hardware
+device: cuda
+num_workers: 8
+pin_memory: true
+
+# Cache directory for preprocessed data
+cache_dir: ./cache
+regenerate_cache: false
+
+# Random seed
+seed: 42
+
+# Output directory (will be overridden by command line)
+output_dir: ./experiments/angiosperm

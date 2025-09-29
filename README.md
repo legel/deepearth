@@ -6,7 +6,10 @@ DeepEarth is a new AI foundation model that fuses multimodal data and spatiotemp
 ![DeepEarth Grid4D spacetime encoding](https://github.com/legel/deepearth/blob/main/docs/deepearth_spacetime_encoder_grid4d.png) 
 
 ## Exciting News:
-- _September 30, 2025_  
+- _September 29, 2025_
+  **First end-to-end training of full DeepEarth architecture!** The multimodal model is successfully training with dual-loss optimization. See [hello_deepearth_training.txt](hello_deepearth_training.txt) for first training logs. All systems go! 🚀
+
+- _September 30, 2025_
   **Presentation at top AI lab.** [Lance Legel](https://www.linkedin.com/in/legel/) will present DeepEarth at the [Allen Institute for AI](https://allenai.org) in Seattle in a 1 hour talk.  Looking forward to discussions and collaborations with world leaders in [Earth System AI](https://allenai.org/earth-system).
 
 - _September 25, 2025_  

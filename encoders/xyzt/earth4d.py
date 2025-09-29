@@ -521,7 +521,7 @@ class Earth4D(nn.Module):
                  spatial_levels: int = 24,  # Production default: 24 levels for ~1km resolution  
                  temporal_levels: int = 19,  # Production default: 19 levels for 200-year coverage
                  features_per_level: int = 2,
-                 spatial_log2_hashmap_size: int = 22,  # Production: 4M entries (1GB, tested on L4 GPU)
+                 spatial_log2_hashmap_size: int = 23,  # Production: 4M entries (1GB, tested on L4 GPU)
                  temporal_log2_hashmap_size: int = 18,  # Production: 256K entries
                  base_spatial_resolution: float = 16.0,
                  base_temporal_resolution: float = 8.0,
@@ -773,7 +773,7 @@ if __name__ == "__main__":
     encoder = Earth4D(
         spatial_levels=24,
         temporal_levels=19,
-        spatial_log2_hashmap_size=22,
+        spatial_log2_hashmap_size=23,
         temporal_log2_hashmap_size=18,
         verbose=False
     )
@@ -799,7 +799,7 @@ if __name__ == "__main__":
             self.earth4d = Earth4D(
                 spatial_levels=24,
                 temporal_levels=19,
-                spatial_log2_hashmap_size=22,
+                spatial_log2_hashmap_size=23,
                 temporal_log2_hashmap_size=18,
                 verbose=False
             )
