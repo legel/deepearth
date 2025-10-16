@@ -1,7 +1,7 @@
 ![DeepEarth logo](https://github.com/legel/deepearth/blob/main/docs/deepearth_logo.png)
 ## DeepEarth: AI Foundation Model for Planetary Science & Sustainability
 
-DeepEarth is a new AI model for the planet.  It fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multimodal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatiotemporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  By modeling all kinds of scientific data with state-of-the-art spatial and temporal resolution, DeepEarth will equip key professionals (_e.g._ landscape architects) to solve environmental sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)).
+DeepEarth is a new AI model for the planet.  It fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multimodal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatiotemporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  Through scientific AI, DeepEarth will equip key professionals (_e.g._ landscape architects) to solve global sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)).
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_inductive_simulator.png)
 
