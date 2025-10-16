@@ -7,7 +7,7 @@ DeepEarth is a new AI model for the planet.  It fuses [self-supervised](https://
 
 As seen in the figure above, DeepEarth learns by reconstructing masked observations of real world events (_e.g._ _pollination of a flower_).  Multimodal data are projected into a unified spatiotemporal embedding, based on a shared (_x_, _y_, _z_, _t_) coordinate system, through the novel [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) spacetime positional encoder, seen in the figure below.
 
-![DeepEarth Grid4D spacetime encoding](https://github.com/legel/deepearth/blob/main/docs/deepearth_spacetime_encoder_grid4d.png) 
+![Earth4D spacetime encoder](https://github.com/legel/deepearth/blob/main/docs/deepearth_spacetime_encoder.png) 
 
 ## Exciting News:
 
