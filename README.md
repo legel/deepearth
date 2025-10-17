@@ -27,7 +27,7 @@ As seen in the figure above, DeepEarth learns by reconstructing masked observati
 ## Key Innovations:
 
 #### Deep Bayesian Simulation 
-DeepEarth is a deep neural network that learns to answer classical Bayesian questions, _e.g._ "As variable **α** changes across space and time , how is variable **β** most likely to change, given all available evidence?"
+DeepEarth is a deep neural network that learns to answer classical Bayesian questions, _e.g._ "As variable **α** changes across space and time, how is variable **β** most likely to change, given all available evidence?"
 
 #### Maximizing Likelihood of the Planet
 Following a [mathematical proof](https://proceedings.mlr.press/v37/germain15.html) from Google DeepMind, DeepEarth learns the _most probable_ statistical model for real world data across space and time.  It learns across (_x_, _y_, _z_, _t_, _energy_) metrics, where _energy_ can be any set of real-valued metrics ℝ<sup><em>d</em></sup>.  
