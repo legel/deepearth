@@ -48,7 +48,7 @@ Design and development of DeepEarth is led by award-winning scientists and engin
 DeepEarth is an MIT-licensed open source project designed and built to solve planetary-scale problems 🌎, especially through AI-powered maximization of ecosystem services – _e.g._ for sustainable agriculture, environmental restoration, & ecological landscape design.
 
 #### Invitation for Open Source Collaboration
-Collaborators welcomed! Reach out to [Lance Legel](https://linkedin.com/in/legel) at lance@ecodash.ai or submit an issue/PR here.
+Collaborators welcomed! Contact [Lance Legel](https://linkedin.com/in/legel) at lance@ecodash.ai or submit an issue/PR here.
 
 For further details, see pre-print previews:
 - [DeepEarth: Self-Supervised Multimodal Planetary Simulator with 4D Spacetime Embedding](https://github.com/legel/deepearth/blob/main/docs/deepearth.pdf) (2025)
