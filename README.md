@@ -36,7 +36,7 @@ Following a [mathematical proof](https://proceedings.mlr.press/v37/germain15.htm
 A large number of DeepEarth models can be trained for diverse scientific domains: each model is trained by simply inputting domain-specific datasets, distributed across space and time. Deep inductive priors are automatically learned across all modalities.  
 
 #### Physical Simulator _and_ Foundation Model 
-DeepEarth models are trained as physical simulators of data observed across spacetime (_e.g._ predicting fire risk from historical data).  DeepEarth simulators are also foundation models that can be fine-tuned, just, _i.e._ _ChatGPT_ from _GPT_.
+DeepEarth models are trained as physical simulators of data observed across spacetime (_e.g._ predicting fire risk from historical data). Simulators can also be fine-tuned for specific applications, _i.e._ _ChatGPT_ from _GPT_.
 
 #### Deep Spacetime Manifold
 One of the great lessons from Einstein's _relativity_ is that _space_ and _time_ are not independent variables.  DeepEarth learns unified (_x_, _y_, _z_, _t_) deep vector representations through a temporal extension of NVIDIA's ["multi-resolution hash encoding"](https://nvlabs.github.io/instant-ngp/).
