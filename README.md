@@ -1,7 +1,7 @@
 ![DeepEarth logo](https://github.com/legel/deepearth/blob/main/docs/deepearth_logo.png)
 ## DeepEarth: AI Foundation Model for Planetary Science & Sustainability
 
-DeepEarth is a new AI model for the planet.  It fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multimodal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatiotemporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  Through scientific AI, DeepEarth will equip key professionals (_e.g._ landscape architects) to solve global sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)).
+DeepEarth is a new AI model for the planet.  It fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multimodal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatiotemporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  Through scientific AI, DeepEarth equips key professionals (_e.g._ landscape architects) to solve global sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)).
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_main_figure.png)
 
@@ -16,7 +16,7 @@ As seen in the figure above, DeepEarth learns by reconstructing masked observati
   Thanks to the [Allen Institute for AI](https://allenai.org) for hosting a 1 hour talk with scientists pioneering [AI foundation models for the planet](https://allenai.org/earth-system). See [_video_](  https://www.youtube.com/watch?v=SHJwCInICiA) and [slides](https://github.com/legel/deepearth/blob/main/docs/DeepEarth_AI2_Presentation.pdf).
 
 - _September 25, 2025_  
-  **Breakthrough spacetime encoding!** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) has been fine-tuned for modeling of heterogenous geospatial and temporal data with state-of-the-art precision. See [_example code_](https://github.com/legel/deepearth/blob/main/encoders/xyzt/earth4d_to_lfmc.py).
+  **Breakthrough spacetime encoding!** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) has been fine-tuned for simulating hourly data at sub-meter scale. See [_example code_](https://github.com/legel/deepearth/blob/main/encoders/xyzt/earth4d_to_lfmc.py).
 
 - _August 8, 2025_  
   **Saving the world.** NSF funded a week-long ["Spatial AI for Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/) summer school program in Boulder, Colorado. 5 PhD students developed DeepEarth (including Earth4D) for fire ecology.  See [_demos_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth🔥_NSF_I-GUIDE_Final_Presentation.pdf).
