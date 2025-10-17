@@ -1,11 +1,11 @@
 ![DeepEarth logo](https://github.com/legel/deepearth/blob/main/docs/deepearth_logo.png)
 ## DeepEarth: AI Foundation Model for Planetary Science & Sustainability
 
-DeepEarth is a new AI model for the planet.  It fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multimodal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatiotemporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  Through scientific AI, DeepEarth equips key professionals (_e.g._ landscape architects) to solve global sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)).
+DeepEarth is an AI model for the planet that fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multimodal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatiotemporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  The mission of DeepEarth is to solve global sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)) through AI for scientists, engineers, and designers.
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_main_figure.png)
 
-As seen in the figure above, DeepEarth learns by reconstructing masked observations of real world events (_e.g._ _pollination of a flower_).  Multimodal data are projected into a unified spatiotemporal embedding, based on a shared (_x_, _y_, _z_, _t_) coordinate system, through the novel [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) spacetime positional encoder, seen in the figure below.
+DeepEarth learns by jointly reconstructing masked multimodal datasets (as seen above). [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) provides a planetary-scale continuous spacetime positional encoder for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
 
 ![Earth4D spacetime encoder](https://github.com/legel/deepearth/blob/main/docs/earth4d_spacetime_encoder.png) 
 
@@ -39,7 +39,7 @@ A large number of DeepEarth models can be trained for diverse scientific domains
 DeepEarth models are trained as physical simulators of data observed across spacetime (_e.g._ predicting fire risk from historical data). Simulators can also be fine-tuned for specific applications, _i.e._ _ChatGPT_ from _GPT_.
 
 #### Deep Spacetime Manifold
-One of the great lessons from Einstein's _relativity_ is that _space_ and _time_ are not independent variables.  DeepEarth learns unified (_x_, _y_, _z_, _t_) deep vector representations through a temporal extension of NVIDIA's ["multi-resolution hash encoding"](https://nvlabs.github.io/instant-ngp/).
+One of the great lessons from Einstein's _relativity_ is that _space_ and _time_ are not independent variables.  Following [Grid4D](https://jiaweixu8.github.io/Grid4D-web/), Earth4D extends NVIDIA's [3D multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) to learn spatiotemporal distributions.
 
 #### Top of the Class
 Design and development of DeepEarth is led by award-winning scientists and engineers from Stanford University, University of Florida, and Ecodash.ai, along with one of the first engineers from Google DeepMind.  
