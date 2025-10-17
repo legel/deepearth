@@ -3,7 +3,7 @@
 
 DeepEarth is a new AI model for the planet.  It fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multimodal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatiotemporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  Through scientific AI, DeepEarth will equip key professionals (_e.g._ landscape architects) to solve global sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)).
 
-![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth.png)
+![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_figure_1.png)
 
 As seen in the figure above, DeepEarth learns by reconstructing masked observations of real world events (_e.g._ _pollination of a flower_).  Multimodal data are projected into a unified spatiotemporal embedding, based on a shared (_x_, _y_, _z_, _t_) coordinate system, through the novel [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) spacetime positional encoder, seen in the figure below.
 
