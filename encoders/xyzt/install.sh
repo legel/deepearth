@@ -16,11 +16,12 @@ echo "=========================================="
 echo
 
 # Check Python version
-PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0")
-if [[ $(echo "$PYTHON_VERSION >= 3.7" | bc -l 2>/dev/null) -eq 1 ]]; then
-    echo -e "${GREEN}[✓]${NC} Python $PYTHON_VERSION detected"
+PYTHON_CHECK=$(python3 -c "import sys; major, minor = sys.version_info[:2]; print(f'{major}.{minor}'); exit(0 if (major, minor) >= (3, 7) else 1)" 2>/dev/null)
+PYTHON_EXIT_CODE=$?
+if [[ $PYTHON_EXIT_CODE -eq 0 ]]; then
+    echo -e "${GREEN}[✓]${NC} Python $PYTHON_CHECK detected"
 else
-    echo -e "${RED}[✗]${NC} Python 3.7+ required (found $PYTHON_VERSION)"
+    echo -e "${RED}[✗]${NC} Python 3.7+ required (found $PYTHON_CHECK)"
     exit 1
 fi
 
@@ -90,11 +91,14 @@ echo
 echo "Testing installation..."
 TEST_OUTPUT=$(python3 -c "
 import os
+import warnings
+warnings.filterwarnings('ignore')  # Suppress deprecation warnings during test
+
 os.chdir('$(pwd)')
 try:
     from earth4d import Earth4D
     import torch
-    encoder = Earth4D(auto_ecef_convert=True, verbose=False)
+    encoder = Earth4D(verbose=False)
 
     if torch.cuda.is_available():
         encoder = encoder.cuda()
@@ -108,7 +112,7 @@ try:
     print(f'SUCCESS:{device}:{spatial.shape}:{temporal.shape}')
 except Exception as e:
     print(f'ERROR:{e}')
-" 2>&1)
+" 2>/dev/null)
 
 if [[ $TEST_OUTPUT == SUCCESS:* ]]; then
     IFS=':' read -r status device spatial temporal <<< "$TEST_OUTPUT"
