@@ -6,4 +6,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("hash_encode_forward", &hash_encode_forward, "hash encode forward (CUDA)");
     m.def("hash_encode_backward", &hash_encode_backward, "hash encode backward (CUDA)");
     m.def("hash_encode_second_backward", &hash_encode_second_backward, "hash encode second backward (CUDA)");
+    m.def("hash_encode_forward_tracking", &hash_encode_forward_tracking, "hash encode forward with collision tracking (CUDA)");
 }

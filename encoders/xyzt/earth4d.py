@@ -445,12 +445,13 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
         print(f"  Note: Hash collisions occur when grid cells > hash table size")
         print("="*80 + "\n")
 
-    def encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
+    def encode_spatial(self, xyz: torch.Tensor, collision_tracking=None) -> torch.Tensor:
         """
         Encode spatial xyz coordinates.
 
         Args:
             xyz: Tensor of shape (..., 3) with normalized coordinates
+            collision_tracking: Optional collision tracking data for xyz encoder
 
         Returns:
             Spatial features of shape (..., spatial_dim)
@@ -462,14 +463,15 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
             normalized = (xyz + self.spatial_bound) / (2 * self.spatial_bound)
             print(f"  After normalization: [{normalized.min().item():.4f}, {normalized.max().item():.4f}]")
 
-        return self.xyz_encoder(xyz, size=self.spatial_bound)
+        return self.xyz_encoder(xyz, size=self.spatial_bound, collision_tracking=collision_tracking)
     
-    def encode_temporal(self, xyzt: torch.Tensor) -> torch.Tensor:
+    def encode_temporal(self, xyzt: torch.Tensor, collision_tracking=None) -> torch.Tensor:
         """
         Encode temporal projections (xyt, yzt, xzt).
         
         Args:
             xyzt: Tensor of shape (..., 4) with normalized coordinates
+            collision_tracking: Optional collision tracking data for temporal encoders
             
         Returns:
             Temporal features of shape (..., temporal_dim)
@@ -484,27 +486,38 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
         yzt = xyzt_scaled[..., 1:]
         xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
         
+        # Extract collision tracking for each encoder if provided
+        xyt_tracking = collision_tracking.get('xyt') if collision_tracking else None
+        yzt_tracking = collision_tracking.get('yzt') if collision_tracking else None
+        xzt_tracking = collision_tracking.get('xzt') if collision_tracking else None
+        
         # Encode each projection
-        xyt_features = self.xyt_encoder(xyt, size=self.temporal_bound)
-        yzt_features = self.yzt_encoder(yzt, size=self.temporal_bound)
-        xzt_features = self.xzt_encoder(xzt, size=self.temporal_bound)
+        xyt_features = self.xyt_encoder(xyt, size=self.temporal_bound, collision_tracking=xyt_tracking)
+        yzt_features = self.yzt_encoder(yzt, size=self.temporal_bound, collision_tracking=yzt_tracking)
+        xzt_features = self.xzt_encoder(xzt, size=self.temporal_bound, collision_tracking=xzt_tracking)
         
         # Concatenate temporal features
         return torch.cat([xyt_features, yzt_features, xzt_features], dim=-1)
     
-    def forward(self, xyzt: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, xyzt: torch.Tensor, collision_tracking=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Encode 4D spatiotemporal coordinates.
         
         Args:
             xyzt: Tensor of shape (..., 4) with normalized coordinates
+            collision_tracking: Optional collision tracking data
             
         Returns:
             Tuple of (spatial_features, temporal_features)
         """
         xyz = xyzt[..., :3]
-        spatial_features = self.encode_spatial(xyz)
-        temporal_features = self.encode_temporal(xyzt)
+        
+        # Extract collision tracking for spatial and temporal encoders
+        spatial_tracking = collision_tracking.get('xyz') if collision_tracking else None
+        temporal_tracking = collision_tracking if collision_tracking else None
+        
+        spatial_features = self.encode_spatial(xyz, collision_tracking=spatial_tracking)
+        temporal_features = self.encode_temporal(xyzt, collision_tracking=temporal_tracking)
         return spatial_features, temporal_features
 
 
@@ -528,7 +541,10 @@ class Earth4D(nn.Module):
                  growth_factor: float = 2.0,  # Production: 2.0 for optimal memory/accuracy tradeoff
                  target_spatial_km: float = None,
                  target_temporal_days: float = None,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 # Collision tracking configuration
+                 enable_collision_tracking: bool = False,
+                 max_tracked_examples: int = 10000):
         """
         Initialize Earth4D encoder.
 
@@ -595,10 +611,58 @@ class Earth4D(nn.Module):
             verbose=False  # We'll print our own info
         )
 
+        # Initialize collision tracking
+        self.enable_collision_tracking = enable_collision_tracking
+        self.max_tracked_examples = max_tracked_examples
+        self.collision_tracking_data = None
+        
+        if self.enable_collision_tracking:
+            self._init_collision_tracking()
+
         if self.verbose:
             self._print_resolution_info()
             if self.target_spatial_km is not None or self.target_temporal_days is not None:
                 self._print_target_resolution()
+    
+    def _init_collision_tracking(self):
+        """Initialize collision tracking tensors."""
+        # Get spatial and temporal levels for all 4 grid spaces
+        spatial_levels = self.encoder.xyz_encoder.num_levels
+        temporal_levels = self.encoder.xyt_encoder.num_levels
+        
+        # Initialize collision tracking data structure
+        self.collision_tracking_data = {
+            'xyz': {
+                'collision_indices': torch.zeros((self.max_tracked_examples, spatial_levels, 3), dtype=torch.int32, device='cuda'),
+                'collision_flags': torch.zeros((self.max_tracked_examples, spatial_levels), dtype=torch.bool, device='cuda'),
+                'max_tracked_examples': self.max_tracked_examples,
+                'example_offset': 0
+            },
+            'xyt': {
+                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels, 3), dtype=torch.int32, device='cuda'),
+                'collision_flags': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.bool, device='cuda'),
+                'max_tracked_examples': self.max_tracked_examples,
+                'example_offset': 0
+            },
+            'yzt': {
+                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels, 3), dtype=torch.int32, device='cuda'),
+                'collision_flags': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.bool, device='cuda'),
+                'max_tracked_examples': self.max_tracked_examples,
+                'example_offset': 0
+            },
+            'xzt': {
+                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels, 3), dtype=torch.int32, device='cuda'),
+                'collision_flags': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.bool, device='cuda'),
+                'max_tracked_examples': self.max_tracked_examples,
+                'example_offset': 0
+            },
+            # Coordinate tracking
+            'coordinates': {
+                'original': torch.zeros((self.max_tracked_examples, 4), dtype=torch.float32, device='cuda'),  # lat, lon, elev, time
+                'normalized': torch.zeros((self.max_tracked_examples, 4), dtype=torch.float32, device='cuda'),  # x_norm, y_norm, z_norm, time
+                'count': 0  # Number of examples tracked so far
+            }
+        }
         
     def _print_resolution_info(self):
         """Print detailed resolution information."""
@@ -752,13 +816,174 @@ class Earth4D(nn.Module):
         # Stack normalized coordinates
         norm_coords = torch.stack([x_norm, y_norm, z_norm, time], dim=-1)
 
+        # Save coordinates for collision tracking if enabled
+        if self.enable_collision_tracking and self.collision_tracking_data['coordinates']['count'] < self.max_tracked_examples:
+            current_count = self.collision_tracking_data['coordinates']['count']
+            batch_size = coords.shape[0]
+            remaining_slots = self.max_tracked_examples - current_count
+            save_count = min(batch_size, remaining_slots)
+            
+            if save_count > 0:
+                # Save original coordinates (lat, lon, elev, time)
+                self.collision_tracking_data['coordinates']['original'][current_count:current_count+save_count] = coords[:save_count]
+                # Save normalized coordinates (x_norm, y_norm, z_norm, time)
+                self.collision_tracking_data['coordinates']['normalized'][current_count:current_count+save_count] = norm_coords[:save_count]
+                # Update count
+                self.collision_tracking_data['coordinates']['count'] += save_count
+
         # Encode
-        spatial_features, temporal_features = self.encoder(norm_coords)
+        if self.enable_collision_tracking:
+            spatial_features, temporal_features = self.encoder(norm_coords, collision_tracking=self.collision_tracking_data)
+        else:
+            spatial_features, temporal_features = self.encoder(norm_coords)
         return torch.cat([spatial_features, temporal_features], dim=-1)
 
     def get_output_dim(self) -> int:
         """Return total output dimension."""
         return self.encoder.output_dim
+    
+    def export_collision_data(self, output_dir: str = "collision_analysis"):
+        """
+        Export complete collision tracking data for scientific analysis.
+        
+        Args:
+            output_dir: Directory to save CSV and JSON files
+            
+        Returns:
+            dict: Summary of exported data
+        """
+        if not self.enable_collision_tracking:
+            raise RuntimeError("Collision tracking is not enabled. Initialize Earth4D with enable_collision_tracking=True")
+        
+        from pathlib import Path
+        import pandas as pd
+        import json
+        
+        output_path = Path(output_dir)
+        output_path.mkdir(exist_ok=True)
+        
+        # Get number of tracked examples
+        tracked_count = self.collision_tracking_data['coordinates']['count']
+        if tracked_count == 0:
+            raise RuntimeError("No collision data tracked yet. Run some forward passes first.")
+        
+        print(f"Exporting collision data for {tracked_count} tracked examples...")
+        
+        # Extract coordinates
+        original_coords = self.collision_tracking_data['coordinates']['original'][:tracked_count].cpu().numpy()
+        normalized_coords = self.collision_tracking_data['coordinates']['normalized'][:tracked_count].cpu().numpy()
+        
+        # Create base DataFrame with coordinates
+        df_data = {
+            'latitude': original_coords[:, 0],
+            'longitude': original_coords[:, 1], 
+            'elevation_m': original_coords[:, 2],
+            'time_original': original_coords[:, 3],
+            'x_normalized': normalized_coords[:, 0],
+            'y_normalized': normalized_coords[:, 1],
+            'z_normalized': normalized_coords[:, 2], 
+            'time_normalized': normalized_coords[:, 3]
+        }
+        
+        # Add grid indices for each grid space and level
+        grid_metadata = {}
+        
+        for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
+            grid_data = self.collision_tracking_data[grid_name]
+            indices = grid_data['collision_indices'][:tracked_count].cpu().numpy()
+            flags = grid_data['collision_flags'][:tracked_count].cpu().numpy()
+            
+            num_levels = indices.shape[1]
+            grid_metadata[grid_name] = {
+                'num_levels': num_levels,
+                'collision_rates_by_level': []
+            }
+            
+            # Add columns for each level of this grid
+            for level in range(num_levels):
+                level_indices = indices[:, level, :]  # [tracked_count, 3]
+                level_flags = flags[:, level]  # [tracked_count]
+                
+                # Add grid index columns
+                for dim in range(3):
+                    col_name = f"{grid_name}_level_{level:02d}_dim_{dim}"
+                    df_data[col_name] = level_indices[:, dim]
+                
+                # Add collision flag column
+                col_name = f"{grid_name}_level_{level:02d}_collision"
+                df_data[col_name] = level_flags
+                
+                # Calculate collision rate for metadata
+                collision_rate = float(level_flags.mean())
+                grid_metadata[grid_name]['collision_rates_by_level'].append(collision_rate)
+        
+        # Create DataFrame and export CSV
+        df = pd.DataFrame(df_data)
+        csv_path = output_path / "earth4d_collision_data.csv"
+        df.to_csv(csv_path, index=False)
+        print(f"Exported grid indices to {csv_path}")
+        
+        # Create comprehensive metadata
+        metadata = {
+            'earth4d_config': {
+                'spatial_levels': self.encoder.xyz_encoder.num_levels,
+                'temporal_levels': self.encoder.xyt_encoder.num_levels,
+                'spatial_log2_hashmap_size': getattr(self.encoder.xyz_encoder, 'log2_hashmap_size', 'unknown'),
+                'temporal_log2_hashmap_size': getattr(self.encoder.xyt_encoder, 'log2_hashmap_size', 'unknown'),
+                'max_tracked_examples': self.max_tracked_examples,
+                'tracked_examples': tracked_count
+            },
+            'coordinate_ranges': {
+                'latitude': [float(original_coords[:, 0].min()), float(original_coords[:, 0].max())],
+                'longitude': [float(original_coords[:, 1].min()), float(original_coords[:, 1].max())],
+                'elevation_m': [float(original_coords[:, 2].min()), float(original_coords[:, 2].max())],
+                'time_original': [float(original_coords[:, 3].min()), float(original_coords[:, 3].max())]
+            },
+            'normalized_coordinate_ranges': {
+                'x_normalized': [float(normalized_coords[:, 0].min()), float(normalized_coords[:, 0].max())],
+                'y_normalized': [float(normalized_coords[:, 1].min()), float(normalized_coords[:, 1].max())],
+                'z_normalized': [float(normalized_coords[:, 2].min()), float(normalized_coords[:, 2].max())],
+                'time_normalized': [float(normalized_coords[:, 3].min()), float(normalized_coords[:, 3].max())]
+            },
+            'grid_analysis': grid_metadata,
+            'csv_format': {
+                'description': 'Each row represents one tracked coordinate with its grid indices across all levels',
+                'coordinate_columns': ['latitude', 'longitude', 'elevation_m', 'time_original', 'x_normalized', 'y_normalized', 'z_normalized', 'time_normalized'],
+                'grid_index_pattern': '{grid}_level_{level:02d}_dim_{dim}',
+                'collision_flag_pattern': '{grid}_level_{level:02d}_collision',
+                'grids': ['xyz', 'xyt', 'yzt', 'xzt']
+            }
+        }
+        
+        # Export metadata JSON
+        json_path = output_path / "earth4d_collision_metadata.json"
+        with open(json_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        print(f"Exported metadata to {json_path}")
+        
+        # Create summary report
+        summary = {
+            'total_tracked_examples': tracked_count,
+            'output_files': {
+                'csv': str(csv_path),
+                'json': str(json_path)
+            },
+            'collision_summary': {}
+        }
+        
+        for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
+            rates = grid_metadata[grid_name]['collision_rates_by_level']
+            summary['collision_summary'][grid_name] = {
+                'overall_rate': float(np.mean(rates)),
+                'fine_resolution_rate': float(np.mean(rates[-5:])),  # Last 5 levels
+                'levels': len(rates)
+            }
+        
+        print(f"\nCollision Summary:")
+        for grid_name, stats in summary['collision_summary'].items():
+            print(f"  {grid_name}: {stats['overall_rate']:.1%} overall, {stats['fine_resolution_rate']:.1%} fine resolution")
+        
+        return summary
 
 
 
