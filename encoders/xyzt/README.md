@@ -65,6 +65,7 @@ Earth4D's configuration determines the tradeoff between memory usage, resolution
 | 19 | 512K | 100 MB | ~10 km | Continental modeling |
 | 20 | 1M | 200 MB | ~5 km | Regional weather |
 | 22 | 4M | 1 GB | ~1 km | City-scale modeling |
+| 23 | 8M | 2 GB | ~500 m | Default planetary |
 | 24 | 16M | 4 GB | ~100 m | Urban planning |
 | 26 | 64M | 14 GB | ~10 m | Building-level |
 | 28** | 256M | 56 GB | ~1 m | Infrastructure |
@@ -132,7 +133,7 @@ encoder = Earth4D(
 ```python
 encoder = Earth4D()  # Uses defaults optimized for 200-year planetary coverage
 # spatial_levels=24, temporal_levels=19
-# spatial_log2_hashmap_size=22, temporal_log2_hashmap_size=18
+# spatial_log2_hashmap_size=23, temporal_log2_hashmap_size=18
 # Memory: 755 MB model, ~3.8 GB during training
 # Resolution: 0.095m spatial, 0.84hr temporal over 200 years (1900-2100)
 # Growth factor: 2.0 for optimal memory scaling
@@ -219,7 +220,7 @@ Earth4D uses a decomposed architecture optimized for spacetime:
 1. **Spatial Encoder (XYZ)**: 3D hash encoding of ECEF coordinates
    - Encodes full 3D position in Earth-Centered Earth-Fixed frame
    - 24 levels × 2 features = 48D output
-   - Hash table: 2^22 entries (4M)
+   - Hash table: 2^23 entries (8M)
 
 2. **Spatiotemporal Projections**: Three 3D encodings capturing orthogonal planes:
    - **XYT**: Equatorial plane + time (X-Y plane through Earth's center)
