@@ -172,6 +172,37 @@ __global__ void kernel_grid(
         pos[d] = smoothstep(pos[d]);
     }
 
+    // **COLLISION TRACKING: Capture actual hash table index (1D)**
+    if (track_collisions && collision_indices != nullptr && collision_flags != nullptr) {
+        const uint32_t global_example_idx = example_offset + b;
+        if (global_example_idx < max_tracked_examples) {
+            // Compute the actual 1D hash table index that gets used for lookup
+            uint32_t stride = 1;
+            uint32_t index = 0;
+            bool hash_collision = false;
+            
+            // Compute index using same logic as get_grid_index
+            #pragma unroll
+            for (uint32_t d = 0; d < D && stride <= hashmap_size; d++) {
+                index += pos_grid[d] * stride;
+                stride *= resolution[d];
+            }
+            
+            // Apply hashing if stride exceeds hashmap_size
+            if (stride > hashmap_size) {
+                index = fast_hash<D>(pos_grid);
+                hash_collision = true;
+            }
+            
+            // The actual hash table index is (index % hashmap_size)
+            uint32_t hash_table_index = index % hashmap_size;
+            
+            // Store the 1D hash table index (only need one value per level, not D values)
+            collision_indices[global_example_idx * L + level] = (int)hash_table_index;
+            collision_flags[global_example_idx * L + level] = hash_collision;
+        }
+    }
+
     // printf("[b=%d, l=%d] pos=(%f, %f, %f)+(%d, %d, %d), scale=%f\n", b, level, pos[0], pos[1], pos[2], pos_grid[0], pos_grid[1], pos_grid[2], scale);
 
     // interpolate
