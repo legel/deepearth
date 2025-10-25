@@ -5,7 +5,7 @@ DeepEarth is an AI model for the planet that fuses [self-supervised](https://en.
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_main_figure.png)
 
-DeepEarth learns by jointly reconstructing masked multimodal datasets (as seen above). It uses a novel spacetime positional encoder, [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
+DeepEarth learns by jointly reconstructing masked multimodal datasets (as seen above). It uses a novel spacetime positional encoder, [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
 
 ![Earth4D spacetime encoder](https://github.com/legel/deepearth/blob/main/docs/earth4d_spacetime_encoder.png) 
 
