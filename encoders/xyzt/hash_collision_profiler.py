@@ -3,15 +3,25 @@
 Hash Collision Profiler
 ========================
 
+See hash collision rates across all indices for Earth4D for a given number of simulated points, over various distributions.
+Examples:
+
+python hash_collision_profiler.py --n-points 1000
+python hash_collision_profiler.py --n-points 10000
+python hash_collision_profiler.py --n-points 100000
+python hash_collision_profiler.py --n-points 1000000
+
 Statistical profiling of hash collisions in Earth4D spatiotemporal encoding.
 
 Features:
 - Synthetic test data generation for controlled collision analysis
-- Real-world LFMC data profiling
 - Complete collision tracking and analysis
 - CSV/JSON export with test metadata
 
-Author: Earth4D Team
+To do:
+- Explore visualizations of input data vs. hash collisions from output files.
+
+Author: Lance Legel, Qin Huang
 License: MIT
 """
 
@@ -682,8 +692,6 @@ def run_synthetic_tests(output_dir="hash_collision_tests", n_points=1_000_000):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Hash Collision Profiler')
-    parser.add_argument('--synthetic-only', action='store_true',
-                       help='Run only synthetic tests, skip LFMC data')
     parser.add_argument('--n-points', type=int, default=1_000_000,
                        help='Number of points per test (default: 1M)')
     parser.add_argument('--output-dir', type=str, default='hash_collision_tests',
@@ -691,8 +699,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.synthetic_only:
-        run_synthetic_tests(output_dir=args.output_dir, n_points=args.n_points)
-    else:
-        print("Real LFMC data profiling not yet implemented in new version")
-        print("Use --synthetic-only flag to run synthetic tests")
+    run_synthetic_tests(output_dir=args.output_dir, n_points=args.n_points)
