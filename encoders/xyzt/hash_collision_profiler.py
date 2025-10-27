@@ -66,7 +66,7 @@ class SpatiotemporalPointGenerator:
         return lat, lon, elev, time, metadata
 
     def generate_moderate_spatial_cluster(self, center_lat=37.7749, center_lon=-122.4194):
-        """Test 2: 1M points in 10km × 10km region."""
+        """Test 2: Points clustered in 10km × 10km region."""
         # 10km ≈ 0.09 degrees at equator
         lat_offset = np.random.uniform(-0.045, 0.045, self.n_points).astype(np.float64)
         lon_offset = np.random.uniform(-0.045, 0.045, self.n_points).astype(np.float64)
@@ -78,10 +78,9 @@ class SpatiotemporalPointGenerator:
 
         metadata = {
             'test_name': 'moderate_spatial_cluster',
-            'description': '1M points in 10km × 10km region',
+            'description': 'Points clustered in 10km × 10km region',
             'spatial_extent': '10km × 10km',
             'center': f'({center_lat}, {center_lon})',
-            'density': '~10 points/m²',
             'expected_collision_behavior': 'Moderate spatial collisions at fine levels'
         }
 
@@ -113,7 +112,7 @@ class SpatiotemporalPointGenerator:
         return lat, lon, elev, time, metadata
 
     def generate_moderate_spatiotemporal(self, center_lat=40.7128, center_lon=-74.0060):
-        """Test 4: 1M points in 1km × 1km × 1 hour window."""
+        """Test 4: Points clustered in 1km × 1km × 1 hour window."""
         # 1km ≈ 0.009 degrees
         lat_offset = np.random.uniform(-0.0045, 0.0045, self.n_points).astype(np.float64)
         lon_offset = np.random.uniform(-0.0045, 0.0045, self.n_points).astype(np.float64)
@@ -126,7 +125,7 @@ class SpatiotemporalPointGenerator:
 
         metadata = {
             'test_name': 'moderate_spatiotemporal',
-            'description': '1M points in 1km × 1km × 1 hour',
+            'description': 'Points clustered in 1km × 1km × 1 hour',
             'spatial_extent': '1km × 1km',
             'temporal_extent': '1 hour',
             'expected_collision_behavior': 'High collisions in space and time'
@@ -135,7 +134,7 @@ class SpatiotemporalPointGenerator:
         return lat, lon, elev, time, metadata
 
     def generate_extreme_spatial_single(self, center_lat=51.5074, center_lon=-0.1278):
-        """Test 5: 1M points in 10m × 10m region."""
+        """Test 5: Points densely clustered in 10m × 10m region."""
         # 10m ≈ 0.00009 degrees
         lat_offset = np.random.uniform(-0.000045, 0.000045, self.n_points).astype(np.float64)
         lon_offset = np.random.uniform(-0.000045, 0.000045, self.n_points).astype(np.float64)
@@ -147,16 +146,15 @@ class SpatiotemporalPointGenerator:
 
         metadata = {
             'test_name': 'extreme_spatial_single',
-            'description': '1M points in 10m × 10m region (single cluster)',
+            'description': 'Points densely clustered in 10m × 10m region',
             'spatial_extent': '10m × 10m',
-            'density': '~10,000 points/m²',
             'expected_collision_behavior': 'Extreme spatial hash stress test'
         }
 
         return lat, lon, elev, time, metadata
 
     def generate_extreme_spatial_multi(self, n_clusters=10):
-        """Test 6: 10 clusters × 100k points each, 10m × 10m per cluster."""
+        """Test 6: Multiple dense spatial clusters, 10m × 10m per cluster."""
         points_per_cluster = self.n_points // n_clusters
 
         # Distribute clusters globally
@@ -184,7 +182,7 @@ class SpatiotemporalPointGenerator:
 
         metadata = {
             'test_name': 'extreme_spatial_multi',
-            'description': f'{n_clusters} clusters, 100k points each, 10m × 10m per cluster',
+            'description': f'{n_clusters} clusters, 10m × 10m per cluster',
             'n_clusters': n_clusters,
             'points_per_cluster': points_per_cluster,
             'spatial_extent_per_cluster': '10m × 10m',
@@ -194,7 +192,7 @@ class SpatiotemporalPointGenerator:
         return lat, lon, elev, time, metadata
 
     def generate_extreme_temporal_single(self, center_time=0.5):
-        """Test 7: 1M points within 1 hour time window, spatially distributed."""
+        """Test 7: Points densely clustered within 1 hour time window, spatially distributed."""
         lat = np.random.uniform(-90, 90, self.n_points).astype(np.float64)
         lon = np.random.uniform(-180, 180, self.n_points).astype(np.float64)
         elev = np.random.uniform(0, 3000, self.n_points).astype(np.float64)
@@ -203,7 +201,7 @@ class SpatiotemporalPointGenerator:
 
         metadata = {
             'test_name': 'extreme_temporal_single',
-            'description': '1M points in 1 hour window (single cluster)',
+            'description': 'Points clustered in 1 hour temporal window',
             'temporal_extent': '1 hour',
             'temporal_center': center_time,
             'expected_collision_behavior': 'Extreme temporal hash stress test'
@@ -212,7 +210,7 @@ class SpatiotemporalPointGenerator:
         return lat, lon, elev, time, metadata
 
     def generate_extreme_temporal_multi(self, n_clusters=10):
-        """Test 8: 10 clusters × 100k points each, 1 hour per cluster, spread 1900-2100."""
+        """Test 8: Multiple temporal clusters, 1 hour per cluster, spread across time range."""
         points_per_cluster = self.n_points // n_clusters
 
         # Distribute time clusters across full range
@@ -251,7 +249,7 @@ class SpatiotemporalPointGenerator:
         return lat, lon, elev, time, metadata
 
     def generate_continental_sparse(self):
-        """Test 9: 1M points across North America, evenly distributed."""
+        """Test 9: Points across North America, evenly distributed."""
         # North America approximate bounds
         lat = np.random.uniform(25, 72, self.n_points).astype(np.float64)  # ~25°N to 72°N
         lon = np.random.uniform(-170, -50, self.n_points).astype(np.float64)  # ~170°W to 50°W
@@ -260,7 +258,7 @@ class SpatiotemporalPointGenerator:
 
         metadata = {
             'test_name': 'continental_sparse',
-            'description': '1M points across North America (sparse coverage)',
+            'description': 'Points across North America (sparse coverage)',
             'spatial_extent': 'Continental (~20M km²)',
             'density': '~0.05 points/km²',
             'expected_collision_behavior': 'Very low collisions due to sparsity'
@@ -693,7 +691,7 @@ def run_synthetic_tests(output_dir="hash_collision_tests", n_points=1_000_000):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Hash Collision Profiler')
     parser.add_argument('--n-points', type=int, default=1_000_000,
-                       help='Number of points per test (default: 1M)')
+                       help='Number of points per test (default: 1000000)')
     parser.add_argument('--output-dir', type=str, default='hash_collision_tests',
                        help='Output directory for test results')
 
