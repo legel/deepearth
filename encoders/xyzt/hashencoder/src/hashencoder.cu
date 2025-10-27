@@ -102,15 +102,19 @@ __device__ inline float identity_derivative(float val) {
 
 template <typename scalar_t, uint32_t D, uint32_t C>
 __global__ void kernel_grid(
-    const scalar_t * __restrict__ inputs, 
-    const scalar_t * __restrict__ grid, 
-    const int * __restrict__ offsets, 
-    scalar_t * __restrict__ outputs, 
-    const uint32_t B, const uint32_t L, 
+    const scalar_t * __restrict__ inputs,
+    const scalar_t * __restrict__ grid,
+    const int * __restrict__ offsets,
+    scalar_t * __restrict__ outputs,
+    const uint32_t B, const uint32_t L,
     const float * __restrict__ per_level_scale,
     const float * __restrict__ base_resolution,
-    const bool calc_grad_inputs, 
-    scalar_t * __restrict__ dy_dx
+    const bool calc_grad_inputs,
+    scalar_t * __restrict__ dy_dx,
+    const bool track_collisions,
+    int * __restrict__ collision_indices,
+    const uint32_t example_offset,
+    const uint32_t max_tracked_examples
 ) {
     const uint32_t b = blockIdx.x * blockDim.x + threadIdx.x;
     
@@ -172,34 +176,28 @@ __global__ void kernel_grid(
         pos[d] = smoothstep(pos[d]);
     }
 
-    // **COLLISION TRACKING: Capture actual hash table index (1D)**
-    if (track_collisions && collision_indices != nullptr && collision_flags != nullptr) {
+    // Collision tracking: capture hash table index
+    if (track_collisions && collision_indices != nullptr) {
         const uint32_t global_example_idx = example_offset + b;
         if (global_example_idx < max_tracked_examples) {
-            // Compute the actual 1D hash table index that gets used for lookup
-            uint32_t stride = 1;
+            // Use 64-bit stride to prevent overflow
+            uint64_t stride = 1;
             uint32_t index = 0;
-            bool hash_collision = false;
-            
-            // Compute index using same logic as get_grid_index
+
             #pragma unroll
             for (uint32_t d = 0; d < D && stride <= hashmap_size; d++) {
                 index += pos_grid[d] * stride;
                 stride *= resolution[d];
             }
-            
+
             // Apply hashing if stride exceeds hashmap_size
             if (stride > hashmap_size) {
                 index = fast_hash<D>(pos_grid);
-                hash_collision = true;
             }
-            
-            // The actual hash table index is (index % hashmap_size)
+
+            // Store the hash table index
             uint32_t hash_table_index = index % hashmap_size;
-            
-            // Store the 1D hash table index (only need one value per level, not D values)
             collision_indices[global_example_idx * L + level] = (int)hash_table_index;
-            collision_flags[global_example_idx * L + level] = hash_collision;
         }
     }
 
@@ -647,14 +645,14 @@ __global__ void kernel_grid_second_backward_embedding(
 
 
 template <typename scalar_t, uint32_t D>
-void kernel_grid_wrapper(const scalar_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx) {
+void kernel_grid_wrapper(const scalar_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
     static constexpr uint32_t N_THREAD = 512;
 	const dim3 blocks_hashgrid = { div_round_up(B, N_THREAD), L, 1 };
     switch (C) {
-        case 1: kernel_grid<scalar_t, D, 1><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx); break;
-        case 2: kernel_grid<scalar_t, D, 2><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx); break;
-        case 4: kernel_grid<scalar_t, D, 4><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx); break;
-        case 8: kernel_grid<scalar_t, D, 8><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx); break;
+        case 1: kernel_grid<scalar_t, D, 1><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 2: kernel_grid<scalar_t, D, 2><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 4: kernel_grid<scalar_t, D, 4><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 8: kernel_grid<scalar_t, D, 8><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
         default: throw std::runtime_error{"GridEncoding: C must be 1, 2, 4, or 8."};
     }
 }
@@ -666,13 +664,13 @@ void kernel_grid_wrapper(const scalar_t *inputs, const scalar_t *embeddings, con
 // H: base resolution
 // dy_dx: [B, L * D * C]
 template <typename scalar_t>
-void hash_encode_forward_cuda(const scalar_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx) {
+void hash_encode_forward_cuda(const scalar_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
     switch (D) {
-        case 2: kernel_grid_wrapper<scalar_t, 2>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx); break;
-        case 3: kernel_grid_wrapper<scalar_t, 3>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx); break;
+        case 2: kernel_grid_wrapper<scalar_t, 2>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 3: kernel_grid_wrapper<scalar_t, 3>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
         default: throw std::runtime_error{"GridEncoding: D must be 2 or 3."};
     }
-    
+
 }
 
 template <typename scalar_t, uint32_t D>
@@ -776,7 +774,7 @@ void hash_encode_second_backward_cuda(const scalar_t *grad, const scalar_t *inpu
 }
 
 
-void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, at::Tensor dy_dx) {
+void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, at::Tensor dy_dx, const bool track_collisions, at::Tensor collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
     CHECK_CUDA(inputs);
     CHECK_CUDA(embeddings);
     CHECK_CUDA(offsets);
@@ -784,7 +782,7 @@ void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, c
     CHECK_CUDA(dy_dx);
     CHECK_CUDA(per_level_scale);
     CHECK_CUDA(base_resolution);
-    
+
     CHECK_CONTIGUOUS(inputs);
     CHECK_CONTIGUOUS(embeddings);
     CHECK_CONTIGUOUS(offsets);
@@ -801,9 +799,12 @@ void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, c
     CHECK_IS_FLOATING(outputs);
     CHECK_IS_FLOATING(dy_dx);
 
+    // Get raw pointer for collision tracking (may be null if disabled)
+    int *collision_indices_ptr = track_collisions ? collision_indices.data_ptr<int>() : nullptr;
+
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(
     inputs.scalar_type(), "hash_encode_forward", ([&] {
-        hash_encode_forward_cuda<scalar_t>(inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), outputs.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>());
+        hash_encode_forward_cuda<scalar_t>(inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), outputs.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), track_collisions, collision_indices_ptr, example_offset, max_tracked_examples);
     }));
 }
 

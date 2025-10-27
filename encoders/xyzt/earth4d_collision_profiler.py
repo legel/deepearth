@@ -93,16 +93,16 @@ def profile_earth4d_collisions():
     coords_subset = coords.cuda()
     print(f"Processing {max_tracked} unique spatiotemporal coordinates")
     
-    # Initialize Earth4D with production configuration and collision tracking
-    print("\nInitializing Earth4D with production configuration...")
+    # Initialize Earth4D with collision tracking
+    print("\nInitializing Earth4D...")
     model = Earth4D(
-        spatial_levels=24,           # Production: 24 levels  
-        temporal_levels=19,          # Production: 19 levels
-        spatial_log2_hashmap_size=23,  # Production: 8M entries
-        temporal_log2_hashmap_size=18, # Production: 256K entries
+        spatial_levels=24,
+        temporal_levels=24,
+        spatial_log2_hashmap_size=22,
+        temporal_log2_hashmap_size=22,
         enable_collision_tracking=True,
         max_tracked_examples=max_tracked,
-        verbose=False  # Disable verbose for cleaner output
+        verbose=True
     ).cuda()
     
     # Store datetime strings for export
@@ -117,7 +117,7 @@ def profile_earth4d_collisions():
     
     with torch.no_grad():
         # Process in batches to demonstrate coordinate tracking
-        batch_size = 100
+        batch_size = 5000
         total_processed = 0
         
         for i in range(0, max_tracked, batch_size):
@@ -200,43 +200,91 @@ def profile_earth4d_collisions():
                 max_val = exported_df[col].max()
                 print(f"  {col}: [{min_val:.4f}, {max_val:.4f}]")
     
-    # Check grid indices are reasonable - verify they're within expected hash table ranges
-    print("\nGrid index sample check (1D hash table indices):")
+    # Check grid indices are reasonable
+    print("\nGrid index sample check (hash table indices):")
     for grid in ['xyz', 'xyt', 'yzt', 'xzt']:
-        expected_max = 8388607 if grid == 'xyz' else 262143  # 2^23-1 for spatial, 2^18-1 for temporal
         level_0_cols = [col for col in exported_df.columns if f"{grid}_level_00_index" in col]
         if level_0_cols:
             col = level_0_cols[0]
             min_val = exported_df[col].min()
             max_val = exported_df[col].max()
-            print(f"  {col}: [{min_val}, {max_val}] (expected max: {expected_max})")
-            if max_val > expected_max:
-                print(f"    ⚠️  WARNING: Max value {max_val} exceeds expected hash table size!")
+            print(f"  {col}: [{min_val}, {max_val}]")
         else:
             print(f"  ⚠️  {grid}_level_00_index column not found")
     
-    # Scientific analysis preview
+    # Scientific analysis with collision detection
     print("\n" + "="*60)
-    print("SCIENTIFIC ANALYSIS PREVIEW")
+    print("COLLISION RATE ANALYSIS")
     print("="*60)
-    
+    print("Analyzing collisions (different coordinates → same hash index)")
+    print()
+
     # Calculate collision statistics by grid and level
+    from collections import defaultdict
+
     for grid in ['xyz', 'xyt', 'yzt', 'xzt']:
-        collision_cols = [col for col in exported_df.columns if f"{grid}_level" in col and "collision" in col]
-        if collision_cols:
+        index_cols = [col for col in exported_df.columns if f"{grid}_level_" in col and "_index" in col]
+        index_cols = sorted(index_cols, key=lambda x: int(x.split('_level_')[1].split('_')[0]))
+
+        if index_cols:
+            print(f"{grid.upper()} Grid Collision Rates:")
+
             collision_rates = []
-            for col in sorted(collision_cols):
-                level = int(col.split('_level_')[1].split('_')[0])
-                rate = exported_df[col].mean()
-                collision_rates.append((level, rate))
-            
-            print(f"\n{grid.upper()} Grid Collision Rates:")
-            for level, rate in collision_rates[:5]:  # Show first 5 levels
-                print(f"  Level {level:2d}: {rate:.1%}")
-            if len(collision_rates) > 10:
-                print("  ...")
-                for level, rate in collision_rates[-5:]:  # Show last 5 levels
-                    print(f"  Level {level:2d}: {rate:.1%}")
+
+            # Get coordinates with SAME transformations as during encoding
+            # Must match what CUDA kernel receives after ALL transformations
+            if grid == 'xyz':
+                # Spatial grid: apply HashEncoder normalization (coord + 1) / 2
+                coord_data = (exported_df[['x_normalized', 'y_normalized', 'z_normalized']].values + 1.0) / 2.0
+            else:
+                # Temporal grids: apply BOTH transformations
+                # 1. Time scaling: t_scaled = (time * 2 - 1) * 0.9
+                # 2. HashEncoder normalization: (coord + 1) / 2
+                t_scaled = (exported_df['time_normalized'].values * 2.0 - 1.0) * 0.9
+                t_normalized = (t_scaled + 1.0) / 2.0
+
+                if grid == 'xyt':
+                    spatial_normalized = (exported_df[['x_normalized', 'y_normalized']].values + 1.0) / 2.0
+                    coord_data = np.column_stack([spatial_normalized, t_normalized])
+                elif grid == 'yzt':
+                    spatial_normalized = (exported_df[['y_normalized', 'z_normalized']].values + 1.0) / 2.0
+                    coord_data = np.column_stack([spatial_normalized, t_normalized])
+                elif grid == 'xzt':
+                    spatial_normalized = (exported_df[['x_normalized', 'z_normalized']].values + 1.0) / 2.0
+                    coord_data = np.column_stack([spatial_normalized, t_normalized])
+
+            for index_col in index_cols:
+                level = int(index_col.split('_level_')[1].split('_')[0])
+
+                # Get hash indices
+                hash_indices = exported_df[index_col].values
+
+                # Group by hash index and count unique coordinates
+                hash_to_coords = defaultdict(list)
+                for i in range(len(exported_df)):
+                    hash_idx = hash_indices[i]
+                    coord_tuple = tuple(coord_data[i])
+                    hash_to_coords[hash_idx].append(coord_tuple)
+
+                # Count collisions
+                collisions = 0
+                for hash_idx, coord_list in hash_to_coords.items():
+                    unique_coords = set(coord_list)
+                    if len(unique_coords) > 1:
+                        # Collision: multiple different coordinates map to same index
+                        collisions += len(coord_list)
+
+                # Calculate rate
+                total_coords = len(exported_df)
+                collision_rate = collisions / total_coords if total_coords > 0 else 0
+
+                collision_rates.append((level, collision_rate))
+
+            # Show all levels
+            for level, collision_rate in collision_rates:
+                print(f"  Level {level:2d}: {collision_rate:.1%}")
+
+            print()
     
     # File size information
     csv_size = csv_path.stat().st_size / (1024 * 1024)  # MB
@@ -251,11 +299,13 @@ def profile_earth4d_collisions():
     print("EARTH4D COLLISION PROFILING COMPLETED SUCCESSFULLY")
     print("="*80)
     print("✅ Original coordinates tracked and exported")
-    print("✅ Complete CSV with grid indices per coordinate")  
+    print("✅ Complete CSV with grid indices per coordinate")
     print("✅ Professional format: 8 coord columns + grid-level columns")
+    print("✅ Collision analysis integrated")
     print("✅ Scientific analysis ready data export")
+
     print(f"\nProfiling data ready for analysis at: {output_dir}")
-    
+
     return summary
 
 if __name__ == "__main__":

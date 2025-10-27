@@ -7,14 +7,20 @@ import torch
 import torch.nn as nn
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
-from torch.cuda.amp import custom_bwd, custom_fwd 
+
+# Use torch.amp instead of deprecated torch.cuda.amp
+try:
+    from torch.amp import custom_bwd, custom_fwd
+except ImportError:
+    # Fallback for older PyTorch versions
+    from torch.cuda.amp import custom_bwd, custom_fwd 
 
 from .backend import _backend
 
 class _hash_encode(Function):
     @staticmethod
-    @custom_fwd(cast_inputs=torch.half)
-    def forward(ctx, inputs, embeddings, offsets, per_level_scale, base_resolution, calc_grad_inputs=False):
+    @custom_fwd(cast_inputs=torch.half, device_type='cuda')
+    def forward(ctx, inputs, embeddings, offsets, per_level_scale, base_resolution, calc_grad_inputs=False, track_collisions=False, collision_indices=None, example_offset=0, max_tracked_examples=0):
         # inputs: [B, D], float in [0, 1]
         # embeddings: [sO, C], float
         # offsets: [L + 1], int
@@ -25,13 +31,13 @@ class _hash_encode(Function):
         offsets = offsets.contiguous()
         per_level_scale = per_level_scale.contiguous()
         base_resolution = base_resolution.contiguous()
-        
+
         B, D = inputs.shape # batch size, coord dim
         L = offsets.shape[0] - 1 # level
         C = embeddings.shape[1] # embedding dim for each level
         # S = np.log2(per_level_scale) # resolution multiplier at each level, apply log2 for later CUDA exp2f
         per_level_scale = torch.log2(per_level_scale)
-        # H = base_resolution # base resolution
+        # H = base resolution
 
         # L first, optimize cache for cuda kernel, but needs an extra permute later
         outputs = torch.empty(L, B, C, device=inputs.device, dtype=inputs.dtype)
@@ -41,7 +47,7 @@ class _hash_encode(Function):
         else:
             dy_dx = torch.empty(1, device=inputs.device, dtype=inputs.dtype)
 
-        _backend.hash_encode_forward(inputs, embeddings, offsets, outputs, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx)
+        _backend.hash_encode_forward(inputs, embeddings, offsets, outputs, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples)
 
         # permute back to [B, L * C]
         outputs = outputs.permute(1, 0, 2).reshape(B, L * C)
@@ -53,7 +59,7 @@ class _hash_encode(Function):
         return outputs
     
     @staticmethod
-    @custom_bwd
+    @custom_bwd(device_type='cuda')
     def backward(ctx, grad):
         
         inputs, embeddings, offsets, per_level_scale, base_resolution, dy_dx = ctx.saved_tensors
@@ -174,16 +180,36 @@ class HashEncoder(nn.Module):
     def __repr__(self):
         return f"HashEncoder: input_dim={self.input_dim} num_levels={self.num_levels} level_dim={self.level_dim} base_resolution={self.base_resolution} per_level_scale={self.per_level_scale} params={tuple(self.embeddings.shape)}"
 
-    def forward(self, inputs, size=1):
+    def forward(self, inputs, size=1, collision_tracking=None):
         # inputs: [..., input_dim], normalized real world positions in [-size, size]
+        # collision_tracking: Optional dict with collision tracking data for this grid
         # return: [..., num_levels * level_dim]
 
         inputs = (inputs + size) / (2 * size) # map to [0, 1]
-        
+
         prefix_shape = list(inputs.shape[:-1])
         inputs = inputs.view(-1, self.input_dim)
 
-        outputs = hash_encode(inputs, self.embeddings, self.offsets, self.per_level_scale, self.base_resolution, inputs.requires_grad)        
+        # Extract collision tracking parameters if provided
+        if collision_tracking is not None:
+            track_collisions = True
+            collision_indices = collision_tracking['collision_indices']
+            example_offset = collision_tracking['example_offset']
+            max_tracked_examples = collision_tracking['max_tracked_examples']
+        else:
+            track_collisions = False
+            # Create dummy tensor for when collision tracking is disabled
+            collision_indices = torch.empty(1, dtype=torch.int32, device=inputs.device)
+            example_offset = 0
+            max_tracked_examples = 0
+
+        # Call hash_encode with collision tracking parameters
+        outputs = hash_encode(
+            inputs, self.embeddings, self.offsets, self.per_level_scale,
+            self.base_resolution, inputs.requires_grad,
+            track_collisions, collision_indices,
+            example_offset, max_tracked_examples
+        )
         outputs = outputs.view(prefix_shape + [self.output_dim])
 
         return outputs

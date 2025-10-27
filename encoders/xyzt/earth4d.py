@@ -230,7 +230,7 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
                  # Spatial encoding configuration
                  spatial_levels: int = 24,  # Match Earth4D default
                  spatial_features: int = 2,
-                 spatial_base_res: int = 16,
+                 spatial_base_res: int = 8,
                  spatial_max_res: int = 134217728,  # 2^27 for sub-meter
                  spatial_hashmap: int = 22,  # Match Earth4D default
                  # Temporal encoding configuration
@@ -440,17 +440,15 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
         print(f"  Spatial encoder: {spatial_actual:,} params")
         print(f"  Temporal encoders: {temporal_actual:,} params")
         print(f"  Total: {total_params:,} params")
-        print(f"\nMEMORY USAGE:")
-        print(f"  Model size (float32): {memory_mb:.1f} MB")
-        print(f"  Note: Hash collisions occur when grid cells > hash table size")
         print("="*80 + "\n")
 
-    def encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
+    def encode_spatial(self, xyz: torch.Tensor, collision_tracking_data: dict = None) -> torch.Tensor:
         """
         Encode spatial xyz coordinates.
 
         Args:
             xyz: Tensor of shape (..., 3) with normalized coordinates
+            collision_tracking_data: Optional dict containing collision tracking info for 'xyz' grid
 
         Returns:
             Spatial features of shape (..., spatial_dim)
@@ -462,15 +460,18 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
             normalized = (xyz + self.spatial_bound) / (2 * self.spatial_bound)
             print(f"  After normalization: [{normalized.min().item():.4f}, {normalized.max().item():.4f}]")
 
-        return self.xyz_encoder(xyz, size=self.spatial_bound)
+        # Extract collision tracking info for xyz grid if provided
+        xyz_tracking = collision_tracking_data.get('xyz') if collision_tracking_data else None
+        return self.xyz_encoder(xyz, size=self.spatial_bound, collision_tracking=xyz_tracking)
     
-    def encode_temporal(self, xyzt: torch.Tensor) -> torch.Tensor:
+    def encode_temporal(self, xyzt: torch.Tensor, collision_tracking_data: dict = None) -> torch.Tensor:
         """
         Encode temporal projections (xyt, yzt, xzt).
-        
+
         Args:
             xyzt: Tensor of shape (..., 4) with normalized coordinates
-            
+            collision_tracking_data: Optional dict containing collision tracking info for temporal grids
+
         Returns:
             Temporal features of shape (..., temporal_dim)
         """
@@ -478,33 +479,39 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
         xyz_scaled = xyzt[..., :3]
         t_scaled = (xyzt[..., 3:] * 2 * self.temporal_bound - self.temporal_bound) * 0.9
         xyzt_scaled = torch.cat([xyz_scaled, t_scaled], dim=-1)
-        
+
         # Create 3D projections with time
         xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
         yzt = xyzt_scaled[..., 1:]
         xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
-        
+
+        # Extract collision tracking info for each temporal grid if provided
+        xyt_tracking = collision_tracking_data.get('xyt') if collision_tracking_data else None
+        yzt_tracking = collision_tracking_data.get('yzt') if collision_tracking_data else None
+        xzt_tracking = collision_tracking_data.get('xzt') if collision_tracking_data else None
+
         # Encode each projection
-        xyt_features = self.xyt_encoder(xyt, size=self.temporal_bound)
-        yzt_features = self.yzt_encoder(yzt, size=self.temporal_bound)
-        xzt_features = self.xzt_encoder(xzt, size=self.temporal_bound)
-        
+        xyt_features = self.xyt_encoder(xyt, size=self.temporal_bound, collision_tracking=xyt_tracking)
+        yzt_features = self.yzt_encoder(yzt, size=self.temporal_bound, collision_tracking=yzt_tracking)
+        xzt_features = self.xzt_encoder(xzt, size=self.temporal_bound, collision_tracking=xzt_tracking)
+
         # Concatenate temporal features
         return torch.cat([xyt_features, yzt_features, xzt_features], dim=-1)
     
-    def forward(self, xyzt: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, xyzt: torch.Tensor, collision_tracking: dict = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Encode 4D spatiotemporal coordinates.
-        
+
         Args:
             xyzt: Tensor of shape (..., 4) with normalized coordinates
-            
+            collision_tracking: Optional dict containing collision tracking data for all grids
+
         Returns:
             Tuple of (spatial_features, temporal_features)
         """
         xyz = xyzt[..., :3]
-        spatial_features = self.encode_spatial(xyz)
-        temporal_features = self.encode_temporal(xyzt)
+        spatial_features = self.encode_spatial(xyz, collision_tracking_data=collision_tracking)
+        temporal_features = self.encode_temporal(xyzt, collision_tracking_data=collision_tracking)
         return spatial_features, temporal_features
 
 
@@ -518,14 +525,14 @@ class Earth4D(nn.Module):
 
     def __init__(self,
                  # Core encoder configuration - production-tested values
-                 spatial_levels: int = 24,  # Production default: 24 levels for ~1km resolution  
-                 temporal_levels: int = 19,  # Production default: 19 levels for 200-year coverage
+                 spatial_levels: int = 24,
+                 temporal_levels: int = 24,
                  features_per_level: int = 2,
-                 spatial_log2_hashmap_size: int = 23,  # Production: 8M entries (2^23, tested on L4 GPU)
-                 temporal_log2_hashmap_size: int = 18,  # Production: 256K entries
-                 base_spatial_resolution: float = 16.0,
-                 base_temporal_resolution: float = 8.0,
-                 growth_factor: float = 2.0,  # Production: 2.0 for optimal memory/accuracy tradeoff
+                 spatial_log2_hashmap_size: int = 22,
+                 temporal_log2_hashmap_size: int = 22,
+                 base_spatial_resolution: float = 32.0,
+                 base_temporal_resolution: float = 32.0,
+                 growth_factor: float = 2.0,
                  target_spatial_km: float = None,
                  target_temporal_days: float = None,
                  verbose: bool = True,
@@ -536,32 +543,20 @@ class Earth4D(nn.Module):
         Initialize Earth4D encoder.
 
         Args:
-            spatial_levels: Number of spatial hash levels (default: 24, production-tested)
-                - 24 levels: Achieves 3.61% MAPE on AlphaEarth prediction
-                - Provides ~1km to sub-meter multi-resolution coverage
-            temporal_levels: Number of temporal hash levels (default: 19, production-tested)
-                - 19 levels: Covers 200 years (1900-2100) at ~1hr precision
+            spatial_levels: Number of spatial resolution levels
+            temporal_levels: Number of temporal resolution levels
             features_per_level: Features per level (default: 2)
-            spatial_log2_hashmap_size: Log2 of spatial hashmap size (default: 22 = 4M entries)
-                - 19: 512K entries (100MB, ~10km resolution, regional models)
-                - 22: 4M entries (1GB, ~1km resolution, continental - RECOMMENDED)
-                - 24: 16M entries (4GB, ~100m resolution, country-scale)
-                - 26: 64M entries (14GB, ~10m resolution, city-scale)
-            temporal_log2_hashmap_size: Log2 of temporal hashmap size (default: 18 = 256K entries)
-            base_spatial_resolution: Base resolution for spatial encoder (default: 16)
-            base_temporal_resolution: Base resolution for temporal encoder (default: 8)  
-            growth_factor: Growth factor between levels (default: 2.0, optimal for memory)
-            target_spatial_km: Optional target spatial resolution in kilometers for display
-            target_temporal_days: Optional target temporal resolution in days for display
-            verbose: Print resolution table on initialization (default: True)
+            spatial_log2_hashmap_size: Log2 of spatial hash table size
+            temporal_log2_hashmap_size: Log2 of temporal hash table size
+            base_spatial_resolution: Base resolution for spatial encoder
+            base_temporal_resolution: Base resolution for temporal encoder
+            growth_factor: Growth factor between levels (default: 2.0)
+            target_spatial_km: Optional target spatial resolution in kilometers
+            target_temporal_days: Optional target temporal resolution in days
+            verbose: Print resolution table on initialization
 
-        Production Performance (tested on 3.2M GBIF samples):
-            - Training: 200 epochs in <2 hours on single L4 GPU (24GB)
-            - Memory: ~17MB encoder, ~20MB total model
-            - Accuracy: 3.61% MAPE on 64D AlphaEarth embeddings
-        
-        Note: Hash collisions are expected and acceptable for sparse Earth data.
-        The encoder leverages natural sparsity of high-frequency spatial variations.
+        Note: Hash collisions are expected and acceptable for Earth data.
+        Collisions at fine temporal resolutions are normal when data doesn't vary at that scale.
         """
         super().__init__()
 
@@ -617,30 +612,26 @@ class Earth4D(nn.Module):
         # Get spatial and temporal levels for all 4 grid spaces
         spatial_levels = self.encoder.xyz_encoder.num_levels
         temporal_levels = self.encoder.xyt_encoder.num_levels
-        
-        # Initialize collision tracking data structure
+
+        # Initialize collision tracking data structure (indices only, flags computed during export)
         self.collision_tracking_data = {
             'xyz': {
                 'collision_indices': torch.zeros((self.max_tracked_examples, spatial_levels), dtype=torch.int32, device='cuda'),
-                'collision_flags': torch.zeros((self.max_tracked_examples, spatial_levels), dtype=torch.bool, device='cuda'),
                 'max_tracked_examples': self.max_tracked_examples,
                 'example_offset': 0
             },
             'xyt': {
                 'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32, device='cuda'),
-                'collision_flags': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.bool, device='cuda'),
                 'max_tracked_examples': self.max_tracked_examples,
                 'example_offset': 0
             },
             'yzt': {
                 'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32, device='cuda'),
-                'collision_flags': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.bool, device='cuda'),
                 'max_tracked_examples': self.max_tracked_examples,
                 'example_offset': 0
             },
             'xzt': {
                 'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32, device='cuda'),
-                'collision_flags': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.bool, device='cuda'),
                 'max_tracked_examples': self.max_tracked_examples,
                 'example_offset': 0
             },
@@ -882,36 +873,80 @@ class Earth4D(nn.Module):
             'time_normalized': normalized_coords[:, 3]
         }
         
-        # Add grid indices for each grid space and level
+        # Add grid indices and compute collision flags for each grid space and level
         grid_metadata = {}
-        
+
         for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
             grid_data = self.collision_tracking_data[grid_name]
-            indices = grid_data['collision_indices'][:tracked_count].cpu().numpy()  # Now [tracked_count, levels]
-            flags = grid_data['collision_flags'][:tracked_count].cpu().numpy()
-            
+            indices = grid_data['collision_indices'][:tracked_count].cpu().numpy()
+
             num_levels = indices.shape[1]
+            # Get actual hash table size from encoder
+            if grid_name == 'xyz':
+                hash_table_size = 2 ** self.encoder.spatial_log2_hashmap_size
+            else:
+                hash_table_size = 2 ** self.encoder.temporal_log2_hashmap_size
+
             grid_metadata[grid_name] = {
                 'num_levels': num_levels,
                 'collision_rates_by_level': [],
-                'hash_table_size': 2**23 if grid_name == 'xyz' else 2**18  # Spatial vs temporal hash sizes
+                'hash_table_size': hash_table_size
             }
-            
+
+            # Get relevant coordinates for this grid with SAME transformations as during encoding
+            # Must match what CUDA kernel receives after ALL transformations
+            if grid_name == 'xyz':
+                # Spatial grid: apply HashEncoder normalization (inputs + size) / (2 * size) with size=1.0
+                coords_for_grid = (normalized_coords[:, [0, 1, 2]] + 1.0) / 2.0
+            else:
+                # Temporal grids: apply BOTH transformations
+                # 1. Time scaling: t_scaled = (time * 2 - 1) * 0.9  → [-0.9, 0.9]
+                # 2. HashEncoder normalization: (coord + 1) / 2  → [0, 1]
+                t_scaled = (normalized_coords[:, 3:4] * 2.0 - 1.0) * 0.9
+                t_normalized = (t_scaled + 1.0) / 2.0
+
+                if grid_name == 'xyt':
+                    spatial_normalized = (normalized_coords[:, [0, 1]] + 1.0) / 2.0
+                    coords_for_grid = np.hstack([spatial_normalized, t_normalized])
+                elif grid_name == 'yzt':
+                    spatial_normalized = (normalized_coords[:, [1, 2]] + 1.0) / 2.0
+                    coords_for_grid = np.hstack([spatial_normalized, t_normalized])
+                elif grid_name == 'xzt':
+                    spatial_normalized = (normalized_coords[:, [0, 2]] + 1.0) / 2.0
+                    coords_for_grid = np.hstack([spatial_normalized, t_normalized])
+
             # Add columns for each level of this grid
             for level in range(num_levels):
-                level_indices = indices[:, level]  # [tracked_count] - now 1D hash table indices
-                level_flags = flags[:, level]  # [tracked_count]
-                
-                # Add single hash table index column (1D)
+                level_indices = indices[:, level]
+
+                # Add hash table index column
                 col_name = f"{grid_name}_level_{level:02d}_index"
                 df_data[col_name] = level_indices
-                
+
+                # Compute collision flags: different coordinates mapping to same hash index
+                hash_to_coords = {}
+                collision_flags = np.zeros(tracked_count, dtype=bool)
+
+                for i in range(tracked_count):
+                    hash_idx = level_indices[i]
+                    coord_tuple = tuple(coords_for_grid[i])
+
+                    if hash_idx not in hash_to_coords:
+                        hash_to_coords[hash_idx] = set()
+                    hash_to_coords[hash_idx].add(coord_tuple)
+
+                # Flag collisions: hash indices with multiple unique coordinate tuples
+                for i in range(tracked_count):
+                    hash_idx = level_indices[i]
+                    if len(hash_to_coords[hash_idx]) > 1:
+                        collision_flags[i] = True
+
                 # Add collision flag column
                 col_name = f"{grid_name}_level_{level:02d}_collision"
-                df_data[col_name] = level_flags
-                
+                df_data[col_name] = collision_flags
+
                 # Calculate collision rate for metadata
-                collision_rate = float(level_flags.mean())
+                collision_rate = float(collision_flags.mean())
                 grid_metadata[grid_name]['collision_rates_by_level'].append(collision_rate)
         
         # Create DataFrame and export CSV
@@ -979,7 +1014,7 @@ class Earth4D(nn.Module):
         print(f"\nCollision Summary:")
         for grid_name, stats in summary['collision_summary'].items():
             print(f"  {grid_name}: {stats['overall_rate']:.1%} overall, {stats['fine_resolution_rate']:.1%} fine resolution")
-        
+
         return summary
 
 
@@ -987,82 +1022,28 @@ class Earth4D(nn.Module):
 
 # Example usage and testing
 if __name__ == "__main__":
-    print("Earth4D: Production-Ready Planetary Encoder")
+    print("Earth4D: Planetary Spatiotemporal Positional Encoder")
     print("=" * 60)
     
-    # Example 1: Production configuration (as used for AlphaEarth)
-    print("\n1. Production Earth4D Configuration:")
+    # Check device availability
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"   Using device: {device.upper()}")
+
     encoder = Earth4D(
         spatial_levels=24,
-        temporal_levels=19,
-        spatial_log2_hashmap_size=23,
-        temporal_log2_hashmap_size=18,
-        verbose=False
-    )
-    
+        temporal_levels=24,
+        spatial_log2_hashmap_size=22,
+        temporal_log2_hashmap_size=22,
+        verbose=True
+    ).to(device)
+
     # Example coordinates: [lat, lon, elev_m, time_norm]
     coords = torch.tensor([
         [37.7749, -122.4194, 50.0, 0.5],   # San Francisco
-        [40.7128, -74.0060, 100.0, 0.7],    # New York
+        [40.7128, -74.0060, 100.0, 0.7],   # New York
         [-33.8688, 151.2093, 20.0, 0.3],   # Sydney
-    ])
-    
+    ], device=device)
+
     features = encoder(coords)
-    print(f"   Input shape: {coords.shape}")
-    print(f"   Output features: {features.shape}")
-    print(f"   Output dimension: {encoder.get_output_dim()}")
-    
-    # Example 2: Training setup
-    print("\n2. Training Configuration Example:")
-    
-    class DeepEarthModel(torch.nn.Module):
-        def __init__(self, target_dim=64):
-            super().__init__()
-            self.earth4d = Earth4D(
-                spatial_levels=24,
-                temporal_levels=19,
-                spatial_log2_hashmap_size=23,
-                temporal_log2_hashmap_size=18,
-                verbose=False
-            )
-            encoder_dim = self.earth4d.get_output_dim()
-            
-            # Example MLP decoder
-            self.decoder = torch.nn.Sequential(
-                torch.nn.LayerNorm(encoder_dim),
-                torch.nn.Linear(encoder_dim, 256),
-                torch.nn.ReLU(),
-                torch.nn.Dropout(0.1),
-                torch.nn.Linear(256, target_dim),
-                torch.nn.Tanh()
-            )
-        
-        def forward(self, coords):
-            features = self.earth4d(coords)
-            return self.decoder(features)
-    
-    model = DeepEarthModel(target_dim=64)
-    predictions = model(coords)
-    print(f"   Model predictions shape: {predictions.shape}")
-    
-    # Calculate model size
-    total_params = sum(p.numel() for p in model.parameters())
-    earth4d_params = sum(p.numel() for p in model.earth4d.parameters())
-    print(f"   Earth4D parameters: {earth4d_params:,}")
-    print(f"   Total model parameters: {total_params:,}")
-    print(f"   Model size (MB): {total_params * 4 / 1024 / 1024:.2f}")
-    
-    # Example 3: Different scale configurations
-    print("\n3. Scale Configuration Examples:")
-    configs = [
-        ("Regional", 16, 19, "~10km resolution, 100MB"),
-        ("Continental", 24, 22, "~1km resolution, 1GB (RECOMMENDED)"),
-        ("Country", 32, 24, "~100m resolution, 4GB"),
-    ]
-    
-    for name, levels, log2_size, desc in configs:
-        print(f"   {name}: L={levels}, log2={log2_size} - {desc}")
-    
-    print("\n" + "=" * 60)
-    print("Earth4D ready for planetary-scale deep learning!")
-    print("Validated: 3.61% MAPE on AlphaEarth embeddings (3.2M samples)")
+    print(f"\nInput shape: {coords.shape}")
+    print(f"Output shape: {features.shape}")
