@@ -37,7 +37,6 @@ ext_modules = [
 setup(
     name='hashencoder',
     version='1.0.0',
-    author='Earth4D Team',
     description='Multi-resolution hash encoding for Earth4D',
     long_description='',
     py_modules=['hashgrid', 'backend', '__init__'],
@@ -45,9 +44,5 @@ setup(
     cmdclass={
         'build_ext': BuildExtension.with_options(no_python_abi_suffix=True)
     },
-    install_requires=[
-        'torch',
-        'numpy',
-    ],
     python_requires='>=3.7',
 )

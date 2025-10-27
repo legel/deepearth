@@ -55,6 +55,11 @@ else
     echo -e "${GREEN}[✓]${NC} Ninja build system found"
 fi
 
+# Ensure setuptools and wheel are up-to-date (prevents bdist_wheel warnings)
+echo "Checking build dependencies..."
+pip install --upgrade setuptools wheel -q 2>/dev/null || true
+echo -e "${GREEN}[✓]${NC} Build dependencies ready"
+
 # Set library path
 TORCH_LIB_PATH=$(python3 -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))" 2>/dev/null)
 if [ -d "$TORCH_LIB_PATH" ]; then
@@ -77,7 +82,38 @@ else
     rm -rf build dist *.egg-info __pycache__
     rm -f hashencoder_cuda*.so
 
-    if python3 setup.py build_ext --inplace; then
+    # Detect CUDA architecture from nvidia-smi
+    if command -v nvidia-smi &> /dev/null; then
+        GPU_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.')
+        if [ ! -z "$GPU_ARCH" ]; then
+            export TORCH_CUDA_ARCH_LIST="${GPU_ARCH:0:1}.${GPU_ARCH:1}"
+            echo "  Detected GPU architecture: ${TORCH_CUDA_ARCH_LIST}"
+        fi
+    fi
+
+    # Run build with progress indication
+    # Note: bdist_wheel and g++ version warnings are harmless and can be ignored
+    echo "  Compiling CUDA kernels (this may take 30-60 seconds)..."
+
+    # Run build in background and show progress
+    TEMP_BUILD_LOG=$(mktemp)
+    python3 setup.py build_ext --inplace > "$TEMP_BUILD_LOG" 2>&1 &
+    BUILD_PID=$!
+
+    # Show progress dots while building
+    while kill -0 $BUILD_PID 2>/dev/null; do
+        echo -n "."
+        sleep 2
+    done
+    wait $BUILD_PID
+    BUILD_EXIT_CODE=$?
+    echo ""
+
+    # Show build output, filtering out known harmless warnings
+    cat "$TEMP_BUILD_LOG" | grep -vE "(ModuleNotFoundError while trying to load entry-point bdist_wheel|No module named 'setuptools\.command\.bdist_wheel'|warnings\.warn\(f'There are no.*version bounds|There are no .* version bounds defined for CUDA)"
+    rm -f "$TEMP_BUILD_LOG"
+
+    if [ $BUILD_EXIT_CODE -eq 0 ]; then
         echo -e "${GREEN}[✓]${NC} CUDA extension built successfully!"
     else
         echo -e "${YELLOW}[⚠]${NC} CUDA build failed. Will compile on first use."
@@ -108,16 +144,18 @@ try:
         coords = torch.tensor([[40.7, -74.0, 100, 0.5]])
         device = 'CPU'
 
-    spatial, temporal = encoder(coords)
-    print(f'SUCCESS:{device}:{spatial.shape}:{temporal.shape}')
+    features = encoder(coords)
+    spatial_dim = encoder.encoder.spatial_dim
+    temporal_dim = encoder.encoder.temporal_dim
+    print(f'SUCCESS:{device}:{features.shape}:spatial={spatial_dim}:temporal={temporal_dim}')
 except Exception as e:
     print(f'ERROR:{e}')
 " 2>/dev/null)
 
 if [[ $TEST_OUTPUT == SUCCESS:* ]]; then
-    IFS=':' read -r status device spatial temporal <<< "$TEST_OUTPUT"
+    IFS=':' read -r status device shape spatial temporal <<< "$TEST_OUTPUT"
     echo -e "${GREEN}[✓]${NC} Earth4D test passed on $device"
-    echo "    Spatial: $spatial, Temporal: $temporal"
+    echo "    Features shape: $shape ($spatial, $temporal)"
 else
     echo -e "${RED}[✗]${NC} Test failed: ${TEST_OUTPUT#ERROR:}"
     exit 1
@@ -131,10 +169,11 @@ echo "=========================================="
 echo
 echo "To use Earth4D:"
 echo "  from earth4d import Earth4D"
-echo "  encoder = Earth4D(auto_ecef_convert=True)"
+echo "  encoder = Earth4D().cuda()  # if using GPU"
+echo "  coords = torch.tensor([[lat, lon, elev, time]]).cuda()"
+echo "  features = encoder(coords)"
 echo
-echo "Run examples:"
-echo "  python3 test_earth4d.py"
-echo "  python3 test_high_resolution.py"
+echo "Run example:"
+echo "  python earth4d.py"
 echo
 echo "Documentation: README.md"
