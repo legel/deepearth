@@ -11,6 +11,12 @@ DeepEarth learns by jointly reconstructing masked multimodal datasets (as seen a
 
 ## Exciting News:
 
+- _October 29, 2025_  
+  **Predicting risk of fires.**  See a presentation by [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather), [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based), and [Lance Legel](https://www.linkedin.com/in/legel/) on simulating [live fuel moisture content](https://www.nature.com/articles/s41597-024-03159-6) hosted by NSF [Institute for Geospatial Understanding](http://i-guide.io/). Register [_here_](https://i-guide.io/i-guide-vco/geospatial-simulation-of-fire-ecology-with-deepearth/).
+
+- _October 27, 2025_  
+  **Battle-hardened (_x_, _y_, _z_, _t_) AI.**  For our spatiotemporal [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/), we've [fixed a numerical bug in NVIDIA's CUDA kernels](https://github.com/legel/deepearth/pull/7) based on [profiling of hash collisions](https://github.com/legel/deepearth/blob/main/encoders/xyzt/hash_collision_profiler.py).
+
 - _September 30, 2025_  
   **Presentation at top AI lab.** 
   Thanks to the [Allen Institute for AI](https://allenai.org) for hosting a 1 hour talk with scientists pioneering [AI foundation models for the planet](https://allenai.org/earth-system). See [_video_](  https://www.youtube.com/watch?v=SHJwCInICiA) and [_slides_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth_AI2_Presentation.pdf).
