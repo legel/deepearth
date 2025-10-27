@@ -829,13 +829,14 @@ class Earth4D(nn.Module):
         """Return total output dimension."""
         return self.encoder.output_dim
     
-    def export_collision_data(self, output_dir: str = "collision_analysis"):
+    def export_collision_data(self, output_dir: str = "collision_analysis", format: str = 'csv'):
         """
         Export complete collision tracking data for scientific analysis.
-        
+
         Args:
-            output_dir: Directory to save CSV and JSON files
-            
+            output_dir: Directory to save output files
+            format: Export format ('csv' or 'pt'). 'pt' uses PyTorch tensors with float64 for GPU-accelerated analysis.
+
         Returns:
             dict: Summary of exported data
         """
@@ -848,7 +849,7 @@ class Earth4D(nn.Module):
         import numpy as np
         
         output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
+        output_path.mkdir(parents=True, exist_ok=True)
         
         # Get number of tracked examples
         tracked_count = self.collision_tracking_data['coordinates']['count']
@@ -889,8 +890,8 @@ class Earth4D(nn.Module):
 
             grid_metadata[grid_name] = {
                 'num_levels': num_levels,
-                'collision_rates_by_level': [],
-                'hash_table_size': hash_table_size
+                'hash_table_size': hash_table_size,
+                'note': 'Collision rates computed during analysis, not stored in export'
             }
 
             # Get relevant coordinates for this grid with SAME transformations as during encoding
@@ -915,45 +916,70 @@ class Earth4D(nn.Module):
                     spatial_normalized = (normalized_coords[:, [0, 2]] + 1.0) / 2.0
                     coords_for_grid = np.hstack([spatial_normalized, t_normalized])
 
-            # Add columns for each level of this grid
+            # Add index columns for all levels (fast - just copying arrays)
             for level in range(num_levels):
                 level_indices = indices[:, level]
-
-                # Add hash table index column
                 col_name = f"{grid_name}_level_{level:02d}_index"
                 df_data[col_name] = level_indices
 
-                # Compute collision flags: different coordinates mapping to same hash index
-                hash_to_coords = {}
-                collision_flags = np.zeros(tracked_count, dtype=bool)
-
-                for i in range(tracked_count):
-                    hash_idx = level_indices[i]
-                    coord_tuple = tuple(coords_for_grid[i])
-
-                    if hash_idx not in hash_to_coords:
-                        hash_to_coords[hash_idx] = set()
-                    hash_to_coords[hash_idx].add(coord_tuple)
-
-                # Flag collisions: hash indices with multiple unique coordinate tuples
-                for i in range(tracked_count):
-                    hash_idx = level_indices[i]
-                    if len(hash_to_coords[hash_idx]) > 1:
-                        collision_flags[i] = True
-
-                # Add collision flag column
-                col_name = f"{grid_name}_level_{level:02d}_collision"
-                df_data[col_name] = collision_flags
-
-                # Calculate collision rate for metadata
-                collision_rate = float(collision_flags.mean())
-                grid_metadata[grid_name]['collision_rates_by_level'].append(collision_rate)
+                # Note: Collision flags computed during analysis, not export
+                # This speeds up export dramatically (96 levels × 1M points = 96M operations saved)
         
-        # Create DataFrame and export CSV
-        df = pd.DataFrame(df_data)
-        csv_path = output_path / "earth4d_collision_data.csv"
-        df.to_csv(csv_path, index=False)
-        print(f"Exported grid indices to {csv_path}")
+        # Build comprehensive column map for reconstructing CSV from .pt
+        column_map = {
+            'description': 'Column names and their order for reconstructing CSV from PyTorch tensors',
+            'coordinate_columns': {
+                'original': ['latitude', 'longitude', 'elevation_m', 'time_original'],
+                'normalized': ['x_normalized', 'y_normalized', 'z_normalized', 'time_normalized']
+            },
+            'hash_index_columns': {}
+        }
+
+        # Add all hash index column names for each grid
+        for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
+            grid_data = self.collision_tracking_data[grid_name]
+            num_levels = grid_data['collision_indices'].shape[1]
+            column_map['hash_index_columns'][grid_name] = [
+                f"{grid_name}_level_{level:02d}_index" for level in range(num_levels)
+            ]
+
+        # Full CSV column order
+        all_columns = (
+            column_map['coordinate_columns']['original'] +
+            column_map['coordinate_columns']['normalized']
+        )
+        for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
+            all_columns.extend(column_map['hash_index_columns'][grid_name])
+
+        column_map['full_csv_columns'] = all_columns
+        column_map['total_columns'] = len(all_columns)
+
+        # Export based on format
+        if format == 'pt':
+            # Export as PyTorch tensors for fast GPU processing
+            tensor_data = {
+                'coordinates': {
+                    'original': torch.from_numpy(original_coords).double(),
+                    'normalized': torch.from_numpy(normalized_coords).double()
+                },
+                'hash_indices': {}
+            }
+
+            # Add hash indices for each grid
+            for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
+                grid_data = self.collision_tracking_data[grid_name]
+                indices = grid_data['collision_indices'][:tracked_count].cpu()
+                tensor_data['hash_indices'][grid_name] = indices
+
+            data_path = output_path / "collision_data.pt"
+            torch.save(tensor_data, data_path)
+            print(f"Exported collision data to {data_path}")
+
+        else:  # csv format
+            df = pd.DataFrame(df_data)
+            csv_path = output_path / "earth4d_collision_data.csv"
+            df.to_csv(csv_path, index=False)
+            print(f"Exported grid indices to {csv_path}")
         
         # Create comprehensive metadata
         metadata = {
@@ -978,12 +1004,17 @@ class Earth4D(nn.Module):
                 'time_normalized': [float(normalized_coords[:, 3].min()), float(normalized_coords[:, 3].max())]
             },
             'grid_analysis': grid_metadata,
-            'csv_format': {
-                'description': 'Each row represents one tracked coordinate with its 1D hash table indices across all levels',
-                'coordinate_columns': ['latitude', 'longitude', 'elevation_m', 'time_original', 'x_normalized', 'y_normalized', 'z_normalized', 'time_normalized'],
-                'grid_index_pattern': '{grid}_level_{level:02d}_index',
-                'collision_flag_pattern': '{grid}_level_{level:02d}_collision',
-                'grids': ['xyz', 'xyt', 'yzt', 'xzt']
+            'column_map': column_map,
+            'export_format': format,
+            'reconstruction_guide': {
+                'description': 'How to reconstruct full CSV from .pt file using column_map',
+                'steps': [
+                    '1. Load collision_data.pt with torch.load()',
+                    '2. Extract coordinates[\'original\'] and coordinates[\'normalized\'] tensors',
+                    '3. Extract hash_indices for each grid (xyz, xyt, yzt, xzt)',
+                    '4. Create DataFrame columns in order specified by column_map[\'full_csv_columns\']',
+                    '5. Use column_map[\'hash_index_columns\'][grid] for each grid\'s level naming'
+                ]
             }
         }
         
@@ -994,26 +1025,20 @@ class Earth4D(nn.Module):
         print(f"Exported metadata to {json_path}")
         
         # Create summary report
+        output_files = {'json': str(json_path)}
+        if format == 'pt':
+            output_files['pt'] = str(data_path)
+        else:
+            output_files['csv'] = str(csv_path)
+
         summary = {
             'total_tracked_examples': tracked_count,
-            'output_files': {
-                'csv': str(csv_path),
-                'json': str(json_path)
-            },
-            'collision_summary': {}
+            'format': format,
+            'output_files': output_files,
+            'note': 'Collision analysis performed by profiler script during analysis phase. Column mapping in metadata JSON.'
         }
-        
-        for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
-            rates = grid_metadata[grid_name]['collision_rates_by_level']
-            summary['collision_summary'][grid_name] = {
-                'overall_rate': float(np.mean(rates)),
-                'fine_resolution_rate': float(np.mean(rates[-5:])),  # Last 5 levels
-                'levels': len(rates)
-            }
-        
-        print(f"\nCollision Summary:")
-        for grid_name, stats in summary['collision_summary'].items():
-            print(f"  {grid_name}: {stats['overall_rate']:.1%} overall, {stats['fine_resolution_rate']:.1%} fine resolution")
+
+        print(f"\nExport complete ({format} format). Column map included in metadata JSON.")
 
         return summary
 

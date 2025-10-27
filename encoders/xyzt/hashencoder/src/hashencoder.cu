@@ -100,9 +100,9 @@ __device__ inline float identity_derivative(float val) {
 	return 1;
 }
 
-template <typename scalar_t, uint32_t D, uint32_t C>
+template <typename input_t, typename scalar_t, uint32_t D, uint32_t C>
 __global__ void kernel_grid(
-    const scalar_t * __restrict__ inputs,
+    const input_t * __restrict__ inputs,
     const scalar_t * __restrict__ grid,
     const int * __restrict__ offsets,
     scalar_t * __restrict__ outputs,
@@ -117,11 +117,11 @@ __global__ void kernel_grid(
     const uint32_t max_tracked_examples
 ) {
     const uint32_t b = blockIdx.x * blockDim.x + threadIdx.x;
-    
+
     if (b >= B) return;
 
     const uint32_t level = blockIdx.y;
-    
+
     // locate
     grid += (uint32_t)offsets[level] * C;
     inputs += b * D;
@@ -139,7 +139,7 @@ __global__ void kernel_grid(
     if (flag_oob) {
         #pragma unroll
         for (uint32_t ch = 0; ch < C; ch++) {
-            outputs[ch] = 0; 
+            outputs[ch] = 0;
         }
         if (calc_grad_inputs) {
             dy_dx += b * D * L * C + level * D * C; // B L D C
@@ -147,31 +147,34 @@ __global__ void kernel_grid(
             for (uint32_t d = 0; d < D; d++) {
                 #pragma unroll
                 for (uint32_t ch = 0; ch < C; ch++) {
-                    dy_dx[d * C + ch] = 0; 
-                }       
+                    dy_dx[d * C + ch] = 0;
+                }
             }
         }
         return;
     }
 
     const uint32_t hashmap_size = offsets[level + 1] - offsets[level];
-    float scale[D];
+    double scale[D];
     uint32_t resolution[D];
     for (uint32_t d = 0; d < D; d++) {
-        scale[d] = exp2f(level * per_level_scale[d]) * base_resolution[d] - 1.0f;
+        scale[d] = exp2(level * (double)per_level_scale[d]) * (double)base_resolution[d] - 1.0;
         resolution[d] = (uint32_t)ceil(scale[d]) + 1;
     }
-    
-    // calculate coordinate
-    float pos[D];
+
+    // calculate coordinate using high precision
+    double pos_hp[D];  // High precision position
+    float pos[D];      // Convert to float for interpolation
     float pos_derivative[D];
     uint32_t pos_grid[D];
 
     #pragma unroll
     for (uint32_t d = 0; d < D; d++) {
-        pos[d] = (float)inputs[d] * scale[d]; // + 0.5f;
-        pos_grid[d] = floorf(pos[d]);
-        pos[d] -= (float)pos_grid[d];
+        // Use double precision for critical calculation
+        pos_hp[d] = (double)inputs[d] * scale[d];
+        pos_grid[d] = (uint32_t)floor(pos_hp[d]);
+        // Convert to float for interpolation (after extracting integer part)
+        pos[d] = (float)(pos_hp[d] - (double)pos_grid[d]);
         pos_derivative[d] = smoothstep_derivative(pos[d]);
         pos[d] = smoothstep(pos[d]);
     }
@@ -289,13 +292,13 @@ __global__ void kernel_grid(
 }
 
 
-template <typename scalar_t, uint32_t D, uint32_t C, uint32_t N_C>
+template <typename input_t, typename scalar_t, uint32_t D, uint32_t C, uint32_t N_C>
 __global__ void kernel_grid_backward(
     const scalar_t * __restrict__ grad,
-    const scalar_t * __restrict__ inputs, 
-    const scalar_t * __restrict__ grid, 
-    const int * __restrict__ offsets, 
-    scalar_t * __restrict__ grad_grid, 
+    const input_t * __restrict__ inputs,
+    const scalar_t * __restrict__ grid,
+    const int * __restrict__ offsets,
+    scalar_t * __restrict__ grad_grid,
     const uint32_t B, const uint32_t L,
     const float * __restrict__ per_level_scale,
     const float * __restrict__ base_resolution
@@ -312,10 +315,10 @@ __global__ void kernel_grid_backward(
     grad += level * B * C + b * C + ch; // L, B, C
 
     const uint32_t hashmap_size = offsets[level + 1] - offsets[level];
-    float scale[D];
+    double scale[D];
     uint32_t resolution[D];
     for (uint32_t d = 0; d < D; d++) {
-        scale[d] = exp2f(level * per_level_scale[d]) * base_resolution[d] - 1.0f;
+        scale[d] = exp2(level * (double)per_level_scale[d]) * (double)base_resolution[d] - 1.0;
         resolution[d] = (uint32_t)ceil(scale[d]) + 1;
     }
 
@@ -327,15 +330,16 @@ __global__ void kernel_grid_backward(
         }
     }
 
-    // calculate coordinate
+    // calculate coordinate with high precision
+    double pos_hp[D];
     float pos[D];
     uint32_t pos_grid[D];
 
     #pragma unroll
     for (uint32_t d = 0; d < D; d++) {
-        pos[d] = (float)inputs[d] * scale[d];// + 0.5f;
-        pos_grid[d] = floorf(pos[d]);
-        pos[d] -= (float)pos_grid[d];
+        pos_hp[d] = (double)inputs[d] * scale[d];
+        pos_grid[d] = (uint32_t)floor(pos_hp[d]);
+        pos[d] = (float)(pos_hp[d] - (double)pos_grid[d]);
         pos[d] = smoothstep(pos[d]);
     }
 
@@ -413,16 +417,16 @@ __global__ void kernel_input_backward(
 }
 
 
-template <typename scalar_t, uint32_t D, uint32_t C, uint32_t N_C>
+template <typename input_t, typename scalar_t, uint32_t D, uint32_t C, uint32_t N_C>
 __global__ void kernel_grid_second_backward_grad(
     const scalar_t * __restrict__ grad,
-    const scalar_t * __restrict__ inputs, 
-    const scalar_t * __restrict__ grid, 
-    const int * __restrict__ offsets, 
-    const scalar_t * __restrict__ grad_grad_inputs, 
-    const scalar_t * __restrict__ dy_dx, 
-    scalar_t * __restrict__ grad_grad, 
-    const uint32_t B, const uint32_t L, 
+    const input_t * __restrict__ inputs,
+    const scalar_t * __restrict__ grid,
+    const int * __restrict__ offsets,
+    const scalar_t * __restrict__ grad_grad_inputs,
+    const scalar_t * __restrict__ dy_dx,
+    scalar_t * __restrict__ grad_grad,
+    const uint32_t B, const uint32_t L,
     const float * __restrict__ per_level_scale,
     const float * __restrict__ base_resolution
 ) {
@@ -471,16 +475,16 @@ __global__ void kernel_grid_second_backward_grad(
 }
 
 
-template <typename scalar_t, uint32_t D, uint32_t C, uint32_t N_C>
+template <typename input_t, typename scalar_t, uint32_t D, uint32_t C, uint32_t N_C>
 __global__ void kernel_grid_second_backward_embedding(
     const scalar_t * __restrict__ grad,
-    const scalar_t * __restrict__ inputs, 
-    const scalar_t * __restrict__ grid, 
-    const int * __restrict__ offsets, 
-    const scalar_t * __restrict__ grad_grad_inputs, 
-    const scalar_t * __restrict__ dy_dx, 
-    scalar_t * __restrict__ grad2_embeddings, 
-    const uint32_t B, const uint32_t L, 
+    const input_t * __restrict__ inputs,
+    const scalar_t * __restrict__ grid,
+    const int * __restrict__ offsets,
+    const scalar_t * __restrict__ grad_grad_inputs,
+    const scalar_t * __restrict__ dy_dx,
+    scalar_t * __restrict__ grad2_embeddings,
+    const uint32_t B, const uint32_t L,
     const float * __restrict__ per_level_scale,
     const float * __restrict__ base_resolution
 ) {
@@ -507,10 +511,10 @@ __global__ void kernel_grid_second_backward_embedding(
     grad_grad_inputs += b*D;
 
     const uint32_t hashmap_size = offsets[level + 1] - offsets[level];
-    float scale[D];
+    double scale[D];
     uint32_t resolution[D];
     for (uint32_t d = 0; d < D; d++) {
-        scale[d] = exp2f(level * per_level_scale[d]) * base_resolution[d] - 1.0f;
+        scale[d] = exp2(level * (double)per_level_scale[d]) * (double)base_resolution[d] - 1.0;
         resolution[d] = (uint32_t)ceil(scale[d]) + 1;
     }
 
@@ -522,16 +526,17 @@ __global__ void kernel_grid_second_backward_embedding(
         }
     }
 
-    // calculate coordinate
+    // calculate coordinate with high precision
+    double pos_hp[D];
     float pos[D];
     float pos_derivative[D];
     uint32_t pos_grid[D];
 
     #pragma unroll
     for (uint32_t d = 0; d < D; d++) {
-        pos[d] = (float)inputs[d] * scale[d];// + 0.5f;
-        pos_grid[d] = floorf(pos[d]);
-        pos[d] -= (float)pos_grid[d];
+        pos_hp[d] = (double)inputs[d] * scale[d];
+        pos_grid[d] = (uint32_t)floor(pos_hp[d]);
+        pos[d] = (float)(pos_hp[d] - (double)pos_grid[d]);
         pos_derivative[d] = smoothstep_derivative(pos[d]);
         pos[d] = smoothstep(pos[d]);
     }
@@ -644,55 +649,55 @@ __global__ void kernel_grid_second_backward_embedding(
 }
 
 
-template <typename scalar_t, uint32_t D>
-void kernel_grid_wrapper(const scalar_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
+template <typename input_t, typename scalar_t, uint32_t D>
+void kernel_grid_wrapper(const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
     static constexpr uint32_t N_THREAD = 512;
 	const dim3 blocks_hashgrid = { div_round_up(B, N_THREAD), L, 1 };
     switch (C) {
-        case 1: kernel_grid<scalar_t, D, 1><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
-        case 2: kernel_grid<scalar_t, D, 2><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
-        case 4: kernel_grid<scalar_t, D, 4><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
-        case 8: kernel_grid<scalar_t, D, 8><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 1: kernel_grid<input_t, scalar_t, D, 1><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 2: kernel_grid<input_t, scalar_t, D, 2><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 4: kernel_grid<input_t, scalar_t, D, 4><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 8: kernel_grid<input_t, scalar_t, D, 8><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
         default: throw std::runtime_error{"GridEncoding: C must be 1, 2, 4, or 8."};
     }
 }
 
-// inputs: [B, D], float, in [0, 1]
+// inputs: [B, D], float or double, in [0, 1]
 // embeddings: [sO, C], float
 // offsets: [L + 1], uint32_t
 // outputs: [L, B, C], float (L first, so only one level of hashmap needs to fit into cache at a time.)
 // H: base resolution
 // dy_dx: [B, L * D * C]
-template <typename scalar_t>
-void hash_encode_forward_cuda(const scalar_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
+template <typename input_t, typename scalar_t>
+void hash_encode_forward_cuda(const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
     switch (D) {
-        case 2: kernel_grid_wrapper<scalar_t, 2>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
-        case 3: kernel_grid_wrapper<scalar_t, 3>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 2: kernel_grid_wrapper<input_t, scalar_t, 2>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 3: kernel_grid_wrapper<input_t, scalar_t, 3>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
         default: throw std::runtime_error{"GridEncoding: D must be 2 or 3."};
     }
 
 }
 
-template <typename scalar_t, uint32_t D>
-void kernel_grid_backward_wrapper(const scalar_t *grad, const scalar_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs) {
+template <typename input_t, typename scalar_t, uint32_t D>
+void kernel_grid_backward_wrapper(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs) {
     static constexpr uint32_t N_THREAD = 256;
 	const uint32_t N_C = std::min(2u, C); // n_features_per_thread
 	const dim3 blocks_hashgrid = { div_round_up(B * C / N_C, N_THREAD), L, 1 };
     switch (C) {
-        case 1: 
-            kernel_grid_backward<scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution); 
+        case 1:
+            kernel_grid_backward<input_t, scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 1><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
-        case 2: 
-            kernel_grid_backward<scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
+        case 2:
+            kernel_grid_backward<input_t, scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 2><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
-        case 4: 
-            kernel_grid_backward<scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
+        case 4:
+            kernel_grid_backward<input_t, scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 4><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
-        case 8: 
-            kernel_grid_backward<scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
+        case 8:
+            kernel_grid_backward<input_t, scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 8><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         default: throw std::runtime_error{"GridEncoding: C must be 1, 2, 4, or 8."};
@@ -701,53 +706,53 @@ void kernel_grid_backward_wrapper(const scalar_t *grad, const scalar_t *inputs, 
 
 
 // grad: [L, B, C], float
-// inputs: [B, D], float, in [0, 1]
+// inputs: [B, D], float or double, in [0, 1]
 // embeddings: [sO, C], float
 // offsets: [L + 1], uint32_t
 // grad_embeddings: [sO, C]
 // H: base resolution
-template <typename scalar_t>
-void hash_encode_backward_cuda(const scalar_t *grad, const scalar_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs) {
+template <typename input_t, typename scalar_t>
+void hash_encode_backward_cuda(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs) {
     switch (D) {
-        case 2: kernel_grid_backward_wrapper<scalar_t, 2>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs); break;
-        case 3: kernel_grid_backward_wrapper<scalar_t, 3>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs); break;
+        case 2: kernel_grid_backward_wrapper<input_t, scalar_t, 2>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs); break;
+        case 3: kernel_grid_backward_wrapper<input_t, scalar_t, 3>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs); break;
         default: throw std::runtime_error{"GridEncoding: D must be 2 or 3."};
     }
 }
 
 
-template <typename scalar_t, uint32_t D>
-void kernel_grid_second_backward_wrapper(const scalar_t *grad, const scalar_t *inputs, const scalar_t *embeddings, const int *offsets, 
-    const uint32_t B, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, 
+template <typename input_t, typename scalar_t, uint32_t D>
+void kernel_grid_second_backward_wrapper(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets,
+    const uint32_t B, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs,
     const scalar_t *dy_dx, const scalar_t *grad_grad_inputs, scalar_t *grad_grad, scalar_t *grad2_embeddings) {
     static constexpr uint32_t N_THREAD = 256;
 	const uint32_t N_C = std::min(2u, C); // n_features_per_thread
 	const dim3 blocks_hashgrid = { div_round_up(B * C / N_C, N_THREAD), L, 1 };
     switch (C) {
         /*
-        case 1: 
-            kernel_grid_second_backward_grad<scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad_grad, B, L, per_level_scale, base_resolution); 
-            kernel_grid_second_backward_embedding<scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad2_embeddings, B, L, per_level_scale, base_resolution); 
+        case 1:
+            kernel_grid_second_backward_grad<input_t, scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad_grad, B, L, per_level_scale, base_resolution);
+            kernel_grid_second_backward_embedding<input_t, scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad2_embeddings, B, L, per_level_scale, base_resolution);
             // if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 1><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         */
-        case 2: 
-            kernel_grid_second_backward_grad<scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad_grad, B, L, per_level_scale, base_resolution);
-            kernel_grid_second_backward_embedding<scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad2_embeddings, B, L, per_level_scale, base_resolution);
+        case 2:
+            kernel_grid_second_backward_grad<input_t, scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad_grad, B, L, per_level_scale, base_resolution);
+            kernel_grid_second_backward_embedding<input_t, scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad2_embeddings, B, L, per_level_scale, base_resolution);
             // if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 2><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
-        case 4: 
-            kernel_grid_second_backward_grad<scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad_grad, B, L, per_level_scale, base_resolution);
-            kernel_grid_second_backward_embedding<scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad2_embeddings, B, L, per_level_scale, base_resolution);
+        case 4:
+            kernel_grid_second_backward_grad<input_t, scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad_grad, B, L, per_level_scale, base_resolution);
+            kernel_grid_second_backward_embedding<input_t, scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad2_embeddings, B, L, per_level_scale, base_resolution);
             // if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 4><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
-        
-        case 8: 
-            kernel_grid_second_backward_grad<scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad_grad, B, L, per_level_scale, base_resolution);
-            kernel_grid_second_backward_embedding<scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad2_embeddings, B, L, per_level_scale, base_resolution);
+
+        case 8:
+            kernel_grid_second_backward_grad<input_t, scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad_grad, B, L, per_level_scale, base_resolution);
+            kernel_grid_second_backward_embedding<input_t, scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_grad_inputs, dy_dx, grad2_embeddings, B, L, per_level_scale, base_resolution);
             // if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 8><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
-        
+
         default: throw std::runtime_error{"GridEncoding: C must be 1, 2, 4, or 8."};
     }
 }
@@ -762,13 +767,13 @@ void kernel_grid_second_backward_wrapper(const scalar_t *grad, const scalar_t *i
 // offsets: [L + 1], uint32_t
 // dy_dx: [B, L * D * C]
 // H: base resolution
-template <typename scalar_t>
-void hash_encode_second_backward_cuda(const scalar_t *grad, const scalar_t *inputs, const scalar_t *embeddings, 
-    const int *offsets, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, 
+template <typename input_t, typename scalar_t>
+void hash_encode_second_backward_cuda(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings,
+    const int *offsets, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution,
     const bool calc_grad_inputs, const scalar_t *dy_dx, const scalar_t *grad_grad_inputs, scalar_t *grad_grad, scalar_t *grad2_embeddings) {
     switch (D) {
-        case 2: kernel_grid_second_backward_wrapper<scalar_t, 2>(grad, inputs, embeddings, offsets, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_grad_inputs, grad_grad, grad2_embeddings); break;
-        case 3: kernel_grid_second_backward_wrapper<scalar_t, 3>(grad, inputs, embeddings, offsets, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_grad_inputs, grad_grad, grad2_embeddings); break;
+        case 2: kernel_grid_second_backward_wrapper<input_t, scalar_t, 2>(grad, inputs, embeddings, offsets, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_grad_inputs, grad_grad, grad2_embeddings); break;
+        case 3: kernel_grid_second_backward_wrapper<input_t, scalar_t, 3>(grad, inputs, embeddings, offsets, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_grad_inputs, grad_grad, grad2_embeddings); break;
         default: throw std::runtime_error{"GridEncoding: D must be 2 or 3."};
     }
 }
@@ -802,10 +807,20 @@ void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, c
     // Get raw pointer for collision tracking (may be null if disabled)
     int *collision_indices_ptr = track_collisions ? collision_indices.data_ptr<int>() : nullptr;
 
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-    inputs.scalar_type(), "hash_encode_forward", ([&] {
-        hash_encode_forward_cuda<scalar_t>(inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), outputs.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), track_collisions, collision_indices_ptr, example_offset, max_tracked_examples);
-    }));
+    // Dispatch on both input type and embedding type
+    if (inputs.scalar_type() == at::ScalarType::Double) {
+        // Double precision inputs with float32 embeddings
+        AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        embeddings.scalar_type(), "hash_encode_forward", ([&] {
+            hash_encode_forward_cuda<double, scalar_t>(inputs.data_ptr<double>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), outputs.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), track_collisions, collision_indices_ptr, example_offset, max_tracked_examples);
+        }));
+    } else {
+        // Float32 inputs (existing behavior)
+        AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        inputs.scalar_type(), "hash_encode_forward", ([&] {
+            hash_encode_forward_cuda<scalar_t, scalar_t>(inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), outputs.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), track_collisions, collision_indices_ptr, example_offset, max_tracked_examples);
+        }));
+    }
 }
 
 void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, const at::Tensor dy_dx, at::Tensor grad_inputs) {
@@ -818,7 +833,7 @@ void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const 
     CHECK_CUDA(grad_inputs);
     CHECK_CUDA(per_level_scale);
     CHECK_CUDA(base_resolution);
-    
+
     CHECK_CONTIGUOUS(grad);
     CHECK_CONTIGUOUS(inputs);
     CHECK_CONTIGUOUS(embeddings);
@@ -839,11 +854,21 @@ void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const 
     CHECK_IS_FLOATING(dy_dx);
     CHECK_IS_FLOATING(grad_inputs);
 
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-    grad.scalar_type(), "hash_encode_backward", ([&] {
-        hash_encode_backward_cuda<scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>());
-    }));
-    
+    // Dispatch on input type
+    if (inputs.scalar_type() == at::ScalarType::Double) {
+        // Double precision inputs
+        AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        grad.scalar_type(), "hash_encode_backward", ([&] {
+            hash_encode_backward_cuda<double, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<double>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>());
+        }));
+    } else {
+        // Float32 inputs
+        AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        grad.scalar_type(), "hash_encode_backward", ([&] {
+            hash_encode_backward_cuda<scalar_t, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>());
+        }));
+    }
+
 }
 
 
@@ -883,12 +908,23 @@ void hash_encode_second_backward(const at::Tensor grad, const at::Tensor inputs,
     CHECK_IS_FLOATING(per_level_scale);
     CHECK_IS_FLOATING(base_resolution);
 
+    // Dispatch on input type for float64 support
+    if (inputs.scalar_type() == at::ScalarType::Double) {
+        // Double precision inputs with float32 embeddings/grad
+        AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        grad.scalar_type(), "hash_encode_second_backward", ([&] {
+            hash_encode_second_backward_cuda<double, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<double>(), embeddings.data_ptr<scalar_t>(),
+            offsets.data_ptr<int>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_grad_inputs.data_ptr<scalar_t>(),
+            grad_grad.data_ptr<scalar_t>(), grad2_embeddings.data_ptr<scalar_t>());
+        }));
+    } else {
+        // Float32 inputs (existing behavior)
+        AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        grad.scalar_type(), "hash_encode_second_backward", ([&] {
+            hash_encode_second_backward_cuda<scalar_t, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(),
+            offsets.data_ptr<int>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_grad_inputs.data_ptr<scalar_t>(),
+            grad_grad.data_ptr<scalar_t>(), grad2_embeddings.data_ptr<scalar_t>());
+        }));
+    }
 
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-    grad.scalar_type(), "hash_encode_second_backward", ([&] {
-        hash_encode_second_backward_cuda<scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), 
-        offsets.data_ptr<int>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_grad_inputs.data_ptr<scalar_t>(),
-        grad_grad.data_ptr<scalar_t>(), grad2_embeddings.data_ptr<scalar_t>());
-    }));
-    
 }

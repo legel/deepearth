@@ -40,12 +40,13 @@ class _hash_encode(Function):
         # H = base resolution
 
         # L first, optimize cache for cuda kernel, but needs an extra permute later
-        outputs = torch.empty(L, B, C, device=inputs.device, dtype=inputs.dtype)
+        # Use embeddings dtype (float32) for outputs, even if inputs are float64
+        outputs = torch.empty(L, B, C, device=inputs.device, dtype=embeddings.dtype)
 
         if calc_grad_inputs:
-            dy_dx = torch.empty(B, L * D * C, device=inputs.device, dtype=inputs.dtype)
+            dy_dx = torch.empty(B, L * D * C, device=inputs.device, dtype=embeddings.dtype)
         else:
-            dy_dx = torch.empty(1, device=inputs.device, dtype=inputs.dtype)
+            dy_dx = torch.empty(1, device=inputs.device, dtype=embeddings.dtype)
 
         _backend.hash_encode_forward(inputs, embeddings, offsets, outputs, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples)
 
