@@ -361,11 +361,7 @@ class SpeciesAwareLFMCModel(nn.Module):
         super().__init__()
 
         self.earth4d = Earth4D(
-            spatial_levels=24,
-            temporal_levels=19,
-            spatial_log2_hashmap_size=22,
-            temporal_log2_hashmap_size=18,
-            verbose=False
+            verbose=True
         )
 
         earth4d_dim = self.earth4d.get_output_dim()
@@ -1484,7 +1480,7 @@ def create_temporal_visualization(dataset, all_predictions, all_ground_truth, al
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-path', required=True)
-    parser.add_argument('--epochs', type=int, default=500)
+    parser.add_argument('--epochs', type=int, default=2500)
     parser.add_argument('--batch-size', type=int, default=30000)
     parser.add_argument('--lr', type=float, default=0.03)
     parser.add_argument('--output-dir', type=str, default='./outputs')
