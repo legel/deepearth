@@ -25,10 +25,10 @@ DeepEarth learns by jointly reconstructing masked multimodal datasets (as seen a
   **Breakthrough spacetime encoding!** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) has been fine-tuned for simulating hourly data at sub-meter scale. See [_example code_](https://github.com/legel/deepearth/blob/main/encoders/xyzt/earth4d_to_lfmc.py).
 
 - _August 8, 2025_  
-  **Saving the world.** NSF funded a week-long ["Spatial AI for Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/) summer school program in Boulder, Colorado. 5 PhD students developed DeepEarth (including Earth4D) for fire ecology.  See [_demos_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth🔥_NSF_I-GUIDE_Final_Presentation.pdf).
+  **AI for natural disasters.** NSF funded a week-long ["Spatial AI for Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/) summer school program in Boulder, Colorado. 5 PhD students developed DeepEarth (including Earth4D) for fire ecology.  See [_demos_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth🔥_NSF_I-GUIDE_Final_Presentation.pdf).
 
 - _June 23, 2025_  
-  **Partnering with GeoAI leaders.** NSF funded a 3 hour workshop on DeepEarth in Chicago for a ["GeoAI for Sustainability"](https://i-guide.io/forum/forum-2025/workshops/) conference. 3 professors, 5 postdocs, and 2 PhD students contributed.  See [_slides_](https://github.com/legel/deepearth/blob/main/docs/NSF_DeepEarth_Workshop.pdf).
+  **Workshop in Chicago.** NSF funded a 3 hour workshop on DeepEarth in Chicago for a ["GeoAI for Sustainability"](https://i-guide.io/forum/forum-2025/workshops/) conference. 3 professors, 5 postdocs, and 2 PhD students contributed.  See [_slides_](https://github.com/legel/deepearth/blob/main/docs/NSF_DeepEarth_Workshop.pdf).
 
 ## Key Innovations:
 
@@ -51,7 +51,7 @@ One of the great lessons from Einstein's _relativity_ is that _space_ and _time_
 Design and development of DeepEarth is led by award-winning scientists and engineers from Stanford University, University of Florida, and Ecodash.ai, along with one of the first engineers from Google DeepMind.  
 
 #### Planetary Intelligence for Everyone
-DeepEarth is an MIT-licensed open source project designed and built to solve planetary-scale problems 🌎, especially through AI-powered maximization of ecosystem services – _e.g._ for sustainable agriculture, environmental restoration, & ecological landscape design.
+DeepEarth is a MIT-licensed open source project designed and built to solve planetary-scale problems 🌎, especially through AI-powered maximization of ecosystem services – _e.g._ for sustainable agriculture, environmental restoration, & ecological landscape design.
 
 #### Invitation for Open Source Collaboration
 Collaborators welcomed! Contact [Lance Legel](https://linkedin.com/in/legel) at lance@ecodash.ai or submit an issue/PR here.
