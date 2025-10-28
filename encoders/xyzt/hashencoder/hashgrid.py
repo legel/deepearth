@@ -62,7 +62,7 @@ class _hash_encode(Function):
     @staticmethod
     @custom_bwd(device_type='cuda')
     def backward(ctx, grad):
-        
+
         inputs, embeddings, offsets, per_level_scale, base_resolution, dy_dx = ctx.saved_tensors
         B, D, C, L = ctx.dims
         calc_grad_inputs = ctx.calc_grad_inputs
@@ -73,9 +73,9 @@ class _hash_encode(Function):
         grad_inputs, grad_embeddings = _hash_encode_second_backward.apply(grad, inputs, embeddings, offsets, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx)
 
         if calc_grad_inputs:
-            return grad_inputs, grad_embeddings, None, None, None, None
+            return grad_inputs, grad_embeddings, None, None, None, None, None, None, None, None
         else:
-            return None, grad_embeddings, None, None, None, None
+            return None, grad_embeddings, None, None, None, None, None, None, None, None
 
 
 class _hash_encode_second_backward(Function):
