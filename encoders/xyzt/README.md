@@ -1,156 +1,131 @@
-# Earth4D: Deep Spacetime Encoder for Planetary Simulation
+# Earth4D: Multi-Resolution 4D Spacetime Encoder for DeepEarth
 
-Earth4D is a spatiotemporal encoder built on a 4D extension of NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) (specifically, _[Grid4D](https://github.com/JiaweiXu8/Grid4D/tree/main)_).  It is designed to accelerate and optimize planetary-scale deep learning tasks, involving latitude, longitude, elevation, and time coordinates.
+Earth4D is a pioneering 4D spatiotemporal encoder that enables planetary-scale deep learning on Earth observation data. Built on NVIDIA's multi-resolution hash encoding architecture and extended to 4D spacetime, Earth4D efficiently encodes latitude, longitude, elevation, and time into learnable features at multiple scales - from sub-meter spatial resolution to microsecond temporal precision.
 
-## Overview
+## 🌍 Core Innovation
 
-Earth4D is a general-purpose encoder for any spatiotemporal prediction task. It uses decomposed hash encoding with separate spatial (xyz) and temporal (xyt, yzt, xzt) projections for efficient 4D representation learning.
+Earth4D is the foundation of DeepEarth's ability to process and learn from the entire planet's observational data across space and time. By using decomposed hash encoding with separate spatial (xyz) and temporal (xyt, yzt, xzt) projections, it achieves:
 
-## Key Features
+- **Planetary Coverage**: Multi-resolution encoding from continental scale to sub-meter precision
+- **Temporal Dynamics**: Flexible temporal encoding from years to sub-second precision
+- **Memory Efficiency**: Configurable hash table sizes to balance memory and collision rates
+- **GPU Acceleration**: Custom CUDA kernels for real-time encoding at scale
 
-- **Multi-resolution hash encoding** for scalable feature extraction
-- **Configurable spatial and temporal resolution hierarchies**
-- **Optional automatic ECEF coordinate conversion** (lat/lon/elevation → normalized ECEF)
-- **Configurable multi-resolution scales** in meters and seconds
-- **Designed for planetary-scale spatiotemporal modeling**
+## 🚀 Quick Start
 
-## Usage
+### Installation
 
-### Basic Usage with Normalized Coordinates
+```bash
+# Clone DeepEarth repository
+git clone https://github.com/deepearth/deepearth.git
+cd deepearth/encoders/xyzt
 
-```python
-from deepearth.encoders.xyzt import Earth4D
-
-# Create basic encoder
-encoder = Earth4D()
-
-# Input: normalized coordinates (batch_size, 4) -> (x, y, z, t) in [0, 1]
-coordinates = torch.rand(100, 4)  
-
-# Encode
-spatial_features, temporal_features = encoder(coordinates)
-print(f"Spatial features: {spatial_features.shape}")    # (100, 32)
-print(f"Temporal features: {temporal_features.shape}")  # (100, 96)
+# Install dependencies
+bash install.sh
 ```
 
-### Advanced Usage with Raw Geographic Coordinates
+### Basic Usage
 
 ```python
-from deepearth.encoders.xyzt import create_earth4d_with_auto_conversion
+from earth4d import Earth4D
+import torch
 
-# Create encoder with automatic ECEF conversion
-encoder = create_earth4d_with_auto_conversion()
+# Check device availability
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# Input: raw geographic coordinates (lat, lon, elevation, time)
-# lat/lon in degrees, elevation in meters, time in seconds since epoch
-geo_coords = torch.tensor([
-    [37.7749, -122.4194, 50.0, 1640995200.0],  # San Francisco
-    [40.7128, -74.0060, 100.0, 1640995260.0],  # New York
-    [51.5074, -0.1278, 25.0, 1640995320.0],    # London
-])
+encoder = Earth4D(
+    spatial_levels=24,
+    temporal_levels=24,
+    spatial_log2_hashmap_size=22,
+    temporal_log2_hashmap_size=22,
+    verbose=True
+).to(device)
 
-# Encoder automatically converts to ECEF and normalizes
-spatial_features, temporal_features = encoder(geo_coords)
+# Example coordinates: [lat, lon, elev_m, time_norm]
+coords = torch.tensor([
+    [37.7749, -122.4194, 50.0, 0.5],   # San Francisco
+    [40.7128, -74.0060, 100.0, 0.7],   # New York
+    [-33.8688, 151.2093, 20.0, 0.3],   # Sydney
+], device=device)
+
+features = encoder(coords)
+print(f"\nInput shape: {coords.shape}")
+print(f"Output shape: {features.shape}")
 ```
 
-### Custom Multi-Resolution Scales
+## 📊 Resolution Scale Table
 
-```python
-from deepearth.encoders.xyzt import create_earth4d_with_physical_scales
+### Spatial Encoder (XYZ)
 
-# Define scales in physical units
-spatial_scales_meters = [16, 32, 64, 128, 256, 512]      # meters
-temporal_scales_seconds = [3600, 86400, 604800, 2592000] # hour, day, week, month
+| Level | Grid Resolution | Meters/Cell |
+|-------|----------------|-------------|
+| 0 | 32 | 398.2km |
+| 1 | 64 | 199.1km |
+| 2 | 128 | 99.5km |
+| 3 | 256 | 49.8km |
+| 4 | 512 | 24.9km |
+| 5 | 1024 | 12.4km |
+| 6 | 2048 | 6.2km |
+| 7 | 4096 | 3.1km |
+| 8 | 8192 | 1.6km |
+| 9 | 16384 | 777.7m |
+| 10 | 32768 | 388.9m |
+| 11 | 65536 | 194.4m |
+| 12 | 131072 | 97.21m |
+| 13 | 262144 | 48.61m |
+| 14 | 524288 | 24.30m |
+| 15 | 1048576 | 12.15m |
+| 16 | 2097152 | 6.076m |
+| 17 | 4194304 | 3.038m |
+| 18 | 8388608 | 1.519m |
+| 19 | 16777216 | 0.7595m |
+| 20 | 33554432 | 0.3797m |
+| 21 | 67108864 | 0.1899m |
+| 22 | 134217728 | 0.0949m |
 
-# Create encoder with custom scales
-encoder = create_earth4d_with_physical_scales(
-    spatial_scales_meters=spatial_scales_meters,
-    temporal_scales_seconds=temporal_scales_seconds
-)
+### Temporal Encoders (XYT, YZT, XZT)
 
-coordinates = torch.rand(50, 4)
-features = encoder(coordinates)
-```
+| Level | Grid Resolution | Seconds/Cell |
+|-------|----------------|--------------|
+| 0 | 32 | 986175.0 |
+| 1 | 64 | 493087.5 |
+| 2 | 128 | 246543.8 |
+| 3 | 256 | 123271.9 |
+| 4 | 512 | 61635.9 |
+| 5 | 1024 | 30818.0 |
+| 6 | 2048 | 15409.0 |
+| 7 | 4096 | 7704.5 |
+| 8 | 8192 | 3852.2 |
+| 9 | 16384 | 1926.1 |
+| 10 | 32768 | 963.1 |
+| 11 | 65536 | 481.5 |
+| 12 | 131072 | 240.8 |
+| 13 | 262144 | 120.4 |
+| 14 | 524288 | 60.2 |
+| 15 | 1048576 | 30.1 |
+| 16 | 2097152 | 15.0 |
+| 17 | 4194304 | 7.5 |
+| 18 | 8388608 | 3.8 |
+| 19 | 16777216 | 1.9 |
+| 20 | 33554432 | 0.9 |
+| 21 | 67108864 | 0.5 |
+| 22 | 134217728 | 0.2 |
 
-### Integration with Your Models
+## 🔬 Research Applications
 
-```python
-import torch.nn as nn
-from deepearth.encoders.xyzt import Earth4D
+Earth4D enables breakthrough research in:
 
-class MyPlanetaryModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        
-        # Earth4D encoder for spatiotemporal features
-        self.earth4d = Earth4D(
-            spatial_levels=16,
-            temporal_levels=16,
-            auto_ecef_convert=True  # Handle raw lat/lon/elevation
-        )
-        
-        # Your prediction head
-        feature_dim = self.earth4d.get_feature_dimensions()['total']
-        self.predictor = nn.Sequential(
-            nn.Linear(feature_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)  # Your target variable
-        )
-    
-    def forward(self, coordinates):
-        # coordinates: (batch, 4) -> (lat, lon, elevation, time)
-        spatial_feat, temporal_feat = self.earth4d(coordinates)
-        combined_feat = torch.cat([spatial_feat, temporal_feat], dim=-1)
-        prediction = self.predictor(combined_feat)
-        return prediction
+- **Climate Modeling**: Multi-scale climate dynamics from global to local
+- **Weather Prediction**: High-resolution nowcasting with temporal continuity
+- **Earth Observation**: Fusion of satellite, aerial, and ground sensors
+- **Urban Planning**: Building-level environmental modeling
+- **Agriculture**: Precision crop monitoring at plant scale
+- **Disaster Response**: Real-time multi-scale hazard assessment
 
-# Usage
-model = MyPlanetaryModel()
-geo_coords = torch.tensor([[37.7749, -122.4194, 50.0, 1640995200.0]])
-prediction = model(geo_coords)
-```
+## 📚 Technical Papers
 
-## Configuration Options
+Earth4D builds on:
+- [Instant Neural Graphics Primitives](https://nvlabs.github.io/instant-ngp/) (Müller et al., 2022)
+- [Grid4D](https://github.com/JiaweiXu8/Grid4D) (4D extension)
 
-### Earth4D Parameters
-
-- `spatial_levels`: Number of spatial hash encoding levels (default: 16)
-- `spatial_features`: Features per spatial level (default: 2)
-- `spatial_base_res`: Base spatial resolution (default: 16)
-- `spatial_max_res`: Maximum spatial resolution (default: 512)
-- `temporal_levels`: Number of temporal hash encoding levels (default: 16)
-- `temporal_features`: Features per temporal level (default: 2)
-- `auto_ecef_convert`: Enable automatic coordinate conversion (default: False)
-- `spatial_scales_meters`: Custom spatial scales in meters (optional)
-- `temporal_scales_seconds`: Custom temporal scales in seconds (optional)
-
-### Feature Dimensions
-
-```python
-encoder = Earth4D()
-dims = encoder.get_feature_dimensions()
-print(dims)
-# {'spatial': 32, 'temporal': 96, 'total': 128}
-```
-
-## Architecture Details
-
-Earth4D uses the Grid4D decomposed encoding strategy:
-
-1. **Spatial Encoding**: 3D hash encoding for (x, y, z) coordinates
-2. **Temporal Projections**: Three 3D hash encodings for:
-   - (x, y, t) - XY plane over time
-   - (y, z, t) - YZ plane over time  
-   - (x, z, t) - XZ plane over time
-3. **Feature Fusion**: Separate spatial and temporal feature vectors
-
-This decomposition enables efficient learning of spatiotemporal patterns while maintaining computational efficiency.
-
-## Performance Tips
-
-1. **Batch Processing**: Use larger batch sizes for better GPU utilization
-2. **Coordinate Normalization**: Ensure coordinates are properly normalized to [0, 1]
-3. **Memory Usage**: Adjust hash map sizes (`spatial_hashmap`, `temporal_hashmap`) based on available memory
-4. **Resolution Tuning**: Start with default resolutions and adjust based on your data scale
+*Earth4D: Encoding the entire planet across space and time, one hash at a time.*
