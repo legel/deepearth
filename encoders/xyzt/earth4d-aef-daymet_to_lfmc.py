@@ -212,17 +212,44 @@ class ModularGPUDataset:
         df = self.dataset.data
 
         # Coordinates and targets
+        # Parse dates to float for consistent normalization with original scripts
+        date_floats = np.zeros(len(df))
+        for i, date in enumerate(df['date']):
+            year = date.year
+            month = date.month
+            day = date.day
+            date_floats[i] = year + (month - 1) / 12.0 + day / 365.0
+
+        # Normalize time to [0, 1] using FIXED RANGE: 2015-2025
+        # This matches the original earth4d_to_lfmc.py and earth4d-aef_to_lfmc.py behavior
+        time_norm = (date_floats - 2015) / 10.0
+        time_norm = np.clip(time_norm, 0, 1)
+
         coords_np = np.column_stack([
             df['lat'].values,
             df['lon'].values,
             df['elevation_m'].values,
-            df['date'].astype('int64').values / 1e9  # Convert to float
+            time_norm
         ])
 
-        # Normalize time to [0, 1] (2015-2025 range)
-        time_values = coords_np[:, 3]
-        time_norm = (time_values - time_values.min()) / (time_values.max() - time_values.min())
-        coords_np[:, 3] = time_norm
+        # DEPRECATED: Data-dependent normalization (caused performance discrepancy)
+        # This was causing 3+ pp worse performance because Earth4D hash encoding is
+        # sensitive to time coordinate values. Data-dependent normalization maps the
+        # actual data range (2017-2023) to [0, 1], while the original scripts map a
+        # fixed range (2015-2025) to [0, 1]. This causes different dates to receive
+        # different time coordinates, leading to different hash cell lookups and
+        # ultimately different learned spatial-temporal patterns.
+        #
+        # OLD CODE (DO NOT USE):
+        # coords_np = np.column_stack([
+        #     df['lat'].values,
+        #     df['lon'].values,
+        #     df['elevation_m'].values,
+        #     df['date'].astype('int64').values / 1e9  # Convert to Unix timestamp
+        # ])
+        # time_values = coords_np[:, 3]
+        # time_norm = (time_values - time_values.min()) / (time_values.max() - time_values.min())
+        # coords_np[:, 3] = time_norm
 
         # Transfer to GPU
         self.coords = torch.tensor(coords_np, dtype=torch.float32, device=device)
@@ -966,12 +993,24 @@ def run_training_session(args, run_name=""):
 
     # Print final summary
     final = metrics_history[-1]
-    print(f"\nFINAL RESULTS (Epoch {args.epochs}):", flush=True)
+    print(f"\nFINAL RESULTS (Epoch {args.epochs}) - Errors in LFMC percentage points:", flush=True)
     print(f"  Overall Performance:", flush=True)
     print(f"    Training:      MAE={final['train_mae']:.1f}pp, Median={final['train_median_ae']:.1f}pp, Std={final['train_error_std']:.1f}pp", flush=True)
     print(f"    Temporal Test: MAE={final['temporal_mae']:.1f}pp, Median={final['temporal_median_ae']:.1f}pp, Std={final['temporal_error_std']:.1f}pp", flush=True)
     print(f"    Spatial Test:  MAE={final['spatial_mae']:.1f}pp, Median={final['spatial_median_ae']:.1f}pp, Std={final['spatial_error_std']:.1f}pp", flush=True)
     print(f"    Random Test:   MAE={final['random_mae']:.1f}pp, Median={final['random_median_ae']:.1f}pp, Std={final['random_error_std']:.1f}pp", flush=True)
+
+    print(f"\n  Unique Species Locations Only:", flush=True)
+    print(f"    Training:      MAE={final['train_unique_mae']:.1f}pp, Median={final['train_unique_median_ae']:.1f}pp, Std={final['train_unique_std']:.1f}pp", flush=True)
+    print(f"    Temporal Test: MAE={final['temporal_unique_mae']:.1f}pp, Median={final['temporal_unique_median_ae']:.1f}pp, Std={final['temporal_unique_std']:.1f}pp", flush=True)
+    print(f"    Spatial Test:  MAE={final['spatial_unique_mae']:.1f}pp, Median={final['spatial_unique_median_ae']:.1f}pp, Std={final['spatial_unique_std']:.1f}pp", flush=True)
+    print(f"    Random Test:   MAE={final['random_unique_mae']:.1f}pp, Median={final['random_unique_median_ae']:.1f}pp, Std={final['random_unique_std']:.1f}pp", flush=True)
+
+    print(f"\n  Multi-Species Locations Only:", flush=True)
+    print(f"    Training:      MAE={final['train_degen_mae']:.1f}pp, Median={final['train_degen_median_ae']:.1f}pp, Std={final['train_degen_std']:.1f}pp", flush=True)
+    print(f"    Temporal Test: MAE={final['temporal_degen_mae']:.1f}pp, Median={final['temporal_degen_median_ae']:.1f}pp, Std={final['temporal_degen_std']:.1f}pp", flush=True)
+    print(f"    Spatial Test:  MAE={final['spatial_degen_mae']:.1f}pp, Median={final['spatial_degen_median_ae']:.1f}pp, Std={final['spatial_degen_std']:.1f}pp", flush=True)
+    print(f"    Random Test:   MAE={final['random_degen_mae']:.1f}pp, Median={final['random_degen_median_ae']:.1f}pp, Std={final['random_degen_std']:.1f}pp", flush=True)
 
     print("\nTraining complete!", flush=True)
 
