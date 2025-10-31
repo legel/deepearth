@@ -213,8 +213,19 @@ class ModularGPUDataset:
 
         # Coordinates and targets
         # Parse dates to float for consistent normalization with original scripts
+        # Note: dates may be datetime objects (from Parquet) or Unix timestamps (from .pt cache)
         date_floats = np.zeros(len(df))
-        for i, date in enumerate(df['date']):
+        dates = df['date'].values
+
+        # Check if dates are already Unix timestamps (float) or datetime objects
+        if np.issubdtype(dates.dtype, np.floating):
+            # Dates are Unix timestamps (from .pt cache) - convert to datetime
+            dates = pd.to_datetime(dates, unit='s')
+
+        for i, date in enumerate(dates):
+            # Convert to pandas Timestamp if needed
+            if not isinstance(date, pd.Timestamp):
+                date = pd.Timestamp(date)
             year = date.year
             month = date.month
             day = date.day
