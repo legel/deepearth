@@ -284,7 +284,7 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
         self.temporal_dim = temporal_levels * temporal_features * 3  # 3 projections
         self.output_dim = self.spatial_dim + self.temporal_dim
         
-        # Spatial encoder for xyz coordinates (no learned probing - pure spatial)
+        # Spatial encoder for xyz coordinates (with learned probing)
         self.xyz_encoder = HashEncoder(
             input_dim=3,
             num_levels=spatial_levels,
@@ -293,10 +293,12 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
             base_resolution=spatial_base_res,
             log2_hashmap_size=spatial_hashmap,
             desired_resolution=spatial_max_res,
-            enable_learned_probing=False  # Spatial only, no learned probing
+            enable_learned_probing=enable_learned_probing,
+            probing_range=probing_range,
+            index_codebook_size=index_codebook_size
         )
 
-        # Temporal projection encoders (xyt, yzt, xzt) with optional learned probing
+        # Temporal projection encoders (xyt, yzt, xzt) with learned probing
         self.xyt_encoder = HashEncoder(
             input_dim=3,
             num_levels=temporal_levels,
