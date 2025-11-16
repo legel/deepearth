@@ -647,35 +647,56 @@ class Earth4D(nn.Module):
         temporal_levels = self.encoder.xyt_encoder.num_levels
 
         # Initialize collision tracking data structure (indices only, flags computed during export)
+        # Create tensors on CPU - they will be moved to CUDA when .cuda() is called on the model
         self.collision_tracking_data = {
             'xyz': {
-                'collision_indices': torch.zeros((self.max_tracked_examples, spatial_levels), dtype=torch.int32, device='cuda'),
+                'collision_indices': torch.zeros((self.max_tracked_examples, spatial_levels), dtype=torch.int32),
                 'max_tracked_examples': self.max_tracked_examples,
                 'example_offset': 0
             },
             'xyt': {
-                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32, device='cuda'),
+                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32),
                 'max_tracked_examples': self.max_tracked_examples,
                 'example_offset': 0
             },
             'yzt': {
-                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32, device='cuda'),
+                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32),
                 'max_tracked_examples': self.max_tracked_examples,
                 'example_offset': 0
             },
             'xzt': {
-                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32, device='cuda'),
+                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32),
                 'max_tracked_examples': self.max_tracked_examples,
                 'example_offset': 0
             },
             # Coordinate tracking
             'coordinates': {
-                'original': torch.zeros((self.max_tracked_examples, 4), dtype=torch.float32, device='cuda'),  # lat, lon, elev, time
-                'normalized': torch.zeros((self.max_tracked_examples, 4), dtype=torch.float32, device='cuda'),  # x_norm, y_norm, z_norm, time
+                'original': torch.zeros((self.max_tracked_examples, 4), dtype=torch.float32),  # lat, lon, elev, time
+                'normalized': torch.zeros((self.max_tracked_examples, 4), dtype=torch.float32),  # x_norm, y_norm, z_norm, time
                 'count': 0  # Number of examples tracked so far
             }
         }
-        
+
+    def cuda(self, device=None):
+        """Override cuda() to also move collision tracking tensors to GPU."""
+        # Call parent cuda() to move all registered parameters/buffers
+        super().cuda(device)
+
+        # Move collision tracking tensors to CUDA
+        if hasattr(self, 'collision_tracking_data') and self.collision_tracking_data is not None:
+            for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
+                if grid_name in self.collision_tracking_data:
+                    self.collision_tracking_data[grid_name]['collision_indices'] = \
+                        self.collision_tracking_data[grid_name]['collision_indices'].cuda(device)
+
+            if 'coordinates' in self.collision_tracking_data:
+                self.collision_tracking_data['coordinates']['original'] = \
+                    self.collision_tracking_data['coordinates']['original'].cuda(device)
+                self.collision_tracking_data['coordinates']['normalized'] = \
+                    self.collision_tracking_data['coordinates']['normalized'].cuda(device)
+
+        return self
+
     def _print_resolution_info(self):
         """Print detailed resolution information."""
         # Get resolution scales from encoder
