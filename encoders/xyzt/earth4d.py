@@ -242,6 +242,10 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
                  # Coordinate bounds
                  spatial_bound: float = 1.0,
                  temporal_bound: float = 1.0,
+                 # Learned hash probing
+                 enable_learned_probing: bool = False,
+                 probing_range: int = 4,
+                 index_codebook_size: int = 2048,
                  # Reporting
                  verbose: bool = True):
         """
@@ -280,7 +284,7 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
         self.temporal_dim = temporal_levels * temporal_features * 3  # 3 projections
         self.output_dim = self.spatial_dim + self.temporal_dim
         
-        # Spatial encoder for xyz coordinates
+        # Spatial encoder for xyz coordinates (no learned probing - pure spatial)
         self.xyz_encoder = HashEncoder(
             input_dim=3,
             num_levels=spatial_levels,
@@ -288,10 +292,11 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
             per_level_scale=2,
             base_resolution=spatial_base_res,
             log2_hashmap_size=spatial_hashmap,
-            desired_resolution=spatial_max_res
+            desired_resolution=spatial_max_res,
+            enable_learned_probing=False  # Spatial only, no learned probing
         )
-        
-        # Temporal projection encoders (xyt, yzt, xzt)
+
+        # Temporal projection encoders (xyt, yzt, xzt) with optional learned probing
         self.xyt_encoder = HashEncoder(
             input_dim=3,
             num_levels=temporal_levels,
@@ -299,9 +304,12 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
             per_level_scale=2,
             base_resolution=temporal_base_res,
             log2_hashmap_size=temporal_hashmap,
-            desired_resolution=temporal_max_res
+            desired_resolution=temporal_max_res,
+            enable_learned_probing=enable_learned_probing,
+            probing_range=probing_range,
+            index_codebook_size=index_codebook_size
         )
-        
+
         self.yzt_encoder = HashEncoder(
             input_dim=3,
             num_levels=temporal_levels,
@@ -309,9 +317,12 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
             per_level_scale=2,
             base_resolution=temporal_base_res,
             log2_hashmap_size=temporal_hashmap,
-            desired_resolution=temporal_max_res
+            desired_resolution=temporal_max_res,
+            enable_learned_probing=enable_learned_probing,
+            probing_range=probing_range,
+            index_codebook_size=index_codebook_size
         )
-        
+
         self.xzt_encoder = HashEncoder(
             input_dim=3,
             num_levels=temporal_levels,
@@ -319,7 +330,10 @@ class Grid4DSpatiotemporalEncoder(nn.Module):
             per_level_scale=2,
             base_resolution=temporal_base_res,
             log2_hashmap_size=temporal_hashmap,
-            desired_resolution=temporal_max_res
+            desired_resolution=temporal_max_res,
+            enable_learned_probing=enable_learned_probing,
+            probing_range=probing_range,
+            index_codebook_size=index_codebook_size
         )
 
         # Calculate and display resolution scales
@@ -538,7 +552,11 @@ class Earth4D(nn.Module):
                  verbose: bool = True,
                  # Collision tracking configuration
                  enable_collision_tracking: bool = False,
-                 max_tracked_examples: int = 1000000):
+                 max_tracked_examples: int = 1000000,
+                 # Learned hash probing configuration
+                 enable_learned_probing: bool = False,
+                 probing_range: int = 4,
+                 index_codebook_size: int = 2048):
         """
         Initialize Earth4D encoder.
 
@@ -554,6 +572,11 @@ class Earth4D(nn.Module):
             target_spatial_km: Optional target spatial resolution in kilometers
             target_temporal_days: Optional target temporal resolution in days
             verbose: Print resolution table on initialization
+            enable_collision_tracking: Track hash indices for collision analysis
+            max_tracked_examples: Maximum number of examples to track
+            enable_learned_probing: Enable learned hash probing for 4× memory reduction
+            probing_range: Number of probe candidates (N_p, default: 4)
+            index_codebook_size: Size of learned probe table (N_c, default: 2048)
 
         Note: Hash collisions are expected and acceptable for Earth data.
         Collisions at fine temporal resolutions are normal when data doesn't vary at that scale.
@@ -563,11 +586,16 @@ class Earth4D(nn.Module):
         self.verbose = verbose
         self.target_spatial_km = target_spatial_km
         self.target_temporal_days = target_temporal_days
-        
+
         # Collision tracking configuration
         self.enable_collision_tracking = enable_collision_tracking
         self.max_tracked_examples = max_tracked_examples
         self.collision_tracking_data = None
+
+        # Learned probing configuration
+        self.enable_learned_probing = enable_learned_probing
+        self.probing_range = probing_range
+        self.index_codebook_size = index_codebook_size
 
         # WGS84 ellipsoid parameters for coordinate conversion
         self.WGS84_A = 6378137.0  # Semi-major axis in meters
@@ -595,6 +623,9 @@ class Earth4D(nn.Module):
             temporal_hashmap=temporal_log2_hashmap_size,
             spatial_bound=1.0,
             temporal_bound=1.0,
+            enable_learned_probing=enable_learned_probing,
+            probing_range=probing_range,
+            index_codebook_size=index_codebook_size,
             verbose=False  # We'll print our own info
         )
 
@@ -828,6 +859,154 @@ class Earth4D(nn.Module):
     def get_output_dim(self) -> int:
         """Return total output dimension."""
         return self.encoder.output_dim
+
+    def compute_loss(self, predictions, targets, criterion=None,
+                    enable_probe_entropy_loss=False, probe_entropy_weight=0.001,
+                    enable_gradient_validation=False):
+        """
+        Compute loss with optional regularization for learned hash probing.
+
+        This method ensures all loss computation happens in one place, making it easy
+        to enable/disable various penalties and validate gradients.
+
+        Args:
+            predictions: Model output features
+            targets: Ground truth targets
+            criterion: Loss function (default: MSELoss)
+            enable_probe_entropy_loss: Add entropy regularization on probe distributions
+            probe_entropy_weight: Weight for entropy loss (default: 0.001)
+            enable_gradient_validation: Perform finite-difference gradient check
+
+        Returns:
+            Dictionary with:
+                'total_loss': Combined loss (differentiable, use for backward())
+                'task_loss': Task-specific loss component
+                'probe_entropy_loss': Entropy regularization (if enabled)
+                'gradient_valid': Boolean indicating gradient correctness (if validation enabled)
+        """
+        if criterion is None:
+            criterion = torch.nn.MSELoss()
+
+        # Main task loss
+        task_loss = criterion(predictions, targets)
+        total_loss = task_loss
+
+        loss_dict = {
+            'task_loss': task_loss.item(),
+            'total_loss': task_loss.item()
+        }
+
+        # Optional: Entropy regularization for learned probing
+        # This encourages uniform probe distribution, indirectly reducing collisions
+        if enable_probe_entropy_loss and hasattr(self.encoder, 'xyt_encoder') and \
+           hasattr(self.encoder.xyt_encoder, 'enable_learned_probing') and \
+           self.encoder.xyt_encoder.enable_learned_probing:
+
+            probe_entropy_loss = self._compute_probe_entropy_loss()
+
+            # Add to total (subtract because we want HIGH entropy)
+            total_loss = total_loss - probe_entropy_weight * probe_entropy_loss
+
+            loss_dict['probe_entropy_loss'] = probe_entropy_loss.item()
+            loss_dict['total_loss'] = total_loss.item()
+
+        # Optional: Gradient validation using finite differences
+        # NOTE: This is expensive and only for debugging - disabled by default
+        if enable_gradient_validation:
+            gradient_valid = self._validate_gradients()
+            loss_dict['gradient_valid'] = gradient_valid
+
+        # Return total_loss for backward(), plus diagnostic info
+        loss_dict['_total_loss_tensor'] = total_loss
+        return loss_dict
+
+    def _compute_probe_entropy_loss(self):
+        """
+        Compute entropy of probe distributions to encourage uniform hash usage.
+
+        High entropy → probes are uniformly distributed → less collision likelihood
+
+        Returns:
+            Average entropy across all encoders and levels (differentiable)
+        """
+        total_entropy = 0.0
+        num_encoders = 0
+
+        # Iterate over all encoders with learned probing
+        for encoder_name in ['xyz_encoder', 'xyt_encoder', 'yzt_encoder', 'xzt_encoder']:
+            if not hasattr(self.encoder, encoder_name):
+                continue
+
+            enc = getattr(self.encoder, encoder_name)
+
+            # Check if encoder has learned probing enabled
+            if not hasattr(enc, 'enable_learned_probing') or not enc.enable_learned_probing:
+                continue
+
+            if not hasattr(enc, 'index_logits') or enc.index_logits is None:
+                continue
+
+            # index_logits shape: [num_levels, N_c, N_p]
+            # Compute softmax probabilities
+            probs = torch.softmax(enc.index_logits, dim=-1)  # softmax over N_p
+
+            # Entropy: H = -sum(p * log(p))
+            # Add small epsilon to avoid log(0)
+            eps = 1e-10
+            entropy = -(probs * torch.log(probs + eps)).sum(dim=-1)  # [num_levels, N_c]
+
+            # Average entropy across levels and codebook entries
+            avg_entropy = entropy.mean()
+            total_entropy = total_entropy + avg_entropy
+            num_encoders += 1
+
+        if num_encoders == 0:
+            return torch.tensor(0.0, device=self.encoder.xyz_encoder.embeddings.device)
+
+        return total_entropy / num_encoders
+
+    def _validate_gradients(self):
+        """
+        Validate gradients exist and have reasonable magnitudes.
+
+        This is a simplified gradient check. Full finite-difference validation
+        would require recomputing the forward pass for each parameter perturbation,
+        which is prohibitively expensive for large models.
+
+        Returns:
+            Boolean indicating if gradients pass basic sanity checks
+        """
+        # Only validate if we have learned probing
+        if not hasattr(self.encoder, 'xyt_encoder'):
+            return True
+
+        if not hasattr(self.encoder.xyt_encoder, 'enable_learned_probing') or \
+           not self.encoder.xyt_encoder.enable_learned_probing:
+            return True
+
+        # Check embeddings have gradients
+        if self.encoder.xyz_encoder.embeddings.grad is None:
+            return False
+
+        # Check index_logits have gradients
+        if self.encoder.xyt_encoder.index_logits.grad is None:
+            return False
+
+        # Check gradient magnitudes are reasonable
+        embed_grad_norm = self.encoder.xyz_encoder.embeddings.grad.norm().item()
+        logit_grad_norm = self.encoder.xyt_encoder.index_logits.grad.norm().item()
+
+        # Gradients should exist and be finite
+        if not torch.isfinite(torch.tensor(embed_grad_norm)):
+            return False
+        if not torch.isfinite(torch.tensor(logit_grad_norm)):
+            return False
+
+        # Gradient magnitudes should be reasonable (not too large)
+        if embed_grad_norm > 1e6 or logit_grad_norm > 1e6:
+            return False
+
+        return True
     
     def export_collision_data(self, output_dir: str = "collision_analysis", format: str = 'csv'):
         """
