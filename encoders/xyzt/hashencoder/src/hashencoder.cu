@@ -559,7 +559,8 @@ __global__ void kernel_grid_backward(
                 // Distribute gradients to all N_p probes weighted by softmax
                 #pragma unroll
                 for (uint32_t p = 0; p < N_p; ++p) {
-                    uint32_t probe_index = (N_p * h1 + p) * C + ch;
+                    // CRITICAL: Apply modulo to prevent out-of-bounds access (matches forward pass fix)
+                    uint32_t probe_index = ((N_p * h1 + p) % hashmap_size) * C + ch;
                     float weight = w * weights[p];
 
                     if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
@@ -605,8 +606,8 @@ __global__ void kernel_grid_backward(
                     }
                 }
             } else {
-                // Direct indexing (grid fits) - use direct index
-                uint32_t index = (uint32_t)(index_direct * C + ch);
+                // Direct indexing (grid fits) - use direct index with modulo for safety
+                uint32_t index = (uint32_t)((index_direct % hashmap_size) * C + ch);
 
                 if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                     #pragma unroll
