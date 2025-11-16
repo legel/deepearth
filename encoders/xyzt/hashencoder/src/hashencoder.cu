@@ -50,6 +50,31 @@ __device__ uint32_t fast_hash(const uint32_t pos_grid[D]) {
 	return result;
 }
 
+template <uint32_t D>
+__device__ uint32_t fast_hash2(const uint32_t pos_grid[D]) {
+	static_assert(D <= 7, "fast_hash2 can only hash up to 7 dimensions.");
+
+	// Secondary hash function with different primes for decorrelation
+	// Uses mathematical constants (multiples of 10^9) to ensure different distribution
+    constexpr uint32_t primes[7] = {
+        1,          // Memory coherence
+        3141592653, // π × 10^9
+        2718281829, // e × 10^9
+        1618033989, // φ × 10^9
+        2236067977, // √5 × 10^9
+        1732050807, // √3 × 10^9
+        4142135623  // √17 × 10^9
+    };
+
+	uint32_t result = 0;
+	#pragma unroll
+	for (uint32_t i = 0; i < D; ++i) {
+		result ^= pos_grid[i] * primes[i];
+	}
+
+	return result;
+}
+
 
 template <uint32_t D, uint32_t C>
 __device__ uint32_t get_grid_index(const uint32_t ch, const uint32_t hashmap_size, const uint32_t* resolution, const uint32_t pos_grid[D]) {
@@ -84,6 +109,50 @@ __device__ uint32_t get_grid_index(const uint32_t pos_grid[D]) {
 	return index;
 }
 
+// Learned hash probing version of get_grid_index
+template <uint32_t D, uint32_t C>
+__device__ uint32_t get_grid_index_learned(
+    const uint32_t ch,
+    const uint32_t hashmap_size,
+    const uint32_t N_f,
+    const uint32_t N_p,
+    const uint32_t N_c,
+    const uint32_t level,
+    const uint32_t* resolution,
+    const uint32_t pos_grid[D],
+    const int* probe_indices  // Shape: (L, N_c)
+) {
+    // Use uint64_t for stride to prevent overflow for large resolutions
+    uint64_t stride = 1;
+    uint32_t index = 0;
+
+    // Try direct indexing first (no hashing needed)
+    #pragma unroll
+    for (uint32_t d = 0; d < D; d++) {
+        index += pos_grid[d] * stride;
+        stride *= resolution[d];
+    }
+
+    // Use learned hash probing if grid doesn't fit
+    if (stride > hashmap_size) {
+        // Compute base hash (coarse localization)
+        uint32_t h1 = fast_hash<D>(pos_grid) % N_f;
+
+        // Compute auxiliary hash for probe lookup
+        uint32_t h2 = fast_hash2<D>(pos_grid) % N_c;
+
+        // Get learned probe offset (discrete index)
+        uint32_t probe_idx = level * N_c + h2;
+        int probe_raw = probe_indices[probe_idx];
+        uint32_t probe = (uint32_t)probe_raw;
+
+        // Hybrid indexing: base hash + learned probe offset
+        index = N_p * h1 + probe;
+    }
+
+    return index * C + ch;
+}
+
 __device__ inline float smoothstep(float val) {
 	return val*val*(3.0f - 2.0f * val);
 }
@@ -100,6 +169,31 @@ __device__ inline float identity_derivative(float val) {
 	return 1;
 }
 
+// Softmax computation for learned probing
+template <uint32_t N_p>
+__device__ inline void compute_softmax(const float* logits, float* weights) {
+    // Find max for numerical stability
+    float max_logit = logits[0];
+    #pragma unroll
+    for (uint32_t i = 1; i < N_p; ++i) {
+        max_logit = max(max_logit, logits[i]);
+    }
+
+    // Compute exp and sum
+    float sum_exp = 0.0f;
+    #pragma unroll
+    for (uint32_t i = 0; i < N_p; ++i) {
+        weights[i] = expf(logits[i] - max_logit);
+        sum_exp += weights[i];
+    }
+
+    // Normalize
+    #pragma unroll
+    for (uint32_t i = 0; i < N_p; ++i) {
+        weights[i] /= sum_exp;
+    }
+}
+
 template <typename input_t, typename scalar_t, uint32_t D, uint32_t C>
 __global__ void kernel_grid(
     const input_t * __restrict__ inputs,
@@ -114,7 +208,12 @@ __global__ void kernel_grid(
     const bool track_collisions,
     int * __restrict__ collision_indices,
     const uint32_t example_offset,
-    const uint32_t max_tracked_examples
+    const uint32_t max_tracked_examples,
+    // Learned probing parameters (optional, nullptr means disabled)
+    const int * __restrict__ probe_indices = nullptr,  // Shape: (L, N_c) or nullptr
+    const uint32_t N_f = 0,
+    const uint32_t N_p = 1,
+    const uint32_t N_c = 0
 ) {
     const uint32_t b = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -225,7 +324,13 @@ __global__ void kernel_grid(
             }
         }
 
-        uint32_t index = get_grid_index<D, C>(0, hashmap_size, resolution, pos_grid_local);
+        uint32_t index;
+        // Use learned probing if enabled (probe_indices != nullptr)
+        if (probe_indices != nullptr) {
+            index = get_grid_index_learned<D, C>(0, hashmap_size, N_f, N_p, N_c, level, resolution, pos_grid_local, probe_indices);
+        } else {
+            index = get_grid_index<D, C>(0, hashmap_size, resolution, pos_grid_local);
+        }
 
         // writing to register (fast)
         #pragma unroll
@@ -233,7 +338,7 @@ __global__ void kernel_grid(
             results[ch] += w * grid[index + ch];
         }
 
-        //printf("[b=%d, l=%d] int %d, idx %d, w %f, val %f, pos_grid=(%d %d %d)\n", 
+        //printf("[b=%d, l=%d] int %d, idx %d, w %f, val %f, pos_grid=(%d %d %d)\n",
         //b, level, idx, index, w, grid[index], pos_grid_local[0], pos_grid_local[1], pos_grid_local[]);
     }    
 
@@ -273,9 +378,17 @@ __global__ void kernel_grid(
                 }
 
                 pos_grid_local[gd] = pos_grid[gd];
-                uint32_t index_left = get_grid_index<D, C>(0, hashmap_size, resolution, pos_grid_local);
-                pos_grid_local[gd] = pos_grid[gd] + 1;
-                uint32_t index_right = get_grid_index<D, C>(0, hashmap_size, resolution, pos_grid_local);
+                uint32_t index_left;
+                uint32_t index_right;
+                if (probe_indices != nullptr) {
+                    index_left = get_grid_index_learned<D, C>(0, hashmap_size, N_f, N_p, N_c, level, resolution, pos_grid_local, probe_indices);
+                    pos_grid_local[gd] = pos_grid[gd] + 1;
+                    index_right = get_grid_index_learned<D, C>(0, hashmap_size, N_f, N_p, N_c, level, resolution, pos_grid_local, probe_indices);
+                } else {
+                    index_left = get_grid_index<D, C>(0, hashmap_size, resolution, pos_grid_local);
+                    pos_grid_local[gd] = pos_grid[gd] + 1;
+                    index_right = get_grid_index<D, C>(0, hashmap_size, resolution, pos_grid_local);
+                }
 
                 #pragma unroll
                 for (uint32_t ch = 0; ch < C; ch++) {
@@ -301,7 +414,14 @@ __global__ void kernel_grid_backward(
     scalar_t * __restrict__ grad_grid,
     const uint32_t B, const uint32_t L,
     const float * __restrict__ per_level_scale,
-    const float * __restrict__ base_resolution
+    const float * __restrict__ base_resolution,
+    // Learned probing parameters (optional, nullptr means disabled)
+    const int * __restrict__ probe_indices = nullptr,      // Shape: (L, N_c)
+    const float * __restrict__ index_logits = nullptr,     // Shape: (L, N_c, N_p) for training
+    float * __restrict__ grad_index_logits = nullptr,      // Shape: (L, N_c, N_p) gradients
+    const uint32_t N_f = 0,
+    const uint32_t N_p = 1,
+    const uint32_t N_c = 0
 ) {
     const uint32_t b = (blockIdx.x * blockDim.x + threadIdx.x) * N_C / C;
 	if (b >= B) return;
@@ -366,22 +486,133 @@ __global__ void kernel_grid_backward(
             }
         }
 
-        uint32_t index = get_grid_index<D, C>(ch, hashmap_size, resolution, pos_grid_local);
-
-        // atomicAdd for __half is slow (especially for large values), so we use __half2 if N_C % 2 == 0
-        // TODO: use float which is better than __half, if N_C % 2 != 0
-        if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
-            #pragma unroll
-            for (uint32_t c = 0; c < N_C; c += 2) {
-                // process two __half at once (by interpreting as a __half2)
-                __half2 v = {(__half)(w * grad_cur[c]), (__half)(w * grad_cur[c + 1])};
-                atomicAdd((__half2*)&grad_grid[index + c], v);
+        // Use learned probing if enabled (probe_indices != nullptr)
+        if (probe_indices != nullptr && index_logits != nullptr) {
+            // Compute stride to check if we need hashing
+            uint64_t stride = 1;
+            for (uint32_t d = 0; d < D; d++) {
+                stride *= resolution[d];
             }
-        // float, or __half when N_C % 2 != 0 (which means C == 1)
+
+            // Only use learned probing if grid doesn't fit (same logic as forward)
+            if (stride > hashmap_size) {
+                // Compute base hash and auxiliary hash
+                uint32_t h1 = fast_hash<D>(pos_grid_local) % N_f;
+                uint32_t h2 = fast_hash2<D>(pos_grid_local) % N_c;
+
+                // Get pointer to logits for this (level, h2)
+                const float* logits = &index_logits[level * N_c * N_p + h2 * N_p];
+
+                // Compute softmax weights
+                float weights[16];  // Max N_p we support
+                float max_logit = logits[0];
+                #pragma unroll
+                for (uint32_t p = 1; p < N_p; ++p) {
+                    max_logit = max(max_logit, logits[p]);
+                }
+
+                float sum_exp = 0.0f;
+                #pragma unroll
+                for (uint32_t p = 0; p < N_p; ++p) {
+                    weights[p] = expf(logits[p] - max_logit);
+                    sum_exp += weights[p];
+                }
+
+                #pragma unroll
+                for (uint32_t p = 0; p < N_p; ++p) {
+                    weights[p] /= sum_exp;
+                }
+
+                // Distribute gradients to all N_p probes weighted by softmax
+                #pragma unroll
+                for (uint32_t p = 0; p < N_p; ++p) {
+                    uint32_t probe_index = (N_p * h1 + p) * C + ch;
+                    float weight = w * weights[p];
+
+                    if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+                        #pragma unroll
+                        for (uint32_t c = 0; c < N_C; c += 2) {
+                            __half2 v = {(__half)(weight * grad_cur[c]), (__half)(weight * grad_cur[c + 1])};
+                            atomicAdd((__half2*)&grad_grid[probe_index + c], v);
+                        }
+                    } else {
+                        #pragma unroll
+                        for (uint32_t c = 0; c < N_C; c++) {
+                            atomicAdd(&grad_grid[probe_index + c], weight * grad_cur[c]);
+                        }
+                    }
+                }
+
+                // Compute gradients for index_logits (softmax backward)
+                if (grad_index_logits != nullptr) {
+                    // For each probe, compute gradient to logit
+                    // Using the softmax backward formula: grad_logit[p] = weight[p] * (grad_weight[p] - dot_product)
+                    // where grad_weight[p] comes from the contribution of this probe to the total gradient
+
+                    // First, compute the weighted gradient for each probe
+                    float grad_weights[16] = {0};  // Gradients w.r.t. softmax outputs
+
+                    #pragma unroll
+                    for (uint32_t p = 0; p < N_p; ++p) {
+                        // The gradient w.r.t. weight[p] is: sum_c (grad_cur[c] * w)
+                        // Since we distributed (w * weights[p] * grad_cur[c]) to the grid
+                        #pragma unroll
+                        for (uint32_t c = 0; c < N_C; c++) {
+                            grad_weights[p] += grad_cur[c] * w;
+                        }
+                    }
+
+                    // Compute dot product for softmax backward
+                    float dot_product = 0.0f;
+                    #pragma unroll
+                    for (uint32_t p = 0; p < N_p; ++p) {
+                        dot_product += weights[p] * grad_weights[p];
+                    }
+
+                    // Apply softmax backward: grad_logit[p] = weight[p] * (grad_weight[p] - dot_product)
+                    #pragma unroll
+                    for (uint32_t p = 0; p < N_p; ++p) {
+                        float grad_logit = weights[p] * (grad_weights[p] - dot_product);
+                        uint32_t logit_idx = level * N_c * N_p + h2 * N_p + p;
+                        atomicAdd(&grad_index_logits[logit_idx], grad_logit);
+                    }
+                }
+            } else {
+                // Direct indexing (grid fits), use standard approach
+                uint32_t index = get_grid_index<D, C>(ch, hashmap_size, resolution, pos_grid_local);
+
+                if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+                    #pragma unroll
+                    for (uint32_t c = 0; c < N_C; c += 2) {
+                        __half2 v = {(__half)(w * grad_cur[c]), (__half)(w * grad_cur[c + 1])};
+                        atomicAdd((__half2*)&grad_grid[index + c], v);
+                    }
+                } else {
+                    #pragma unroll
+                    for (uint32_t c = 0; c < N_C; c++) {
+                        atomicAdd(&grad_grid[index + c], w * grad_cur[c]);
+                    }
+                }
+            }
         } else {
-            #pragma unroll
-            for (uint32_t c = 0; c < N_C; c++) {
-                atomicAdd(&grad_grid[index + c], w * grad_cur[c]);
+            // No learned probing, use standard indexing
+            uint32_t index = get_grid_index<D, C>(ch, hashmap_size, resolution, pos_grid_local);
+
+            // atomicAdd for __half is slow (especially for large values), so we use __half2 if N_C % 2 == 0
+            // TODO: use float which is better than __half, if N_C % 2 != 0
+            if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+                #pragma unroll
+                for (uint32_t c = 0; c < N_C; c += 2) {
+                    // process two __half at once (by interpreting as a __half2)
+                    __half2 v = {(__half)(w * grad_cur[c]), (__half)(w * grad_cur[c + 1])};
+                    atomicAdd((__half2*)&grad_grid[index + c], v);
+                }
+            // float, or __half when N_C % 2 != 0 (which means C == 1)
+            } else {
+                #pragma unroll
+                for (uint32_t c = 0; c < N_C; c++) {
+                    atomicAdd(&grad_grid[index + c], w * grad_cur[c]);
+                }
             }
         }
     }    
@@ -650,14 +881,14 @@ __global__ void kernel_grid_second_backward_embedding(
 
 
 template <typename input_t, typename scalar_t, uint32_t D>
-void kernel_grid_wrapper(const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
+void kernel_grid_wrapper(const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples, const int *probe_indices = nullptr, const uint32_t N_f = 0, const uint32_t N_p = 1, const uint32_t N_c = 0) {
     static constexpr uint32_t N_THREAD = 512;
 	const dim3 blocks_hashgrid = { div_round_up(B, N_THREAD), L, 1 };
     switch (C) {
-        case 1: kernel_grid<input_t, scalar_t, D, 1><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
-        case 2: kernel_grid<input_t, scalar_t, D, 2><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
-        case 4: kernel_grid<input_t, scalar_t, D, 4><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
-        case 8: kernel_grid<input_t, scalar_t, D, 8><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 1: kernel_grid<input_t, scalar_t, D, 1><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples, probe_indices, N_f, N_p, N_c); break;
+        case 2: kernel_grid<input_t, scalar_t, D, 2><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples, probe_indices, N_f, N_p, N_c); break;
+        case 4: kernel_grid<input_t, scalar_t, D, 4><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples, probe_indices, N_f, N_p, N_c); break;
+        case 8: kernel_grid<input_t, scalar_t, D, 8><<<blocks_hashgrid, N_THREAD>>>(inputs, embeddings, offsets, outputs, B, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples, probe_indices, N_f, N_p, N_c); break;
         default: throw std::runtime_error{"GridEncoding: C must be 1, 2, 4, or 8."};
     }
 }
@@ -669,35 +900,35 @@ void kernel_grid_wrapper(const input_t *inputs, const scalar_t *embeddings, cons
 // H: base resolution
 // dy_dx: [B, L * D * C]
 template <typename input_t, typename scalar_t>
-void hash_encode_forward_cuda(const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
+void hash_encode_forward_cuda(const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float *per_level_scale, const float *base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, const bool track_collisions, int *collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples, const int *probe_indices = nullptr, const uint32_t N_f = 0, const uint32_t N_p = 1, const uint32_t N_c = 0) {
     switch (D) {
-        case 2: kernel_grid_wrapper<input_t, scalar_t, 2>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
-        case 3: kernel_grid_wrapper<input_t, scalar_t, 3>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples); break;
+        case 2: kernel_grid_wrapper<input_t, scalar_t, 2>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples, probe_indices, N_f, N_p, N_c); break;
+        case 3: kernel_grid_wrapper<input_t, scalar_t, 3>(inputs, embeddings, offsets, outputs, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, track_collisions, collision_indices, example_offset, max_tracked_examples, probe_indices, N_f, N_p, N_c); break;
         default: throw std::runtime_error{"GridEncoding: D must be 2 or 3."};
     }
 
 }
 
 template <typename input_t, typename scalar_t, uint32_t D>
-void kernel_grid_backward_wrapper(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs) {
+void kernel_grid_backward_wrapper(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs, const int *probe_indices, const float *index_logits, float *grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c) {
     static constexpr uint32_t N_THREAD = 256;
 	const uint32_t N_C = std::min(2u, C); // n_features_per_thread
 	const dim3 blocks_hashgrid = { div_round_up(B * C / N_C, N_THREAD), L, 1 };
     switch (C) {
         case 1:
-            kernel_grid_backward<input_t, scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
+            kernel_grid_backward<input_t, scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 1><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         case 2:
-            kernel_grid_backward<input_t, scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
+            kernel_grid_backward<input_t, scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 2><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         case 4:
-            kernel_grid_backward<input_t, scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
+            kernel_grid_backward<input_t, scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 4><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         case 8:
-            kernel_grid_backward<input_t, scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution);
+            kernel_grid_backward<input_t, scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 8><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         default: throw std::runtime_error{"GridEncoding: C must be 1, 2, 4, or 8."};
@@ -712,10 +943,10 @@ void kernel_grid_backward_wrapper(const scalar_t *grad, const input_t *inputs, c
 // grad_embeddings: [sO, C]
 // H: base resolution
 template <typename input_t, typename scalar_t>
-void hash_encode_backward_cuda(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs) {
+void hash_encode_backward_cuda(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs, const int *probe_indices, const float *index_logits, float *grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c) {
     switch (D) {
-        case 2: kernel_grid_backward_wrapper<input_t, scalar_t, 2>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs); break;
-        case 3: kernel_grid_backward_wrapper<input_t, scalar_t, 3>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs); break;
+        case 2: kernel_grid_backward_wrapper<input_t, scalar_t, 2>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c); break;
+        case 3: kernel_grid_backward_wrapper<input_t, scalar_t, 3>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c); break;
         default: throw std::runtime_error{"GridEncoding: D must be 2 or 3."};
     }
 }
@@ -779,7 +1010,7 @@ void hash_encode_second_backward_cuda(const scalar_t *grad, const input_t *input
 }
 
 
-void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, at::Tensor dy_dx, const bool track_collisions, at::Tensor collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples) {
+void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, at::Tensor dy_dx, const bool track_collisions, at::Tensor collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples, const at::Tensor probe_indices, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c) {
     CHECK_CUDA(inputs);
     CHECK_CUDA(embeddings);
     CHECK_CUDA(offsets);
@@ -807,23 +1038,32 @@ void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, c
     // Get raw pointer for collision tracking (may be null if disabled)
     int *collision_indices_ptr = track_collisions ? collision_indices.data_ptr<int>() : nullptr;
 
+    // Get raw pointer for learned probing (nullptr if disabled)
+    int *probe_indices_ptr = nullptr;
+    if (probe_indices.defined() && probe_indices.numel() > 0) {
+        CHECK_CUDA(probe_indices);
+        CHECK_CONTIGUOUS(probe_indices);
+        CHECK_IS_INT(probe_indices);
+        probe_indices_ptr = probe_indices.data_ptr<int>();
+    }
+
     // Dispatch on both input type and embedding type
     if (inputs.scalar_type() == at::ScalarType::Double) {
         // Double precision inputs with float32 embeddings
         AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         embeddings.scalar_type(), "hash_encode_forward", ([&] {
-            hash_encode_forward_cuda<double, scalar_t>(inputs.data_ptr<double>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), outputs.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), track_collisions, collision_indices_ptr, example_offset, max_tracked_examples);
+            hash_encode_forward_cuda<double, scalar_t>(inputs.data_ptr<double>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), outputs.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), track_collisions, collision_indices_ptr, example_offset, max_tracked_examples, probe_indices_ptr, N_f, N_p, N_c);
         }));
     } else {
         // Float32 inputs (existing behavior)
         AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         inputs.scalar_type(), "hash_encode_forward", ([&] {
-            hash_encode_forward_cuda<scalar_t, scalar_t>(inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), outputs.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), track_collisions, collision_indices_ptr, example_offset, max_tracked_examples);
+            hash_encode_forward_cuda<scalar_t, scalar_t>(inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), outputs.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), track_collisions, collision_indices_ptr, example_offset, max_tracked_examples, probe_indices_ptr, N_f, N_p, N_c);
         }));
     }
 }
 
-void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, const at::Tensor dy_dx, at::Tensor grad_inputs) {
+void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, const at::Tensor dy_dx, at::Tensor grad_inputs, const at::Tensor probe_indices, const at::Tensor index_logits, at::Tensor grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c) {
     CHECK_CUDA(grad);
     CHECK_CUDA(inputs);
     CHECK_CUDA(embeddings);
@@ -854,18 +1094,44 @@ void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const 
     CHECK_IS_FLOATING(dy_dx);
     CHECK_IS_FLOATING(grad_inputs);
 
+    // Get raw pointers for learned probing (nullptr if disabled)
+    int *probe_indices_ptr = nullptr;
+    float *index_logits_ptr = nullptr;
+    float *grad_index_logits_ptr = nullptr;
+
+    if (probe_indices.defined() && probe_indices.numel() > 0) {
+        CHECK_CUDA(probe_indices);
+        CHECK_CONTIGUOUS(probe_indices);
+        CHECK_IS_INT(probe_indices);
+        probe_indices_ptr = probe_indices.data_ptr<int>();
+    }
+
+    if (index_logits.defined() && index_logits.numel() > 0) {
+        CHECK_CUDA(index_logits);
+        CHECK_CONTIGUOUS(index_logits);
+        CHECK_IS_FLOATING(index_logits);
+        index_logits_ptr = index_logits.data_ptr<float>();
+    }
+
+    if (grad_index_logits.defined() && grad_index_logits.numel() > 0) {
+        CHECK_CUDA(grad_index_logits);
+        CHECK_CONTIGUOUS(grad_index_logits);
+        CHECK_IS_FLOATING(grad_index_logits);
+        grad_index_logits_ptr = grad_index_logits.data_ptr<float>();
+    }
+
     // Dispatch on input type
     if (inputs.scalar_type() == at::ScalarType::Double) {
         // Double precision inputs
         AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         grad.scalar_type(), "hash_encode_backward", ([&] {
-            hash_encode_backward_cuda<double, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<double>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>());
+            hash_encode_backward_cuda<double, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<double>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, N_f, N_p, N_c);
         }));
     } else {
         // Float32 inputs
         AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         grad.scalar_type(), "hash_encode_backward", ([&] {
-            hash_encode_backward_cuda<scalar_t, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>());
+            hash_encode_backward_cuda<scalar_t, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, N_f, N_p, N_c);
         }));
     }
 
