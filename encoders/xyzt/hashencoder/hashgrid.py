@@ -42,7 +42,8 @@ class _hash_encode(Function):
             probe_indices = torch.empty(0, dtype=torch.int32, device=inputs.device)
 
         if index_logits is not None:
-            index_logits = index_logits.contiguous()
+            # Ensure index_logits is always float32 for CUDA kernel
+            index_logits = index_logits.contiguous().to(torch.float32)
         else:
             # Create empty tensor if not provided (backend will handle nullptr)
             index_logits = torch.empty(0, dtype=torch.float32, device=inputs.device)
@@ -110,7 +111,8 @@ class _hash_encode_second_backward(Function):
     @staticmethod
     def forward(ctx, grad, inputs, embeddings, offsets, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, probe_indices, index_logits, N_f, N_p, N_c):
         device = inputs.device
-        grad_inputs = torch.zeros_like(inputs, device=device)
+        # Use embeddings dtype (float32) for CUDA kernel operations
+        grad_inputs_f32 = torch.zeros_like(inputs, device=device, dtype=embeddings.dtype)
         grad_embeddings = torch.zeros_like(embeddings, device=device)
 
         # Create grad_index_logits tensor if index_logits is provided
@@ -119,12 +121,24 @@ class _hash_encode_second_backward(Function):
         else:
             grad_index_logits = torch.empty(0, device=device, dtype=torch.float32)
 
-        ctx.save_for_backward(grad, inputs, embeddings, offsets, per_level_scale, base_resolution, dy_dx, grad_inputs, grad_embeddings, probe_indices, index_logits, grad_index_logits)
+        ctx.save_for_backward(grad, inputs, embeddings, offsets, per_level_scale, base_resolution, dy_dx, grad_inputs_f32, grad_embeddings, probe_indices, index_logits, grad_index_logits)
         ctx.dims = [B, D, C, L]
         ctx.calc_grad_inputs = calc_grad_inputs
         ctx.learned_probing_params = [N_f, N_p, N_c]
 
-        _backend.hash_encode_backward(grad, inputs, embeddings, offsets, grad_embeddings, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c)
+        # Convert index_logits to float32 for CUDA kernel (handles float64 inputs)
+        if index_logits.numel() > 0 and index_logits.dtype != torch.float32:
+            index_logits_f32 = index_logits.to(torch.float32)
+        else:
+            index_logits_f32 = index_logits
+
+        _backend.hash_encode_backward(grad, inputs, embeddings, offsets, grad_embeddings, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs_f32, probe_indices, index_logits_f32, grad_index_logits, N_f, N_p, N_c)
+
+        # Convert grad_inputs back to match inputs dtype for autograd compatibility
+        if inputs.dtype != embeddings.dtype:
+            grad_inputs = grad_inputs_f32.to(inputs.dtype)
+        else:
+            grad_inputs = grad_inputs_f32
 
         return grad_inputs, grad_embeddings, grad_index_logits
 
