@@ -95,18 +95,18 @@ def main():
     parser = argparse.ArgumentParser(description='Grid search for learned hash probing hyperparameters')
 
     # Grid search parameters
-    parser.add_argument('--probing-ranges', type=int, nargs='+', default=[2, 4, 8],
-                       help='List of N_p values to test (default: 2 4 8)')
+    parser.add_argument('--probing-ranges', type=int, nargs='+', default=[32],
+                       help='List of N_p values to test (default: 32)')
     parser.add_argument('--codebook-sizes', type=int, nargs='+', default=[512],
                        help='List of N_c values to test (default: 512)')
-    parser.add_argument('--entropy-weights', type=float, nargs='+', default=[0.0, 0.01, 0.05],
-                       help='List of entropy weights to test (default: 0.0 0.01 0.05)')
-    parser.add_argument('--hashmap-sizes', type=int, nargs='+', default=[22],
-                       help='List of log2 hashmap sizes to test (default: 22 for 2^22)')
+    parser.add_argument('--entropy-weights', type=float, nargs='+', default=[0.5],
+                       help='List of entropy weights to test (default: 0.5)')
+    parser.add_argument('--hashmap-sizes', type=int, nargs='+', default=[22, 20, 18, 16, 14],
+                       help='List of log2 hashmap sizes to test (default: 22 20 18 16 14)')
 
     # Fixed training parameters
-    parser.add_argument('--epochs', type=int, default=250,
-                       help='Epochs per test (default: 250)')
+    parser.add_argument('--epochs', type=int, default=2500,
+                       help='Epochs per test (default: 2500)')
     parser.add_argument('--batch-size', type=int, default=30000,
                        help='Batch size (default: 30000)')
     parser.add_argument('--lr', type=float, default=0.0125,
@@ -117,8 +117,8 @@ def main():
                        help='Random seed (default: 0)')
     parser.add_argument('--index-lr-multiplier', type=float, default=10.0,
                        help='LR multiplier for index_logits (default: 10.0)')
-    parser.add_argument('--output-dir', type=str, default='./grid_search',
-                       help='Output directory for all tests (default: ./grid_search)')
+    parser.add_argument('--output-dir', type=str, default='./learned_memory_explorations',
+                       help='Output directory for all tests (default: ./learned_memory_explorations)')
 
     # Baseline handling
     parser.add_argument('--baseline-results-path', type=str, default=None,
