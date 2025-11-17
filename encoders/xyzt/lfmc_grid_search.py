@@ -11,13 +11,13 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-def run_single_test(probing_range, entropy_weight, index_codebook_size, test_id, total_tests, args, baseline_results_path=None):
+def run_single_test(probing_range, entropy_weight, index_codebook_size, hashmap_size, test_id, total_tests, args, baseline_results_path=None):
     """Run a single training test with given hyperparameters."""
 
     print(f"\n{'='*80}")
     print(f"TEST {test_id}/{total_tests}")
     print(f"{'='*80}")
-    print(f"N_p={probing_range}, N_c={index_codebook_size}, entropy_weight={entropy_weight}")
+    print(f"N_p={probing_range}, N_c={index_codebook_size}, entropy_weight={entropy_weight}, hashmap_size=2^{hashmap_size}")
     if baseline_results_path:
         print(f"Reusing baseline from: {Path(baseline_results_path).parent.name}")
     else:
@@ -26,7 +26,7 @@ def run_single_test(probing_range, entropy_weight, index_codebook_size, test_id,
     print(f"{'='*80}\n")
 
     # Build command
-    output_dir = f"{args.output_dir}/test_{test_id:02d}_Np{probing_range}_Nc{index_codebook_size}_ent{entropy_weight}"
+    output_dir = f"{args.output_dir}/test_{test_id:02d}_Np{probing_range}_Nc{index_codebook_size}_ent{entropy_weight}_hash{hashmap_size}"
 
     cmd = [
         'python', '-u', 'earth4d_to_lfmc_comparison.py',
@@ -39,6 +39,8 @@ def run_single_test(probing_range, entropy_weight, index_codebook_size, test_id,
         '--index-codebook-size', str(index_codebook_size),
         '--index-lr-multiplier', str(args.index_lr_multiplier),
         '--entropy-weight', str(entropy_weight),
+        '--spatial-log2-hashmap-size', str(hashmap_size),
+        '--temporal-log2-hashmap-size', str(hashmap_size),
         '--output-dir', output_dir,
     ]
 
@@ -71,6 +73,7 @@ def run_single_test(probing_range, entropy_weight, index_codebook_size, test_id,
                 'probing_range': probing_range,
                 'index_codebook_size': index_codebook_size,
                 'entropy_weight': entropy_weight,
+                'hashmap_size': hashmap_size,
                 'test_rmse': learned['test_rmse'],
                 'test_mae': learned['test_mae'],
                 'test_r2': learned['test_r2'],
@@ -98,6 +101,8 @@ def main():
                        help='List of N_c values to test (default: 512)')
     parser.add_argument('--entropy-weights', type=float, nargs='+', default=[0.0, 0.01, 0.05],
                        help='List of entropy weights to test (default: 0.0 0.01 0.05)')
+    parser.add_argument('--hashmap-sizes', type=int, nargs='+', default=[22],
+                       help='List of log2 hashmap sizes to test (default: 22 for 2^22)')
 
     # Fixed training parameters
     parser.add_argument('--epochs', type=int, default=250,
@@ -122,7 +127,7 @@ def main():
     args = parser.parse_args()
 
     # Calculate total tests
-    total_tests = len(args.probing_ranges) * len(args.codebook_sizes) * len(args.entropy_weights)
+    total_tests = len(args.probing_ranges) * len(args.codebook_sizes) * len(args.entropy_weights) * len(args.hashmap_sizes)
     est_time_min = total_tests * args.epochs / 10  # Rough estimate: 10 epochs/min
 
     print("\n" + "="*80)
@@ -135,6 +140,7 @@ def main():
     print(f"  N_p (probing_range): {args.probing_ranges}")
     print(f"  N_c (codebook_size): {args.codebook_sizes}")
     print(f"  Entropy weights: {args.entropy_weights}")
+    print(f"  Hashmap sizes (log2): {args.hashmap_sizes}")
     print(f"\nFixed:")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Learning rate: {args.lr}")
@@ -159,17 +165,18 @@ def main():
     for probing_range in args.probing_ranges:
         for codebook_size in args.codebook_sizes:
             for entropy_weight in args.entropy_weights:
-                result = run_single_test(probing_range, entropy_weight, codebook_size,
-                                        test_id, total_tests, args, baseline_results_path)
-                if result:
-                    results.append(result)
+                for hashmap_size in args.hashmap_sizes:
+                    result = run_single_test(probing_range, entropy_weight, codebook_size, hashmap_size,
+                                            test_id, total_tests, args, baseline_results_path)
+                    if result:
+                        results.append(result)
 
-                    # After first test, save baseline results path for reuse (if not already provided)
-                    if test_id == 1 and not args.baseline_results_path:
-                        baseline_results_path = str(Path(result['output_dir']) / 'comparison_summary.json')
-                        print(f"\n✓ Baseline results saved. Subsequent tests will reuse baseline from test 1.\n")
+                        # After first test, save baseline results path for reuse (if not already provided)
+                        if test_id == 1 and not args.baseline_results_path:
+                            baseline_results_path = str(Path(result['output_dir']) / 'comparison_summary.json')
+                            print(f"\n✓ Baseline results saved. Subsequent tests will reuse baseline from test 1.\n")
 
-                test_id += 1
+                    test_id += 1
 
     # Sort by test R²
     results.sort(key=lambda x: x['test_r2'], reverse=True)
@@ -178,11 +185,11 @@ def main():
     print("\n\n" + "="*80)
     print("GRID SEARCH RESULTS (sorted by R²)")
     print("="*80)
-    print(f"\n{'Rank':<6}{'N_p':<6}{'N_c':<8}{'Entropy':<10}{'RMSE':<10}{'MAE':<10}{'R²':<10}{'Time(s)':<10}")
+    print(f"\n{'Rank':<6}{'N_p':<6}{'N_c':<8}{'Hash':<7}{'Entropy':<10}{'RMSE':<10}{'MAE':<10}{'R²':<10}{'Time(s)':<10}")
     print("-"*80)
 
     for rank, r in enumerate(results, 1):
-        print(f"{rank:<6}{r['probing_range']:<6}{r['index_codebook_size']:<8}{r['entropy_weight']:<10.3f}"
+        print(f"{rank:<6}{r['probing_range']:<6}{r['index_codebook_size']:<8}2^{r['hashmap_size']:<5}{r['entropy_weight']:<10.3f}"
               f"{r['test_rmse']:<10.2f}{r['test_mae']:<10.2f}"
               f"{r['test_r2']:<10.4f}{r['training_time']:<10.1f}")
 
@@ -193,6 +200,7 @@ def main():
     print("="*80)
     print(f"  N_p (probing_range): {best['probing_range']}")
     print(f"  N_c (codebook_size): {best['index_codebook_size']}")
+    print(f"  Hashmap size: 2^{best['hashmap_size']}")
     print(f"  Entropy weight: {best['entropy_weight']}")
     print(f"\nPerformance:")
     print(f"  Test RMSE: {best['test_rmse']:.2f}pp")
