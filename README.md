@@ -12,7 +12,7 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 ## Exciting News:
 
 - _November 17, 2025_
-  **99% parameter reduction, 4× speedup.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) scales from 5M to 724M parameters while maintaining accuracy, demonstrating extreme efficiency (850MB GPU, 4× faster training) to large-scale performance—enabling both edge deployment and parallel computing. See [_grid search_](https://github.com/legel/deepearth/tree/main/encoders/xyzt).
+  **99% parameter reduction, 4× speedup.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) with [learned hash probing](https://arxiv.org/abs/2312.17241) tested on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6) with only 5 million parameters yields near state-of-the-art accuracy with spectacular efficiency. See [_grid search_](https://github.com/legel/deepearth/tree/main/encoders/xyzt).
 
 - _November 16, 2025_
   **23% error reduction in space-time encoder.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt), achieving state-of-the-art R² on an ecological forecasting benchmark. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
