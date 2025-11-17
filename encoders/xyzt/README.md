@@ -4,26 +4,39 @@ Earth4D is a pioneering 4D spatiotemporal encoder that enables planetary-scale d
 
 ## 🌍 Core Innovation
 
-Earth4D combines decomposed hash encoding with learned hash probing for superior accuracy and memory efficiency. Using separate spatial (xyz) and temporal (xyt, yzt, xzt) projections with learned probe selection, it achieves:
+Earth4D combines decomposed hash encoding with learned hash probing for superior accuracy. Using separate spatial (xyz) and temporal (xyt, yzt, xzt) projections with learned probe selection, it achieves:
 
-- **State-of-the-Art Accuracy**: +25% R² improvement on Globe-LFMC 2.0 benchmark (matches pretrained foundation model performance using only coordinates)
-- **Memory Efficiency**: 4× memory reduction via learned hash probing with N_p=32 probing range
+- **State-of-the-Art Accuracy**: +26% R² improvement on Globe-LFMC 2.0 benchmark (matches pretrained foundation model performance using only coordinates)
+- **Extreme Scalability**: 5M to 724M parameters (99% compression) with 4× training speedup and 15× memory reduction while maintaining strong performance
+- **Coordinate-Only Learning**: Learns from (x,y,z,t) + species embeddings without satellite imagery, weather, or topography
 - **Planetary Coverage**: Multi-resolution encoding from continental scale to sub-meter precision
 - **Temporal Dynamics**: Flexible temporal encoding from years to sub-second precision
 - **Automatic Optimization**: Entropy-regularized probe learning (optimal weight=0.5) with automatic tuning
-- **GPU Acceleration**: Custom CUDA kernels for real-time encoding at scale
+- **GPU Acceleration**: Custom CUDA kernels with learned probe selection
 
 ## 🏆 Benchmark Performance
 
 **Globe-LFMC 2.0** (Live Fuel Moisture Content Prediction, AI2 official train/test split):
 
+### Full-Scale Performance
+
 | Configuration | MAE (pp) | R² | Training Time | vs. Pretrained Galileo |
 |--------------|----------|-----|---------------|----------------------|
-| **Earth4D + Learned Probing (N_p=16)** | **12.8** | **0.730** | 850s (2500 epochs) | **Matches** (12.6pp, 0.72) |
-| Earth4D (baseline) | 16.6 | 0.582 | 612s (2500 epochs) | - |
-| **Improvement** | **-22.8%** | **+25.4%** | **+38.8%** | - |
+| **Earth4D + Learned Probing (N_p=32)** | **12.7** | **0.735** | 1049s (2500 epochs) | **Matches** (12.6pp, 0.72) |
+| Earth4D (baseline) | 16.5 | 0.583 | 612s (2500 epochs) | - |
+| **Improvement** | **-23.3%** | **+26.1%** | **+71.3%** | - |
 
-*Earth4D with learned hash probing (N_p=16, 2500 epochs) matches Allen Institute for AI's Galileo foundation model (pretrained on large-scale multimodal Earth observation data) using only (x,y,z,t) coordinates and learnable species embeddings - no satellite imagery, weather data, or topography required. Grid search over probing ranges (250 epochs) identified N_p=32 as optimal.*
+*Earth4D with learned hash probing matches Allen Institute for AI's Galileo foundation model (pretrained on large-scale multimodal Earth observation data) using only (x,y,z,t) coordinates and learnable species embeddings - no satellite imagery, weather data, or topography required.*
+
+### Extreme Compression (Edge/Mobile Deployment)
+
+| Configuration | Parameters | GPU Memory | Training Speed | MAE (pp) | R² | vs. Baseline |
+|--------------|-----------|------------|----------------|----------|-----|--------------|
+| **Compressed (2^14 hash)** | **5.1M** | **850MB** | **4× faster** | **15.0** | **0.668** | **+14.7% R²** |
+| Baseline (2^22 hash) | 724M | 12GB+ | 1× | 16.6 | 0.582 | - |
+| **Reduction** | **-99.3%** | **-93%** | **+300%** | **-9.7%** | **+14.7%** | - |
+
+*99% parameter reduction (724M→5.1M) with 4× training speedup enables edge deployment while still outperforming baseline. Demonstrates Earth4D's scalability from mobile devices to datacenter-scale parallel computing.*
 
 ## 🚀 Quick Start
 
