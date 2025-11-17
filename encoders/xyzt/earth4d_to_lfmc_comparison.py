@@ -104,14 +104,18 @@ class SpeciesAwareLFMCModelWithProbing(nn.Module):
     def __init__(self, n_species, species_dim=32,
                  enable_learned_probing=False,
                  probing_range=4,
-                 index_codebook_size=512):
+                 index_codebook_size=512,
+                 spatial_log2_hashmap_size=22,
+                 temporal_log2_hashmap_size=22):
         super().__init__()
 
         self.earth4d = Earth4D(
             verbose=True,
             enable_learned_probing=enable_learned_probing,
             probing_range=probing_range,
-            index_codebook_size=index_codebook_size
+            index_codebook_size=index_codebook_size,
+            spatial_log2_hashmap_size=spatial_log2_hashmap_size,
+            temporal_log2_hashmap_size=temporal_log2_hashmap_size
         )
 
         earth4d_dim = self.earth4d.get_output_dim()
@@ -222,7 +226,9 @@ def run_training_with_timing(args, run_name="", enable_learned_probing=False,
         species_dim=args.species_dim,
         enable_learned_probing=enable_learned_probing,
         probing_range=probing_range,
-        index_codebook_size=index_codebook_size
+        index_codebook_size=index_codebook_size,
+        spatial_log2_hashmap_size=args.spatial_log2_hashmap_size,
+        temporal_log2_hashmap_size=args.temporal_log2_hashmap_size
     ).to(device)
     timing['model_creation'] = time.time() - t0
     print(f"\n⏱  Model created in {timing['model_creation']:.2f}s", flush=True)
@@ -684,6 +690,12 @@ def main():
                        help='Enable entropy regularization for learned hash probing')
     parser.add_argument('--entropy-weight', type=float, default=0.01,
                        help='Weight for entropy regularization loss (default: 0.01)')
+
+    # Hash table size configuration
+    parser.add_argument('--spatial-log2-hashmap-size', type=int, default=22,
+                       help='Log2 of spatial hash table size (default: 22 for 2^22)')
+    parser.add_argument('--temporal-log2-hashmap-size', type=int, default=22,
+                       help='Log2 of temporal hash table size (default: 22 for 2^22)')
 
     # Baseline control (for grid search efficiency)
     parser.add_argument('--skip-baseline', action='store_true',
