@@ -1,0 +1,282 @@
+Hash Collision Rate Summary Statistics
+================================================================================
+
+
+Uniform Random
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 26.9%
+    Min collision rate:  11.0% (Level 16)
+    Max collision rate:  99.6% (Level 0)
+    Std deviation:       30.4%
+
+  XYT Grid:
+    Mean collision rate: 18.8%
+    Min collision rate:  11.0% (Level 15)
+    Max collision rate:  97.7% (Level 0)
+    Std deviation:       22.0%
+
+  YZT Grid:
+    Mean collision rate: 19.7%
+    Min collision rate:  10.9% (Level 16)
+    Max collision rate:  97.7% (Level 0)
+    Std deviation:       22.5%
+
+  XZT Grid:
+    Mean collision rate: 19.7%
+    Min collision rate:  11.0% (Level 10)
+    Max collision rate:  97.7% (Level 0)
+    Std deviation:       22.5%
+
+Continental Sparse
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 32.6%
+    Min collision rate:  11.0% (Level 20)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       35.3%
+
+  XYT Grid:
+    Mean collision rate: 21.1%
+    Min collision rate:  11.0% (Level 21)
+    Max collision rate:  99.4% (Level 0)
+    Std deviation:       25.6%
+
+  YZT Grid:
+    Mean collision rate: 23.7%
+    Min collision rate:  11.0% (Level 21)
+    Max collision rate:  99.7% (Level 0)
+    Std deviation:       28.2%
+
+  XZT Grid:
+    Mean collision rate: 21.9%
+    Min collision rate:  11.0% (Level 7)
+    Max collision rate:  99.5% (Level 0)
+    Std deviation:       26.4%
+
+Extreme Spatial Single
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 95.2%
+    Min collision rate:  22.8% (Level 23)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       16.5%
+
+  XYT Grid:
+    Mean collision rate: 63.6%
+    Min collision rate:  11.0% (Level 23)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       40.1%
+
+  YZT Grid:
+    Mean collision rate: 63.8%
+    Min collision rate:  11.0% (Level 21)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       40.0%
+
+  XZT Grid:
+    Mean collision rate: 64.1%
+    Min collision rate:  11.0% (Level 21)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       39.9%
+
+Extreme Spatial Multi
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 91.5%
+    Min collision rate:  15.4% (Level 23)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       22.6%
+
+  XYT Grid:
+    Mean collision rate: 53.2%
+    Min collision rate:  11.0% (Level 21)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       39.7%
+
+  YZT Grid:
+    Mean collision rate: 53.3%
+    Min collision rate:  11.0% (Level 18)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       39.8%
+
+  XZT Grid:
+    Mean collision rate: 53.2%
+    Min collision rate:  11.0% (Level 19)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       39.7%
+
+Extreme Temporal Single
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 27.0%
+    Min collision rate:  11.0% (Level 23)
+    Max collision rate:  99.6% (Level 0)
+    Std deviation:       30.4%
+
+  XYT Grid:
+    Mean collision rate: 30.6%
+    Min collision rate:  11.0% (Level 14)
+    Max collision rate:  99.9% (Level 0)
+    Std deviation:       33.8%
+
+  YZT Grid:
+    Mean collision rate: 32.4%
+    Min collision rate:  11.0% (Level 20)
+    Max collision rate:  99.9% (Level 0)
+    Std deviation:       33.7%
+
+  XZT Grid:
+    Mean collision rate: 32.4%
+    Min collision rate:  11.0% (Level 13)
+    Max collision rate:  99.9% (Level 0)
+    Std deviation:       33.7%
+
+Extreme Temporal Multi
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 27.0%
+    Min collision rate:  11.0% (Level 12)
+    Max collision rate:  99.6% (Level 0)
+    Std deviation:       30.4%
+
+  XYT Grid:
+    Mean collision rate: 24.7%
+    Min collision rate:  11.0% (Level 15)
+    Max collision rate:  99.2% (Level 0)
+    Std deviation:       28.4%
+
+  YZT Grid:
+    Mean collision rate: 26.3%
+    Min collision rate:  11.0% (Level 15)
+    Max collision rate:  99.2% (Level 0)
+    Std deviation:       28.7%
+
+  XZT Grid:
+    Mean collision rate: 26.3%
+    Min collision rate:  11.0% (Level 22)
+    Max collision rate:  99.2% (Level 0)
+    Std deviation:       28.7%
+
+Moderate Spatial Cluster
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 64.6%
+    Min collision rate:  11.0% (Level 20)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       41.7%
+
+  XYT Grid:
+    Mean collision rate: 44.5%
+    Min collision rate:  11.0% (Level 17)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       41.3%
+
+  YZT Grid:
+    Mean collision rate: 45.1%
+    Min collision rate:  11.0% (Level 14)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       41.4%
+
+  XZT Grid:
+    Mean collision rate: 44.4%
+    Min collision rate:  10.9% (Level 21)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       41.3%
+
+Moderate Spatiotemporal
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 74.3%
+    Min collision rate:  11.0% (Level 21)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       38.5%
+
+  XYT Grid:
+    Mean collision rate: 69.3%
+    Min collision rate:  11.0% (Level 23)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       40.6%
+
+  YZT Grid:
+    Mean collision rate: 71.1%
+    Min collision rate:  11.0% (Level 23)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       39.9%
+
+  XZT Grid:
+    Mean collision rate: 69.1%
+    Min collision rate:  11.0% (Level 23)
+    Max collision rate:  100.0% (Level 0)
+    Std deviation:       40.6%
+
+Moderate Temporal Cluster
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 99.9%
+    Min collision rate:  99.9% (Level 6)
+    Max collision rate:  99.9% (Level 0)
+    Std deviation:       0.0%
+
+  XYT Grid:
+    Mean collision rate: 29.3%
+    Min collision rate:  11.0% (Level 17)
+    Max collision rate:  98.5% (Level 0)
+    Std deviation:       29.9%
+
+  YZT Grid:
+    Mean collision rate: 29.5%
+    Min collision rate:  11.0% (Level 18)
+    Max collision rate:  98.7% (Level 0)
+    Std deviation:       30.2%
+
+  XZT Grid:
+    Mean collision rate: 29.5%
+    Min collision rate:  11.0% (Level 18)
+    Max collision rate:  98.7% (Level 0)
+    Std deviation:       30.2%
+
+Time Series
+--------------------------------------------------------------------------------
+
+  XYZ Grid:
+    Mean collision rate: 99.1%
+    Min collision rate:  99.0% (Level 19)
+    Max collision rate:  99.7% (Level 0)
+    Std deviation:       0.2%
+
+  XYT Grid:
+    Mean collision rate: 23.9%
+    Min collision rate:  10.9% (Level 17)
+    Max collision rate:  97.7% (Level 0)
+    Std deviation:       21.9%
+
+  YZT Grid:
+    Mean collision rate: 25.4%
+    Min collision rate:  11.0% (Level 17)
+    Max collision rate:  97.7% (Level 0)
+    Std deviation:       22.2%
+
+  XZT Grid:
+    Mean collision rate: 25.4%
+    Min collision rate:  11.0% (Level 15)
+    Max collision rate:  97.7% (Level 0)
+    Std deviation:       22.3%
+
+================================================================================
+
+Overall Statistics (All Scenarios, All Grids)
+--------------------------------------------------------------------------------
+Mean collision rate: 44.8%
+Min collision rate:  10.9%
+Max collision rate:  100.0%
+Std deviation:       40.1%
