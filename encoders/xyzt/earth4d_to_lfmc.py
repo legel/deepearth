@@ -29,6 +29,80 @@ sys.path.insert(0, SCRIPT_DIR)
 
 from earth4d import Earth4D
 
+# LFMC constants following allenai/lfmc approach
+MAX_LFMC_VALUE = 302  # 99.9th percentile of the LFMC values
+
+# AI2 official data URL
+AI2_LFMC_CSV_URL = "https://raw.githubusercontent.com/allenai/lfmc/refs/heads/main/data/labels/lfmc_data_conus.csv"
+DEFAULT_AI2_CSV_PATH = "data/labels/lfmc_data_conus.csv"
+
+# AI2 default fold configuration (70-15-15 split)
+# Uses seed 42 for reproducibility, matching allenai/lfmc
+DEFAULT_NUM_FOLDS = 100
+_rng = random.Random(42)
+DEFAULT_VALIDATION_FOLDS, DEFAULT_TEST_FOLDS = map(
+    frozenset, (lambda lst: (lst[:15], lst[15:]))(lst := _rng.sample(range(DEFAULT_NUM_FOLDS), 30))
+)
+
+
+def download_ai2_csv(output_path: str = DEFAULT_AI2_CSV_PATH):
+    """Download AI2's official LFMC CSV if not present."""
+    import urllib.request
+    output_path = Path(output_path)
+
+    if output_path.exists():
+        print(f"LFMC CSV already exists at {output_path}", flush=True)
+        return output_path
+
+    print(f"Downloading LFMC CSV from {AI2_LFMC_CSV_URL}...", flush=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        urllib.request.urlretrieve(AI2_LFMC_CSV_URL, output_path)
+        print(f"Downloaded to {output_path}", flush=True)
+        return output_path
+    except Exception as e:
+        print(f"Error downloading LFMC CSV: {e}", flush=True)
+        raise
+
+
+def assign_ai2_folds(df: pd.DataFrame, id_column: str = 'sorting_id', num_folds: int = DEFAULT_NUM_FOLDS) -> pd.DataFrame:
+    """
+    Assign folds using AI2's hash-based deterministic approach.
+
+    This matches their approach in lfmc/lfmc/core/splits.py:
+    - Uses SHA256 hash of sorting_id
+    - Converts to deterministic fold assignment
+    - Ensures reproducibility across runs
+    """
+    import hashlib
+
+    def create_prob(value: int) -> float:
+        hash_val = hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+        return int(hash_val[:8], 16) / 0xFFFFFFFF
+
+    probs = df[id_column].apply(create_prob)
+    df['fold'] = (probs * num_folds).astype(int)
+    return df
+
+
+def assign_splits_from_folds(
+    df: pd.DataFrame,
+    validation_folds: frozenset[int],
+    test_folds: frozenset[int],
+) -> pd.DataFrame:
+    """Assign train/val/test splits from fold assignments."""
+    def map_split(row: pd.Series) -> str:
+        if row['fold'] in validation_folds:
+            return 'validation'
+        elif row['fold'] in test_folds:
+            return 'test'
+        else:
+            return 'train'
+
+    df['split'] = df.apply(map_split, axis=1)
+    return df
+
 
 class ExponentialMovingAverage:
     """Track exponential moving average of metrics."""
@@ -71,145 +145,84 @@ class MetricsEMA:
         return {key: ema.get() for key, ema in self.emas.items()}
 
 
-def load_bioclip_embeddings(bioclip_path='./species_embeddings',
-                           lfmc_species=None,
-                           cache_path='./lfmc_bioclip_embeddings_cache.pt'):
-    """Load BioCLIP 2 species embeddings, using cache if available."""
-
-    # Check if we have a cached version for LFMC species
-    if lfmc_species is not None and os.path.exists(cache_path):
-        print(f"\nLoading cached BioCLIP embeddings from {cache_path}", flush=True)
-        cache_data = torch.load(cache_path, weights_only=False)
-
-        # Verify cache is still valid
-        if set(cache_data['species']) == set(lfmc_species):
-            print(f"  Cache valid: {len(cache_data['embeddings'])} species, {cache_data['embedding_dim']}D embeddings", flush=True)
-            return cache_data['embeddings']
-        else:
-            print(f"  Cache invalid (species mismatch), regenerating...", flush=True)
-
-    # Load from original BioCLIP files
-    # Load the mapping CSV
-    mapping_path = os.path.join(bioclip_path, 'species_occurrence_counts_with_embeddings.csv')
-    mapping_df = pd.read_csv(mapping_path)
-
-    print(f"\nLoading BioCLIP 2 embeddings from {bioclip_path}", flush=True)
-    print(f"  Total species in BioCLIP database: {len(mapping_df):,}", flush=True)
-
-    # If we know which species we need, filter the dataframe
-    if lfmc_species is not None:
-        relevant_df = mapping_df[mapping_df['species'].isin(lfmc_species)]
-        print(f"  Filtering to {len(relevant_df)} relevant species for LFMC dataset", flush=True)
-    else:
-        relevant_df = mapping_df
-
-    # Create species name to embedding mapping
-    species_to_embedding = {}
-    loaded_chunks = {}
-
-    for _, row in relevant_df.iterrows():
-        species_name = row['species']
-        chunk_file = row['embedding_file']
-        emb_index = row['embedding_index']
-
-        # Load chunk if not already loaded
-        if chunk_file not in loaded_chunks:
-            chunk_path = os.path.join(bioclip_path, chunk_file)
-            if os.path.exists(chunk_path):
-                chunk_data = torch.load(chunk_path, weights_only=False)
-                loaded_chunks[chunk_file] = chunk_data['embeddings']
-                print(f"  Loaded {chunk_file}: {chunk_data['embeddings'].shape}", flush=True)
-
-        # Get the embedding for this species
-        if chunk_file in loaded_chunks:
-            # Compute actual index within the chunk
-            chunk_embeddings = loaded_chunks[chunk_file]
-            # The embedding_index in CSV is global, we need local index within chunk
-            local_idx = emb_index % chunk_embeddings.shape[0]
-            species_to_embedding[species_name] = chunk_embeddings[local_idx].float()  # Convert from float16 to float32
-
-    print(f"  Loaded embeddings for {len(species_to_embedding):,} species", flush=True)
-
-    # Check embedding dimension
-    if species_to_embedding:
-        sample_emb = next(iter(species_to_embedding.values()))
-        print(f"  Embedding dimension: {sample_emb.shape[0]}", flush=True)
-
-        # Save cache if we filtered to LFMC species
-        if lfmc_species is not None and cache_path:
-            print(f"  Saving cache to {cache_path}", flush=True)
-            cache_data = {
-                'species': list(species_to_embedding.keys()),
-                'embeddings': species_to_embedding,
-                'embedding_dim': sample_emb.shape[0]
-            }
-            torch.save(cache_data, cache_path)
-            print(f"  Cache saved successfully", flush=True)
-
-    return species_to_embedding
-
-
 class FullyGPUDataset:
-    """Everything on GPU from the start, with species encoding."""
+    """
+    Everything on GPU from the start, with species encoding.
 
-    def __init__(self, data_path: str, device: str = 'cuda', use_bioclip: bool = False):
-        # ONE-TIME CPU operations for loading
+    Loads AI2's official LFMC CSV and uses their fold-based train/test splits.
+    """
+
+    def __init__(self, data_path: str | None = None, device: str = 'cuda', use_ai2_splits: bool = True):
+        """
+        Load dataset with AI2 official splits.
+
+        Args:
+            data_path: Path to CSV file. If None, downloads AI2 official CSV.
+            device: Device for GPU tensors
+            use_ai2_splits: If True, use AI2's hash-based fold splits (70-15-15)
+        """
+        # Download AI2 CSV if no path provided
+        if data_path is None:
+            data_path = download_ai2_csv()
+            print(f"Using official LFMC CSV", flush=True)
+
+        # Load CSV
+        print(f"Loading data from {data_path}...", flush=True)
         df = pd.read_csv(data_path)
-        df.columns = ['lat', 'lon', 'elev', 'date_str', 'time_str', 'lfmc', 'species']
 
-        # Filter
-        df = df[(df['lfmc'] >= 0) & (df['lfmc'] <= 600) &
+        # Check if this is AI2 format or custom format
+        if 'sorting_id' in df.columns:
+            # AI2 format
+            print("Detected official CSV format", flush=True)
+            df = df.rename(columns={
+                'latitude': 'lat',
+                'longitude': 'lon',
+                'elevation': 'elev',
+                'lfmc_value': 'lfmc',
+                'species_collected': 'species'
+            })
+
+            # Parse sampling_date to date components
+            df['sampling_date'] = pd.to_datetime(df['sampling_date'])
+            df['date_str'] = df['sampling_date'].dt.strftime('%Y%m%d')
+            df['time_str'] = '0000'  # Placeholder
+
+            # Apply AI2 fold-based splits if requested
+            if use_ai2_splits:
+                print("Applying hash-based fold splits...", flush=True)
+                df = assign_ai2_folds(df, 'sorting_id', DEFAULT_NUM_FOLDS)
+                df = assign_splits_from_folds(df, DEFAULT_VALIDATION_FOLDS, DEFAULT_TEST_FOLDS)
+
+                # Store split info
+                self.has_splits = True
+                print(f"  Train folds: {DEFAULT_NUM_FOLDS - len(DEFAULT_VALIDATION_FOLDS) - len(DEFAULT_TEST_FOLDS)}", flush=True)
+                print(f"  Validation folds: {len(DEFAULT_VALIDATION_FOLDS)}", flush=True)
+                print(f"  Test folds: {len(DEFAULT_TEST_FOLDS)}", flush=True)
+            else:
+                self.has_splits = False
+        else:
+            # Custom format - assume columns already named correctly
+            print("Detected custom CSV format", flush=True)
+            df.columns = ['lat', 'lon', 'elev', 'date_str', 'time_str', 'lfmc', 'species']
+            self.has_splits = False
+
+        # Filter - clip at 99.9th percentile (302) following allenai/lfmc approach
+        df = df[(df['lfmc'] >= 0) & (df['lfmc'] <= MAX_LFMC_VALUE) &
                 df['lat'].notna() & df['lon'].notna() &
                 df['elev'].notna()].copy()
 
-        self.use_bioclip = use_bioclip
-        self.bioclip_embeddings = None
-        self.bioclip_dim = 768  # BioCLIP 2 dimension
+        n_total = len(df)
+        print(f"Loaded {n_total:,} samples after filtering", flush=True)
 
-        # If using BioCLIP, load embeddings and filter dataset
-        if use_bioclip:
-            # Get unique species in LFMC dataset
-            lfmc_species = df['species'].unique()
-
-            # Load BioCLIP embeddings, using cache if available
-            cache_path = os.path.join(os.path.dirname(data_path), 'lfmc_bioclip_embeddings_cache.pt')
-            bioclip_dict = load_bioclip_embeddings(lfmc_species=list(lfmc_species), cache_path=cache_path)
-
-            # Check which species in LFMC data have BioCLIP embeddings
-            lfmc_species = set(df['species'].unique())
-            bioclip_species = set(bioclip_dict.keys())
-            matched_species = lfmc_species & bioclip_species
-            missing_species = lfmc_species - bioclip_species
-
-            print(f"\nSpecies matching:", flush=True)
-            print(f"  LFMC species: {len(lfmc_species)}", flush=True)
-            print(f"  Matched with BioCLIP: {len(matched_species)} ({100*len(matched_species)/len(lfmc_species):.1f}%)", flush=True)
-            print(f"  Missing from BioCLIP: {len(missing_species)}", flush=True)
-
-            if missing_species:
-                # Count samples for missing species
-                missing_counts = {}
-                for species in missing_species:
-                    missing_counts[species] = len(df[df['species'] == species])
-
-                # Sort by count
-                sorted_missing = sorted(missing_counts.items(), key=lambda x: x[1], reverse=True)
-
-                total_missing_samples = sum(missing_counts.values())
-                print(f"  Total samples to be filtered: {total_missing_samples:,} ({100*total_missing_samples/len(df):.1f}%)", flush=True)
-                print(f"  Top 5 missing species by sample count:", flush=True)
-                for i, (species, count) in enumerate(sorted_missing[:5]):
-                    print(f"    {i+1}. {species}: {count:,} samples", flush=True)
-
-                # Filter dataset to only include species with BioCLIP embeddings
-                df = df[df['species'].isin(matched_species)].copy()
-                print(f"\nFiltered dataset: {len(df):,} samples remaining", flush=True)
-
-            # Store BioCLIP embeddings for matched species
-            self.bioclip_embeddings = bioclip_dict
+        # Show split breakdown if available
+        if self.has_splits and 'split' in df.columns:
+            for split_name in ['train', 'validation', 'test']:
+                n_split = len(df[df['split'] == split_name])
+                pct = 100 * n_split / n_total
+                print(f"  {split_name.capitalize()}: {n_split:,} samples ({pct:.1f}%)", flush=True)
 
         n = len(df)
-        print(f"Loaded {n:,} samples", flush=True)
+        print(f"Total samples to process: {n:,}", flush=True)
 
         # Parse dates to floats (for GPU sorting later)
         date_floats = np.zeros(n)
@@ -236,19 +249,6 @@ class FullyGPUDataset:
 
         # Convert species to indices
         species_indices = np.array([self.species_to_idx[s] for s in df['species'].values])
-
-        # If using BioCLIP, prepare embeddings tensor
-        if use_bioclip:
-            # Create embedding matrix for all species in dataset
-            embedding_matrix = torch.zeros((self.n_species, self.bioclip_dim), dtype=torch.float32)
-            for species, idx in self.species_to_idx.items():
-                if species in self.bioclip_embeddings:
-                    embedding_matrix[idx] = self.bioclip_embeddings[species]
-                else:
-                    # This shouldn't happen as we filtered, but just in case
-                    print(f"WARNING: No BioCLIP embedding for {species}", flush=True)
-            self.species_embeddings = embedding_matrix.to(device)
-            print(f"  BioCLIP embeddings prepared: {embedding_matrix.shape}", flush=True)
 
         print(f"\nSpecies Statistics:", flush=True)
         print(f"  Unique species: {self.n_species}", flush=True)
@@ -334,7 +334,9 @@ class FullyGPUDataset:
                            df['elev'].values, time_norm]),
             dtype=torch.float32, device=device
         )
-        self.targets = torch.tensor(df['lfmc'].values, dtype=torch.float32, device=device)
+        # Normalize targets to [0, 1] following allenai/lfmc approach
+        normalized_lfmc = df['lfmc'].values / MAX_LFMC_VALUE
+        self.targets = torch.tensor(normalized_lfmc, dtype=torch.float32, device=device)
         self.species_idx = torch.tensor(species_indices, dtype=torch.long, device=device)
 
         # Degeneracy flag on GPU
@@ -346,6 +348,29 @@ class FullyGPUDataset:
         # Store raw dataframe columns for split creation
         self.df = df
 
+        # Create split indices on GPU if splits are available
+        if self.has_splits and 'split' in df.columns:
+            # Create indices for train (train+validation) and test
+            train_mask = df['split'].isin(['train', 'validation']).values
+            test_mask = (df['split'] == 'test').values
+
+            self.train_indices = torch.tensor(np.where(train_mask)[0], dtype=torch.long, device=device)
+            self.test_indices = torch.tensor(np.where(test_mask)[0], dtype=torch.long, device=device)
+
+            print(f"\nSplit Indices Created:", flush=True)
+            print(f"  Train+Validation: {len(self.train_indices):,} samples", flush=True)
+            print(f"  Test: {len(self.test_indices):,} samples", flush=True)
+
+            # Report degeneracy breakdown per split
+            print(f"\nDegeneracy breakdown by split:", flush=True)
+            for name, indices in [('Train+Val', self.train_indices), ('Test', self.test_indices)]:
+                n_degen = self.is_degenerate[indices].sum().item()
+                n_unique = len(indices) - n_degen
+                print(f"  {name:10s}: {n_unique:5d} unique, {n_degen:5d} multi-species degenerate ({100*n_degen/len(indices):.1f}%)", flush=True)
+        else:
+            self.train_indices = None
+            self.test_indices = None
+
         self.n = n
         self.device = device
         self.n_degenerate_samples = n_degenerate_samples
@@ -355,9 +380,9 @@ class FullyGPUDataset:
 
 
 class SpeciesAwareLFMCModel(nn.Module):
-    """LFMC model with species embeddings (learnable or pre-trained)."""
+    """LFMC model with learnable species embeddings."""
 
-    def __init__(self, n_species, species_dim=32, use_bioclip=False, bioclip_embeddings=None, freeze_embeddings=False):
+    def __init__(self, n_species, species_dim=32):
         super().__init__()
 
         self.earth4d = Earth4D(
@@ -365,27 +390,11 @@ class SpeciesAwareLFMCModel(nn.Module):
         )
 
         earth4d_dim = self.earth4d.get_output_dim()
-        self.use_bioclip = use_bioclip
 
-        if use_bioclip:
-            # Use pre-trained BioCLIP embeddings
-            if bioclip_embeddings is None:
-                raise ValueError("BioCLIP embeddings must be provided when use_bioclip=True")
-            self.species_embeddings = nn.Embedding.from_pretrained(bioclip_embeddings, freeze=freeze_embeddings)
-            species_dim = bioclip_embeddings.shape[1]  # 768 for BioCLIP 2
-            if freeze_embeddings:
-                print(f"  Using FROZEN BioCLIP embeddings: {bioclip_embeddings.shape}", flush=True)
-            else:
-                print(f"  Using TRAINABLE BioCLIP embeddings: {bioclip_embeddings.shape}", flush=True)
-        else:
-            # Learnable species embeddings
-            self.species_embeddings = nn.Embedding(n_species, species_dim)
-            nn.init.normal_(self.species_embeddings.weight, mean=0.0, std=0.1)
-            if freeze_embeddings:
-                self.species_embeddings.weight.requires_grad = False
-                print(f"  Using FROZEN random embeddings: ({n_species}, {species_dim})", flush=True)
-            else:
-                print(f"  Using TRAINABLE random embeddings: ({n_species}, {species_dim})", flush=True)
+        # Learnable species embeddings
+        self.species_embeddings = nn.Embedding(n_species, species_dim)
+        nn.init.normal_(self.species_embeddings.weight, mean=0.0, std=0.1)
+        print(f"  Using learnable species embeddings: ({n_species}, {species_dim})", flush=True)
 
         # MLP that takes concatenated Earth4D features and species embedding
         input_dim = earth4d_dim + species_dim
@@ -396,7 +405,8 @@ class SpeciesAwareLFMCModel(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(256, 128),
             nn.ReLU(inplace=True),
-            nn.Linear(128, 1)
+            nn.Linear(128, 1),
+            nn.Sigmoid()  # Constrain output to [0, 1] to match normalized targets
         )
 
         # Initialize Earth4D parameters
@@ -422,157 +432,92 @@ class SpeciesAwareLFMCModel(nn.Module):
         return self.mlp(combined_features).squeeze(-1)
 
 
-def create_gpu_splits(dataset, device='cuda'):
-    """Create splits ensuring test species are in training set.
-
-    Spatial split uses 5 cluster centers with nearest neighbors to create
-    true spatial holdout regions.
+def get_ai2_splits(dataset):
     """
-    n = dataset.n
+    Return AI2 train/test splits from the dataset.
 
-    # Get unique species in dataset
-    all_species = set(dataset.df['species'].unique())
-
-    # All indices on GPU
-    all_idx = torch.arange(n, device=device)
-
-    # 1. Temporal: sort by date ON GPU and take last 5%
-    n_temp = int(n * 0.05)
-    _, date_order = torch.sort(dataset.date_values)
-    temp_idx = date_order[-n_temp:]
-
-    # 2. Create mask for used indices
-    used = torch.zeros(n, dtype=torch.bool, device=device)
-    used[temp_idx] = True
-
-    # 3. Spatial: Create 5 spatial clusters using k-nearest neighbors
-    n_spat = int(n * 0.05)
-    available = all_idx[~used]
-
-    # Get spatial coordinates (lat, lon) for available samples
-    available_coords = dataset.coords[available][:, :2]  # Just lat, lon
-
-    # Randomly select 5 cluster centers from available points
-    n_available = len(available)
-    center_indices = torch.randperm(n_available, device=device)[:5]
-    cluster_centers = available_coords[center_indices]
-
-    # For each cluster center, find nearest neighbors
-    spat_indices = []
-    samples_per_cluster = n_spat // 5
-    remaining_samples = n_spat % 5  # Handle remainder
-
-    for i, center in enumerate(cluster_centers):
-        # Calculate distances to all available points
-        distances = torch.sum((available_coords - center.unsqueeze(0)) ** 2, dim=1)
-
-        # Get indices of nearest neighbors
-        n_samples = samples_per_cluster + (1 if i < remaining_samples else 0)
-        _, nearest_indices = torch.topk(distances, n_samples, largest=False)
-
-        # Map back to original indices
-        cluster_samples = available[nearest_indices]
-        spat_indices.append(cluster_samples)
-
-    # Combine all spatial clusters
-    spat_idx = torch.cat(spat_indices)
-    used[spat_idx] = True
-
-    # Store cluster centers for visualization
-    dataset.spatial_cluster_centers = cluster_centers.cpu().numpy()
-
-    # 4. Random: 5% from remaining
-    n_rand = int(n * 0.05)
-    available = all_idx[~used]
-    perm = torch.randperm(len(available), device=device)
-    rand_idx = available[perm[:n_rand]]
-    used[rand_idx] = True
-
-    # 5. Train: everything else
-    train_idx = all_idx[~used]
-
-    print(f"\nSplits: Train={len(train_idx)}, Temporal={len(temp_idx)}, "
-          f"Spatial={len(spat_idx)}, Random={len(rand_idx)}", flush=True)
+    Uses the hash-based fold assignment (70% train, 15% validation, 15% test).
+    For training, we combine train+validation following AI2's approach.
+    """
+    if not dataset.has_splits or dataset.train_indices is None:
+        raise ValueError("Dataset does not have AI2 splits. Ensure use_ai2_splits=True when creating dataset.")
 
     # Check species coverage
-    train_species = set(dataset.df.iloc[train_idx.cpu().numpy()]['species'].unique())
-    temp_species = set(dataset.df.iloc[temp_idx.cpu().numpy()]['species'].unique())
-    spat_species = set(dataset.df.iloc[spat_idx.cpu().numpy()]['species'].unique())
-    rand_species = set(dataset.df.iloc[rand_idx.cpu().numpy()]['species'].unique())
+    train_species = set(dataset.df.iloc[dataset.train_indices.cpu().numpy()]['species'].unique())
+    test_species = set(dataset.df.iloc[dataset.test_indices.cpu().numpy()]['species'].unique())
 
-    print(f"\nSpecies coverage:", flush=True)
+    print(f"\nSpecies Coverage:", flush=True)
     print(f"  Train species: {len(train_species)}", flush=True)
-    print(f"  Temporal test species: {len(temp_species)} ({100*len(temp_species & train_species)/len(temp_species):.1f}% in train)", flush=True)
-    print(f"  Spatial test species: {len(spat_species)} ({100*len(spat_species & train_species)/len(spat_species):.1f}% in train)", flush=True)
-    print(f"  Random test species: {len(rand_species)} ({100*len(rand_species & train_species)/len(rand_species):.1f}% in train)", flush=True)
+    print(f"  Test species: {len(test_species)} ({100*len(test_species & train_species)/len(test_species):.1f}% in train)", flush=True)
 
     # Report species NOT in training set
-    temp_novel = temp_species - train_species
-    spat_novel = spat_species - train_species
-    rand_novel = rand_species - train_species
-
-    if temp_novel:
-        print(f"\n  WARNING: {len(temp_novel)} species in temporal test NOT in training:", flush=True)
-        for s in list(temp_novel)[:5]:
+    test_novel = test_species - train_species
+    if test_novel:
+        print(f"\n  WARNING: {len(test_novel)} species in test NOT in training:", flush=True)
+        for s in list(test_novel)[:5]:
             print(f"    - {s}", flush=True)
-    if spat_novel:
-        print(f"  WARNING: {len(spat_novel)} species in spatial test NOT in training:", flush=True)
-        for s in list(spat_novel)[:5]:
-            print(f"    - {s}", flush=True)
-    if rand_novel:
-        print(f"  WARNING: {len(rand_novel)} species in random test NOT in training:", flush=True)
-        for s in list(rand_novel)[:5]:
-            print(f"    - {s}", flush=True)
-
-    # Report degeneracy breakdown per split
-    print(f"\nDegeneracy breakdown by split:", flush=True)
-    for name, idx in [('Train', train_idx), ('Temporal', temp_idx),
-                       ('Spatial', spat_idx), ('Random', rand_idx)]:
-        n_degen = dataset.is_degenerate[idx].sum().item()
-        n_unique = len(idx) - n_degen
-        print(f"  {name:8s}: {n_unique:5d} unique, {n_degen:5d} multi-species degenerate ({100*n_degen/len(idx):.1f}%)", flush=True)
+        if len(test_novel) > 5:
+            print(f"    ... and {len(test_novel) - 5} more", flush=True)
 
     return {
-        'train': train_idx,
-        'temporal': temp_idx,
-        'spatial': spat_idx,
-        'random': rand_idx
+        'train': dataset.train_indices,
+        'test': dataset.test_indices
     }
 
 
 def compute_metrics_gpu(preds, targets, is_degenerate=None):
     """
-    Compute metrics on GPU.
-    Since LFMC is already in percentage units, we report error statistics directly in LFMC % space.
+    Compute metrics on GPU using absolute errors (LFMC percentage points).
+
+    Following allenai/lfmc approach: denormalize predictions and targets
+    before computing metrics.
+
+    Metrics align with standard LFMC literature (Rao et al. 2020, Miller et al. 2023):
+    - RMSE: Root Mean Squared Error in LFMC percentage points
+    - MAE: Mean Absolute Error in LFMC percentage points
+    - R²: Coefficient of determination
     """
     def calc_metrics(p, t):
-        # Compute errors in LFMC percentage space
-        errors = p - t  # Signed errors
+        if len(p) == 0 or len(t) == 0:
+            # If no samples, return zeros
+            return {
+                'mse': 0.0,
+                'rmse': 0.0,
+                'mae': 0.0,
+                'r2': 0.0,
+                'n_samples': 0
+            }
+
+        # Denormalize to LFMC percentage points (following allenai/lfmc)
+        p_denorm = p * MAX_LFMC_VALUE
+        t_denorm = t * MAX_LFMC_VALUE
+
+        # Compute errors in LFMC percentage point space
+        errors = p_denorm - t_denorm  # Signed errors
         abs_errors = torch.abs(errors)  # Absolute errors
 
-        # Basic metrics
+        # Absolute metrics (in LFMC percentage points)
         mse = (errors ** 2).mean()
         rmse = torch.sqrt(mse)
-
-        # Mean absolute error (in LFMC percentage points)
         mae = abs_errors.mean()
 
-        # Median absolute error
-        median_ae = torch.median(abs_errors)
+        # R² score (coefficient of determination)
+        # R² = 1 - (SS_res / SS_tot)
+        # where SS_res = sum of squared residuals, SS_tot = total sum of squares
+        ss_res = ((p_denorm - t_denorm) ** 2).sum()
+        ss_tot = ((t_denorm - t_denorm.mean()) ** 2).sum()
 
-        # Variance of errors
-        error_var = errors.var()
-
-        # Standard deviation of errors
-        error_std = errors.std()
+        if ss_tot > 0:
+            r2 = 1 - (ss_res / ss_tot)
+        else:
+            r2 = torch.tensor(0.0, device=p.device)
 
         return {
             'mse': mse.item(),
             'rmse': rmse.item(),
             'mae': mae.item(),
-            'median_ae': median_ae.item(),
-            'error_var': error_var.item(),
-            'error_std': error_std.item()
+            'r2': r2.item(),
+            'n_samples': len(p)
         }
 
     # Overall metrics
@@ -584,7 +529,9 @@ def compute_metrics_gpu(preds, targets, is_degenerate=None):
         degen_mask = is_degenerate
 
         # Default empty metrics dict
-        empty_metrics = {'mse': 0, 'rmse': 0, 'mae': 0, 'median_ae': 0, 'error_var': 0, 'error_std': 0}
+        empty_metrics = {
+            'mse': 0, 'rmse': 0, 'mae': 0, 'r2': 0, 'n_samples': 0
+        }
 
         unique_metrics = calc_metrics(preds[unique_mask], targets[unique_mask]) if unique_mask.sum() > 0 else empty_metrics
         degen_metrics = calc_metrics(preds[degen_mask], targets[degen_mask]) if degen_mask.sum() > 0 else empty_metrics
@@ -650,7 +597,9 @@ def evaluate_split(model, dataset, indices):
     """Fast evaluation of a single split."""
     model.eval()
 
-    empty_metrics = {'mse': 0, 'rmse': 0, 'mae': 0, 'median_ae': 0, 'error_var': 0, 'error_std': 0}
+    empty_metrics = {
+        'mse': 0, 'rmse': 0, 'mae': 0, 'median_ae': 0, 'median_rmse': 0, 'r2': 0, 'n_samples': 0
+    }
 
     if len(indices) == 0:
         return empty_metrics, empty_metrics, empty_metrics, [], [], []
@@ -694,43 +643,24 @@ def evaluate_split(model, dataset, indices):
     return overall, unique, degen, sample_trues, sample_preds, sample_types
 
 
-def print_predictions_table(tmp_gt, tmp_pred, tmp_types, spt_gt, spt_pred, spt_types, rnd_gt, rnd_pred, rnd_types):
-    """Print predictions in a clean table format with degeneracy indicators."""
-    print("  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐", flush=True)
+def print_predictions_table(test_gt, test_pred, test_types):
+    """Print predictions in a clean table format with degeneracy indicators for test set."""
+    print("  ┌───────────────────────────────────────────────────────────────┐", flush=True)
+    print("  │  Sample Test Predictions (UNIQUE vs MULTI-species)          │", flush=True)
+    print("  ├───────────────────────────────────────────────────────────────┤", flush=True)
 
-    max_len = max(len(tmp_gt), len(spt_gt), len(rnd_gt))
+    for i in range(min(5, len(test_gt))):
+        # Denormalize for display (multiply by MAX_LFMC_VALUE)
+        gt_val = test_gt[i] * MAX_LFMC_VALUE
+        pred_val = test_pred[i] * MAX_LFMC_VALUE
+        err = abs(gt_val - pred_val)
+        tag = "UNIQUE" if test_types[i] == 'U' else "MULTI"
 
-    for i in range(min(5, max_len)):
-        line = "  │ "
-
-        # Temporal
-        if i < len(tmp_gt):
-            tmp_err = abs(tmp_gt[i] - tmp_pred[i])
-            tmp_tag = "UNIQUE" if tmp_types[i] == 'U' else "MULTI" if i < len(tmp_types) else ''
-            line += f"TEMPORAL-{tmp_tag}: {tmp_gt[i]:3.0f}%→{tmp_pred[i]:3.0f}% (Δ{tmp_err:3.0f}%) │ "
-        else:
-            line += " " * 36 + " │ "
-
-        # Spatial
-        if i < len(spt_gt):
-            spt_err = abs(spt_gt[i] - spt_pred[i])
-            spt_tag = "UNIQUE" if spt_types[i] == 'U' else "MULTI" if i < len(spt_types) else ''
-            line += f"SPATIAL-{spt_tag}: {spt_gt[i]:3.0f}%→{spt_pred[i]:3.0f}% (Δ{spt_err:3.0f}%) │ "
-        else:
-            line += " " * 35 + " │ "
-
-        # Random
-        if i < len(rnd_gt):
-            rnd_err = abs(rnd_gt[i] - rnd_pred[i])
-            rnd_tag = "UNIQUE" if rnd_types[i] == 'U' else "MULTI" if i < len(rnd_types) else ''
-            line += f"RANDOM-{rnd_tag}: {rnd_gt[i]:3.0f}%→{rnd_pred[i]:3.0f}% (Δ{rnd_err:3.0f}%) │"
-        else:
-            line += " " * 34 + " │"
-
+        line = f"  │  {i+1}. {tag:6s}: {gt_val:6.1f}% → {pred_val:6.1f}% (Δ{err:5.1f}pp)  │"
         print(line, flush=True)
 
-    print("  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘", flush=True)
-    print("    (UNIQUE=Single species at location, MULTI=Multiple species at location)", flush=True)
+    print("  └───────────────────────────────────────────────────────────────┘", flush=True)
+    print("    (UNIQUE=Single species, MULTI=Multiple species at same location)", flush=True)
 
 
 
@@ -755,54 +685,30 @@ def run_training_session(args, run_name=""):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("="*80, flush=True)
-    if args.use_bioclip:
-        print(f"EARTH4D LFMC - BIOCLIP SPECIES EMBEDDING VERSION", flush=True)
-    elif args.species_dim == 768:
-        print(f"EARTH4D LFMC - RANDOM 768D SPECIES EMBEDDING VERSION", flush=True)
-    else:
-        print(f"EARTH4D LFMC - LEARNABLE {args.species_dim}D SPECIES EMBEDDING VERSION", flush=True)
+    print(f"EARTH4D LFMC BENCHMARK", flush=True)
+    print(f"Using learnable {args.species_dim}D species embeddings", flush=True)
     print("="*80, flush=True)
 
-    # Load dataset
-    dataset = FullyGPUDataset(args.data_path, device, use_bioclip=args.use_bioclip)
-    splits = create_gpu_splits(dataset, device)
+    # Load dataset with AI2 splits
+    dataset = FullyGPUDataset(args.data_path, device, use_ai2_splits=True)
+    splits = get_ai2_splits(dataset)
 
-    # Model with species embeddings
-    if args.use_bioclip:
-        # Use BioCLIP embeddings
-        model = SpeciesAwareLFMCModel(
-            dataset.n_species,
-            use_bioclip=True,
-            bioclip_embeddings=dataset.species_embeddings,
-            freeze_embeddings=args.freeze_embeddings
-        ).to(device)
-    else:
-        # Use learnable embeddings
-        model = SpeciesAwareLFMCModel(
-            dataset.n_species,
-            species_dim=args.species_dim,
-            use_bioclip=False,
-            freeze_embeddings=args.freeze_embeddings
-        ).to(device)
+    # Model with learnable species embeddings
+    model = SpeciesAwareLFMCModel(
+        dataset.n_species,
+        species_dim=args.species_dim
+    ).to(device)
 
     # Count parameters
     earth4d_params = sum(p.numel() for p in model.earth4d.parameters())
     species_params = sum(p.numel() for p in model.species_embeddings.parameters())
     mlp_params = sum(p.numel() for p in model.mlp.parameters())
     total_params = sum(p.numel() for p in model.parameters())
-
-    # Count trainable parameters (BioCLIP embeddings are frozen)
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print(f"\nModel architecture:", flush=True)
     print(f"  Earth4D parameters: {earth4d_params:,}", flush=True)
-
-    # Report species embedding details
-    embedding_type = "BioCLIP" if args.use_bioclip else "Random"
-    embedding_status = "FROZEN" if args.freeze_embeddings else "TRAINABLE"
-    embedding_dim = 768 if args.use_bioclip else args.species_dim
-
-    print(f"  Species embedding parameters: {species_params:,} ({embedding_type} {embedding_status}, {dataset.n_species} species × {embedding_dim} dims)", flush=True)
+    print(f"  Species embedding parameters: {species_params:,} (Learnable, {dataset.n_species} species × {args.species_dim} dims)", flush=True)
     print(f"  MLP parameters: {mlp_params:,}", flush=True)
     print(f"  Total parameters: {total_params:,}", flush=True)
     print(f"  Trainable parameters: {trainable_params:,}", flush=True)
@@ -827,15 +733,9 @@ def run_training_session(args, run_name=""):
             model, dataset, splits['train'], optimizer, args.batch_size
         )
 
-        # Evaluate all test splits
-        tmp_overall, tmp_unique, tmp_degen, tmp_gt, tmp_pred, tmp_types = evaluate_split(
-            model, dataset, splits['temporal']
-        )
-        spt_overall, spt_unique, spt_degen, spt_gt, spt_pred, spt_types = evaluate_split(
-            model, dataset, splits['spatial']
-        )
-        rnd_overall, rnd_unique, rnd_degen, rnd_gt, rnd_pred, rnd_types = evaluate_split(
-            model, dataset, splits['random']
+        # Evaluate test split
+        test_overall, test_unique, test_degen, test_gt, test_pred, test_types = evaluate_split(
+            model, dataset, splits['test']
         )
 
         dt = time.time() - t0
@@ -845,53 +745,23 @@ def run_training_session(args, run_name=""):
             'epoch': epoch,
             'time': dt,
             # Train overall metrics
-            'train_mse': trn_overall['mse'],
             'train_rmse': trn_overall['rmse'],
             'train_mae': trn_overall['mae'],
-            'train_median_ae': trn_overall['median_ae'],
-            'train_error_var': trn_overall['error_var'],
-            'train_error_std': trn_overall['error_std'],
+            'train_r2': trn_overall['r2'],
             # Train unique metrics
             'train_unique_mae': trn_unique['mae'],
-            'train_unique_median_ae': trn_unique['median_ae'],
-            'train_unique_std': trn_unique['error_std'],
+            'train_unique_r2': trn_unique['r2'],
             # Train degenerate metrics
             'train_degen_mae': trn_degen['mae'],
-            'train_degen_median_ae': trn_degen['median_ae'],
-            'train_degen_std': trn_degen['error_std'],
-            # Temporal test metrics
-            'temporal_mse': tmp_overall['mse'],
-            'temporal_mae': tmp_overall['mae'],
-            'temporal_median_ae': tmp_overall['median_ae'],
-            'temporal_error_std': tmp_overall['error_std'],
-            'temporal_unique_mae': tmp_unique['mae'],
-            'temporal_unique_median_ae': tmp_unique['median_ae'],
-            'temporal_unique_std': tmp_unique['error_std'],
-            'temporal_degen_mae': tmp_degen['mae'],
-            'temporal_degen_median_ae': tmp_degen['median_ae'],
-            'temporal_degen_std': tmp_degen['error_std'],
-            # Spatial test metrics
-            'spatial_mse': spt_overall['mse'],
-            'spatial_mae': spt_overall['mae'],
-            'spatial_median_ae': spt_overall['median_ae'],
-            'spatial_error_std': spt_overall['error_std'],
-            'spatial_unique_mae': spt_unique['mae'],
-            'spatial_unique_median_ae': spt_unique['median_ae'],
-            'spatial_unique_std': spt_unique['error_std'],
-            'spatial_degen_mae': spt_degen['mae'],
-            'spatial_degen_median_ae': spt_degen['median_ae'],
-            'spatial_degen_std': spt_degen['error_std'],
-            # Random test metrics
-            'random_mse': rnd_overall['mse'],
-            'random_mae': rnd_overall['mae'],
-            'random_median_ae': rnd_overall['median_ae'],
-            'random_error_std': rnd_overall['error_std'],
-            'random_unique_mae': rnd_unique['mae'],
-            'random_unique_median_ae': rnd_unique['median_ae'],
-            'random_unique_std': rnd_unique['error_std'],
-            'random_degen_mae': rnd_degen['mae'],
-            'random_degen_median_ae': rnd_degen['median_ae'],
-            'random_degen_std': rnd_degen['error_std']
+            'train_degen_r2': trn_degen['r2'],
+            # Test metrics
+            'test_rmse': test_overall['rmse'],
+            'test_mae': test_overall['mae'],
+            'test_r2': test_overall['r2'],
+            'test_unique_mae': test_unique['mae'],
+            'test_unique_r2': test_unique['r2'],
+            'test_degen_mae': test_degen['mae'],
+            'test_degen_r2': test_degen['r2']
         }
 
         # Update EMAs and store metrics
@@ -901,33 +771,23 @@ def run_training_session(args, run_name=""):
 
         # Store sample predictions for EMA tracking
         if epoch == 1:
-            metrics_ema.sample_predictions['temporal_gt'] = tmp_gt
-            metrics_ema.sample_predictions['spatial_gt'] = spt_gt
-            metrics_ema.sample_predictions['random_gt'] = rnd_gt
-        metrics_ema.sample_predictions[f'temporal_pred_{epoch}'] = tmp_pred
-        metrics_ema.sample_predictions[f'spatial_pred_{epoch}'] = spt_pred
-        metrics_ema.sample_predictions[f'random_pred_{epoch}'] = rnd_pred
+            metrics_ema.sample_predictions['test_gt'] = test_gt
+        metrics_ema.sample_predictions[f'test_pred_{epoch}'] = test_pred
 
-        # Print clean formatted metrics with LFMC % error statistics
+        # Print clean formatted metrics with absolute errors (percentage points) and R²
         print(f"\nEPOCH {epoch:3d} ({dt:.1f}s)", flush=True)
-        print(f"  TRAIN ALL: [MSE: {trn_overall['mse']:7.1f}, MAE: {trn_overall['mae']:5.1f}pp, Median: {trn_overall['median_ae']:5.1f}pp, Std: {trn_overall['error_std']:5.1f}pp]", flush=True)
-        print(f"        UNIQUE: MAE={trn_unique['mae']:5.1f}pp, Med={trn_unique['median_ae']:5.1f}pp  |  MULTI: MAE={trn_degen['mae']:5.1f}pp, Med={trn_degen['median_ae']:5.1f}pp", flush=True)
+        print(f"  TRAIN ALL: [RMSE: {trn_overall['rmse']:5.1f}pp, MAE: {trn_overall['mae']:5.1f}pp, R²: {trn_overall['r2']:.3f}]", flush=True)
+        print(f"        UNIQUE: MAE={trn_unique['mae']:5.1f}pp, R²={trn_unique['r2']:.3f}  |  MULTI: MAE={trn_degen['mae']:5.1f}pp, R²={trn_degen['r2']:.3f}", flush=True)
 
-        print(f"\n  TEST TEMPORAL: [MSE: {tmp_overall['mse']:7.1f}, MAE: {tmp_overall['mae']:5.1f}pp, Median: {tmp_overall['median_ae']:5.1f}pp, Std: {tmp_overall['error_std']:5.1f}pp]", flush=True)
-        print(f"        UNIQUE: MAE={tmp_unique['mae']:5.1f}pp, Med={tmp_unique['median_ae']:5.1f}pp  |  MULTI: MAE={tmp_degen['mae']:5.1f}pp, Med={tmp_degen['median_ae']:5.1f}pp", flush=True)
-
-        print(f"  TEST SPATIAL:  [MSE: {spt_overall['mse']:7.1f}, MAE: {spt_overall['mae']:5.1f}pp, Median: {spt_overall['median_ae']:5.1f}pp, Std: {spt_overall['error_std']:5.1f}pp]", flush=True)
-        print(f"        UNIQUE: MAE={spt_unique['mae']:5.1f}pp, Med={spt_unique['median_ae']:5.1f}pp  |  MULTI: MAE={spt_degen['mae']:5.1f}pp, Med={spt_degen['median_ae']:5.1f}pp", flush=True)
-
-        print(f"  TEST RANDOM:   [MSE: {rnd_overall['mse']:7.1f}, MAE: {rnd_overall['mae']:5.1f}pp, Median: {rnd_overall['median_ae']:5.1f}pp, Std: {rnd_overall['error_std']:5.1f}pp]", flush=True)
-        print(f"        UNIQUE: MAE={rnd_unique['mae']:5.1f}pp, Med={rnd_unique['median_ae']:5.1f}pp  |  MULTI: MAE={rnd_degen['mae']:5.1f}pp, Med={rnd_degen['median_ae']:5.1f}pp", flush=True)
+        print(f"\n  TEST: [RMSE: {test_overall['rmse']:5.1f}pp, MAE: {test_overall['mae']:5.1f}pp, R²: {test_overall['r2']:.3f}]", flush=True)
+        print(f"        UNIQUE: MAE={test_unique['mae']:5.1f}pp, R²={test_unique['r2']:.3f}  |  MULTI: MAE={test_degen['mae']:5.1f}pp, R²={test_degen['r2']:.3f}", flush=True)
 
         # Show predictions table every epoch
-        print_predictions_table(tmp_gt, tmp_pred, tmp_types, spt_gt, spt_pred, spt_types, rnd_gt, rnd_pred, rnd_types)
+        print_predictions_table(test_gt, test_pred, test_types)
 
         # LR decay -  reduction per epoch 
         for g in optimizer.param_groups:
-            g['lr'] *= 0.999
+            g['lr'] *= 0.9995
         print(f"  Learning rate: {optimizer.param_groups[0]['lr']:.6f}", flush=True)
 
     print("="*80, flush=True)
@@ -949,26 +809,21 @@ def run_training_session(args, run_name=""):
     metrics_df.to_csv(metrics_path, index=False)
     print(f"Metrics saved to: {metrics_path}", flush=True)
 
-    # Print final summary with LFMC percentage point errors
+    # Print final summary with absolute errors (percentage points) and R²
     final = metrics_history[-1]
-    print(f"\nFINAL RESULTS (Epoch {args.epochs}) - Errors in LFMC percentage points:", flush=True)
-    print(f"  Overall Performance:", flush=True)
-    print(f"    Training:      MAE={final['train_mae']:.1f}pp, Median={final['train_median_ae']:.1f}pp, Std={final['train_error_std']:.1f}pp", flush=True)
-    print(f"    Temporal Test: MAE={final['temporal_mae']:.1f}pp, Median={final['temporal_median_ae']:.1f}pp, Std={final['temporal_error_std']:.1f}pp", flush=True)
-    print(f"    Spatial Test:  MAE={final['spatial_mae']:.1f}pp, Median={final['spatial_median_ae']:.1f}pp, Std={final['spatial_error_std']:.1f}pp", flush=True)
-    print(f"    Random Test:   MAE={final['random_mae']:.1f}pp, Median={final['random_median_ae']:.1f}pp, Std={final['random_error_std']:.1f}pp", flush=True)
+    print(f"\nFINAL RESULTS (Epoch {args.epochs}) - Absolute Errors (LFMC Percentage Points):", flush=True)
+    print(f"  Comparison with AllenAI LFMC (Rao et al. 2020): RMSE=18.91pp, MAE=12.58pp, R²=0.72", flush=True)
+    print(f"\n  Overall Performance:", flush=True)
+    print(f"    Training:  RMSE={final['train_rmse']:.1f}pp, MAE={final['train_mae']:.1f}pp, R²={final['train_r2']:.3f}", flush=True)
+    print(f"    Test:      RMSE={final['test_rmse']:.1f}pp, MAE={final['test_mae']:.1f}pp, R²={final['test_r2']:.3f}", flush=True)
 
     print(f"\n  Unique Species Locations Only:", flush=True)
-    print(f"    Training:      MAE={final['train_unique_mae']:.1f}pp, Median={final['train_unique_median_ae']:.1f}pp, Std={final['train_unique_std']:.1f}pp", flush=True)
-    print(f"    Temporal Test: MAE={final['temporal_unique_mae']:.1f}pp, Median={final['temporal_unique_median_ae']:.1f}pp, Std={final['temporal_unique_std']:.1f}pp", flush=True)
-    print(f"    Spatial Test:  MAE={final['spatial_unique_mae']:.1f}pp, Median={final['spatial_unique_median_ae']:.1f}pp, Std={final['spatial_unique_std']:.1f}pp", flush=True)
-    print(f"    Random Test:   MAE={final['random_unique_mae']:.1f}pp, Median={final['random_unique_median_ae']:.1f}pp, Std={final['random_unique_std']:.1f}pp", flush=True)
+    print(f"    Training:  MAE={final['train_unique_mae']:.1f}pp, R²={final['train_unique_r2']:.3f}", flush=True)
+    print(f"    Test:      MAE={final['test_unique_mae']:.1f}pp, R²={final['test_unique_r2']:.3f}", flush=True)
 
     print(f"\n  Multi-Species Locations Only:", flush=True)
-    print(f"    Training:      MAE={final['train_degen_mae']:.1f}pp, Median={final['train_degen_median_ae']:.1f}pp, Std={final['train_degen_std']:.1f}pp", flush=True)
-    print(f"    Temporal Test: MAE={final['temporal_degen_mae']:.1f}pp, Median={final['temporal_degen_median_ae']:.1f}pp, Std={final['temporal_degen_std']:.1f}pp", flush=True)
-    print(f"    Spatial Test:  MAE={final['spatial_degen_mae']:.1f}pp, Median={final['spatial_degen_median_ae']:.1f}pp, Std={final['spatial_degen_std']:.1f}pp", flush=True)
-    print(f"    Random Test:   MAE={final['random_degen_mae']:.1f}pp, Median={final['random_degen_median_ae']:.1f}pp, Std={final['random_degen_std']:.1f}pp", flush=True)
+    print(f"    Training:  MAE={final['train_degen_mae']:.1f}pp, R²={final['train_degen_r2']:.3f}", flush=True)
+    print(f"    Test:      MAE={final['test_degen_mae']:.1f}pp, R²={final['test_degen_r2']:.3f}", flush=True)
 
     print("\nTraining complete!", flush=True)
 
@@ -979,31 +834,24 @@ def run_training_session(args, run_name=""):
     with torch.no_grad():
         model.eval()
 
-        # Collect predictions from all test sets
-        all_preds = {}
-        all_gts = {}
-        all_indices = {}
+        # Collect predictions from AI2 test set
+        if len(splits['test']) > 0:
+            coords = dataset.coords[splits['test']]
+            targets = dataset.targets[splits['test']]
+            species = dataset.species_idx[splits['test']]
+            test_preds = model(coords, species)
 
-        for split_name in ['temporal', 'spatial', 'random']:
-            if len(splits[split_name]) > 0:
-                coords = dataset.coords[splits[split_name]]
-                targets = dataset.targets[splits[split_name]]
-                species = dataset.species_idx[splits[split_name]]
-                preds = model(coords, species)
-
-                all_preds[split_name] = preds.cpu().numpy()
-                all_gts[split_name] = targets.cpu().numpy()
-                all_indices[split_name] = splits[split_name]
-
-        # Combine all test sets for visualizations
-        if len(all_preds) > 0:
-            # Concatenate all test predictions and ground truth
-            combined_preds = np.concatenate([all_preds[k] for k in all_preds.keys()])
-            combined_gts = np.concatenate([all_gts[k] for k in all_gts.keys()])
-            combined_indices = torch.cat([all_indices[k] for k in all_indices.keys()])
+            test_preds_np = test_preds.cpu().numpy()
+            test_gts_np = targets.cpu().numpy()
+            test_indices = splits['test']
             train_count = len(splits['train'])
 
-            # Create temporal visualization with all test sets
+            # Create temporal visualization with AI2 test set
+            # Package in dict format for compatibility with visualization function
+            all_preds = {'test': test_preds_np}
+            all_gts = {'test': test_gts_np}
+            all_indices = {'test': test_indices}
+
             temp_errors = create_temporal_visualization(
                 dataset,
                 all_preds,
@@ -1015,22 +863,277 @@ def run_training_session(args, run_name=""):
                 train_samples=train_count
             )
 
-            # Create geospatial visualization with ALL test sets combined
+            # Create geospatial visualization with AI2 test set
             grid_errors, grid_counts = create_geospatial_visualization(
                 dataset,
-                combined_preds,
-                combined_gts,
-                combined_indices,
+                test_preds_np,
+                test_gts_np,
+                test_indices,
                 output_dir,
                 epoch=args.epochs,
                 train_samples=train_count,
-                spatial_indices=splits['spatial']  # Pass spatial indices for marking
+                spatial_indices=None  # No spatial-specific visualization
+            )
+
+            # Create combined scientific figure (geospatial + temporal)
+            print("\nCreating combined scientific figure...", flush=True)
+            create_combined_scientific_figure(
+                dataset,
+                test_preds_np,
+                test_gts_np,
+                test_indices,
+                all_preds,
+                all_gts,
+                all_indices,
+                output_dir,
+                epoch=args.epochs,
+                train_samples=train_count
             )
 
     print(f"Visualizations saved to {output_dir}", flush=True)
 
+    # Export test predictions to CSV
+    print("\nExporting test predictions to CSV...", flush=True)
+    csv_path = export_test_predictions_csv(
+        dataset,
+        test_preds_np,
+        test_gts_np,
+        test_indices,
+        output_dir
+    )
+
+    # Create error distribution histogram
+    print("\nCreating error distribution histogram...", flush=True)
+    create_error_histogram(csv_path, output_dir)
+
     # Return final metrics for comparison
     return final
+
+
+def export_test_predictions_csv(dataset, test_predictions, test_ground_truth, test_indices, output_dir):
+    """
+    Export test predictions and ground truth to CSV for analysis.
+
+    Args:
+        dataset: Dataset object
+        test_predictions: Predictions for test samples (normalized [0, 1])
+        test_ground_truth: Ground truth for test samples (normalized [0, 1])
+        test_indices: Indices of test samples
+        output_dir: Output directory
+    """
+    # Denormalize to LFMC percentage points
+    preds_denorm = test_predictions * MAX_LFMC_VALUE
+    gts_denorm = test_ground_truth * MAX_LFMC_VALUE
+
+    # Extract coordinates and metadata
+    coords = dataset.coords[test_indices].cpu().numpy()
+    lats = coords[:, 0]
+    lons = coords[:, 1]
+    elevs = coords[:, 2]
+    times_norm = coords[:, 3]
+
+    # Get species information
+    species_indices = dataset.species_idx[test_indices].cpu().numpy()
+    species_names = [dataset.idx_to_species[idx] for idx in species_indices]
+
+    # Get degeneracy flags
+    is_degenerate = dataset.is_degenerate[test_indices].cpu().numpy()
+
+    # Calculate errors
+    errors = preds_denorm - gts_denorm
+    abs_errors = np.abs(errors)
+    squared_errors = errors ** 2
+
+    # Create DataFrame
+    export_df = pd.DataFrame({
+        'latitude': lats,
+        'longitude': lons,
+        'elevation_m': elevs,
+        'time_normalized': times_norm,
+        'species': species_names,
+        'is_multi_species_location': is_degenerate,
+        'ground_truth_lfmc_pct': gts_denorm,
+        'predicted_lfmc_pct': preds_denorm,
+        'error_pp': errors,
+        'absolute_error_pp': abs_errors,
+        'squared_error': squared_errors
+    })
+
+    # Sort by absolute error (descending) to see worst predictions first
+    export_df = export_df.sort_values('absolute_error_pp', ascending=False)
+
+    # Save to CSV
+    csv_path = output_dir / 'test_predictions.csv'
+    export_df.to_csv(csv_path, index=False, float_format='%.4f')
+
+    print(f"  Exported {len(export_df):,} test predictions to: {csv_path}", flush=True)
+
+    # Print summary statistics
+    print(f"\n  CSV Summary Statistics:", flush=True)
+    print(f"    LFMC range: [{gts_denorm.min():.1f}%, {gts_denorm.max():.1f}%]", flush=True)
+    print(f"    Absolute Error percentiles:", flush=True)
+    for p in [50, 75, 90, 95, 99]:
+        val = np.percentile(abs_errors, p)
+        print(f"      {p:2d}th: {val:5.1f}pp", flush=True)
+
+    # Show worst predictions
+    worst_10 = sorted(abs_errors, reverse=True)[:10]
+    print(f"    Worst 10 absolute errors (pp):", flush=True)
+    print(f"      {', '.join([f'{e:.1f}' for e in worst_10])}", flush=True)
+
+    # Compute overall metrics
+    mean_squared_error = np.mean(squared_errors)
+    mean_rmse = np.sqrt(mean_squared_error)
+    mean_mae = np.mean(abs_errors)
+
+    print(f"\n  Overall Metrics on Test Set:", flush=True)
+    print(f"    RMSE: {mean_rmse:.1f}pp", flush=True)
+    print(f"    MAE:  {mean_mae:.1f}pp", flush=True)
+
+    return csv_path
+
+
+def create_error_histogram(csv_path, output_dir):
+    """
+    Create histogram showing distribution of absolute errors across test dataset.
+
+    Args:
+        csv_path: Path to test_predictions.csv
+        output_dir: Output directory for saving histogram
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
+
+    # Read the CSV
+    df = pd.read_csv(csv_path)
+
+    # Get absolute errors and predictions/ground truth
+    abs_errors_original = df['absolute_error_pp'].values
+    predictions = df['predicted_lfmc_pct'].values
+    ground_truth = df['ground_truth_lfmc_pct'].values
+
+    # Compute R²
+    ss_res = np.sum((ground_truth - predictions) ** 2)
+    ss_tot = np.sum((ground_truth - np.mean(ground_truth)) ** 2)
+    r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+
+    # Cap errors at 100pp for histogram display
+    abs_errors = np.clip(abs_errors_original, 0, 100)
+    n_over_100 = np.sum(abs_errors_original > 100)
+
+    # Compute statistics (on original uncapped data)
+    mean_error = np.mean(abs_errors_original)
+    median_error = np.median(abs_errors_original)
+    rmse = np.sqrt(np.mean(df['squared_error'].values))
+    mae = np.mean(abs_errors_original)
+    max_error = np.max(abs_errors_original)
+    min_error = np.min(abs_errors_original)
+
+    # Create histogram with 100 bins from 0-100pp
+    n_bins = 100
+    bins = np.linspace(0, 100, n_bins + 1)
+
+    # Create figure (height = 1/5 of width for compressed vertical display)
+    fig, ax = plt.subplots(1, 1, figsize=(16, 3.2))
+
+    # Plot histogram with Turbo colormap (matching geospatial plot)
+    counts, bins_out, patches = ax.hist(abs_errors, bins=bins, edgecolor='black', linewidth=0.5)
+
+    # Color bars using Turbo colormap (same as geospatial plot: 0-50pp scale)
+    norm = plt.Normalize(vmin=0, vmax=50)
+    cmap = cm.get_cmap('turbo')
+
+    for i, patch in enumerate(patches):
+        # Get the center value of this bin
+        bin_center = (bins[i] + bins[i+1]) / 2
+        # Clip to 50pp max (same as geospatial)
+        bin_value = min(bin_center, 50.0)
+        # Set color based on normalized value
+        patch.set_facecolor(cmap(norm(bin_value)))
+
+    # Calculate MAE percentiles for subtitle
+    mae_25th = np.percentile(abs_errors_original, 25)
+    mae_median = np.median(abs_errors_original)
+    mae_75th = np.percentile(abs_errors_original, 75)
+
+    # Labels and title (matching font sizes from other plots)
+    ax.set_xlabel('Absolute Error (percentage points)', fontsize=12)
+    ax.set_ylabel('Number of Test Samples', fontsize=12)
+
+    # Title with LFMC definition for readers unfamiliar with LFMC
+    title_text = 'Distribution of Live Fuel Moisture Content (LFMC) Prediction Errors on Test Set\n'
+    ax.text(0.5, 1.08, title_text.strip(), transform=ax.transAxes,
+            fontsize=13, ha='center', va='bottom')
+
+    # Second line with metrics (smaller font, italicized)
+    subtitle_text = f'LFMC% = (wet mass - dry mass) / dry mass × 100  |  '
+    subtitle_text += f'Total Samples: {len(abs_errors_original):,} | RMSE: {rmse:.1f}pp | '
+    subtitle_text += f'MAE: {mae:.1f}pp (25th: {mae_25th:.1f}pp, Median: {mae_median:.1f}pp, 75th: {mae_75th:.1f}pp) | '
+    subtitle_text += f'R²: {r2:.3f}'
+    if n_over_100 > 0:
+        subtitle_text += f' | {n_over_100} samples >100pp'
+    ax.text(0.5, 1.02, subtitle_text, transform=ax.transAxes,
+            fontsize=9, ha='center', va='bottom', style='italic')
+
+    # Set x-axis limits and tick marks every 5 percentage points
+    ax.set_xlim(0, 100)
+    ax.set_xticks([i for i in range(0, 101, 5)])
+
+    # No gridlines - clean white background
+    ax.grid(False)
+
+    # Format y-axis with comma separators
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x):,}'))
+
+    # Save metrics to JSON file
+    metrics_dict = {
+        'summary_metrics': {
+            'rmse_pp': float(rmse),
+            'mae_pp': float(mae),
+            'r2': float(r2),
+            'total_samples': int(len(abs_errors_original)),
+            'samples_over_100pp': int(n_over_100)
+        },
+        'error_distribution': {
+            'min_error_pp': float(min_error),
+            'percentile_25_pp': float(np.percentile(abs_errors_original, 25)),
+            'median_pp': float(median_error),
+            'mean_pp': float(mean_error),
+            'percentile_75_pp': float(np.percentile(abs_errors_original, 75)),
+            'percentile_95_pp': float(np.percentile(abs_errors_original, 95)),
+            'max_error_pp': float(max_error)
+        },
+        'mae_distribution': {
+            'mae_25th_percentile_pp': float(mae_25th),
+            'mae_median_pp': float(mae_median),
+            'mae_75th_percentile_pp': float(mae_75th)
+        },
+        'lfmc_definition': {
+            'formula': 'LFMC% = (wet mass - dry mass) / dry mass × 100',
+            'error_calculation': 'Percentage Points (pp) = |Predicted LFMC% - Ground Truth LFMC%|',
+            'histogram_note': 'Histogram capped at 100pp for display'
+        }
+    }
+
+    import json
+    metrics_json_path = output_dir / 'error_histogram_metrics.json'
+    with open(metrics_json_path, 'w') as f:
+        json.dump(metrics_dict, f, indent=2)
+
+    print(f"  Metrics saved to: {metrics_json_path}", flush=True)
+
+    # Tight layout
+    plt.tight_layout()
+
+    # Save figure
+    histogram_path = output_dir / 'error_distribution_histogram.png'
+    plt.savefig(histogram_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+    print(f"  Error histogram saved to: {histogram_path}", flush=True)
+    print(f"  Error range: [{min_error:.1f}pp, {max_error:.1f}pp]", flush=True)
+    print(f"  Errors >100pp: {n_over_100} samples (binned at 100+)", flush=True)
+    print(f"  Number of bins: {n_bins} (0-100pp)", flush=True)
 
 
 def create_geospatial_visualization(dataset, test_predictions, test_ground_truth, test_indices, output_dir, epoch="final", train_samples=None, spatial_indices=None):
@@ -1046,51 +1149,51 @@ def create_geospatial_visualization(dataset, test_predictions, test_ground_truth
         train_samples: Number of training samples
         spatial_indices: Indices of spatial holdout samples (for marking regions)
     """
+    # Import geopandas for US boundaries (required)
     try:
         import geopandas as gpd
-        use_shapefile = True
     except ImportError:
-        use_shapefile = False
-        print("Warning: geopandas not available, using simplified boundaries", flush=True)
+        raise ImportError("geopandas is required for US state boundaries. Install with: pip install geopandas")
 
     # Extract coordinates for test samples
     coords = dataset.coords[test_indices].cpu().numpy()
     lats = coords[:, 0]
     lons = coords[:, 1]
 
-    # Calculate errors
-    errors = np.abs(test_predictions - test_ground_truth)
+    # Denormalize predictions and targets to LFMC percentage points
+    test_predictions_denorm = test_predictions * MAX_LFMC_VALUE
+    test_ground_truth_denorm = test_ground_truth * MAX_LFMC_VALUE
 
-    # Create figure
-    fig, ax = plt.subplots(1, 1, figsize=(16, 10))
+    # Calculate errors in LFMC percentage points
+    errors = np.abs(test_predictions_denorm - test_ground_truth_denorm)
 
     # Define CONUS boundaries
     lon_min, lon_max = -125, -66
     lat_min, lat_max = 24, 50
 
-    # Load and plot US shapefile if available
-    if use_shapefile:
-        shapefile_path = Path(SCRIPT_DIR) / 'shapefiles' / 'cb_2018_us_state_20m.shp'
-        if shapefile_path.exists():
-            try:
-                # Read shapefile
-                states = gpd.read_file(shapefile_path)
-                # Filter to continental US (exclude Alaska, Hawaii, territories)
-                states_conus = states[
-                    ~states['NAME'].isin(['Alaska', 'Hawaii', 'Puerto Rico',
-                                         'United States Virgin Islands', 'Guam',
-                                         'American Samoa', 'Northern Mariana Islands'])
-                ]
-                # Plot state boundaries
-                states_conus.boundary.plot(ax=ax, color='darkgrey', linewidth=0.5, alpha=0.7)
-            except Exception as e:
-                print(f"Warning: Could not plot shapefile: {e}", flush=True)
-                use_shapefile = False
-        else:
-            use_shapefile = False
+    # Create figure
+    fig, ax = plt.subplots(1, 1, figsize=(16, 10))
 
-    # Create 100x100 km grid (approximately 0.9 degrees)
-    grid_size = 0.9
+    # Load and plot US shapefile
+    shapefile_path = Path(SCRIPT_DIR) / 'shapefiles' / 'cb_2018_us_state_20m.shp'
+    if not shapefile_path.exists():
+        raise FileNotFoundError(f"Shapefile not found at {shapefile_path}. Please ensure shapefiles are downloaded.")
+
+    # Read shapefile
+    states = gpd.read_file(shapefile_path)
+    # Filter to continental US (exclude Alaska, Hawaii, territories)
+    states_conus = states[
+        ~states['NAME'].isin(['Alaska', 'Hawaii', 'Puerto Rico',
+                             'United States Virgin Islands', 'Guam',
+                             'American Samoa', 'Northern Mariana Islands'])
+    ]
+    # Plot state boundaries with light grey, thin lines
+    states_conus.boundary.plot(ax=ax, color='#CCCCCC', linewidth=0.4, alpha=0.8)
+    # Plot overall US boundary slightly darker
+    states_conus.dissolve().boundary.plot(ax=ax, color='#AAAAAA', linewidth=0.5, alpha=0.9)
+
+    # Create 50x50 km grid (approximately 0.45 degrees)
+    grid_size = 0.45
     lon_bins = np.arange(lon_min, lon_max, grid_size)
     lat_bins = np.arange(lat_min, lat_max, grid_size)
 
@@ -1125,9 +1228,9 @@ def create_geospatial_visualization(dataset, test_predictions, test_ground_truth
             min_log = np.min(log_counts[log_counts > 0]) if np.any(log_counts > 0) else 1
             max_log = np.max(log_counts)
 
-            # Size range: ensure max size doesn't exceed bin size (100km grid)
+            # Size range: ensure max size doesn't exceed bin size (50km grid)
             # Scale sizes to prevent overlap - max diameter should be ~80% of grid spacing
-            size_min, size_max = 20, 250  # Reduced max size to prevent overlap
+            size_min, size_max = 10, 68  # Reduced by 15% to prevent overlap
 
             # Plot each grid cell
             for i in range(len(lat_bins)-1):
@@ -1144,24 +1247,24 @@ def create_geospatial_visualization(dataset, test_predictions, test_ground_truth
                         else:
                             size = size_max
 
-                        # Color based on error (TURBO colormap) - clip to 75pp max
-                        error_value = min(grid_avg_errors[i, j], 75.0)  # Clip to 75pp
+                        # Color based on error (TURBO colormap) - clip to 50pp max
+                        error_value = min(grid_avg_errors[i, j], 50.0)  # Clip to 50pp
 
                         scatter = ax.scatter(lon_center, lat_center, s=size,
                                            c=[error_value], cmap='turbo',
-                                           vmin=0, vmax=75,  # Fixed scale 0-75pp
+                                           vmin=0, vmax=50,  # Fixed scale 0-50pp
                                            alpha=1.0, edgecolors='black', linewidth=0.5)  # Alpha=1.0
 
-    # Add colorbar with fixed 0-75 scale
+    # Add colorbar with fixed 0-50 scale
     if 'scatter' in locals():
         # Create a proper colorbar with fixed scale
         import matplotlib.cm as cm
-        norm = plt.Normalize(vmin=0, vmax=75)
+        norm = plt.Normalize(vmin=0, vmax=50)
         sm = plt.cm.ScalarMappable(cmap='turbo', norm=norm)
         sm.set_array([])
         cbar = plt.colorbar(sm, ax=ax, label='Average LFMC Error (pp)')
-        cbar.set_ticks([0, 15, 30, 45, 60, 75])
-        cbar.set_ticklabels(['0', '15', '30', '45', '60', '75+'])  # Add + to indicate clipping
+        cbar.set_ticks([0, 10, 20, 30, 40, 50])
+        cbar.set_ticklabels(['0', '10', '20', '30', '40', '50+'])  # Add + to indicate clipping
 
     # Create size legend
     # Calculate example sizes for legend
@@ -1217,12 +1320,41 @@ def create_geospatial_visualization(dataset, test_predictions, test_ground_truth
     # Remove grid (no gridlines)
     ax.grid(False)
 
-    # Add simple boundaries if shapefile not available
-    if not use_shapefile:
-        ax.axhline(y=lat_min, color='black', linewidth=1, alpha=0.5)
-        ax.axhline(y=lat_max, color='black', linewidth=1, alpha=0.5)
-        ax.axvline(x=lon_min, color='black', linewidth=1, alpha=0.5)
-        ax.axvline(x=lon_max, color='black', linewidth=1, alpha=0.5)
+    # Add overall statistics in a neat bubble
+    # Calculate mean and median RMSE and MAE across entire dataset (absolute errors in pp)
+    if len(test_predictions) > 0 and len(test_ground_truth) > 0:
+        # Denormalize if not already done
+        if test_predictions.max() <= 1.0:
+            # Values are normalized, denormalize
+            preds_denorm = test_predictions * MAX_LFMC_VALUE
+            gts_denorm = test_ground_truth * MAX_LFMC_VALUE
+        else:
+            # Already denormalized
+            preds_denorm = test_predictions
+            gts_denorm = test_ground_truth
+
+        # Compute absolute errors
+        errors = preds_denorm - gts_denorm
+        abs_errors = np.abs(errors)
+
+        # Compute absolute metrics (in LFMC percentage points)
+        rmse = np.sqrt(np.mean(errors ** 2))
+        mae = np.mean(abs_errors)
+
+        # Compute R²
+        ss_res = np.sum((preds_denorm - gts_denorm) ** 2)
+        ss_tot = np.sum((gts_denorm - np.mean(gts_denorm)) ** 2)
+        r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+        # Display statistics in top-left corner
+        stats_text = (f'Test Dataset:\n'
+                     f'RMSE: {rmse:.1f}pp\n'
+                     f'MAE: {mae:.1f}pp\n'
+                     f'R²: {r2:.3f}')
+        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+               ha='left', va='top', fontsize=11,
+               bbox=dict(boxstyle='round,pad=0.6', facecolor='white', alpha=0.9,
+                        edgecolor='black', linewidth=0.5))
 
     # Save figure
     plt.tight_layout()
@@ -1254,7 +1386,7 @@ def create_temporal_visualization(dataset, all_predictions, all_ground_truth, al
     all_times = []
     all_sources = []  # Track which test set each sample comes from
 
-    for split_name in ['temporal', 'spatial', 'random']:
+    for split_name in ['test']:  # AI2 test split only
         if split_name in all_predictions and len(all_predictions[split_name]) > 0:
             preds = all_predictions[split_name]
             gts = all_ground_truth[split_name]
@@ -1277,6 +1409,10 @@ def create_temporal_visualization(dataset, all_predictions, all_ground_truth, al
     all_preds = np.array(all_preds)
     all_gts = np.array(all_gts)
     all_times = np.array(all_times)
+
+    # Denormalize to LFMC percentage points
+    all_preds = all_preds * MAX_LFMC_VALUE
+    all_gts = all_gts * MAX_LFMC_VALUE
 
     # Convert normalized times to actual dates
     # Assuming 2015-2025 range, convert to datetime objects
@@ -1439,7 +1575,7 @@ def create_temporal_visualization(dataset, all_predictions, all_ground_truth, al
     else:
         title_text = f'Test Performance on {total_test_samples:,} Samples'
 
-    ax.set_title(f'Earth4D LFMC Predictions - Monthly Temporal Evolution (All Test Sets)\n'
+    ax.set_title(f'Earth4D LFMC Predictions - Monthly Temporal Evolution (Test Set)\n'
                  f'Ground Truth and Prediction Distributions\n'
                  f'{title_text}', fontsize=14)
 
@@ -1453,20 +1589,31 @@ def create_temporal_visualization(dataset, all_predictions, all_ground_truth, al
         y_max = min(600, np.max(all_values) + 20)
         ax.set_ylim(y_min, y_max)
 
-    # Add overall statistics - calculate from all predictions
+    # Add overall statistics - calculate from all predictions (absolute errors in pp)
     if len(months_filtered) > 0:
         all_predictions = np.concatenate(month_predictions)
         all_ground_truths = np.concatenate(month_ground_truths)
 
-        # Calculate overall error statistics (prediction vs actual ground truth)
-        all_errors = np.abs(all_predictions - all_ground_truths)
-        overall_mae = np.mean(all_errors)
-        overall_median_error = np.median(all_errors)
+        # Compute absolute errors
+        errors = all_predictions - all_ground_truths
+        abs_errors = np.abs(errors)
 
-        stats_text = f'Entire Test Dataset: Mean {overall_mae:.1f}pp, Median {overall_median_error:.1f}pp'
+        # Compute absolute metrics (in LFMC percentage points)
+        rmse = np.sqrt(np.mean(errors ** 2))
+        mae = np.mean(abs_errors)
+
+        # Compute R²
+        ss_res = np.sum((all_predictions - all_ground_truths) ** 2)
+        ss_tot = np.sum((all_ground_truths - np.mean(all_ground_truths)) ** 2)
+        r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+        stats_text = (f'Test Dataset:\n'
+                     f'RMSE: {rmse:.1f}pp\n'
+                     f'MAE: {mae:.1f}pp\n'
+                     f'R²: {r2:.3f}')
         ax.text(0.02, 0.95, stats_text, transform=ax.transAxes,
-                ha='left', va='top', fontsize=14,
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9,
+                ha='left', va='top', fontsize=11,
+                bbox=dict(boxstyle='round,pad=0.6', facecolor='white', alpha=0.9,
                          edgecolor='black', linewidth=0.5))
 
     # Save figure
@@ -1474,24 +1621,326 @@ def create_temporal_visualization(dataset, all_predictions, all_ground_truth, al
     plt.savefig(output_dir / f'temporal_predictions_epoch_{epoch}.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    return np.array(all_errors) if len(months_filtered) > 0 else None
+    # Return absolute errors if we have valid data
+    if len(months_filtered) > 0:
+        all_predictions_full = np.concatenate(month_predictions)
+        all_ground_truths_full = np.concatenate(month_ground_truths)
+        abs_errors_full = np.abs(all_predictions_full - all_ground_truths_full)
+        return abs_errors_full
+    return None
+
+
+def create_combined_scientific_figure(dataset, test_predictions, test_ground_truth, test_indices,
+                                     all_predictions, all_ground_truth, all_indices,
+                                     output_dir, epoch="final", train_samples=None):
+    """Create combined geospatial + temporal scientific figure with (A) and (B) labels.
+
+    Args:
+        dataset: Dataset object
+        test_predictions: Test predictions for geospatial plot
+        test_ground_truth: Test ground truth for geospatial plot
+        test_indices: Test indices for geospatial plot
+        all_predictions: Dict of all predictions for temporal plot
+        all_ground_truth: Dict of all ground truth for temporal plot
+        all_indices: Dict of all indices for temporal plot
+        output_dir: Output directory
+        epoch: Epoch number
+        train_samples: Number of training samples
+    """
+    from datetime import datetime, timedelta
+    import matplotlib.dates as mdates
+    from matplotlib.gridspec import GridSpec
+
+    # Import geopandas for US boundaries (required)
+    try:
+        import geopandas as gpd
+    except ImportError:
+        raise ImportError("geopandas is required for US state boundaries. Install with: pip install geopandas")
+
+    # ========== STEP 1: DETERMINE CORRECT DIMENSIONS ==========
+    lon_min, lon_max = -125, -66
+    lat_min, lat_max = 24, 50
+
+    # For mid-latitude maps, need to account for cos(lat) correction
+    # At 37°N (mid-CONUS), 1° longitude ≈ 0.8 × 1° latitude in physical distance
+    lat_center = (lat_min + lat_max) / 2
+    cos_lat = np.cos(np.radians(lat_center))  # ~0.799 at 37°N
+
+    # Physical aspect ratio corrected for latitude
+    lon_span = lon_max - lon_min  # 59°
+    lat_span = lat_max - lat_min  # 26°
+    # Physical width/height ratio
+    geo_aspect_physical = (lon_span * cos_lat) / lat_span  # ~1.81
+
+    # Set desired geospatial WIDTH and compute natural HEIGHT
+    geo_width_inches = 10.0
+    geo_height_inches = geo_width_inches / geo_aspect_physical  # ~5.52 inches
+
+    # Temporal plot: match the geospatial height, use original aspect ratio
+    temp_aspect = 18.0 / 8.0  # 2.25
+    temp_height_inches = geo_height_inches  # Match geo height
+    temp_width_inches = temp_height_inches * temp_aspect  # ~12.4 inches
+
+    # Combined figure dimensions - add extra space on right for y-axis labels
+    total_width = geo_width_inches + temp_width_inches + 2.0  # Extra space for gap and right y-axis
+    total_height = geo_height_inches
+
+    # ========== STEP 2: CREATE FIGURE WITH CORRECT LAYOUT ==========
+    fig = plt.figure(figsize=(total_width, total_height))
+    gs = GridSpec(1, 2, figure=fig,
+                 width_ratios=[geo_width_inches, temp_width_inches],
+                 wspace=0.08, hspace=0)
+
+    ax_geo = fig.add_subplot(gs[0])
+
+    # Extract geospatial data
+    coords = dataset.coords[test_indices].cpu().numpy()
+    lats, lons = coords[:, 0], coords[:, 1]
+    test_preds_denorm = test_predictions * MAX_LFMC_VALUE
+    test_gts_denorm = test_ground_truth * MAX_LFMC_VALUE
+    errors = np.abs(test_preds_denorm - test_gts_denorm)
+
+    # Grid and bin data - 150x150km bins (approximately 1.35 degrees)
+    grid_size = 1.35
+    lon_bins = np.arange(lon_min, lon_max, grid_size)
+    lat_bins = np.arange(lat_min, lat_max, grid_size)
+    grid_errors = np.zeros((len(lat_bins)-1, len(lon_bins)-1))
+    grid_counts = np.zeros((len(lat_bins)-1, len(lon_bins)-1))
+
+    for i in range(len(lats)):
+        if lon_min <= lons[i] <= lon_max and lat_min <= lats[i] <= lat_max:
+            lon_idx = np.digitize(lons[i], lon_bins) - 1
+            lat_idx = np.digitize(lats[i], lat_bins) - 1
+            if 0 <= lon_idx < len(lon_bins)-1 and 0 <= lat_idx < len(lat_bins)-1:
+                grid_errors[lat_idx, lon_idx] += errors[i]
+                grid_counts[lat_idx, lon_idx] += 1
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        grid_avg_errors = grid_errors / grid_counts
+        grid_avg_errors[grid_counts == 0] = np.nan
+
+    # Plot grid cells with larger circles for 150km bins
+    if np.any(~np.isnan(grid_avg_errors)):
+        log_counts = np.log1p(grid_counts)
+        log_counts[grid_counts == 0] = 0
+        min_log = np.min(log_counts[log_counts > 0]) if np.any(log_counts > 0) else 1
+        max_log = np.max(log_counts)
+        # Larger circles for 150km grid - reduced by 25% from 150 to 112
+        size_min, size_max = 30, 112
+
+        for i in range(len(lat_bins)-1):
+            for j in range(len(lon_bins)-1):
+                if not np.isnan(grid_avg_errors[i, j]) and grid_counts[i, j] > 0:
+                    lon_center = (lon_bins[j] + lon_bins[j+1]) / 2
+                    lat_center = (lat_bins[i] + lat_bins[i+1]) / 2
+                    if max_log > min_log:
+                        size_norm = (log_counts[i, j] - min_log) / (max_log - min_log)
+                        size = size_min + (size_max - size_min) * size_norm
+                    else:
+                        size = size_max
+                    error_value = min(grid_avg_errors[i, j], 50.0)
+                    ax_geo.scatter(lon_center, lat_center, s=size, c=[error_value],
+                                 cmap='turbo', vmin=0, vmax=50, alpha=1.0,
+                                 edgecolors='black', linewidth=0.5)
+
+    # Plot US boundaries AFTER circles so boundaries are on top
+    shapefile_path = Path(SCRIPT_DIR) / 'shapefiles' / 'cb_2018_us_state_20m.shp'
+    if not shapefile_path.exists():
+        raise FileNotFoundError(f"Shapefile not found at {shapefile_path}. Please ensure shapefiles are downloaded.")
+
+    states = gpd.read_file(shapefile_path)
+    states_conus = states[
+        ~states['NAME'].isin(['Alaska', 'Hawaii', 'Puerto Rico',
+                             'United States Virgin Islands', 'Guam',
+                             'American Samoa', 'Northern Mariana Islands'])
+    ]
+    states_conus.boundary.plot(ax=ax_geo, color='#CCCCCC', linewidth=0.4, alpha=0.8)
+    states_conus.dissolve().boundary.plot(ax=ax_geo, color='#AAAAAA', linewidth=0.5, alpha=0.9)
+
+    # Add colorbar
+    norm = plt.Normalize(vmin=0, vmax=50)
+    sm = plt.cm.ScalarMappable(cmap='turbo', norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax_geo, label='Avg Error (pp)', fraction=0.046, pad=0.04)
+    cbar.set_ticks([0, 10, 20, 30, 40, 50])
+    cbar.set_ticklabels(['0', '10', '20', '30', '40', '50+'])
+    cbar.ax.tick_params(labelsize=13)
+    cbar.set_label('Avg Error (pp)', fontsize=14)
+
+    # Set axis limits and aspect ratio (preserve geographic proportions)
+    # Expand y-limits to match the vertical extent of temporal plot while maintaining aspect
+    # Add padding to top and bottom to fill the subplot area
+    lat_center_point = (lat_min + lat_max) / 2  # 37
+    lat_range_current = lat_max - lat_min  # 26
+
+    # Expand by 35% to fill more vertical space and align with temporal plot height
+    lat_range_expanded = lat_range_current * 1.35
+    lat_min_expanded = lat_center_point - lat_range_expanded / 2  # ~19.4
+    lat_max_expanded = lat_center_point + lat_range_expanded / 2  # ~54.6
+
+    ax_geo.set_xlim(lon_min, lon_max)
+    ax_geo.set_ylim(lat_min_expanded, lat_max_expanded)
+    # Set aspect ratio accounting for latitude: 1° lon = cos(lat) × 1° lat in physical space
+    ax_geo.set_aspect(1.0 / cos_lat)  # This makes the map look geographically correct
+    ax_geo.grid(False)
+
+    # Add axis labels with consistent font size
+    ax_geo.set_xlabel('Longitude', fontsize=14)
+    ax_geo.set_ylabel('Latitude', fontsize=14)
+    ax_geo.tick_params(axis='both', labelsize=13)
+
+    # Panel label - just (A)
+    ax_geo.text(0.02, 0.98, '(A)',
+               transform=ax_geo.transAxes, fontsize=14, weight='bold',
+               ha='left', va='top',
+               bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9))
+
+    # ========== PANEL B: TEMPORAL ==========
+    ax_temp = fig.add_subplot(gs[1])
+
+    # Combine test data
+    all_preds, all_gts, all_times = [], [], []
+    for split_name in ['test']:
+        if split_name in all_predictions and len(all_predictions[split_name]) > 0:
+            preds = all_predictions[split_name]
+            gts = all_ground_truth[split_name]
+            indices = all_indices[split_name]
+            coords = dataset.coords[indices].cpu().numpy()
+            times = coords[:, 3]
+            all_preds.extend(preds)
+            all_gts.extend(gts)
+            all_times.extend(times)
+
+    if len(all_preds) > 0:
+        all_preds = np.array(all_preds) * MAX_LFMC_VALUE
+        all_gts = np.array(all_gts) * MAX_LFMC_VALUE
+
+        # Convert to dates
+        base_date = datetime(2015, 1, 1)
+        end_date = datetime(2025, 1, 1)
+        total_days = (end_date - base_date).days
+        dates = [base_date + timedelta(days=int(t * total_days)) for t in all_times]
+
+        # Monthly binning
+        monthly_data = defaultdict(lambda: {'preds': [], 'gts': []})
+        for i, date in enumerate(dates):
+            month_start = datetime(date.year, date.month, 1)
+            monthly_data[month_start]['preds'].append(all_preds[i])
+            monthly_data[month_start]['gts'].append(all_gts[i])
+
+        months = sorted(monthly_data.keys())
+        month_predictions, month_ground_truths, month_positions = [], [], []
+
+        for month in months:
+            preds = np.array(monthly_data[month]['preds'])
+            gts = np.array(monthly_data[month]['gts'])
+            if len(preds) >= 5:
+                month_predictions.append(preds)
+                month_ground_truths.append(gts)
+                month_positions.append(mdates.date2num(month))
+
+        # Plot violins
+        if len(month_predictions) > 0:
+            offset = 5
+            gt_medians_list = []
+            pred_medians_list = []
+            gt_positions_list = []
+            pred_positions_list = []
+
+            for i, pos in enumerate(month_positions):
+                # Ground truth (red)
+                gt_parts = ax_temp.violinplot([month_ground_truths[i]],
+                                            positions=[pos - offset],
+                                            widths=8.4, showmeans=False,
+                                            showmedians=False, showextrema=False)
+                for pc in gt_parts['bodies']:
+                    pc.set_facecolor('#B22222')
+                    pc.set_edgecolor('#8B0000')
+                    pc.set_alpha(0.6)
+                    pc.set_linewidth(0.5)
+
+                # Prediction (blue)
+                pred_parts = ax_temp.violinplot([month_predictions[i]],
+                                              positions=[pos + offset],
+                                              widths=8.4, showmeans=False,
+                                              showmedians=False, showextrema=False)
+                for pc in pred_parts['bodies']:
+                    pc.set_facecolor('#000080')
+                    pc.set_edgecolor('#000050')
+                    pc.set_alpha(0.6)
+                    pc.set_linewidth(0.5)
+
+                # Store medians and positions
+                gt_median = np.median(month_ground_truths[i])
+                pred_median = np.median(month_predictions[i])
+                gt_medians_list.append(gt_median)
+                pred_medians_list.append(pred_median)
+                gt_positions_list.append(pos - offset)
+                pred_positions_list.append(pos + offset)
+
+            # Plot median points
+            for pos, gt_median in zip(gt_positions_list, gt_medians_list):
+                ax_temp.scatter(pos, gt_median, c='#B22222', s=40, zorder=6,
+                              edgecolors='#8B0000', linewidth=0.5)
+            for pos, pred_median in zip(pred_positions_list, pred_medians_list):
+                ax_temp.scatter(pos, pred_median, c='#000080', s=40, zorder=6,
+                              edgecolors='#000050', linewidth=0.5)
+
+            # Format temporal axis
+            ax_temp.xaxis_date()
+            ax_temp.xaxis.set_major_locator(mdates.YearLocator())
+            ax_temp.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+            ax_temp.set_xlabel('Date', fontsize=14)
+            ax_temp.set_ylabel('LFMC (%)', fontsize=14)
+
+            # Move y-axis to the right side
+            ax_temp.yaxis.tick_right()
+            ax_temp.yaxis.set_label_position('right')
+
+            # Set tick label sizes to match geospatial plot
+            ax_temp.tick_params(axis='both', labelsize=13)
+
+            ax_temp.grid(False)
+
+            # Full legend with distributions and medians - larger font
+            gt_violin = mpatches.Patch(color='#B22222', alpha=0.6,
+                                      label='Ground Truth Distribution')
+            gt_median_marker = plt.Line2D([0], [0], marker='o', color='w',
+                                        markerfacecolor='#B22222', markeredgecolor='#8B0000',
+                                        markersize=6, label='Ground Truth Median')
+            pred_violin = mpatches.Patch(color='#000080', alpha=0.6,
+                                        label='Prediction Distribution')
+            pred_median_marker = plt.Line2D([0], [0], marker='o', color='w',
+                                          markerfacecolor='#000080', markeredgecolor='#000050',
+                                          markersize=6, label='Prediction Median')
+
+            ax_temp.legend(handles=[gt_violin, gt_median_marker, pred_violin, pred_median_marker],
+                         loc='upper right', frameon=True, fancybox=True, shadow=False, fontsize=12)
+
+    # Panel label - just (B)
+    ax_temp.text(0.02, 0.98, '(B)',
+                transform=ax_temp.transAxes, fontsize=14, weight='bold',
+                ha='left', va='top',
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9))
+
+    # Save combined figure
+    plt.savefig(output_dir / f'combined_scientific_figure_epoch_{epoch}.png',
+                dpi=200, bbox_inches='tight')
+    plt.close()
+
+    print(f"  Combined scientific figure saved to: combined_scientific_figure_epoch_{epoch}.png", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data-path', required=True)
+    parser.add_argument('--data-path', default=None,
+                       help='Path to LFMC CSV. If not provided, downloads AI2 official CSV.')
     parser.add_argument('--epochs', type=int, default=2500)
     parser.add_argument('--batch-size', type=int, default=30000)
-    parser.add_argument('--lr', type=float, default=0.03)
+    parser.add_argument('--lr', type=float, default=0.0125)
     parser.add_argument('--output-dir', type=str, default='./outputs')
     parser.add_argument('--species-dim', type=int, default=768,
-                       help='Dimension of learnable species embeddings (ignored if using BioCLIP or comparison mode)')
-    parser.add_argument('--use-bioclip', action='store_true',
-                       help='Use pre-trained BioCLIP 2 embeddings instead of learnable embeddings')
-    parser.add_argument('--freeze-embeddings', action='store_true',
-                       help='Freeze species embeddings (no training). Default is trainable.')
-    parser.add_argument('--compare-embeddings', action='store_true',
-                       help='Run comparison: BioCLIP vs random 768D embeddings (runs both sequentially)')
+                       help='Dimension of learnable species embeddings')
     parser.add_argument('--seed', type=int, default=0,
                        help='Random seed for reproducibility (default: 0)')
     args = parser.parse_args()
@@ -1500,51 +1949,8 @@ def main():
     # Note: cudnn.benchmark is set to False in run_training_session for determinism
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    if args.compare_embeddings:
-        print("="*80, flush=True)
-        print("ABLATION STUDY: BioCLIP vs Random 768D Embeddings", flush=True)
-        print(f"Both will be {'FROZEN' if args.freeze_embeddings else 'TRAINABLE'} for fair comparison", flush=True)
-        print("="*80, flush=True)
-
-        # Run with BioCLIP embeddings
-        print("\n[1/2] Training with BioCLIP embeddings...", flush=True)
-        args_bioclip = argparse.Namespace(**vars(args))
-        args_bioclip.use_bioclip = True
-        args_bioclip.freeze_embeddings = args.freeze_embeddings  # Use same freeze setting
-        bioclip_results = run_training_session(args_bioclip, run_name="bioclip")
-
-        # Run with random 768D embeddings
-        print("\n[2/2] Training with random 768D embeddings...", flush=True)
-        args_random = argparse.Namespace(**vars(args))
-        args_random.use_bioclip = False
-        args_random.species_dim = 768
-        args_random.freeze_embeddings = args.freeze_embeddings  # Use same freeze setting
-        random_results = run_training_session(args_random, run_name="random768d")
-
-        # Compare results
-        print("\n" + "="*80, flush=True)
-        print("ABLATION STUDY RESULTS - BioCLIP Advantage:", flush=True)
-        print("="*80, flush=True)
-
-        # Calculate improvements
-        for split in ['temporal', 'spatial', 'random']:
-            bioclip_mae = bioclip_results[f'{split}_mae']
-            random_mae = random_results[f'{split}_mae']
-            improvement = random_mae - bioclip_mae
-            percent_improvement = (improvement / random_mae) * 100
-
-            print(f"\n  {split.capitalize()} Test:", flush=True)
-            print(f"    Random 768D: MAE={random_mae:.1f}pp", flush=True)
-            print(f"    BioCLIP:     MAE={bioclip_mae:.1f}pp", flush=True)
-            print(f"    Improvement: {improvement:.1f}pp ({percent_improvement:.1f}% better)", flush=True)
-
-        print("\n  Overall BioCLIP provides pre-trained biological knowledge that", flush=True)
-        print("  improves generalization compared to random initialization.", flush=True)
-        print("="*80, flush=True)
-
-    else:
-        # Single run mode
-        run_training_session(args)
+    # Run training session
+    run_training_session(args)
 
 
 if __name__ == "__main__":

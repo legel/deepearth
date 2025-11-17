@@ -1,28 +1,31 @@
 ![DeepEarth logo](https://github.com/legel/deepearth/blob/main/docs/deepearth_logo.png)
 ## DeepEarth: AI Foundation Model for Planetary Science & Sustainability
 
-DeepEarth is an AI model for the planet that fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multimodal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatiotemporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  The mission of DeepEarth is to solve global sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)) through AI for scientists, engineers, and designers.
+DeepEarth is an AI model for the planet that fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multi-modal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatio-temporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  The mission of DeepEarth is to solve global sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)) through AI for scientists, engineers, and designers.
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_main_figure.png)
 
-DeepEarth learns by jointly reconstructing masked multimodal datasets (as seen above). It uses a novel spacetime positional encoder, [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
+DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen above). It uses a novel space-time positional encoder, [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
 
-![Earth4D spacetime encoder](https://github.com/legel/deepearth/blob/main/docs/earth4d_spacetime_encoder.png) 
+![Earth4D space-time encoder](https://github.com/legel/deepearth/blob/main/docs/earth4d_spacetime_encoder.png) 
 
 ## Exciting News:
+
+- _November 17, 2025_
+  **99% parameter reduction, 4× speedup.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) with [learned hash probing](https://arxiv.org/abs/2312.17241) tested on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6) with only 5 million parameters yields near state-of-the-art accuracy with spectacular efficiency. See [_hyperparameter grid search_](https://github.com/legel/deepearth/blob/main/encoders/xyzt/lfmc_grid_search.py).
+
+- _November 16, 2025_
+  **23% error reduction in space-time encoder.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt), achieving state-of-the-art R² on an ecological forecasting benchmark. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
 
 - _October 29, 2025_  
   **Predicting risk of fires.**  [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather), [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based), and [Lance Legel](https://www.linkedin.com/in/legel/) presented on simulating [live fuel moisture content](https://www.nature.com/articles/s41597-024-03159-6) through NSF's [Institute for Geospatial Understanding](http://i-guide.io/). See [_event_](https://i-guide.io/i-guide-vco/geospatial-simulation-of-fire-ecology-with-deepearth/).
 
 - _October 27, 2025_  
-  **Battle-hardened (_x_, _y_, _z_, _t_) AI.**  For our spatiotemporal [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/), we've [fixed a numerical bug in NVIDIA's CUDA kernels](https://github.com/legel/deepearth/pull/7) based on [profiling of hash collisions](https://github.com/legel/deepearth/blob/main/encoders/xyzt/hash_collision_profiler.py).
+  **Battle-hardened (_x_, _y_, _z_, _t_) AI.**  For our spatio-temporal [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/), we've [fixed a numerical bug in NVIDIA's CUDA kernels](https://github.com/legel/deepearth/pull/7) based on [profiling of hash collisions](https://github.com/legel/deepearth/blob/main/encoders/xyzt/hash_collision_profiler.py).
 
 - _September 30, 2025_  
   **Presentation at top AI lab.** 
   Thanks to the [Allen Institute for AI](https://allenai.org) for hosting a 1 hour talk with scientists pioneering [AI foundation models for the planet](https://allenai.org/earth-system). See [_video_](  https://www.youtube.com/watch?v=SHJwCInICiA) and [_slides_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth_AI2_Presentation.pdf).
-
-- _September 25, 2025_  
-  **Breakthrough spacetime encoding!** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) has been fine-tuned for simulating hourly data at sub-meter scale. See [_example code_](https://github.com/legel/deepearth/blob/main/encoders/xyzt/earth4d_to_lfmc.py).
 
 - _August 8, 2025_  
   **NSF summer school program.** NSF funded a week-long ["Spatial AI for Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/) summer school program in Boulder, Colorado. 5 PhD students researched and developed DeepEarth.  See [_demos_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth🔥_NSF_I-GUIDE_Final_Presentation.pdf).
@@ -45,7 +48,7 @@ A large number of DeepEarth models can be trained for diverse scientific domains
 DeepEarth models are trained as physical simulators of data observed across spacetime (_e.g._ predicting fire risk from historical data). Simulators can also be fine-tuned for specific applications, _i.e._ _ChatGPT_ from _GPT_.
 
 #### Deep Spacetime Manifold
-One of the great lessons from Einstein's _relativity_ is that _space_ and _time_ are not independent variables.  Following [Grid4D](https://jiaweixu8.github.io/Grid4D-web/), Earth4D extends NVIDIA's [3D multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) to learn spatiotemporal distributions.
+One of the great lessons from Einstein's _relativity_ is that _space_ and _time_ are not independent variables.  Following [Grid4D](https://jiaweixu8.github.io/Grid4D-web/), Earth4D extends NVIDIA's [3D multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) to learn spatio-temporal distributions.
 
 #### Top of the Class
 Design and development of DeepEarth is led by award-winning scientists and engineers from Stanford University, University of Florida, and Ecodash.ai, along with one of the first engineers from Google DeepMind.  
@@ -57,6 +60,6 @@ DeepEarth is a MIT-licensed open source project designed and built to solve plan
 Collaborators welcomed! Contact [Lance Legel](https://linkedin.com/in/legel) at lance@ecodash.ai or submit an issue/PR here.
 
 For further details, see pre-print previews:
-- [DeepEarth: Self-Supervised Multimodal Planetary Simulator with 4D Spacetime Embedding](https://github.com/legel/deepearth/blob/main/docs/deepearth.pdf) (2025)
+- [DeepEarth: Self-Supervised Multi-Modal Planetary Simulator with 4D Space-Time Embedding](https://github.com/legel/deepearth/blob/main/docs/deepearth.pdf) (2025)
 - [Inductive Neural Networks for Ecology](https://doi.org/10.13140/RG.2.2.25523.90406) (2025)
 - [AI Foundation Models for Biogeography and Ecophysiology](https://doi.org/10.13140/RG.2.2.12102.13123) (2024)

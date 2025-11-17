@@ -124,12 +124,12 @@ __device__ uint32_t get_grid_index_learned(
 ) {
     // Use uint64_t for stride to prevent overflow for large resolutions
     uint64_t stride = 1;
-    uint32_t index = 0;
+    uint64_t index = 0;  // FIXED: Use 64-bit to prevent overflow
 
     // Try direct indexing first (no hashing needed)
     #pragma unroll
     for (uint32_t d = 0; d < D; d++) {
-        index += pos_grid[d] * stride;
+        index += (uint64_t)pos_grid[d] * stride;
         stride *= resolution[d];
     }
 
@@ -147,10 +147,12 @@ __device__ uint32_t get_grid_index_learned(
         uint32_t probe = (uint32_t)probe_raw;
 
         // Hybrid indexing: base hash + learned probe offset
-        index = N_p * h1 + probe;
+        index = (uint64_t)N_p * h1 + probe;
     }
 
-    return index * C + ch;
+    // CRITICAL FIX: Apply modulo to clamp index to valid range (matches standard get_grid_index)
+    // This prevents illegal memory access at grid boundaries during interpolation
+    return (uint32_t)((index % hashmap_size) * C + ch);
 }
 
 __device__ inline float smoothstep(float val) {
@@ -279,26 +281,51 @@ __global__ void kernel_grid(
     }
 
     // Collision tracking: capture hash table index
+    // IMPORTANT: Must use SAME indexing logic as actual embedding lookup
     if (track_collisions && collision_indices != nullptr) {
         const uint32_t global_example_idx = example_offset + b;
         if (global_example_idx < max_tracked_examples) {
             // Use 64-bit stride to prevent overflow
             uint64_t stride = 1;
-            uint32_t index = 0;
+            uint64_t index = 0;
 
             #pragma unroll
-            for (uint32_t d = 0; d < D && stride <= hashmap_size; d++) {
-                index += pos_grid[d] * stride;
+            for (uint32_t d = 0; d < D; d++) {
+                index += (uint64_t)pos_grid[d] * stride;
                 stride *= resolution[d];
             }
 
             // Apply hashing if stride exceeds hashmap_size
             if (stride > hashmap_size) {
-                index = fast_hash<D>(pos_grid);
+                if (probe_indices != nullptr && N_c > 0 && N_f > 0 && N_p > 0) {
+                    // Learned probing: use SAME logic as get_grid_index_learned
+                    uint32_t h1 = fast_hash<D>(pos_grid) % N_f;
+                    uint32_t h2 = fast_hash2<D>(pos_grid) % N_c;
+                    uint32_t probe_idx = level * N_c + h2;
+                    int probe_raw = probe_indices[probe_idx];
+                    uint32_t probe = (uint32_t)probe_raw;
+                    // Clamp probe to valid range for safety
+                    if (probe >= N_p) probe = 0;
+                    index = (uint64_t)N_p * h1 + probe;
+                    // Index already fits within hashmap (N_f * N_p = hashmap_size)
+                } else {
+                    // Standard hashing
+                    index = fast_hash<D>(pos_grid);
+                }
             }
 
             // Store the hash table index
-            uint32_t hash_table_index = index % hashmap_size;
+            // For learned probing with grid that fits: index is direct position
+            // For learned probing with hashing: index = N_p * h1 + probe (already fits)
+            // For standard hashing: need modulo
+            uint32_t hash_table_index;
+            if (stride > hashmap_size && probe_indices == nullptr) {
+                // Standard hashing needs modulo
+                hash_table_index = (uint32_t)(index % hashmap_size);
+            } else {
+                // Direct indexing or learned probing (already fits)
+                hash_table_index = (uint32_t)index;
+            }
             collision_indices[global_example_idx * L + level] = (int)hash_table_index;
         }
     }
@@ -487,14 +514,20 @@ __global__ void kernel_grid_backward(
         }
 
         // Use learned probing if enabled (probe_indices != nullptr)
+        // IMPORTANT: Must match forward logic - always use learned probing when enabled
         if (probe_indices != nullptr && index_logits != nullptr) {
-            // Compute stride to check if we need hashing
+            // Replicate get_grid_index_learned logic for gradient computation
             uint64_t stride = 1;
+            uint64_t index_direct = 0;
+
+            // Compute direct index
+            #pragma unroll
             for (uint32_t d = 0; d < D; d++) {
+                index_direct += (uint64_t)pos_grid_local[d] * stride;
                 stride *= resolution[d];
             }
 
-            // Only use learned probing if grid doesn't fit (same logic as forward)
+            // Use learned hash probing if grid doesn't fit (matching forward)
             if (stride > hashmap_size) {
                 // Compute base hash and auxiliary hash
                 uint32_t h1 = fast_hash<D>(pos_grid_local) % N_f;
@@ -526,7 +559,8 @@ __global__ void kernel_grid_backward(
                 // Distribute gradients to all N_p probes weighted by softmax
                 #pragma unroll
                 for (uint32_t p = 0; p < N_p; ++p) {
-                    uint32_t probe_index = (N_p * h1 + p) * C + ch;
+                    // CRITICAL: Apply modulo to prevent out-of-bounds access (matches forward pass fix)
+                    uint32_t probe_index = ((N_p * h1 + p) % hashmap_size) * C + ch;
                     float weight = w * weights[p];
 
                     if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
@@ -545,17 +579,11 @@ __global__ void kernel_grid_backward(
 
                 // Compute gradients for index_logits (softmax backward)
                 if (grad_index_logits != nullptr) {
-                    // For each probe, compute gradient to logit
-                    // Using the softmax backward formula: grad_logit[p] = weight[p] * (grad_weight[p] - dot_product)
-                    // where grad_weight[p] comes from the contribution of this probe to the total gradient
-
                     // First, compute the weighted gradient for each probe
                     float grad_weights[16] = {0};  // Gradients w.r.t. softmax outputs
 
                     #pragma unroll
                     for (uint32_t p = 0; p < N_p; ++p) {
-                        // The gradient w.r.t. weight[p] is: sum_c (grad_cur[c] * w)
-                        // Since we distributed (w * weights[p] * grad_cur[c]) to the grid
                         #pragma unroll
                         for (uint32_t c = 0; c < N_C; c++) {
                             grad_weights[p] += grad_cur[c] * w;
@@ -578,8 +606,8 @@ __global__ void kernel_grid_backward(
                     }
                 }
             } else {
-                // Direct indexing (grid fits), use standard approach
-                uint32_t index = get_grid_index<D, C>(ch, hashmap_size, resolution, pos_grid_local);
+                // Direct indexing (grid fits) - use direct index with modulo for safety
+                uint32_t index = (uint32_t)((index_direct % hashmap_size) * C + ch);
 
                 if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                     #pragma unroll
