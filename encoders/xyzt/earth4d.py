@@ -21,10 +21,10 @@ Key Features:
 
 Performance:
 On Globe-LFMC 2.0 (live fuel moisture content prediction, AI2 official split):
-  - With learned probing (N_p=16): MAE=12.8pp, R²=0.730 (matches pretrained Galileo)
-  - Without learned probing: MAE=16.6pp, R²=0.582
-  - Optimal grid search config: N_p=32, entropy weight=0.5 (250 epochs)
-  - Training overhead: +39% time for +25% R² improvement
+  - With learned probing (N_p=32): MAE=12.7pp, R²=0.735 (matches pretrained Galileo)
+  - Without learned probing: MAE=16.5pp, R²=0.583
+  - Accuracy improvement: -23% MAE, +26% R²
+  - Training time tradeoff: +71% overhead for state-of-the-art accuracy
 
 Usage:
     from deepearth.encoders.xyzt import Earth4D
