@@ -1,17 +1,17 @@
 # Earth4D: Multi-Resolution 4D Spacetime Encoder with Learned Hash Probing
 
-Earth4D is a pioneering 4D spatiotemporal encoder that enables planetary-scale deep learning on Earth observation data. Built on NVIDIA's multi-resolution hash encoding architecture, extended to 4D spacetime, and enhanced with learned hash probing (Takikawa et al., 2023), Earth4D efficiently encodes latitude, longitude, elevation, and time into learnable features at multiple scales - from sub-meter spatial resolution to microsecond temporal precision.
+Earth4D is a pioneering 4D spatiotemporal encoder that enables planetary-scale deep learning on Earth observation data. Built on NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) architecture, extended to 4D spacetime, and enhanced with [learned hash probing](https://research.nvidia.com/labs/toronto-ai/compact-ngp/) (Takikawa et al., 2023), Earth4D efficiently encodes latitude, longitude, elevation, and time into learnable features at multiple scales - from sub-meter spatial resolution to microsecond temporal precision.
 
 ## 🌍 Core Innovation
 
 Earth4D combines decomposed hash encoding with learned hash probing for superior accuracy. Using separate spatial (xyz) and temporal (xyt, yzt, xzt) projections with learned probe selection, it achieves:
 
-- **State-of-the-Art Accuracy**: +26% R² improvement on Globe-LFMC 2.0 benchmark (matches pretrained foundation model performance using only coordinates)
+- **State-of-the-Art Accuracy**: +26% R² improvement on [Globe-LFMC 2.0](https://www.nature.com/articles/s41597-024-03159-6) benchmark (matches pretrained foundation model performance using only coordinates)
 - **Extreme Scalability**: 5M to 724M parameters (99% compression) with 4× training speedup and 15× memory reduction while maintaining strong performance
 - **Coordinate-Only Learning**: Learns from (x,y,z,t) + species embeddings without satellite imagery, weather, or topography
 - **Planetary Coverage**: Multi-resolution encoding from continental scale to sub-meter precision
 - **Temporal Dynamics**: Flexible temporal encoding from years to sub-second precision
-- **Automatic Optimization**: Entropy-regularized probe learning (optimal weight=0.5) with automatic tuning
+- **Automatic Optimization**: [Entropy-regularized](https://github.com/legel/deepearth/blob/9b34f6728974a9fcd2a8e4b517fa0637f39dde8a/encoders/xyzt/earth4d.py#L976) probe learning (optimal weight=0.5) with automatic tuning
 - **GPU Acceleration**: Custom CUDA kernels with learned probe selection
 
 ## 🏆 Benchmark Performance
@@ -93,57 +93,57 @@ encoder_baseline = Earth4D(enable_learned_probing=False).to(device)
 
 | Level | Grid Resolution | Meters/Cell |
 |-------|----------------|-------------|
-| 0 | 32 | 398.2km |
-| 1 | 64 | 199.1km |
-| 2 | 128 | 99.5km |
-| 3 | 256 | 49.8km |
-| 4 | 512 | 24.9km |
-| 5 | 1024 | 12.4km |
-| 6 | 2048 | 6.2km |
-| 7 | 4096 | 3.1km |
-| 8 | 8192 | 1.6km |
-| 9 | 16384 | 777.7m |
-| 10 | 32768 | 388.9m |
-| 11 | 65536 | 194.4m |
-| 12 | 131072 | 97.21m |
-| 13 | 262144 | 48.61m |
-| 14 | 524288 | 24.30m |
-| 15 | 1048576 | 12.15m |
-| 16 | 2097152 | 6.076m |
-| 17 | 4194304 | 3.038m |
-| 18 | 8388608 | 1.519m |
-| 19 | 16777216 | 0.7595m |
-| 20 | 33554432 | 0.3797m |
-| 21 | 67108864 | 0.1899m |
-| 22 | 134217728 | 0.0949m |
+| 1 | 32 | 398.2km |
+| 2 | 64 | 199.1km |
+| 3 | 128 | 99.5km |
+| 4 | 256 | 49.8km |
+| 5 | 512 | 24.9km |
+| 6 | 1024 | 12.4km |
+| 7 | 2048 | 6.2km |
+| 8 | 4096 | 3.1km |
+| 9 | 8192 | 1.6km |
+| 10 | 16384 | 777.7m |
+| 11 | 32768 | 388.9m |
+| 12 | 65536 | 194.4m |
+| 13 | 131072 | 97.21m |
+| 14 | 262144 | 48.61m |
+| 15 | 524288 | 24.30m |
+| 16 | 1048576 | 12.15m |
+| 17 | 2097152 | 6.076m |
+| 18 | 4194304 | 3.038m |
+| 19 | 8388608 | 1.519m |
+| 20 | 16777216 | 0.7595m |
+| 21 | 33554432 | 0.3797m |
+| 22 | 67108864 | 0.1899m |
+| 23 | 134217728 | 0.0949m |
 
 ### Temporal Encoders (XYT, YZT, XZT)
 
 | Level | Grid Resolution | Seconds/Cell |
 |-------|----------------|--------------|
-| 0 | 32 | 986175.0 |
-| 1 | 64 | 493087.5 |
-| 2 | 128 | 246543.8 |
-| 3 | 256 | 123271.9 |
-| 4 | 512 | 61635.9 |
-| 5 | 1024 | 30818.0 |
-| 6 | 2048 | 15409.0 |
-| 7 | 4096 | 7704.5 |
-| 8 | 8192 | 3852.2 |
-| 9 | 16384 | 1926.1 |
-| 10 | 32768 | 963.1 |
-| 11 | 65536 | 481.5 |
-| 12 | 131072 | 240.8 |
-| 13 | 262144 | 120.4 |
-| 14 | 524288 | 60.2 |
-| 15 | 1048576 | 30.1 |
-| 16 | 2097152 | 15.0 |
-| 17 | 4194304 | 7.5 |
-| 18 | 8388608 | 3.8 |
-| 19 | 16777216 | 1.9 |
-| 20 | 33554432 | 0.9 |
-| 21 | 67108864 | 0.5 |
-| 22 | 134217728 | 0.2 |
+| 1 | 32 | 986175.0 |
+| 2 | 64 | 493087.5 |
+| 3 | 128 | 246543.8 |
+| 4 | 256 | 123271.9 |
+| 5 | 512 | 61635.9 |
+| 6 | 1024 | 30818.0 |
+| 7 | 2048 | 15409.0 |
+| 8 | 4096 | 7704.5 |
+| 9 | 8192 | 3852.2 |
+| 10 | 16384 | 1926.1 |
+| 11 | 32768 | 963.1 |
+| 12 | 65536 | 481.5 |
+| 13 | 131072 | 240.8 |
+| 14 | 262144 | 120.4 |
+| 15 | 524288 | 60.2 |
+| 16 | 1048576 | 30.1 |
+| 17 | 2097152 | 15.0 |
+| 18 | 4194304 | 7.5 |
+| 19 | 8388608 | 3.8 |
+| 20 | 16777216 | 1.9 |
+| 21 | 33554432 | 0.9 |
+| 22 | 67108864 | 0.5 |
+| 23 | 134217728 | 0.2 |
 
 ## 🔬 Research Applications
 
@@ -156,10 +156,11 @@ Earth4D enables breakthrough research in:
 - **Agriculture**: Precision crop monitoring at plant scale
 - **Disaster Response**: Real-time multi-scale hazard assessment
 
-## 📚 Technical Papers
+## 📚 Key Technical Foundations
 
 Earth4D builds on:
 - [Instant Neural Graphics Primitives](https://nvlabs.github.io/instant-ngp/) (Müller et al., 2022)
+- [Compact Neural Graphics Primitives with Learned Hash Probing](https://research.nvidia.com/labs/toronto-ai/compact-ngp/) (Takikawa et al., 2023)
 - [Grid4D](https://github.com/JiaweiXu8/Grid4D) (4D extension)
 
 *Earth4D: Encoding the entire planet across space and time, one hash at a time.*
