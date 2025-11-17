@@ -11,9 +11,11 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 ## Exciting News:
 
-- _November 17, 2025_  
-  **23% error reduction in space-time encoder.** 
-  [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt), achieving state-of-the-art R² on an ecological forecasting benchmark. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
+- _November 17, 2025_
+  **99% parameter reduction, 4× speedup.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) scales from 5M to 724M parameters while maintaining accuracy, demonstrating extreme efficiency (850MB GPU, 4× faster training) to large-scale performance—enabling both edge deployment and parallel computing. See [_grid search_](https://github.com/legel/deepearth/tree/main/encoders/xyzt).
+
+- _November 16, 2025_
+  **23% error reduction in space-time encoder.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt), achieving state-of-the-art R² on an ecological forecasting benchmark. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
 
 - _October 29, 2025_  
   **Predicting risk of fires.**  [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather), [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based), and [Lance Legel](https://www.linkedin.com/in/legel/) presented on simulating [live fuel moisture content](https://www.nature.com/articles/s41597-024-03159-6) through NSF's [Institute for Geospatial Understanding](http://i-guide.io/). See [_event_](https://i-guide.io/i-guide-vco/geospatial-simulation-of-fire-ecology-with-deepearth/).
