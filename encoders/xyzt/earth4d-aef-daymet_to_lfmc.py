@@ -420,7 +420,8 @@ class ModularLFMCModel(nn.Module):
 
     def __init__(self, n_species, species_dim=32, aef_dim=0, daymet_dim=0,
                  use_earth4d=True, use_species=True,
-                 use_bioclip=False, bioclip_embeddings=None, freeze_embeddings=False):
+                 use_bioclip=False, bioclip_embeddings=None, freeze_embeddings=False,
+                 enable_learned_probing=True, probing_range=32, probe_entropy_weight=0.5):
         super().__init__()
 
         self.use_earth4d = use_earth4d
@@ -436,6 +437,9 @@ class ModularLFMCModel(nn.Module):
                 temporal_levels=19,
                 spatial_log2_hashmap_size=22,
                 temporal_log2_hashmap_size=18,
+                enable_learned_probing=enable_learned_probing,
+                probing_range=probing_range,
+                probe_entropy_weight=probe_entropy_weight,
                 verbose=False
             )
             earth4d_dim = self.earth4d.get_output_dim()
@@ -639,8 +643,8 @@ def compute_metrics_gpu(preds, targets, is_degenerate=None):
     return overall
 
 
-def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
-    """Train for one epoch."""
+def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000, enable_learned_probing_loss=False):
+    """Train for one epoch with optional learned probing loss."""
     model.train()
     n = len(indices)
 
@@ -653,6 +657,10 @@ def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
     all_preds = []
     all_targets = []
     all_degens = []
+
+    # Track probe entropy loss if using learned probing
+    total_probe_entropy_loss = 0.0
+    num_batches_with_entropy = 0
 
     n_batches = (n + batch_size - 1) // batch_size
 
@@ -670,7 +678,21 @@ def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
         daymet_features = dataset.daymet_features[batch_idx] if dataset.daymet_features is not None else None
 
         preds = model(coords, species, aef_features, daymet_features)
-        loss = criterion(preds, targets)
+
+        # Use new loss computation if model has Earth4D with learned probing
+        if enable_learned_probing_loss and hasattr(model, 'earth4d') and hasattr(model.earth4d, 'compute_loss'):
+            loss_dict = model.earth4d.compute_loss(
+                preds, targets, criterion,
+                enable_probe_entropy_loss=True,
+                probe_entropy_weight=0.5
+            )
+            loss = loss_dict['total_loss']
+            if 'probe_entropy_loss' in loss_dict:
+                total_probe_entropy_loss += loss_dict['probe_entropy_loss']
+                num_batches_with_entropy += 1
+        else:
+            # Standard loss computation (backward compatible)
+            loss = criterion(preds, targets)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -685,6 +707,10 @@ def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
     all_degens = torch.cat(all_degens)
 
     overall, unique, degen = compute_metrics_gpu(all_preds, all_targets, all_degens)
+
+    # Add average probe entropy loss to overall metrics if available
+    if num_batches_with_entropy > 0:
+        overall['probe_entropy_loss'] = total_probe_entropy_loss / num_batches_with_entropy
 
     return overall, unique, degen
 
@@ -838,7 +864,10 @@ def run_training_session(args, run_name=""):
             use_species=args.use_species,
             use_bioclip=True,
             bioclip_embeddings=dataset.species_embeddings,
-            freeze_embeddings=args.freeze_embeddings
+            freeze_embeddings=args.freeze_embeddings,
+            enable_learned_probing=args.enable_learned_probing,
+            probing_range=args.probing_range,
+            probe_entropy_weight=args.probe_entropy_weight
         ).to(device)
     else:
         model = ModularLFMCModel(
@@ -849,7 +878,10 @@ def run_training_session(args, run_name=""):
             use_earth4d=args.use_earth4d,
             use_species=args.use_species,
             use_bioclip=False,
-            freeze_embeddings=args.freeze_embeddings
+            freeze_embeddings=args.freeze_embeddings,
+            enable_learned_probing=args.enable_learned_probing,
+            probing_range=args.probing_range,
+            probe_entropy_weight=args.probe_entropy_weight
         ).to(device)
 
     # Count parameters
@@ -888,9 +920,10 @@ def run_training_session(args, run_name=""):
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
 
-        # Train
+        # Train (with optional learned probing loss)
         trn_overall, trn_unique, trn_degen = train_epoch_gpu(
-            model, dataset, splits['train'], optimizer, args.batch_size
+            model, dataset, splits['train'], optimizer, args.batch_size,
+            enable_learned_probing_loss=args.enable_learned_probing
         )
 
         # Evaluate
@@ -954,6 +987,10 @@ def run_training_session(args, run_name=""):
             'random_degen_std': rnd_degen['error_std']
         }
 
+        # Add probe entropy loss if present
+        if 'probe_entropy_loss' in trn_overall:
+            current_metrics['probe_entropy_loss'] = trn_overall['probe_entropy_loss']
+
         ema_metrics = metrics_ema.update(current_metrics)
         current_metrics.update(ema_metrics)
         metrics_history.append(current_metrics)
@@ -962,6 +999,10 @@ def run_training_session(args, run_name=""):
         print(f"\nEPOCH {epoch:3d} ({dt:.1f}s)", flush=True)
         print(f"  TRAIN ALL: [MSE: {trn_overall['mse']:7.1f}, MAE: {trn_overall['mae']:5.1f}pp, Median: {trn_overall['median_ae']:5.1f}pp, Std: {trn_overall['error_std']:5.1f}pp]", flush=True)
         print(f"        UNIQUE: MAE={trn_unique['mae']:5.1f}pp, Med={trn_unique['median_ae']:5.1f}pp  |  MULTI: MAE={trn_degen['mae']:5.1f}pp, Med={trn_degen['median_ae']:5.1f}pp", flush=True)
+
+        # Print probe entropy loss if using learned probing
+        if 'probe_entropy_loss' in trn_overall:
+            print(f"        Probe Entropy Loss: {trn_overall['probe_entropy_loss']:.4f}", flush=True)
 
         print(f"\n  TEST TEMPORAL: [MSE: {tmp_overall['mse']:7.1f}, MAE: {tmp_overall['mae']:5.1f}pp, Median: {tmp_overall['median_ae']:5.1f}pp, Std: {tmp_overall['error_std']:5.1f}pp]", flush=True)
         print(f"        UNIQUE: MAE={tmp_unique['mae']:5.1f}pp, Med={tmp_unique['median_ae']:5.1f}pp  |  MULTI: MAE={tmp_degen['mae']:5.1f}pp, Med={tmp_degen['median_ae']:5.1f}pp", flush=True)
@@ -1064,6 +1105,18 @@ def main():
                        help='Disable auto-download')
     parser.add_argument('--seed', type=int, default=0,
                        help='Random seed (default: 0)')
+
+    # Learned hash probing arguments (NEW)
+    parser.add_argument('--enable-learned-probing', action='store_true', default=True,
+                       help='Enable learned hash probing for 4× memory reduction (default: True)')
+    parser.add_argument('--disable-learned-probing', dest='enable_learned_probing',
+                       action='store_false',
+                       help='Disable learned hash probing (use for backward compatibility)')
+    parser.add_argument('--probing-range', type=int, default=32,
+                       help='Number of probe candidates N_p (must be power-of-2, default: 32)')
+    parser.add_argument('--probe-entropy-weight', type=float, default=0.5,
+                       help='Entropy regularization weight (default: 0.5)')
+
     args = parser.parse_args()
 
     device = 'cuda'
