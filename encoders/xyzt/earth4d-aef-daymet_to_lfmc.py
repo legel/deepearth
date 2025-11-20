@@ -681,15 +681,18 @@ def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000, enable
 
         # Use new loss computation if model has Earth4D with learned probing
         if enable_learned_probing_loss and hasattr(model, 'earth4d') and hasattr(model.earth4d, 'compute_loss'):
-            loss_dict = model.earth4d.compute_loss(
-                preds, targets, criterion,
-                enable_probe_entropy_loss=True,
-                probe_entropy_weight=0.5
-            )
-            loss = loss_dict['total_loss']
-            if 'probe_entropy_loss' in loss_dict:
-                total_probe_entropy_loss += loss_dict['probe_entropy_loss']
-                num_batches_with_entropy += 1
+            # Compute loss manually to get tensor (not .item())
+            task_loss = criterion(preds, targets)
+            loss = task_loss
+
+            # Add entropy regularization if learned probing enabled
+            if hasattr(model.earth4d, 'enable_learned_probing') and model.earth4d.enable_learned_probing:
+                if hasattr(model.earth4d, '_compute_probe_entropy_loss'):
+                    probe_entropy = model.earth4d._compute_probe_entropy_loss()
+                    # Subtract because we want HIGH entropy (less collisions)
+                    loss = loss - 0.5 * probe_entropy
+                    total_probe_entropy_loss += probe_entropy.item()
+                    num_batches_with_entropy += 1
         else:
             # Standard loss computation (backward compatible)
             loss = criterion(preds, targets)
