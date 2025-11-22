@@ -571,11 +571,28 @@ def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
         species = dataset.species_idx[batch_idx]
 
         preds = model(coords, species)
-        loss = criterion(preds, targets)
+
+        # FIX #2: Use compute_loss() with entropy regularization if available
+        if hasattr(model.earth4d, 'compute_loss'):
+            loss_dict = model.earth4d.compute_loss(
+                preds, targets,
+                enable_probe_entropy_loss=True,
+                probe_entropy_weight=0.5
+            )
+            loss = loss_dict['_total_loss_tensor']
+        else:
+            loss = criterion(preds, targets)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
+
+        # FIX #1: Update probe indices after optimizer step (for learned probing)
+        if hasattr(model.earth4d.encoder.xyz_encoder, 'update_probe_indices'):
+            model.earth4d.encoder.xyz_encoder.update_probe_indices()
+            model.earth4d.encoder.xyt_encoder.update_probe_indices()
+            model.earth4d.encoder.yzt_encoder.update_probe_indices()
+            model.earth4d.encoder.xzt_encoder.update_probe_indices()
 
         # Store for metrics
         all_preds.append(preds.detach())
@@ -713,8 +730,29 @@ def run_training_session(args, run_name=""):
     print(f"  Total parameters: {total_params:,}", flush=True)
     print(f"  Trainable parameters: {trainable_params:,}", flush=True)
 
-    # Optimizer
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
+    # FIX #3: Use differential learning rates if learned probing is enabled
+    if hasattr(model.earth4d.encoder.xyz_encoder, 'index_logits'):
+        index_lr_multiplier = 10.0
+        optimizer_params = [
+            # Earth4D embedding parameters (base LR)
+            {'params': model.earth4d.encoder.xyz_encoder.embeddings, 'lr': args.lr},
+            {'params': model.earth4d.encoder.xyt_encoder.embeddings, 'lr': args.lr},
+            {'params': model.earth4d.encoder.yzt_encoder.embeddings, 'lr': args.lr},
+            {'params': model.earth4d.encoder.xzt_encoder.embeddings, 'lr': args.lr},
+            # Species embeddings (base LR)
+            {'params': model.species_embeddings.parameters(), 'lr': args.lr},
+            # MLP parameters (base LR)
+            {'params': model.mlp.parameters(), 'lr': args.lr},
+            # Index logits (10× HIGHER LR - critical for learned probing!)
+            {'params': model.earth4d.encoder.xyz_encoder.index_logits, 'lr': args.lr * index_lr_multiplier},
+            {'params': model.earth4d.encoder.xyt_encoder.index_logits, 'lr': args.lr * index_lr_multiplier},
+            {'params': model.earth4d.encoder.yzt_encoder.index_logits, 'lr': args.lr * index_lr_multiplier},
+            {'params': model.earth4d.encoder.xzt_encoder.index_logits, 'lr': args.lr * index_lr_multiplier},
+        ]
+        optimizer = optim.AdamW(optimizer_params, weight_decay=0.001)
+        print(f"\n✓ Using {index_lr_multiplier}× higher LR for index_logits: {args.lr * index_lr_multiplier:.6f}", flush=True)
+    else:
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
 
     # Tracking metrics
     metrics_history = []
