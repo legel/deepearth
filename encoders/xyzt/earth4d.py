@@ -698,6 +698,26 @@ class Earth4D(nn.Module):
             }
         }
 
+    def to(self, *args, **kwargs):
+        """Override to() to also move collision tracking tensors."""
+        # Call parent to() to move all registered parameters/buffers
+        super().to(*args, **kwargs)
+
+        # Move collision tracking tensors to same device
+        if hasattr(self, 'collision_tracking_data') and self.collision_tracking_data is not None:
+            for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
+                if grid_name in self.collision_tracking_data:
+                    self.collision_tracking_data[grid_name]['collision_indices'] = \
+                        self.collision_tracking_data[grid_name]['collision_indices'].to(*args, **kwargs)
+
+            if 'coordinates' in self.collision_tracking_data:
+                self.collision_tracking_data['coordinates']['original'] = \
+                    self.collision_tracking_data['coordinates']['original'].to(*args, **kwargs)
+                self.collision_tracking_data['coordinates']['normalized'] = \
+                    self.collision_tracking_data['coordinates']['normalized'].to(*args, **kwargs)
+
+        return self
+
     def cuda(self, device=None):
         """Override cuda() to also move collision tracking tensors to GPU."""
         # Call parent cuda() to move all registered parameters/buffers
