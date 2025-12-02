@@ -260,7 +260,7 @@ def train_model(
         history['val_loss'].append(val_loss)
         history['epochs'].append(epoch)
 
-        # Save best model
+        # Save best model (by validation loss)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save({
@@ -278,7 +278,27 @@ def train_model(
                 'train_indices': train_indices if chip_sizes else None,
                 'val_indices': val_indices if chip_sizes else None,
             }, output_dir / 'best_model.pt')
-            print(f"  ✓ Saved best model")
+            print(f"  ✓ Saved best model (val_loss={val_loss:.6f})")
+
+        # Save periodic checkpoints for reconstruction quality analysis
+        # Save at epochs 10, 20, 30, 40, 50 (every 10 epochs)
+        if epoch % 10 == 0 or epoch == epochs:
+            checkpoint_path = output_dir / f'checkpoint_epoch{epoch}.pt'
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+                'config': {
+                    'enable_learned_probing': enable_learned_probing,
+                    'probing_range': probing_range,
+                    'batch_size': batch_size,
+                    'lr': lr,
+                },
+                'train_indices': train_indices if chip_sizes else None,
+                'val_indices': val_indices if chip_sizes else None,
+            }, checkpoint_path)
+            print(f"  ✓ Saved checkpoint: epoch {epoch}")
 
     # Save history
     with open(output_dir / 'history.json', 'w') as f:
