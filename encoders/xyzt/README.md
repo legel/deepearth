@@ -1,50 +1,53 @@
-# Earth4D: Multi-Resolution 4D Spacetime Encoder with Learned Hash Probing
+# Earth4D: Multi-Resolution 4D Space-Time Positional Encoder
 
-Earth4D is a pioneering 4D spatiotemporal encoder that enables planetary-scale deep learning on Earth observation data. Built on NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) architecture, extended to 4D spacetime, and enhanced with [learned hash probing](https://research.nvidia.com/labs/toronto-ai/compact-ngp/) (Takikawa et al., 2023), Earth4D efficiently encodes latitude, longitude, elevation, and time into learnable features at multiple scales - from sub-meter spatial resolution to microsecond temporal precision.
+Earth4D is a planetary-scale 4D space-time positional encoder that enables deep learning on Earth observation data across space and time. Built on NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) architecture, extended to 4D space-time, and enhanced with [learned hash probing](https://research.nvidia.com/labs/toronto-ai/compact-ngp/) (Takikawa et al., 2023), Earth4D efficiently encodes latitude, longitude, elevation, and time into learnable features at multiple scales—from sub-meter spatial resolution to sub-second temporal precision.
 
-## 🌍 Core Innovation
+## Core Innovation
 
-Earth4D combines decomposed hash encoding with learned hash probing for superior accuracy. Using separate spatial (xyz) and temporal (xyt, yzt, xzt) projections with learned probe selection, it achieves:
+Earth4D combines decomposed hash encoding with learned hash probing for state-of-the-art accuracy. Using separate spatial (xyz) and spatio-temporal (xyt, yzt, xzt) grids with learned probe selection, it achieves:
 
-- **State-of-the-Art Accuracy**: +26% R² improvement on [Globe-LFMC 2.0](https://www.nature.com/articles/s41597-024-03159-6) benchmark (matches pretrained foundation model performance using only coordinates)
-- **Extreme Scalability**: 5M to 724M parameters (99% compression) with 4× training speedup and 15× memory reduction while maintaining strong performance
-- **Coordinate-Only Learning**: Learns from (x,y,z,t) + species embeddings without satellite imagery, weather, or topography
+- **State-of-the-Art Accuracy**: Surpasses pre-trained foundation models on ecological forecasting benchmarks using only coordinates
+- **Learned Hash Probing**: 25% MAE reduction and 28% R² improvement over baseline hash encoding
 - **Planetary Coverage**: Multi-resolution encoding from continental scale to sub-meter precision
 - **Temporal Dynamics**: Flexible temporal encoding from years to sub-second precision
-- **Automatic Optimization**: [Entropy-regularized](https://github.com/legel/deepearth/blob/9b34f6728974a9fcd2a8e4b517fa0637f39dde8a/encoders/xyzt/earth4d.py#L976) probe learning (optimal weight=0.5) with automatic tuning
-- **GPU Acceleration**: Custom CUDA kernels with learned probe selection
+- **GPU Acceleration**: Custom CUDA kernels with learned probe selection, parallelizable across levels and spatio-temporal boundaries
 
-## 🏆 Benchmark Performance
+## Benchmark Performance
 
-**Globe-LFMC 2.0** (Live Fuel Moisture Content Prediction, AI2 official train/test split):
+**Globe-LFMC 2.0** (Live Fuel Moisture Content Prediction, AI2 official train/test split: 76,467/13,297):
 
-### Full-Scale Performance
+### State-of-the-Art Results
 
-| Configuration | MAE (pp) | R² | Training Time | vs. Pretrained Galileo |
-|--------------|----------|-----|---------------|----------------------|
-| **Earth4D + Learned Probing (N_p=32)** | **12.7** | **0.735** | 1049s (2500 epochs) | **Matches** (12.6pp, 0.72) |
-| Earth4D (baseline) | 16.5 | 0.583 | 612s (2500 epochs) | - |
-| **Improvement** | **-23.3%** | **+26.1%** | **+71.3%** | - |
+| Model | Data Inputs | MAE (pp) | RMSE (pp) | R² |
+|-------|-------------|----------|-----------|-----|
+| **Earth4D** (Learned Hashing) | (x,y,z,t) + Species Name | **12.4** | 20.3 | **0.745** |
+| Galileo (Pre-Trained) | (x,y,z,t) + Species + Remote Sensing | 12.6 | **18.9** | 0.72 |
 
-*Earth4D with learned hash probing matches Allen Institute for AI's Galileo foundation model (pretrained on large-scale multimodal Earth observation data) using only (x,y,z,t) coordinates and learnable species embeddings - no satellite imagery, weather data, or topography required.*
+*Earth4D surpasses Allen Institute for AI's Galileo foundation model (pre-trained on Sentinel-2 optical imagery, Sentinel-1 SAR, VIIRS night lights, ERA-5 weather, TerraClimate soil/water, and SRTM topography) using only (x,y,z,t) coordinates and learnable species embeddings—without satellite imagery, weather data, or topography.*
+
+### Learned Hash Probing Improvements
+
+| Configuration | Parameters | MAE (pp) | R² | vs. Baseline |
+|--------------|-----------|----------|-----|--------------|
+| **With Learned Probing** | 800M | **12.4** | **0.745** | **-25.2% MAE, +28.4% R²** |
+| Baseline (no probing) | 724M | 16.6 | 0.58 | - |
 
 ### Extreme Compression (Edge/Mobile Deployment)
 
 | Configuration | Parameters | GPU Memory | Training Speed | MAE (pp) | R² | vs. Baseline |
 |--------------|-----------|------------|----------------|----------|-----|--------------|
 | **Compressed (2^14 hash)** | **5.1M** | **850MB** | **4× faster** | **15.0** | **0.668** | **+14.7% R²** |
-| Baseline (2^22 hash) | 724M | 12GB+ | 1× | 16.6 | 0.582 | - |
-| **Reduction** | **-99.3%** | **-93%** | **+300%** | **-9.7%** | **+14.7%** | - |
+| Baseline (2^22 hash) | 800M | 12GB+ | 1× | 16.6 | 0.58 | - |
 
-*99% parameter reduction (724M→5.1M) with 4× training speedup enables edge deployment while still outperforming baseline. Demonstrates Earth4D's scalability from mobile devices to datacenter-scale parallel computing.*
+*99% parameter reduction (724M→5.1M) with 4× training speedup enables edge deployment while still outperforming baseline.*
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
 ```bash
 # Clone DeepEarth repository
-git clone https://github.com/deepearth/deepearth.git
+git clone https://github.com/legel/deepearth.git
 cd deepearth/encoders/xyzt
 
 # Install dependencies
@@ -81,13 +84,23 @@ coords = torch.tensor([
 
 features = encoder(coords)
 print(f"\nInput shape: {coords.shape}")
-print(f"Output shape: {features.shape}")
+print(f"Output shape: {features.shape}")  # [3, 192]
 
 # Disable learned probing if needed (baseline mode)
 encoder_baseline = Earth4D(enable_learned_probing=False).to(device)
 ```
 
-## 📊 Resolution Scale Table
+## Architecture Details
+
+Earth4D outputs a **192-dimensional feature vector** per (x,y,z,t) coordinate:
+- 4 grids (xyz, xyt, yzt, xzt)
+- 24 levels per grid
+- 2D feature per level
+- Total: 4 × 24 × 2 = 192 dimensions
+
+Default configuration requires **724M trainable parameters** (~11 GB GPU memory during training). Each level stores up to 2²² entries. The architecture is parallelizable across levels and spatio-temporal boundaries.
+
+## Resolution Scale Table
 
 ### Spatial Encoder (XYZ)
 
@@ -147,22 +160,34 @@ encoder_baseline = Earth4D(enable_learned_probing=False).to(device)
 | 23 | 134217728 | 0.2 |
 | 24 | 268435456 | 0.1 |
 
-## 🔬 Research Applications
+## Research Applications
 
-Earth4D enables breakthrough research in:
+Earth4D enables research in:
 
 - **Climate Modeling**: Multi-scale climate dynamics from global to local
+- **Ecological Forecasting**: Vegetation moisture, phenology, species distributions
 - **Weather Prediction**: High-resolution nowcasting with temporal continuity
 - **Earth Observation**: Fusion of satellite, aerial, and ground sensors
 - **Urban Planning**: Building-level environmental modeling
 - **Agriculture**: Precision crop monitoring at plant scale
 - **Disaster Response**: Real-time multi-scale hazard assessment
+- **Subsurface Modeling**: Geological spatial reconstruction
 
-## 📚 Key Technical Foundations
+## Key Technical Foundations
 
 Earth4D builds on:
 - [Instant Neural Graphics Primitives](https://nvlabs.github.io/instant-ngp/) (Müller et al., 2022)
 - [Compact Neural Graphics Primitives with Learned Hash Probing](https://research.nvidia.com/labs/toronto-ai/compact-ngp/) (Takikawa et al., 2023)
 - [Grid4D](https://github.com/JiaweiXu8/Grid4D) (4D extension)
+
+## Citation
+
+```bibtex
+@article{legel2025deepearth,
+  title={Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding},
+  author={Legel, Lance and Huang, Qin and Voelker, Brandon and Neamati, Daniel and Johnson, Patrick Alan and Bastani, Favyen and Rose, Jeff and Hennessy, James Ryan and Guralnick, Robert and Soltis, Douglas and Soltis, Pamela and Wang, Shaowen},
+  year={2025}
+}
+```
 
 *Earth4D: Encoding the entire planet across space and time, one hash at a time.*
