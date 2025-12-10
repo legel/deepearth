@@ -39,12 +39,12 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 
 #### Planetary Intelligence for Everyone
-DeepEarth is a MIT-licensed open source project designed and built to solve intelligence across the planet 🌎. We aim to help solve problems such as in sustainable agriculture, environmental restoration, [climate resilience and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx).
+DeepEarth is an open source project for solving intelligence across the planet 🌎. We aspire to help solve major sustainability challenges including [climate resilience and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx).
 
 #### Invitation for Open Source Collaboration
 Collaborators welcomed! Contact [Lance Legel](https://linkedin.com/in/legel) at lance@ecodash.ai or submit an issue/PR here.
 
-For further details, see pre-print previews:
+For further details, see papers:
 - [Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding](https://github.com/legel/deepearth/blob/main/docs/DeepEarth.pdf) (2025)
 - [Inductive Neural Networks for Ecology](https://doi.org/10.13140/RG.2.2.25523.90406) (2025)
 - [AI Foundation Models for Biogeography and Ecophysiology](https://doi.org/10.13140/RG.2.2.12102.13123) (2024)
