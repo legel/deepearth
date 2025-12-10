@@ -1,5 +1,5 @@
 ![DeepEarth logo](https://github.com/legel/deepearth/blob/main/docs/deepearth_logo.png)
-## DeepEarth: AI Foundation Model for Planetary Science & Sustainability
+## DeepEarth: AI for Planetary Science & Sustainability
 
 DeepEarth is a [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multi-modal](https://en.wikipedia.org/wiki/Multimodal_learning), [spatio-temporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) GeoAI model for global environmental intelligence and optimization.
 
