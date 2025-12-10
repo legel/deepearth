@@ -290,8 +290,10 @@ class NAIPDownloader:
             zone = row['utm_zone']
             y_prefix = path_parts[2]
             tar_file = f"{zone}-{y_prefix}.tar"
-            chm_filename = path_parts[3]
-            naip_filename = naip_path_str.split('/')[-1]
+            # Preserve subdirectory structure: path_parts[2] is subdirectory, path_parts[3] is filename
+            chm_relative_path = f"{path_parts[2]}/{path_parts[3]}"  # e.g., "369/12_xxx.tif"
+            naip_parts = naip_path_str.split('/')
+            naip_relative_path = f"{naip_parts[2]}/{naip_parts[3]}"
 
             if (zone, tar_file) not in extracted_dirs:
                 missing_stats['tar_not_downloaded'] += 1
@@ -301,8 +303,8 @@ class NAIPDownloader:
                 missing_stats['naip_dir_missing'] += 1
                 continue
 
-            chm_path = extracted_dirs[(zone, tar_file)]['chm'] / chm_filename
-            naip_path = extracted_dirs[(zone, tar_file)]['naip'] / naip_filename
+            chm_path = extracted_dirs[(zone, tar_file)]['chm'] / chm_relative_path
+            naip_path = extracted_dirs[(zone, tar_file)]['naip'] / naip_relative_path
 
             if not chm_path.exists():
                 missing_stats['chm_file_missing'] += 1

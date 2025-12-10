@@ -2,9 +2,22 @@
 
 Production-ready system for downloading and training Earth4D on USGS 3DEP LiDAR + USDA NAIP aerial imagery.
 
-**Dataset:** 22.8 million paired chips (256×256) across entire US
+**Dataset:** 22.8 million paired chips (256×256) across CONUS
 **Source:** [Nature Scientific Data (2025)](https://doi.org/10.1038/s41597-025-04655-z)
 **Objective:** Input (lat, lon, elevation, time) → Output (R, G, B)
+
+---
+
+## Important: Sparse Sampling Design
+
+The RAP CHM-NAIP dataset is **intentionally sparse**, not wall-to-wall coverage:
+
+- **Stratified sampling:** 50,000 locations per land cover class within each EPA Level III ecoregion
+- **Minimum 240m spacing** between all sample locations (enforced via 240m NLCD aggregation)
+- **Data quality filters:** Only areas with USGS 3DEP LiDAR (2014-2023, QL2+ quality) and NAIP imagery within ±2 years
+- **Land cover weighting:** Rangelands oversampled 4×, pasture 2×, water undersampled to 0.1×
+
+The dataset is described as "geographically large, but spatially disparate" - designed for ecological diversity in model training, not continuous CHM products. Expect ~40-60% coverage within any bounding box.
 
 ---
 
@@ -26,19 +39,29 @@ python naip_download.py --lat 37.43 --lon -122.17 --radius 5 --max-chips 100 --p
 - `data/stanford/parsed_xyztrgb.pt` - Parsed data with chip metadata
 - `data/stanford/chip_metadata.json` - Chip locations and properties
 
-### 2. Train Earth4D Model
+### 2. Visualize with GIS Viewer
 
 ```bash
-# Baseline model
-python naip_train.py --data data/stanford/parsed_xyztrgb.pt --output runs/stanford_baseline --epochs 25
-
-# With learned probing
-python naip_train.py --data data/stanford/parsed_xyztrgb.pt --learned-probing --probing-range 32 --output runs/stanford_learned --epochs 25
+python viewer/naip_viewer.py --data-dir stanford --port 5001
+# Open http://localhost:5001
 ```
 
-**Output:**
-- `runs/stanford_baseline/best_model.pt` - Best checkpoint
-- `runs/stanford_baseline/history.json` - Training curves
+Features: Satellite basemap, NAIP/LiDAR overlays, transparency controls, pixel inspector.
+
+### 3. Train Earth4D Model
+
+```bash
+# Default training (learned hash probing ON)
+python naip_train.py --data-dir stanford
+
+# Full configuration
+python naip_train.py --data-dir stanford \
+    --num-batches 1000 --batch-size 10000 \
+    --lr 1e-3 --index-lr-multiplier 10.0 \
+    --probe-entropy-weight 0.5 --probing-range 32
+```
+
+See `NAIP_EARTH4D_TRAINING_GUIDE.md` for detailed configuration.
 
 ---
 
