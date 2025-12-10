@@ -1,7 +1,7 @@
 ![DeepEarth logo](https://github.com/legel/deepearth/blob/main/docs/deepearth_logo.png)
 ## DeepEarth: AI Foundation Model for Planetary Science & Sustainability
 
-DeepEarth is an AI model for the planet that fuses [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multi-modal](https://en.wikipedia.org/wiki/Multimodal_learning), and [spatio-temporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) deep learning.  The mission of DeepEarth is to solve global sustainability challenges (_e.g._ [climate and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx)) through AI for scientists, engineers, and designers.
+DeepEarth is a [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multi-modal](https://en.wikipedia.org/wiki/Multimodal_learning), [spatio-temporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) GeoAI model for global environmental intelligence and optimization.
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_main_figure.png)
 
@@ -58,7 +58,7 @@ One of the great lessons from Einstein's _relativity_ is that _space_ and _time_
 Design and development of DeepEarth is led by award-winning scientists and engineers from Stanford University, University of Florida, and Ecodash.ai, along with one of the first engineers from Google DeepMind.  
 
 #### Planetary Intelligence for Everyone
-DeepEarth is a MIT-licensed open source project designed and built to solve planetary-scale problems 🌎, especially through AI-powered maximization of ecosystem services – _e.g._ for sustainable agriculture, environmental restoration, & ecological landscape design.
+DeepEarth is a MIT-licensed open source project designed and built to solve intelligence across the planet 🌎. We aim to help solve problems such as in sustainable agriculture, environmental restoration, [climate resilience and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx).
 
 #### Invitation for Open Source Collaboration
 Collaborators welcomed! Contact [Lance Legel](https://linkedin.com/in/legel) at lance@ecodash.ai or submit an issue/PR here.
