@@ -168,17 +168,37 @@ class NAIPDownloader:
         tar_path.parent.mkdir(parents=True, exist_ok=True)
         extract_dir.mkdir(parents=True, exist_ok=True)
 
-        # Download if not cached
-        if not tar_path.exists():
-            print(f"\n  Downloading {data_type}/{zone}/{tar_filename}...")
+        # Download if not complete (supports resume)
+        needs_download = not tar_path.exists()
+        if tar_path.exists():
+            # Check if file is complete by trying to open as tar
+            try:
+                with tarfile.open(tar_path, 'r') as tar:
+                    pass  # File is valid
+                print(f"  ✓ Using cached {data_type.upper()}: {tar_filename} ({tar_path.stat().st_size / 1024**3:.2f} GB)")
+            except:
+                # File is incomplete/corrupted, will resume
+                file_size_gb = tar_path.stat().st_size / 1024**3
+                print(f"  ⟳ Resuming {data_type.upper()}: {tar_filename} (have {file_size_gb:.2f} GB)")
+                needs_download = True
+
+        if needs_download:
+            if not tar_path.exists():
+                print(f"  ↓ Downloading {data_type.upper()}: {tar_filename}...")
+            # Longer timeout for large NAIP files (5 hours = 18000s)
+            timeout = 18000 if data_type == 'naip' else 10800
             cmd = ['wget', '-c', '--show-progress', '-O', str(tar_path), url]
             try:
-                subprocess.run(cmd, check=True, timeout=3600)
+                subprocess.run(cmd, check=True, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                # Don't delete partial download - it will resume next time
+                file_size_gb = tar_path.stat().st_size / 1024**3 if tar_path.exists() else 0
+                print(f"\n  ⚠ Download timed out after {timeout/3600:.1f}h - kept {file_size_gb:.2f} GB for resume")
+                raise
             except:
+                # For other errors, remove the broken file
                 tar_path.unlink(missing_ok=True)
                 raise
-        else:
-            print(f"  ✓ Using cached {data_type}/{zone}/{tar_filename}")
 
         # Extract if not already extracted
         if not any(extract_dir.iterdir()):
@@ -224,24 +244,45 @@ class NAIPDownloader:
             tar_file = f"{zone}-{y_prefix}.tar"
             tar_files.add((zone, tar_file))
 
-        print(f"\nNeed to download {len(tar_files)} unique tar files")
+        print(f"\nNeed to download {len(tar_files)} tar file pairs ({len(tar_files)*2} total: CHM + NAIP)")
 
         # Download and extract all tar files
         extracted_dirs = {}
-        for zone, tar_filename in tqdm(list(tar_files), desc="Downloading tars"):
+        failed_downloads = {'chm': [], 'naip': []}
+
+        for i, (zone, tar_filename) in enumerate(list(tar_files), 1):
+            print(f"\n[{i}/{len(tar_files)}] Processing tar pair: {tar_filename}")
+
+            # Download CHM
             try:
                 chm_dir = self.download_and_extract_tar(zone, tar_filename, 'chm')
+            except Exception as e:
+                print(f"  ✗ CHM download failed: {e}")
+                failed_downloads['chm'].append(tar_filename)
+                continue
+
+            # Download NAIP
+            try:
                 naip_dir = self.download_and_extract_tar(zone, tar_filename, 'naip')
+            except Exception as e:
+                print(f"  ✗ NAIP download failed: {e}")
+                failed_downloads['naip'].append(tar_filename)
+                # Store CHM even if NAIP failed (for potential resume)
                 extracted_dirs[(zone, tar_filename)] = {
                     'chm': chm_dir,
-                    'naip': naip_dir
+                    'naip': None
                 }
-            except Exception as e:
-                print(f"  ✗ Failed to download {tar_filename}: {e}")
                 continue
+
+            extracted_dirs[(zone, tar_filename)] = {
+                'chm': chm_dir,
+                'naip': naip_dir
+            }
 
         # Build list of chip file paths
         chip_records = []
+        missing_stats = {'tar_not_downloaded': 0, 'naip_dir_missing': 0, 'chm_file_missing': 0, 'naip_file_missing': 0}
+
         for _, row in chips_df.iterrows():
             chm_path_str = row['chm']
             naip_path_str = row['naip']
@@ -255,28 +296,67 @@ class NAIPDownloader:
             naip_relative_path = f"{naip_parts[2]}/{naip_parts[3]}"
 
             if (zone, tar_file) not in extracted_dirs:
+                missing_stats['tar_not_downloaded'] += 1
+                continue
+
+            if extracted_dirs[(zone, tar_file)]['naip'] is None:
+                missing_stats['naip_dir_missing'] += 1
                 continue
 
             chm_path = extracted_dirs[(zone, tar_file)]['chm'] / chm_relative_path
             naip_path = extracted_dirs[(zone, tar_file)]['naip'] / naip_relative_path
 
-            if chm_path.exists() and naip_path.exists():
-                chip_records.append({
-                    'chip_id': path_parts[3].replace('.tif', ''),  # Use filename from path_parts
-                    'chm_path': str(chm_path),
-                    'naip_path': str(naip_path),
-                    'utm_zone': zone,
-                    'x': row['x'],
-                    'y': row['y'],
-                    'chm_date': row['chm_date'],
-                    'naip_date': row['naip_date'],
-                    'land_cover': row['land_cover'],
-                    'ecoregion': row['us_l3code'],
-                    'distance': row['distance'],
-                    'partition': row['partition']
-                })
+            if not chm_path.exists():
+                missing_stats['chm_file_missing'] += 1
+                continue
 
-        print(f"\n✓ Successfully located {len(chip_records)} chips")
+            if not naip_path.exists():
+                missing_stats['naip_file_missing'] += 1
+                continue
+
+            chip_records.append({
+                'chip_id': chm_filename.replace('.tif', ''),
+                'chm_path': str(chm_path),
+                'naip_path': str(naip_path),
+                'utm_zone': zone,
+                'x': row['x'],
+                'y': row['y'],
+                'chm_date': row['chm_date'],
+                'naip_date': row['naip_date'],
+                'land_cover': row['land_cover'],
+                'ecoregion': row['us_l3code'],
+                'distance': row['distance'],
+                'partition': row['partition']
+            })
+
+        # Print summary
+        print(f"\n{'='*70}")
+        print(f"DOWNLOAD SUMMARY")
+        print(f"{'='*70}")
+        print(f"Requested chips: {len(chips_df)}")
+        print(f"Successfully matched: {len(chip_records)}")
+
+        if len(chip_records) < len(chips_df):
+            print(f"\nChips not matched:")
+            if missing_stats['tar_not_downloaded'] > 0:
+                print(f"  - {missing_stats['tar_not_downloaded']} chips: tar file download failed")
+            if missing_stats['naip_dir_missing'] > 0:
+                print(f"  - {missing_stats['naip_dir_missing']} chips: NAIP extraction incomplete (download timed out)")
+            if missing_stats['chm_file_missing'] > 0:
+                print(f"  - {missing_stats['chm_file_missing']} chips: CHM file not found in tar")
+            if missing_stats['naip_file_missing'] > 0:
+                print(f"  - {missing_stats['naip_file_missing']} chips: NAIP file not found in tar")
+
+        if failed_downloads['chm'] or failed_downloads['naip']:
+            print(f"\nFailed downloads (will resume on next run):")
+            if failed_downloads['chm']:
+                print(f"  CHM: {failed_downloads['chm']}")
+            if failed_downloads['naip']:
+                print(f"  NAIP: {failed_downloads['naip']}")
+                print(f"\n  → Run the command again to resume partial NAIP downloads")
+
+        print(f"{'='*70}")
+
         return chip_records
 
 
