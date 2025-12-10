@@ -11,11 +11,12 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 ## Exciting News:
 
+
 - _December 2, 2025_  
-  **Peer-reviewed paper.** _"Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding"_ was accepted to the [2026 World Modeling Workshop](https://world-model-mila.github.io/) at the [Mila Quebec AI Institute](https://mila.quebec/en), alongside keynote talks by [Yoshua Bengio](https://yoshuabengio.org/) and [Yann LeCun](http://yann.lecun.com/). See [_paper_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth.pdf). 
+  **Peer-reviewed presentation in top venue.** Accepted to the [2026 World Modeling Workshop](https://world-model-mila.github.io/) at the [Mila Quebec AI Institute](https://mila.quebec/en), alongside keynote talks by [Yoshua Bengio](https://yoshuabengio.org/) and [Yann LeCun](http://yann.lecun.com/). See [_paper_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth.pdf). 
   
 - _November 17, 2025_  
-  **99% parameter reduction, 4× speedup.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) with [learned hash probing](https://arxiv.org/abs/2312.17241) tested on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6) with only 5 million parameters yields near state-of-the-art accuracy with spectacular efficiency. See [_hyperparameter grid search_](https://github.com/legel/deepearth/blob/main/encoders/xyzt/lfmc_grid_search.py).
+  **99% parameter reduction, 4× speedup.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) with [learned hash probing](https://arxiv.org/abs/2312.17241) tested on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6) demonstrates spectacular accuracy with 5M parameters. See [_code_](https://github.com/legel/deepearth/blob/main/encoders/xyzt/lfmc_grid_search.py).
 
 - _November 16, 2025_  
   **23% error reduction in space-time encoder.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt), achieving state-of-the-art R² on an ecological forecasting benchmark. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
