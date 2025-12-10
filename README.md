@@ -11,6 +11,9 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 ## Exciting News:
 
+- _December 2, 2025_  
+  **Peer-reviewed paper.** _"Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding"_ was accepted to the [2026 World Modeling Workshop](https://world-model-mila.github.io/) at the [Mila Quebec AI Institute](https://mila.quebec/en), alongside keynote talks by [Yoshua Bengio](https://yoshuabengio.org/) and [Yann LeCun](http://yann.lecun.com/). See [_paper_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth.pdf). 
+  
 - _November 17, 2025_  
   **99% parameter reduction, 4× speedup.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) with [learned hash probing](https://arxiv.org/abs/2312.17241) tested on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6) with only 5 million parameters yields near state-of-the-art accuracy with spectacular efficiency. See [_hyperparameter grid search_](https://github.com/legel/deepearth/blob/main/encoders/xyzt/lfmc_grid_search.py).
 
