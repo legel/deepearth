@@ -21,7 +21,7 @@ A planetary-scale neural architecture for understanding Earth through unified mu
 
 DeepEarth is a revolutionary approach to planetary intelligence that learns to understand Earth observations across all scales of space and time. Unlike traditional models that process different data types separately, DeepEarth creates a unified representation space where patterns can be discovered across modalities, locations, and temporal scales.
 
-### Recent Updates (September 29, 2024)
+### Recent Updates (September 29, 2025)
 
 **First End-to-End Training Results**: The full DeepEarth architecture is now successfully training with the complete "Symphony of Experts" design, featuring:
 - Dual-loss architecture: Universal space (256D) and modality-specific reconstruction
