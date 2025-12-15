@@ -164,6 +164,152 @@ class _hash_encode_second_backward(Function):
 hash_encode = _hash_encode.apply
 
 
+# =============================================================================
+# Warp-Level YOHO Autograd Function (Automatic Intra-Warp Deduplication)
+# =============================================================================
+
+class _hash_encode_warp_yoho(Function):
+    """
+    Warp-level YOHO hash encoding with automatic intra-warp deduplication.
+
+    This uses CUDA warp primitives (__match_any_sync, __shfl_sync) to automatically
+    deduplicate threads within each warp that share the same grid cell. No Python-side
+    preprocessing required - all deduplication happens in the CUDA kernel.
+
+    Now supports learned hash probing via probe_indices and index_logits parameters.
+    When index_logits is provided, the backward pass uses softmax weighting over
+    all probe candidates instead of just the argmax probe index.
+
+    Benefits:
+    - Zero Python overhead (no torch.unique calls)
+    - Automatic deduplication within 32-thread warps
+    - Shares embedding reads, each thread computes own interpolation
+    - Backward uses warp reduction to minimize atomic contention
+    """
+    @staticmethod
+    @custom_fwd(cast_inputs=torch.half, device_type='cuda')
+    def forward(ctx, inputs, embeddings, offsets, per_level_scale, base_resolution, calc_grad_inputs=False, probe_indices=None, index_logits=None, N_f=0, N_p=1, N_c=0, track_dedup=False):
+        # inputs: [B, D], float in [0, 1]
+        # embeddings: [sO, C], float
+        # offsets: [L + 1], int
+        # probe_indices: [L, N_c], int32 (optional, for learned probing)
+        # index_logits: [L, N_c, N_p], float32 (optional, for softmax-weighted gradients)
+        # track_dedup: bool, whether to track deduplication statistics
+        # RETURN: [B, F], float (and optionally dedup_stats)
+
+        inputs = inputs.contiguous()
+        embeddings = embeddings.contiguous()
+        offsets = offsets.contiguous()
+        per_level_scale = per_level_scale.contiguous()
+        base_resolution = base_resolution.contiguous()
+
+        # Handle probe_indices (may be None if learned probing disabled)
+        if probe_indices is not None:
+            probe_indices = probe_indices.contiguous()
+        else:
+            # Create empty tensor if not provided (backend will handle nullptr)
+            probe_indices = torch.empty(0, dtype=torch.int32, device=inputs.device)
+
+        # Handle index_logits (may be None if learned probing disabled)
+        if index_logits is not None:
+            index_logits = index_logits.contiguous().to(torch.float32)
+        else:
+            index_logits = torch.empty(0, dtype=torch.float32, device=inputs.device)
+
+        B, D = inputs.shape
+        L = offsets.shape[0] - 1
+        C = embeddings.shape[1]
+
+        # Apply log2 for CUDA exp2f
+        per_level_scale_log2 = torch.log2(per_level_scale)
+
+        # L first for cache optimization, permute later
+        outputs = torch.empty(L, B, C, device=inputs.device, dtype=embeddings.dtype)
+
+        if calc_grad_inputs:
+            dy_dx = torch.empty(B, L * D * C, device=inputs.device, dtype=embeddings.dtype)
+        else:
+            dy_dx = torch.empty(1, device=inputs.device, dtype=embeddings.dtype)
+
+        # Create dedup_stats tensor if tracking enabled
+        if track_dedup:
+            dedup_stats = torch.zeros(L, dtype=torch.uint32, device=inputs.device)
+        else:
+            dedup_stats = torch.empty(0, dtype=torch.uint32, device=inputs.device)
+
+        _backend.hash_encode_forward_warp_yoho(
+            inputs, embeddings, offsets, outputs,
+            B, D, C, L, per_level_scale_log2, base_resolution,
+            calc_grad_inputs, dy_dx,
+            probe_indices, N_f, N_p, N_c,
+            dedup_stats
+        )
+
+        # Permute to [B, L * C]
+        outputs = outputs.permute(1, 0, 2).reshape(B, L * C)
+
+        ctx.save_for_backward(inputs, embeddings, offsets, per_level_scale_log2, base_resolution, dy_dx, probe_indices, index_logits)
+        ctx.dims = [B, D, C, L]
+        ctx.calc_grad_inputs = calc_grad_inputs
+        ctx.learned_probing_params = [N_f, N_p, N_c]
+        ctx.track_dedup = track_dedup
+
+        # Store dedup_stats on the class for retrieval (since ctx is not accessible after forward)
+        if track_dedup:
+            _hash_encode_warp_yoho._last_dedup_stats = dedup_stats
+            _hash_encode_warp_yoho._last_batch_size = B
+        else:
+            _hash_encode_warp_yoho._last_dedup_stats = None
+
+        return outputs
+
+    @staticmethod
+    @custom_bwd(device_type='cuda')
+    def backward(ctx, grad):
+        inputs, embeddings, offsets, per_level_scale, base_resolution, dy_dx, probe_indices, index_logits = ctx.saved_tensors
+        B, D, C, L = ctx.dims
+        calc_grad_inputs = ctx.calc_grad_inputs
+        N_f, N_p, N_c = ctx.learned_probing_params
+
+        # grad: [B, L * C] --> [L, B, C]
+        grad = grad.view(B, L, C).permute(1, 0, 2).contiguous()
+
+        grad_embeddings = torch.zeros_like(embeddings)
+
+        if calc_grad_inputs:
+            grad_inputs = torch.zeros_like(inputs)
+        else:
+            grad_inputs = torch.empty(1, device=inputs.device, dtype=inputs.dtype)
+
+        # Create grad_index_logits tensor if index_logits is provided
+        if index_logits is not None and index_logits.numel() > 0:
+            grad_index_logits = torch.zeros_like(index_logits, device=inputs.device, dtype=torch.float32)
+        else:
+            grad_index_logits = torch.empty(0, device=inputs.device, dtype=torch.float32)
+
+        _backend.hash_encode_backward_warp_yoho(
+            grad, inputs, embeddings, offsets, grad_embeddings,
+            B, D, C, L, per_level_scale, base_resolution,
+            calc_grad_inputs, dy_dx, grad_inputs,
+            probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c
+        )
+
+        # Only return grad_index_logits if index_logits requires grad and is not empty
+        if index_logits.requires_grad and index_logits.numel() > 0:
+            grad_index_logits_return = grad_index_logits
+        else:
+            grad_index_logits_return = None
+
+        if calc_grad_inputs:
+            # Return gradients for all 12 input parameters (added index_logits)
+            return grad_inputs, grad_embeddings, None, None, None, None, None, grad_index_logits_return, None, None, None, None
+        else:
+            return None, grad_embeddings, None, None, None, None, None, grad_index_logits_return, None, None, None, None
+
+
+hash_encode_warp_yoho = _hash_encode_warp_yoho.apply
+
+
 class HashEncoder(nn.Module):
     def __init__(self, input_dim=3, num_levels=16, level_dim=2, per_level_scale=2, base_resolution=16, log2_hashmap_size=19, desired_resolution=None, enable_learned_probing=False, probing_range=4, index_codebook_size=1024):
         super().__init__()
@@ -317,3 +463,96 @@ class HashEncoder(nn.Module):
         outputs = outputs.view(prefix_shape + [self.output_dim])
 
         return outputs
+
+    def forward_warp_yoho(self, inputs, size=1, track_dedup=False):
+        """
+        Warp-level YOHO forward: automatic intra-warp deduplication in CUDA.
+
+        This method uses CUDA warp primitives to automatically deduplicate
+        threads within each 32-thread warp that share the same grid cell.
+        No Python preprocessing required - everything happens in CUDA.
+
+        Benefits over standard forward:
+        - Reduced global memory reads (shared within warp)
+        - Reduced atomic contention in backward pass
+        - Zero Python overhead
+
+        Now supports learned hash probing via probe_indices and index_logits.
+        The backward pass uses softmax weighting over index_logits for proper
+        gradient flow when learned probing is enabled.
+
+        Args:
+            inputs: [..., input_dim] coordinates in [-size, size]
+            size: coordinate range normalization
+            track_dedup: if True, track dedup statistics (stored in self._last_dedup_stats)
+
+        Returns:
+            [..., num_levels * level_dim] encoded features
+        """
+        # Update probe_indices from logits if training with learned probing
+        if self.enable_learned_probing and self.training:
+            if self.index_logits is not None:
+                self.probe_indices.copy_(torch.argmax(self.index_logits, dim=-1))
+
+        inputs = (inputs + size) / (2 * size)  # map to [0, 1]
+
+        prefix_shape = list(inputs.shape[:-1])
+        inputs = inputs.view(-1, self.input_dim)
+        B = inputs.shape[0]
+
+        # Get probe_indices and index_logits for learned probing (or None if disabled)
+        probe_indices = self.probe_indices if self.enable_learned_probing else None
+        index_logits = self.index_logits if self.enable_learned_probing else None
+
+        outputs = hash_encode_warp_yoho(
+            inputs, self.embeddings, self.offsets,
+            self.per_level_scale, self.base_resolution,
+            inputs.requires_grad,
+            probe_indices,
+            index_logits,  # NEW: pass index_logits for softmax-weighted backward
+            self.N_f if self.enable_learned_probing else 0,
+            self.N_p if self.enable_learned_probing else 1,
+            self.N_c if self.enable_learned_probing else 0,
+            track_dedup
+        )
+
+        # Store dedup stats if tracking was enabled
+        if track_dedup:
+            # Stats are stored on the Function class after forward
+            self._last_dedup_stats = _hash_encode_warp_yoho._last_dedup_stats
+            self._last_batch_size = _hash_encode_warp_yoho._last_batch_size
+
+        outputs = outputs.view(prefix_shape + [self.output_dim])
+        return outputs
+
+    def get_last_dedup_stats(self):
+        """Get deduplication statistics from the last forward_warp_yoho call.
+
+        Returns:
+            dict with:
+                - batch_size: total number of points in batch
+                - unique_per_level: tensor of unique cells per level (L,)
+                - dedup_ratio_per_level: tensor of dedup ratios per level (B / unique)
+                - total_unique: total unique cells across all levels
+                - total_nominal: total nominal lookups (B * L)
+                - overall_dedup_ratio: overall dedup ratio
+        """
+        if not hasattr(self, '_last_dedup_stats') or self._last_dedup_stats is None:
+            return None
+
+        stats = self._last_dedup_stats
+        B = self._last_batch_size
+        L = stats.shape[0]
+
+        unique_per_level = stats.cpu().numpy()
+        dedup_ratio = B / (unique_per_level + 1e-10)  # Avoid div by zero
+
+        return {
+            'batch_size': B,
+            'num_levels': L,
+            'unique_per_level': unique_per_level,
+            'dedup_ratio_per_level': dedup_ratio,
+            'total_unique': int(unique_per_level.sum()),
+            'total_nominal': B * L,
+            'overall_dedup_ratio': (B * L) / (unique_per_level.sum() + 1e-10)
+        }

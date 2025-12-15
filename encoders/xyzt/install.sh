@@ -93,7 +93,8 @@ else
 
     # Run build with progress indication
     # Note: bdist_wheel and g++ version warnings are harmless and can be ignored
-    echo "  Compiling CUDA kernels (this may take 30-60 seconds)..."
+    # The 3000+ line CUDA file with multiple template instantiations takes 5-10 minutes to compile
+    echo "  Compiling CUDA kernels (this takes 5-10 minutes due to template instantiations)..."
 
     # Run build in background and show progress
     TEMP_BUILD_LOG=$(mktemp)

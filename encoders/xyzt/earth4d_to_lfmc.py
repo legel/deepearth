@@ -27,7 +27,10 @@ from matplotlib.cm import ScalarMappable
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
-from earth4d import Earth4D
+from earth4d import (
+    Earth4D, AdaptiveRange,
+    spatiotemporal_sort_indices, block_shuffle_indices
+)
 
 # LFMC constants following allenai/lfmc approach
 MAX_LFMC_VALUE = 302  # 99.9th percentile of the LFMC values
@@ -375,18 +378,65 @@ class FullyGPUDataset:
         self.device = device
         self.n_degenerate_samples = n_degenerate_samples
         self.n_unique_samples = n - n_degenerate_samples
+        self.is_sorted = False  # Track if spatiotemporal sorting has been applied
 
         print(f"\nGPU dataset ready: {n:,} samples", flush=True)
+
+    def apply_spatiotemporal_sort(self):
+        """
+        Sort all data by 4D Morton code for YOHO warp coherence optimization.
+
+        After sorting, spatiotemporally nearby points are adjacent in memory.
+        This maximizes cell sharing within GPU warps for all Earth4D grids.
+        Combined with block_shuffle during training, this dramatically improves
+        YOHO deduplication ratios while maintaining training randomness.
+
+        Call this once before training starts.
+        """
+        if self.is_sorted:
+            print("Dataset already sorted, skipping.", flush=True)
+            return
+
+        print("\nApplying spatiotemporal sort for YOHO optimization...", flush=True)
+
+        # Compute sort indices from coordinates
+        sort_idx = spatiotemporal_sort_indices(self.coords)
+
+        # Sort all data tensors
+        self.coords = self.coords[sort_idx]
+        self.targets = self.targets[sort_idx]
+        self.species_idx = self.species_idx[sort_idx]
+        self.is_degenerate = self.is_degenerate[sort_idx]
+        self.date_values = self.date_values[sort_idx]
+
+        # Update split indices to point to sorted positions
+        # Create inverse mapping: inverse_idx[sort_idx[i]] = i
+        inverse_idx = torch.empty_like(sort_idx)
+        inverse_idx[sort_idx] = torch.arange(len(sort_idx), device=sort_idx.device)
+
+        if self.train_indices is not None:
+            self.train_indices = inverse_idx[self.train_indices]
+        if self.test_indices is not None:
+            self.test_indices = inverse_idx[self.test_indices]
+
+        self.is_sorted = True
+        print(f"  Sorted {self.n:,} samples by 4D Morton code", flush=True)
 
 
 class SpeciesAwareLFMCModel(nn.Module):
     """LFMC model with learnable species embeddings."""
 
-    def __init__(self, n_species, species_dim=32):
+    def __init__(self, n_species, species_dim=32,
+                 use_adaptive_range=False, use_yoho=False, use_triton=False,
+                 debug_yoho=False, verbose=True):
         super().__init__()
 
         self.earth4d = Earth4D(
-            verbose=True
+            verbose=verbose,
+            use_adaptive_range=use_adaptive_range,
+            use_yoho=use_yoho,
+            use_triton=use_triton,
+            debug_yoho=debug_yoho,
         )
 
         earth4d_dim = self.earth4d.get_output_dim()
@@ -541,13 +591,25 @@ def compute_metrics_gpu(preds, targets, is_degenerate=None):
     return overall
 
 
-def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
-    """Ultra-fast training - all GPU."""
+def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000,
+                    use_block_shuffle=False, block_size=1024):
+    """Ultra-fast training - all GPU.
+
+    Args:
+        use_block_shuffle: If True, use block shuffling to preserve spatial locality
+                          (for YOHO optimization with spatiotemporally sorted data)
+        block_size: Block size for block shuffling (default 1024 = 32 warps)
+    """
     model.train()
     n = len(indices)
 
-    # Shuffle ON GPU
-    perm = torch.randperm(n, device=indices.device)
+    # Shuffle ON GPU - use block shuffle if data is spatiotemporally sorted
+    if use_block_shuffle:
+        # Block shuffle preserves locality within blocks for YOHO efficiency
+        perm = block_shuffle_indices(n, block_size=block_size, device=indices.device)
+    else:
+        # Standard random shuffle
+        perm = torch.randperm(n, device=indices.device)
     indices = indices[perm]
 
     criterion = nn.MSELoss()
@@ -556,6 +618,13 @@ def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
     all_preds = []
     all_targets = []
     all_degens = []
+
+    # Track timing if profiler is enabled
+    debug_yoho = hasattr(model.earth4d, 'debug_yoho') and model.earth4d.debug_yoho
+    if debug_yoho:
+        profiler = model.earth4d._yoho_profiler
+        total_forward_ms = 0.0
+        total_backward_ms = 0.0
 
     # Process batches
     n_batches = (n + batch_size - 1) // batch_size
@@ -570,7 +639,19 @@ def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
         targets = dataset.targets[batch_idx]
         species = dataset.species_idx[batch_idx]
 
+        # Time forward pass (includes Earth4D + MLP)
+        if debug_yoho:
+            torch.cuda.synchronize()
+            fwd_start = torch.cuda.Event(enable_timing=True)
+            fwd_end = torch.cuda.Event(enable_timing=True)
+            fwd_start.record()
+
         preds = model(coords, species)
+
+        if debug_yoho:
+            fwd_end.record()
+            torch.cuda.synchronize()
+            total_forward_ms += fwd_start.elapsed_time(fwd_end)
 
         # FIX #2: Use compute_loss() with entropy regularization if available
         if hasattr(model.earth4d, 'compute_loss'):
@@ -584,7 +665,21 @@ def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
             loss = criterion(preds, targets)
 
         optimizer.zero_grad(set_to_none=True)
+
+        # Time backward pass
+        if debug_yoho:
+            torch.cuda.synchronize()
+            bwd_start = torch.cuda.Event(enable_timing=True)
+            bwd_end = torch.cuda.Event(enable_timing=True)
+            bwd_start.record()
+
         loss.backward()
+
+        if debug_yoho:
+            bwd_end.record()
+            torch.cuda.synchronize()
+            total_backward_ms += bwd_start.elapsed_time(bwd_end)
+
         optimizer.step()
 
         # FIX #1: Update probe indices after optimizer step (for learned probing)
@@ -604,7 +699,113 @@ def train_epoch_gpu(model, dataset, indices, optimizer, batch_size=20000):
     all_targets = torch.cat(all_targets)
     all_degens = torch.cat(all_degens)
 
+    # Store full timing on profiler
+    if debug_yoho:
+        profiler._full_forward_ms = total_forward_ms
+        profiler._full_backward_ms = total_backward_ms
+
     overall, unique, degen = compute_metrics_gpu(all_preds, all_targets, all_degens)
+
+    return overall, unique, degen
+
+
+def train_epoch_parallel_streams(model, dataset, indices, optimizer, batch_size=1024,
+                                  n_streams=8, use_block_shuffle=True, block_size=1024):
+    """
+    Parallel batch training using CUDA streams for forward passes with accumulated backward.
+
+    Strategy: Run forward passes in parallel across CUDA streams, accumulate predictions,
+    then run a single backward pass on concatenated results. This avoids autograd race
+    conditions while still benefiting from parallel forward computation.
+
+    NOTE: For true Hogwild!-style training with concurrent backward passes, a custom CUDA
+    implementation would be needed (see fused kernel approach in parallel_training_analysis.md).
+
+    Args:
+        model: SpeciesAwareLFMCModel
+        dataset: LFMCDataset with spatiotemporal sorting applied
+        indices: Training indices
+        optimizer: PyTorch optimizer
+        batch_size: Samples per batch (default 1024)
+        n_streams: Number of CUDA streams for parallel processing (default 8)
+        use_block_shuffle: Use block shuffling to preserve locality (default True)
+        block_size: Block size for shuffling (default 1024)
+
+    Returns:
+        Metrics tuple (overall, unique, degen)
+    """
+    model.train()
+    n = len(indices)
+
+    # Shuffle with block preservation for locality
+    if use_block_shuffle:
+        perm = block_shuffle_indices(n, block_size=block_size, device=indices.device)
+    else:
+        perm = torch.randperm(n, device=indices.device)
+    indices = indices[perm]
+
+    criterion = nn.MSELoss()
+
+    # Create CUDA streams for parallel forward passes
+    streams = [torch.cuda.Stream() for _ in range(n_streams)]
+
+    # Prepare all batch data upfront
+    n_batches = (n + batch_size - 1) // batch_size
+    batch_data = []
+    for i in range(n_batches):
+        start = i * batch_size
+        end = min(start + batch_size, n)
+        batch_idx = indices[start:end]
+        batch_data.append({
+            'coords': dataset.coords[batch_idx],
+            'targets': dataset.targets[batch_idx],
+            'species': dataset.species_idx[batch_idx],
+            'degens': dataset.is_degenerate[batch_idx],
+            'size': end - start
+        })
+
+    # Zero gradients
+    optimizer.zero_grad(set_to_none=True)
+
+    # Phase 1: Parallel forward passes across streams
+    all_preds = []
+    all_targets = []
+    all_degens = []
+
+    for i, batch in enumerate(batch_data):
+        stream_idx = i % n_streams
+        stream = streams[stream_idx]
+
+        with torch.cuda.stream(stream):
+            # Forward pass (can run in parallel across streams)
+            preds = model(batch['coords'], batch['species'])
+            all_preds.append(preds)
+            all_targets.append(batch['targets'])
+            all_degens.append(batch['degens'])
+
+    # Synchronize all streams before backward
+    torch.cuda.synchronize()
+
+    # Phase 2: Single backward pass with accumulated loss (no race conditions)
+    all_preds_cat = torch.cat(all_preds)
+    all_targets_cat = torch.cat(all_targets)
+
+    total_loss = criterion(all_preds_cat, all_targets_cat)
+    total_loss.backward()
+
+    # Single optimizer step
+    optimizer.step()
+
+    # Update probe indices if using learned probing
+    if hasattr(model.earth4d.encoder.xyz_encoder, 'update_probe_indices'):
+        model.earth4d.encoder.xyz_encoder.update_probe_indices()
+        model.earth4d.encoder.xyt_encoder.update_probe_indices()
+        model.earth4d.encoder.yzt_encoder.update_probe_indices()
+        model.earth4d.encoder.xzt_encoder.update_probe_indices()
+
+    # Compute metrics
+    all_degens_cat = torch.cat(all_degens)
+    overall, unique, degen = compute_metrics_gpu(all_preds_cat.detach(), all_targets_cat, all_degens_cat)
 
     return overall, unique, degen
 
@@ -710,11 +911,53 @@ def run_training_session(args, run_name=""):
     dataset = FullyGPUDataset(args.data_path, device, use_ai2_splits=True)
     splits = get_ai2_splits(dataset)
 
-    # Model with learnable species embeddings
+    # Model with learnable species embeddings and optional enhancements
+    use_adaptive_range = getattr(args, 'use_adaptive_range', False)
+    use_yoho = getattr(args, 'use_yoho', False)
+    use_triton = getattr(args, 'use_triton', False)
+    track_yoho = getattr(args, 'track_yoho', False)
+    debug_yoho = getattr(args, 'debug_yoho', False)
+    parallel_streams = getattr(args, 'parallel_streams', 0)
+
     model = SpeciesAwareLFMCModel(
         dataset.n_species,
-        species_dim=args.species_dim
+        species_dim=args.species_dim,
+        use_adaptive_range=use_adaptive_range,
+        use_yoho=use_yoho,
+        use_triton=use_triton,
+        debug_yoho=debug_yoho,
+        verbose=True
     ).to(device)
+
+    # Fit adaptive range if enabled
+    if use_adaptive_range:
+        print("\nFitting adaptive range to training data...", flush=True)
+        train_coords = dataset.coords[splits['train']].cpu()
+        model.earth4d.fit_range(train_coords, buffer_fraction=0.25)
+        print("Analyzing active levels...", flush=True)
+        model.earth4d.analyze_levels(train_coords)
+
+    # Apply spatiotemporal sorting for YOHO optimization
+    # NOTE: Disabled - sorting + block shuffle changes training dynamics and hurts accuracy
+    # The YOHO kernel optimization works without sorting, just with less deduplication benefit
+    # if use_yoho:
+    #     dataset.apply_spatiotemporal_sort()
+
+    # Enable YOHO tracking if requested
+    if track_yoho and use_yoho:
+        model.earth4d.enable_yoho_tracking(True)
+        print("\nYOHO batch tracking enabled", flush=True)
+
+    # Check for parallel streams compatibility
+    has_learned_probing = hasattr(model.earth4d.encoder.xyz_encoder, 'index_logits')
+    if parallel_streams > 0 and has_learned_probing:
+        print(f"\nWARNING: Parallel streams disabled - incompatible with learned probing", flush=True)
+        print(f"  (Learned probing does inplace updates that cause autograd errors)", flush=True)
+        parallel_streams = 0
+
+    if parallel_streams > 0:
+        print(f"\nParallel stream training enabled: {parallel_streams} CUDA streams", flush=True)
+        print(f"  Using parallel forward passes with accumulated backward", flush=True)
 
     # Count parameters
     earth4d_params = sum(p.numel() for p in model.earth4d.parameters())
@@ -757,6 +1000,7 @@ def run_training_session(args, run_name=""):
     # Tracking metrics
     metrics_history = []
     metrics_ema = MetricsEMA(alpha=0.1)  # EMA with smoothing factor 0.1
+    epoch_times = []  # Track epoch times for comparison
 
     print("\n" + "="*80, flush=True)
     print("Training with species embeddings (UNIQUE=Single species, MULTI=Multi-species):", flush=True)
@@ -766,10 +1010,19 @@ def run_training_session(args, run_name=""):
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
 
-        # Train
-        trn_overall, trn_unique, trn_degen = train_epoch_gpu(
-            model, dataset, splits['train'], optimizer, args.batch_size
-        )
+        # Train (block shuffle disabled - it changes training dynamics and hurts accuracy)
+        if parallel_streams > 0:
+            # Parallel batch processing with CUDA streams (Hogwild!-style)
+            trn_overall, trn_unique, trn_degen = train_epoch_parallel_streams(
+                model, dataset, splits['train'], optimizer, args.batch_size,
+                n_streams=parallel_streams, use_block_shuffle=False, block_size=1024
+            )
+        else:
+            # Standard sequential batch processing
+            trn_overall, trn_unique, trn_degen = train_epoch_gpu(
+                model, dataset, splits['train'], optimizer, args.batch_size,
+                use_block_shuffle=False, block_size=1024
+            )
 
         # Evaluate test split
         test_overall, test_unique, test_degen, test_gt, test_pred, test_types = evaluate_split(
@@ -777,6 +1030,9 @@ def run_training_session(args, run_name=""):
         )
 
         dt = time.time() - t0
+        epoch_times.append(dt)
+
+        # Note: YOHO stats are now tracked internally during forward() when enabled
 
         # Update EMAs
         current_metrics = {
@@ -823,10 +1079,14 @@ def run_training_session(args, run_name=""):
         # Show predictions table every epoch
         print_predictions_table(test_gt, test_pred, test_types)
 
-        # LR decay -  reduction per epoch 
+        # LR decay -  reduction per epoch
         for g in optimizer.param_groups:
-            g['lr'] *= 0.9995
+            g['lr'] *= 0.99995
         print(f"  Learning rate: {optimizer.param_groups[0]['lr']:.6f}", flush=True)
+
+        # Print YOHO profiling summary if enabled
+        if debug_yoho:
+            model.earth4d.print_yoho_profile(epoch)
 
     print("="*80, flush=True)
 
@@ -944,8 +1204,31 @@ def run_training_session(args, run_name=""):
     print("\nCreating error distribution histogram...", flush=True)
     create_error_histogram(csv_path, output_dir)
 
+    # Print YOHO summary if tracking was enabled
+    yoho_summary = None
+    if track_yoho and use_yoho:
+        model.earth4d.print_yoho_batch_summary()
+        yoho_summary = model.earth4d.get_yoho_batch_summary()
+
     # Return final metrics for comparison
-    return final
+    avg_epoch_time = sum(epoch_times) / len(epoch_times) if epoch_times else 0
+    results = {
+        'test_rmse': final['test_rmse'],
+        'test_mae': final['test_mae'],
+        'test_r2': final['test_r2'],
+        'train_rmse': final['train_rmse'],
+        'train_mae': final['train_mae'],
+        'train_r2': final['train_r2'],
+        'avg_epoch_time_s': avg_epoch_time,
+        'total_epochs': args.epochs,
+        'use_adaptive_range': use_adaptive_range,
+        'use_yoho': use_yoho,
+        'use_triton': use_triton,
+    }
+    if yoho_summary:
+        results['yoho_summary'] = yoho_summary
+
+    return results
 
 
 def export_test_predictions_csv(dataset, test_predictions, test_ground_truth, test_indices, output_dir):
@@ -1974,21 +2257,95 @@ def main():
     parser.add_argument('--data-path', default=None,
                        help='Path to LFMC CSV. If not provided, downloads AI2 official CSV.')
     parser.add_argument('--epochs', type=int, default=2500)
-    parser.add_argument('--batch-size', type=int, default=30000)
-    parser.add_argument('--lr', type=float, default=0.0125)
+    parser.add_argument('--batch-size', type=int, default=100000)
+    parser.add_argument('--lr', type=float, default=0.0025)
     parser.add_argument('--output-dir', type=str, default='./outputs')
     parser.add_argument('--species-dim', type=int, default=768,
                        help='Dimension of learnable species embeddings')
     parser.add_argument('--seed', type=int, default=0,
                        help='Random seed for reproducibility (default: 0)')
+    # NEW: Enhancement flags
+    parser.add_argument('--use-adaptive-range', action='store_true',
+                       help='Enable adaptive range normalization (fit to data extent)')
+    parser.add_argument('--use-yoho', action='store_true',
+                       help='Enable YOHO optimization for coherent batches')
+    parser.add_argument('--use-triton', action='store_true',
+                       help='Enable Triton acceleration for scatter operations')
+    parser.add_argument('--track-yoho', action='store_true',
+                       help='Track YOHO statistics per batch (requires --use-yoho)')
+    parser.add_argument('--debug-yoho', action='store_true',
+                       help='Enable detailed YOHO profiling with timing breakdown per epoch')
+    parser.add_argument('--parallel-streams', type=int, default=0,
+                       help='Number of CUDA streams for parallel batch processing (0=disabled, 8=recommended)')
+    parser.add_argument('--compare', action='store_true',
+                       help='Run comparison: baseline vs enhanced (runs both sequentially)')
     args = parser.parse_args()
 
     device = 'cuda'
     # Note: cudnn.benchmark is set to False in run_training_session for determinism
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Run training session
-    run_training_session(args)
+    if args.compare:
+        # Run comparison test: baseline first, then enhanced
+        print("\n" + "="*80)
+        print("COMPARISON MODE: Running baseline vs enhanced")
+        print("="*80)
+
+        # Run baseline
+        print("\n" + "#"*80)
+        print("# PHASE 1: BASELINE (no enhancements)")
+        print("#"*80 + "\n")
+        baseline_args = argparse.Namespace(**vars(args))
+        baseline_args.use_adaptive_range = False
+        baseline_args.use_yoho = False
+        baseline_args.use_triton = False
+        baseline_args.track_yoho = False
+        baseline_args.debug_yoho = args.debug_yoho  # Preserve debug flag for comparison
+        baseline_args.parallel_streams = 0  # Disable parallel streams for baseline (causes inplace op errors)
+        baseline_args.compare = False
+        baseline_args.output_dir = args.output_dir + '_baseline'
+        baseline_results = run_training_session(baseline_args, run_name="baseline")
+
+        # Run enhanced
+        print("\n" + "#"*80)
+        print("# PHASE 2: ENHANCED (adaptive range + YOHO)")
+        print("#"*80 + "\n")
+        enhanced_args = argparse.Namespace(**vars(args))
+        enhanced_args.use_adaptive_range = False #True
+        enhanced_args.use_yoho = True
+        enhanced_args.use_triton = False #True
+        enhanced_args.track_yoho = True
+        enhanced_args.debug_yoho = args.debug_yoho  # Preserve debug flag for comparison
+        enhanced_args.compare = False
+        enhanced_args.output_dir = args.output_dir + '_enhanced'
+        enhanced_results = run_training_session(enhanced_args, run_name="enhanced")
+
+        # Print comparison summary
+        print("\n" + "="*80)
+        print("COMPARISON SUMMARY")
+        print("="*80)
+        print(f"\n{'Metric':<25} {'Baseline':>15} {'Enhanced':>15} {'Diff':>15}")
+        print("-"*70)
+        for metric in ['test_rmse', 'test_mae', 'test_r2', 'avg_epoch_time_s']:
+            baseline_val = baseline_results.get(metric, 0)
+            enhanced_val = enhanced_results.get(metric, 0)
+            diff = enhanced_val - baseline_val
+            diff_str = f"{diff:+.3f}"
+            if metric in ['test_rmse', 'test_mae', 'avg_epoch_time_s']:
+                diff_str += " (better)" if diff < 0 else " (worse)" if diff > 0 else ""
+            else:
+                diff_str += " (better)" if diff > 0 else " (worse)" if diff < 0 else ""
+            print(f"{metric:<25} {baseline_val:>15.3f} {enhanced_val:>15.3f} {diff_str:>15}")
+
+        if 'yoho_summary' in enhanced_results:
+            yoho = enhanced_results['yoho_summary']
+            print(f"\nYOHO Statistics:")
+            print(f"  Hash lookups saved: {yoho['hashes_saved_pct']:.1f}%")
+            print(f"  Average reduction: {yoho['avg_batch_reduction_ratio']:.1f}×")
+
+    else:
+        # Single run
+        run_training_session(args)
 
 
 if __name__ == "__main__":
