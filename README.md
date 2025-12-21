@@ -10,8 +10,9 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 ![Earth4D space-time encoder](https://github.com/legel/deepearth/blob/main/docs/earth4d_spacetime_encoder.png) 
 
 ## Exciting News:
-
-
+- _December 19, 2025_  
+  **Supercomputing Award.** US DOE [National Energy Research Scientific Computing Center](https://www.nersc.gov) has awarded a DeepEarth team with supercomputing access in 2026 through [EESSD](https://science.osti.gov/ber/Research/eessd).
+  
 - _December 2, 2025_  
   **Peer-reviewed presentation in top venue.** Accepted to the [2026 World Modeling Workshop](https://world-model-mila.github.io/) at the [Mila Quebec AI Institute](https://mila.quebec/en), alongside keynote talks by [Yoshua Bengio](https://yoshuabengio.org/) and [Yann LeCun](http://yann.lecun.com/). See [_paper_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth.pdf). 
   
