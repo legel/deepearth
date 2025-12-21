@@ -34,6 +34,7 @@ except ImportError:
             name='hashencoder_cuda',
             sources=[
                 os.path.join(_src_path, 'src', 'hashencoder.cu'),
+                os.path.join(_src_path, 'src', 'precompute.cu'),
                 os.path.join(_src_path, 'src', 'bindings.cpp'),
             ],
             extra_cflags=['-O3', '-std=c++17'],

@@ -11,13 +11,11 @@ Available encoders:
 from .earth4d import (
     Earth4D,
     Grid4DSpatiotemporalEncoder,
-    CoordinateConverter
 )
 
 __all__ = [
     'Earth4D',
     'Grid4DSpatiotemporalEncoder',
-    'CoordinateConverter'
 ]
 
 __version__ = '1.0.0'
