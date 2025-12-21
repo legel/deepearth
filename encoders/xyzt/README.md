@@ -20,8 +20,8 @@ Earth4D combines decomposed hash encoding with learned hash probing for state-of
 
 | Model | Data Inputs | MAE (pp) | RMSE (pp) | R² |
 |-------|-------------|----------|-----------|-----|
-| **Earth4D** (Learned Hashing) | (x,y,z,t) + Species Name | **12.4** | 20.3 | **0.745** |
-| Galileo (Pre-Trained) | (x,y,z,t) + Species + Remote Sensing | 12.6 | **18.9** | 0.72 |
+| **Earth4D** (Learned Hashing) | (x,y,z,t) + Species Name | **12.1** | **19.9** | **0.755** |
+| Galileo (Pre-Trained) | (x,y,z,t) + Species + Remote Sensing | 12.6 | 18.9 | 0.72 |
 
 *Earth4D surpasses Allen Institute for AI's Galileo foundation model (pre-trained on Sentinel-2 optical imagery, Sentinel-1 SAR, VIIRS night lights, ERA-5 weather, TerraClimate soil/water, and SRTM topography) using only (x,y,z,t) coordinates and learnable species embeddings—without satellite imagery, weather data, or topography.*
 
@@ -29,7 +29,7 @@ Earth4D combines decomposed hash encoding with learned hash probing for state-of
 
 | Configuration | Parameters | MAE (pp) | R² | vs. Baseline |
 |--------------|-----------|----------|-----|--------------|
-| **With Learned Probing** | 800M | **12.4** | **0.745** | **-25.2% MAE, +28.4% R²** |
+| **With Learned Probing** | 800M | **12.1** | **0.755** | **-27.1% MAE, +30.2% R²** |
 | Baseline (no probing) | 724M | 16.6 | 0.58 | - |
 
 ### Extreme Compression (Edge/Mobile Deployment)
@@ -57,8 +57,8 @@ bash install.sh
 ### Run LFMC Benchmark
 
 ```bash
-# Train on Globe-LFMC 2.0 benchmark
-python -m benchmarks.lfmc.train --epochs 2500 --output-dir ./outputs
+# Train on Globe-LFMC 2.0 benchmark (achieves SoTA in ~5 hours)
+python -m benchmarks.lfmc.train --epochs 10000 --batch-size 256 --fused-adam --weight-decay 0.001 --lr 0.00025 --output-dir ./outputs
 ```
 
 See [benchmarks/lfmc/README.md](benchmarks/lfmc/README.md) for full benchmark documentation.
