@@ -30,13 +30,13 @@ nvcc_flags = [
 ]
 
 # Define the extension
-# Split files: hashencoder.cu (core), yoho.cu (YOHO optimization)
+# Split files: hashencoder.cu (core), precompute.cu (fixed coord optimization)
 ext_modules = [
     CUDAExtension(
         name='hashencoder_cuda',
         sources=[
             os.path.join(src_dir, 'hashencoder.cu'),
-            os.path.join(src_dir, 'yoho.cu'),
+            os.path.join(src_dir, 'precompute.cu'),
             os.path.join(src_dir, 'bindings.cpp'),
         ],
         extra_compile_args={
