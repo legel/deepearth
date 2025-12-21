@@ -54,6 +54,15 @@ cd deepearth/encoders/xyzt
 bash install.sh
 ```
 
+### Run LFMC Benchmark
+
+```bash
+# Train on Globe-LFMC 2.0 benchmark
+python -m benchmarks.lfmc.train --epochs 2500 --output-dir ./outputs
+```
+
+See [benchmarks/lfmc/README.md](benchmarks/lfmc/README.md) for full benchmark documentation.
+
 ### Basic Usage
 
 ```python
@@ -173,20 +182,40 @@ Earth4D enables research in:
 - **Disaster Response**: Real-time multi-scale hazard assessment
 - **Subsurface Modeling**: Geological spatial reconstruction
 
+## Project Structure
+
+```
+encoders/xyzt/
+├── earth4d.py          # Main Earth4D encoder module
+├── training.py         # Generic training infrastructure with Protocol classes
+├── coordinates.py      # Coordinate transformation utilities
+├── sorting.py          # Spatiotemporal sorting for cache locality
+├── hashencoder/        # CUDA hash encoding kernels
+│   ├── hashgrid.py     # PyTorch interface
+│   └── src/            # CUDA source files
+└── benchmarks/
+    └── lfmc/           # Globe-LFMC 2.0 benchmark
+        ├── train.py    # Training script
+        ├── model.py    # SpeciesAwareLFMCModel
+        ├── data.py     # Dataset and data loading
+        └── README.md   # Benchmark documentation
+```
+
 ## Key Technical Foundations
 
 Earth4D builds on:
 - [Instant Neural Graphics Primitives](https://nvlabs.github.io/instant-ngp/) (Müller et al., 2022)
 - [Compact Neural Graphics Primitives with Learned Hash Probing](https://research.nvidia.com/labs/toronto-ai/compact-ngp/) (Takikawa et al., 2023)
-- [Grid4D](https://github.com/JiaweiXu8/Grid4D) (4D extension)
+- [Grid4D](https://github.com/JiaweiXu8/Grid4D) (Jiawei et al., 2024)
 
 ## Citation
 
 ```bibtex
-@article{legel2025deepearth,
+@inproceedings{legel2026deepearth,
   title={Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding},
   author={Legel, Lance and Huang, Qin and Voelker, Brandon and Neamati, Daniel and Johnson, Patrick Alan and Bastani, Favyen and Rose, Jeff and Hennessy, James Ryan and Guralnick, Robert and Soltis, Douglas and Soltis, Pamela and Wang, Shaowen},
-  year={2025}
+  booktitle={2026 World Modeling Workshop at Mila - Quebec AI Institute},
+  year={2026}
 }
 ```
 

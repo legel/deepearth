@@ -1,564 +1,24 @@
 """
-Earth4D: Grid4D Encoder for Planetary (X,Y,Z,T) Deep Learning with Learned Hash Probing
-=========================================================================================
-
-Earth4D provides a Grid4D-based spatiotemporal encoder for planetary-scale
-deep learning tasks involving latitude, longitude, elevation, and time coordinates.
-
-The encoder uses decomposed hash encoding with separate spatial (xyz) and
-temporal (xyt, yzt, xzt) projections for efficient 4D representation learning.
-Learned hash probing (Takikawa et al., 2023) is enabled by default for superior
-accuracy and 4× memory reduction.
-
-Key Features:
-- Learned hash probing for improved accuracy (+25% R², -23% MAE on LFMC benchmark)
-- Multi-resolution hash encoding for scalable feature extraction
-- Configurable spatial and temporal resolution hierarchies
-- Automatic entropy regularization for optimal probe distribution
-- Optional automatic ECEF coordinate conversion and normalization
-- Configurable multi-resolution scales in meters and seconds
-- Designed for planetary-scale spatiotemporal modeling
-
-Performance:
-On Globe-LFMC 2.0 (live fuel moisture content prediction, AI2 official split):
-  - With learned probing (N_p=32): MAE=12.7pp, R²=0.735 (matches pretrained Galileo)
-  - Without learned probing: MAE=16.5pp, R²=0.583
-  - Accuracy improvement: -23% MAE, +26% R²
-  - Training time tradeoff: +71% overhead for state-of-the-art accuracy
-
-Usage:
-    from deepearth.encoders.xyzt import Earth4D
-
-    # Basic usage with learned probing (default, optimal settings)
-    encoder = Earth4D()
-    features = encoder(coordinates_xyzt)
-
-    # Disable learned probing if needed
-    encoder = Earth4D(enable_learned_probing=False)
-
-    # Custom learned probing configuration
-    encoder = Earth4D(
-        enable_learned_probing=True,
-        probing_range=32,  # Must be power-of-2 (optimal: 32)
-        probe_entropy_weight=0.5  # Automatic entropy regularization
-    )
-
-References:
-  Takikawa et al. (2023). Compact Neural Graphics Primitives with Learned Hash Probing.
-  arXiv:2312.17241
-
-Author: Earth4D Team, led by ASU PhD student Qin Huang
-Contributors: Anthropic Sonnet 4.5 (implementation assistance via Claude Code v2.0.42)
-License: MIT
+Earth4D: Planetary (X,Y,Z,T) Positional Encoder
 """
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
 
 import torch
 import torch.nn as nn
-import numpy as np
-from typing import List, Optional, Union, Tuple, Dict
-import warnings
+from typing import Optional
 
-# Import hash encoder - adjust path as needed for your environment
-try:
-    from .hashencoder.hashgrid import HashEncoder
-except ImportError:
-    try:
-        # Try absolute import if relative import fails
-        from hashencoder.hashgrid import HashEncoder
-    except ImportError:
-        try:
-            # Try adding current directory to path for direct script execution
-            import os
-            import sys
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            if current_dir not in sys.path:
-                sys.path.insert(0, current_dir)
-            from hashencoder.hashgrid import HashEncoder
-        except ImportError:
-            warnings.warn(
-                "HashEncoder not found. Please install the hash encoding library. "
-                "This encoder is required for Grid4D functionality."
-            )
-            HashEncoder = None
-
-
-class CoordinateConverter:
-    """
-    Coordinate conversion utilities for Earth4D.
-
-    Handles conversion between geographic coordinates (lat, lon, elevation, time)
-    and normalized ECEF coordinates suitable for Grid4D encoding.
-    """
-
-    # WGS84 ellipsoid parameters
-    WGS84_A = 6378137.0  # Semi-major axis in meters
-    WGS84_F = 1.0 / 298.257223563  # Flattening
-    WGS84_B = WGS84_A * (1 - WGS84_F)  # Semi-minor axis
-    WGS84_E2 = 2 * WGS84_F - WGS84_F * WGS84_F  # First eccentricity squared
-
-    def __init__(self,
-                 use_wgs84: bool = True,
-                 earth_radius: float = 6371000.0,  # meters (fallback if not WGS84)
-                 time_origin: float = 0.0,          # reference time
-                 time_scale: float = 1.0):          # time scaling factor
-        """
-        Initialize coordinate converter.
-
-        Args:
-            use_wgs84: Use WGS84 ellipsoid (True) or spherical approximation (False)
-            earth_radius: Earth radius in meters for spherical approximation
-            time_origin: Reference time point (seconds since epoch)
-            time_scale: Scaling factor for time normalization
-        """
-        self.use_wgs84 = use_wgs84
-        self.earth_radius = earth_radius
-        self.time_origin = time_origin
-        self.time_scale = time_scale
-        
-    def geographic_to_ecef(self,
-                          lat: torch.Tensor,
-                          lon: torch.Tensor,
-                          elevation: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Convert geographic coordinates (lat, lon, elevation) to ECEF.
-
-        Args:
-            lat: Latitude in degrees
-            lon: Longitude in degrees
-            elevation: Elevation in meters above sea level
-
-        Returns:
-            Tuple of (x, y, z) ECEF coordinates in meters
-        """
-        # Convert to radians
-        lat_rad = torch.deg2rad(lat)
-        lon_rad = torch.deg2rad(lon)
-
-        if self.use_wgs84:
-            # WGS84 ellipsoid conversion
-            sin_lat = torch.sin(lat_rad)
-            cos_lat = torch.cos(lat_rad)
-            sin_lon = torch.sin(lon_rad)
-            cos_lon = torch.cos(lon_rad)
-
-            # Prime vertical radius of curvature
-            N = self.WGS84_A / torch.sqrt(1 - self.WGS84_E2 * sin_lat * sin_lat)
-
-            # ECEF coordinates
-            x = (N + elevation) * cos_lat * cos_lon
-            y = (N + elevation) * cos_lat * sin_lon
-            z = (N * (1 - self.WGS84_E2) + elevation) * sin_lat
-        else:
-            # Spherical approximation (original implementation)
-            radius = self.earth_radius + elevation
-            x = radius * torch.cos(lat_rad) * torch.cos(lon_rad)
-            y = radius * torch.cos(lat_rad) * torch.sin(lon_rad)
-            z = radius * torch.sin(lat_rad)
-
-        return x, y, z
-    
-    def normalize_coordinates(self,
-                            x: torch.Tensor,
-                            y: torch.Tensor,
-                            z: torch.Tensor,
-                            t: torch.Tensor,
-                            spatial_bound: float = 1.0,
-                            temporal_bound: float = 1.0) -> torch.Tensor:
-        """
-        Normalize ECEF coordinates and time to [0, 1] range.
-
-        Args:
-            x, y, z: ECEF coordinates
-            t: Time coordinates
-            spatial_bound: Spatial normalization bound
-            temporal_bound: Temporal normalization bound
-
-        Returns:
-            Normalized coordinates tensor of shape (..., 4)
-        """
-        # Use fixed normalization bounds based on Earth's size
-        # This ensures consistent normalization across batches
-        if self.use_wgs84:
-            # Maximum ECEF coordinates are roughly Earth radius + max elevation
-            max_coord = self.WGS84_A + 10000  # Allow for up to 10km elevation
-        else:
-            max_coord = self.earth_radius + 10000
-
-        # Normalize spatial coordinates to [-spatial_bound, spatial_bound]
-        # HashEncoder expects coordinates in [-size, size] range
-        x_norm = (x / max_coord) * spatial_bound
-        y_norm = (y / max_coord) * spatial_bound
-        z_norm = (z / max_coord) * spatial_bound
-
-        # Ensure coordinates are in valid range [-spatial_bound, spatial_bound]
-        x_norm = torch.clamp(x_norm, -spatial_bound, spatial_bound)
-        y_norm = torch.clamp(y_norm, -spatial_bound, spatial_bound)
-        z_norm = torch.clamp(z_norm, -spatial_bound, spatial_bound)
-
-        # Normalize temporal coordinates
-        # Assume t is already in [0, 1] range or handle it appropriately
-        if t.min() < 0 or t.max() > 1:
-            # If time is not normalized, normalize to [0, 1]
-            t_min = t.min()
-            t_max = t.max()
-            t_range = t_max - t_min + 1e-6  # Avoid division by zero
-            t_norm = (t - t_min) / t_range * temporal_bound
-        else:
-            t_norm = t * temporal_bound
-
-        return torch.stack([x_norm, y_norm, z_norm, t_norm], dim=-1)
-    
-    def process_raw_coordinates(self,
-                               lat: torch.Tensor,
-                               lon: torch.Tensor, 
-                               elevation: torch.Tensor,
-                               time: torch.Tensor,
-                               spatial_bound: float = 1.0,
-                               temporal_bound: float = 1.0) -> torch.Tensor:
-        """
-        Complete pipeline: geographic -> ECEF -> normalized.
-        
-        Args:
-            lat: Latitude in degrees
-            lon: Longitude in degrees
-            elevation: Elevation in meters
-            time: Time coordinates
-            spatial_bound: Spatial normalization bound
-            temporal_bound: Temporal normalization bound
-            
-        Returns:
-            Normalized XYZT coordinates tensor
-        """
-        # Convert to ECEF
-        x, y, z = self.geographic_to_ecef(lat, lon, elevation)
-        
-        # Normalize
-        return self.normalize_coordinates(x, y, z, time, spatial_bound, temporal_bound)
-
-
-class Grid4DSpatiotemporalEncoder(nn.Module):
-    """
-    Core Grid4D spatiotemporal encoder.
-
-    Implements decomposed hash encoding for 4D coordinates with separate
-    spatial (xyz) and temporal (xyt, yzt, xzt) encoding pathways.
-    """
-
-    def __init__(self,
-                 # Spatial encoding configuration
-                 spatial_levels: int = 24,  # Match Earth4D default
-                 spatial_features: int = 2,
-                 spatial_base_res: int = 8,
-                 spatial_max_res: int = 134217728,  # 2^27 for sub-meter
-                 spatial_hashmap: int = 22,  # Match Earth4D default
-                 # Temporal encoding configuration
-                 temporal_levels: int = 19,  # Match Earth4D default
-                 temporal_features: int = 2,
-                 temporal_base_res: List[int] = None,
-                 temporal_max_res: List[int] = None,
-                 temporal_hashmap: int = 18,  # Match Earth4D default
-                 # Coordinate bounds
-                 spatial_bound: float = 1.0,
-                 temporal_bound: float = 1.0,
-                 # Learned hash probing
-                 enable_learned_probing: bool = False,
-                 probing_range: int = 4,
-                 index_codebook_size: int = 2048,
-                 # Reporting
-                 verbose: bool = True):
-        """
-        Initialize Grid4D encoder.
-
-        Args:
-            spatial_*: Configuration for xyz spatial encoding
-            temporal_*: Configuration for 3D temporal projection encodings
-            spatial_bound: Normalization bound for spatial coordinates
-            temporal_bound: Normalization bound for temporal coordinates
-            verbose: Print resolution scale table on initialization
-        """
-        super().__init__()
-        
-        if HashEncoder is None:
-            raise ImportError(
-                "HashEncoder is required for Grid4D functionality. "
-                "Please install the hash encoding library."
-            )
-        
-        # Default temporal resolutions if not provided
-        if temporal_base_res is None:
-            temporal_base_res = [8, 8, 8]
-        if temporal_max_res is None:
-            temporal_max_res = [32, 32, 16]
-            
-        self.spatial_bound = spatial_bound
-        self.temporal_bound = temporal_bound
-
-        # Store hashmap sizes for reporting
-        self.spatial_log2_hashmap_size = spatial_hashmap
-        self.temporal_log2_hashmap_size = temporal_hashmap
-
-        # Store dimensions for output
-        self.spatial_dim = spatial_levels * spatial_features
-        self.temporal_dim = temporal_levels * temporal_features * 3  # 3 projections
-        self.output_dim = self.spatial_dim + self.temporal_dim
-        
-        # Spatial encoder for xyz coordinates (with learned probing)
-        self.xyz_encoder = HashEncoder(
-            input_dim=3,
-            num_levels=spatial_levels,
-            level_dim=spatial_features,
-            per_level_scale=2,
-            base_resolution=spatial_base_res,
-            log2_hashmap_size=spatial_hashmap,
-            desired_resolution=spatial_max_res,
-            enable_learned_probing=enable_learned_probing,
-            probing_range=probing_range,
-            index_codebook_size=index_codebook_size
-        )
-
-        # Temporal projection encoders (xyt, yzt, xzt) with learned probing
-        self.xyt_encoder = HashEncoder(
-            input_dim=3,
-            num_levels=temporal_levels,
-            level_dim=temporal_features,
-            per_level_scale=2,
-            base_resolution=temporal_base_res,
-            log2_hashmap_size=temporal_hashmap,
-            desired_resolution=temporal_max_res,
-            enable_learned_probing=enable_learned_probing,
-            probing_range=probing_range,
-            index_codebook_size=index_codebook_size
-        )
-
-        self.yzt_encoder = HashEncoder(
-            input_dim=3,
-            num_levels=temporal_levels,
-            level_dim=temporal_features,
-            per_level_scale=2,
-            base_resolution=temporal_base_res,
-            log2_hashmap_size=temporal_hashmap,
-            desired_resolution=temporal_max_res,
-            enable_learned_probing=enable_learned_probing,
-            probing_range=probing_range,
-            index_codebook_size=index_codebook_size
-        )
-
-        self.xzt_encoder = HashEncoder(
-            input_dim=3,
-            num_levels=temporal_levels,
-            level_dim=temporal_features,
-            per_level_scale=2,
-            base_resolution=temporal_base_res,
-            log2_hashmap_size=temporal_hashmap,
-            desired_resolution=temporal_max_res,
-            enable_learned_probing=enable_learned_probing,
-            probing_range=probing_range,
-            index_codebook_size=index_codebook_size
-        )
-
-        # Calculate and display resolution scales
-        if verbose:
-            self._print_resolution_table()
-
-    def _calculate_resolution_scales(self) -> Dict:
-        """Calculate resolution scales for all encoders and levels."""
-        import numpy as np
-
-        # For normalized ECEF coordinates in [-1, 1] range
-        # Physical range is approximately 2 * Earth radius
-        earth_radius = 6371000.0  # meters
-        physical_range = 2 * earth_radius  # pole-to-pole distance
-
-        results = {'spatial': [], 'temporal': {'xyt': [], 'yzt': [], 'xzt': []}}
-
-        # Calculate spatial resolutions
-        spatial_encoder = self.xyz_encoder
-        for level in range(spatial_encoder.num_levels):
-            base_res = spatial_encoder.base_resolution[0].item()
-            scale = spatial_encoder.per_level_scale[0].item()
-            grid_resolution = np.ceil(base_res * (scale ** level))
-            meters_per_cell = physical_range / grid_resolution
-
-            results['spatial'].append({
-                'level': level,
-                'grid_resolution': int(grid_resolution),
-                'meters_per_cell': meters_per_cell,
-                'km_per_cell': meters_per_cell / 1000
-            })
-
-        # Calculate temporal resolutions (simplified for now)
-        for name, encoder in [('xyt', self.xyt_encoder), ('yzt', self.yzt_encoder), ('xzt', self.xzt_encoder)]:
-            for level in range(encoder.num_levels):
-                base_res = encoder.base_resolution[0].item()
-                scale = encoder.per_level_scale[0].item()
-                grid_resolution = np.ceil(base_res * (scale ** level))
-
-                # For temporal, we interpret this as time resolution
-                # Assuming normalized time range of 1 year for display
-                seconds_per_year = 365.25 * 24 * 3600
-                seconds_per_cell = seconds_per_year / grid_resolution
-
-                results['temporal'][name].append({
-                    'level': level,
-                    'grid_resolution': int(grid_resolution),
-                    'seconds_per_cell': seconds_per_cell,
-                    'days_per_cell': seconds_per_cell / 86400
-                })
-
-        return results
-
-    def _print_resolution_table(self):
-        """Print detailed resolution table for all encoders."""
-        results = self._calculate_resolution_scales()
-
-        print("\n" + "="*80)
-        print("EARTH4D RESOLUTION SCALE TABLE")
-        print("="*80)
-
-        # Print spatial resolutions
-        print("\nSPATIAL ENCODER (XYZ):")
-        print(f"{'Level':<6} {'Grid Res':<12} {'Meters/Cell':<15} {'KM/Cell':<12}")
-        print("-" * 50)
-        for item in results['spatial']:
-            # Use appropriate precision based on scale
-            if item['meters_per_cell'] >= 100:
-                meters_str = f"{item['meters_per_cell']:.1f}"
-            elif item['meters_per_cell'] >= 1:
-                meters_str = f"{item['meters_per_cell']:.2f}"
-            elif item['meters_per_cell'] >= 0.01:
-                meters_str = f"{item['meters_per_cell']:.3f}"
-            else:
-                meters_str = f"{item['meters_per_cell']:.4f}"
-
-            if item['km_per_cell'] >= 1:
-                km_str = f"{item['km_per_cell']:.2f}"
-            elif item['km_per_cell'] >= 0.001:
-                km_str = f"{item['km_per_cell']:.3f}"
-            else:
-                km_str = f"{item['km_per_cell']:.4f}"
-
-            print(f"{item['level']:<6} {item['grid_resolution']:<12} "
-                  f"{meters_str:<15} {km_str:<12}")
-
-        # Print temporal resolutions (just one example)
-        print("\nTEMPORAL ENCODERS (XYT, YZT, XZT):")
-        print(f"{'Level':<6} {'Grid Res':<12} {'Seconds/Cell':<15} {'Days/Cell':<12}")
-        print("-" * 50)
-        for item in results['temporal']['xyt']:  # Show all levels
-            print(f"{item['level']:<6} {item['grid_resolution']:<12} "
-                  f"{item['seconds_per_cell']:<15.1f} {item['days_per_cell']:<12.2f}")
-
-        # Print memory summary
-        total_params = (
-            self.xyz_encoder.embeddings.numel() +
-            self.xyt_encoder.embeddings.numel() +
-            self.yzt_encoder.embeddings.numel() +
-            self.xzt_encoder.embeddings.numel()
-        )
-        memory_mb = total_params * 4 / (1024 * 1024)  # float32
-
-        # Calculate hash table information
-        spatial_hash_size = 2 ** self.spatial_log2_hashmap_size
-        temporal_hash_size = 2 ** self.temporal_log2_hashmap_size
-
-        # Calculate actual vs theoretical parameters
-        spatial_actual = self.xyz_encoder.embeddings.numel()
-        temporal_actual = (self.xyt_encoder.embeddings.numel() +
-                          self.yzt_encoder.embeddings.numel() +
-                          self.xzt_encoder.embeddings.numel())
-
-        print(f"\nHASH TABLE CONFIGURATION:")
-        print(f"  Spatial hash table: 2^{self.spatial_log2_hashmap_size} = {spatial_hash_size:,} entries")
-        print(f"  Temporal hash table: 2^{self.temporal_log2_hashmap_size} = {temporal_hash_size:,} entries")
-        print(f"\nACTUAL PARAMETERS:")
-        print(f"  Spatial encoder: {spatial_actual:,} params")
-        print(f"  Temporal encoders: {temporal_actual:,} params")
-        print(f"  Total: {total_params:,} params")
-        print("="*80 + "\n")
-
-    def encode_spatial(self, xyz: torch.Tensor, collision_tracking_data: dict = None) -> torch.Tensor:
-        """
-        Encode spatial xyz coordinates.
-
-        Args:
-            xyz: Tensor of shape (..., 3) with normalized coordinates
-            collision_tracking_data: Optional dict containing collision tracking info for 'xyz' grid
-
-        Returns:
-            Spatial features of shape (..., spatial_dim)
-        """
-        # Debug: Check coordinate ranges
-        if False:  # Set to True for debugging
-            print(f"encode_spatial - xyz range: [{xyz.min().item():.4f}, {xyz.max().item():.4f}]")
-            # After normalization in HashEncoder forward
-            normalized = (xyz + self.spatial_bound) / (2 * self.spatial_bound)
-            print(f"  After normalization: [{normalized.min().item():.4f}, {normalized.max().item():.4f}]")
-
-        # Extract collision tracking info for xyz grid if provided
-        xyz_tracking = collision_tracking_data.get('xyz') if collision_tracking_data else None
-        return self.xyz_encoder(xyz, size=self.spatial_bound, collision_tracking=xyz_tracking)
-    
-    def encode_temporal(self, xyzt: torch.Tensor, collision_tracking_data: dict = None) -> torch.Tensor:
-        """
-        Encode temporal projections (xyt, yzt, xzt).
-
-        Args:
-            xyzt: Tensor of shape (..., 4) with normalized coordinates
-            collision_tracking_data: Optional dict containing collision tracking info for temporal grids
-
-        Returns:
-            Temporal features of shape (..., temporal_dim)
-        """
-        # Scale time dimension appropriately
-        xyz_scaled = xyzt[..., :3]
-        t_scaled = (xyzt[..., 3:] * 2 * self.temporal_bound - self.temporal_bound) * 0.9
-        xyzt_scaled = torch.cat([xyz_scaled, t_scaled], dim=-1)
-
-        # Create 3D projections with time
-        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
-        yzt = xyzt_scaled[..., 1:]
-        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
-
-        # Extract collision tracking info for each temporal grid if provided
-        xyt_tracking = collision_tracking_data.get('xyt') if collision_tracking_data else None
-        yzt_tracking = collision_tracking_data.get('yzt') if collision_tracking_data else None
-        xzt_tracking = collision_tracking_data.get('xzt') if collision_tracking_data else None
-
-        # Encode each projection
-        xyt_features = self.xyt_encoder(xyt, size=self.temporal_bound, collision_tracking=xyt_tracking)
-        yzt_features = self.yzt_encoder(yzt, size=self.temporal_bound, collision_tracking=yzt_tracking)
-        xzt_features = self.xzt_encoder(xzt, size=self.temporal_bound, collision_tracking=xzt_tracking)
-
-        # Concatenate temporal features
-        return torch.cat([xyt_features, yzt_features, xzt_features], dim=-1)
-    
-    def forward(self, xyzt: torch.Tensor, collision_tracking: dict = None) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Encode 4D spatiotemporal coordinates.
-
-        Args:
-            xyzt: Tensor of shape (..., 4) with normalized coordinates
-            collision_tracking: Optional dict containing collision tracking data for all grids
-
-        Returns:
-            Tuple of (spatial_features, temporal_features)
-        """
-        xyz = xyzt[..., :3]
-        spatial_features = self.encode_spatial(xyz, collision_tracking_data=collision_tracking)
-        temporal_features = self.encode_temporal(xyzt, collision_tracking_data=collision_tracking)
-        return spatial_features, temporal_features
+from hashencoder.hashgrid import HashEncoder
+from coordinates import to_ecef, ECEF_NORM_FACTOR, AdaptiveRange
+from training import compute_loss, print_resolution_info
+import tracking
 
 
 class Earth4D(nn.Module):
-    """
-    Earth4D: Complete Grid4D encoder for planetary spatiotemporal modeling.
-
-    Main interface for Earth4D functionality with optional coordinate conversion,
-    configurable multi-resolution scales, and flexible input handling.
-    """
 
     def __init__(self,
-                 # Core encoder configuration - production-tested values
                  spatial_levels: int = 24,
                  temporal_levels: int = 24,
                  features_per_level: int = 2,
@@ -567,20 +27,17 @@ class Earth4D(nn.Module):
                  base_spatial_resolution: float = 32.0,
                  base_temporal_resolution: float = 32.0,
                  growth_factor: float = 2.0,
-                 target_spatial_km: float = None,
-                 target_temporal_days: float = None,
                  verbose: bool = True,
-                 # Collision tracking configuration
                  enable_collision_tracking: bool = False,
                  max_tracked_examples: int = 1000000,
-                 # Learned hash probing configuration (OPTIMAL: N_p=32, entropy=0.5)
                  enable_learned_probing: bool = True,
                  probing_range: int = 32,
                  index_codebook_size: int = 512,
-                 probe_entropy_weight: float = 0.5):
+                 probe_entropy_weight: float = 0.5,
+                 use_adaptive_range: bool = False,
+                 adaptive_range: Optional[AdaptiveRange] = None,
+                 max_precision_level: Optional[int] = None):
         """
-        Initialize Earth4D encoder.
-
         Args:
             spatial_levels: Number of spatial resolution levels
             temporal_levels: Number of temporal resolution levels
@@ -590,24 +47,20 @@ class Earth4D(nn.Module):
             base_spatial_resolution: Base resolution for spatial encoder
             base_temporal_resolution: Base resolution for temporal encoder
             growth_factor: Growth factor between levels (default: 2.0)
-            target_spatial_km: Optional target spatial resolution in kilometers
-            target_temporal_days: Optional target temporal resolution in days
             verbose: Print resolution table on initialization
             enable_collision_tracking: Track hash indices for collision analysis
             max_tracked_examples: Maximum number of examples to track
-            enable_learned_probing: Enable learned hash probing for 4× memory reduction (default: True)
-            probing_range: Number of probe candidates (N_p, OPTIMAL: 32, must be power-of-2)
-            index_codebook_size: Size of learned probe table (N_c, OPTIMAL: 512)
-            probe_entropy_weight: Entropy regularization weight (OPTIMAL: 0.5, automatic when enabled)
-
-        Note: Hash collisions are expected and acceptable for Earth data.
-        Collisions at fine temporal resolutions are normal when data doesn't vary at that scale.
+            enable_learned_probing: Enable learned hash probing (default: True)
+            probing_range: Number of probe candidates (default: 32, must be power-of-2)
+            index_codebook_size: Size of learned probe table (default: 512)
+            probe_entropy_weight: Entropy regularization weight (default: 0.5)
+            use_adaptive_range: Fit normalization to data extent (default: False)
+            adaptive_range: Pre-computed AdaptiveRange object (optional)
+            max_precision_level: Cap finest level (optional, for compute savings)
         """
         super().__init__()
 
         self.verbose = verbose
-        self.target_spatial_km = target_spatial_km
-        self.target_temporal_days = target_temporal_days
 
         # Collision tracking configuration
         self.enable_collision_tracking = enable_collision_tracking
@@ -620,228 +73,153 @@ class Earth4D(nn.Module):
         self.index_codebook_size = index_codebook_size
         self.probe_entropy_weight = probe_entropy_weight
 
-        # WGS84 ellipsoid parameters for coordinate conversion
-        self.WGS84_A = 6378137.0  # Semi-major axis in meters
-        self.WGS84_F = 1.0 / 298.257223563  # Flattening
-        self.WGS84_E2 = 2 * self.WGS84_F - self.WGS84_F**2  # First eccentricity squared
+        # Adaptive range configuration
+        self.use_adaptive_range = use_adaptive_range
+        self.adaptive_range = adaptive_range
+        self.max_precision_level = max_precision_level
 
-        # Calculate max resolutions based on levels and growth factor
+        # Store base parameters for level analysis
+        self.base_spatial_resolution = base_spatial_resolution
+        self.spatial_levels = spatial_levels
+        self.temporal_levels = temporal_levels
+        self.growth_factor = growth_factor
+
+        # Check HashEncoder is available
+        if HashEncoder is None:
+            raise ImportError(
+                "HashEncoder is required for Earth4D functionality. "
+                "Please install the hash encoding library."
+            )
+
+        # Store hashmap sizes for reporting
+        self.spatial_log2_hashmap_size = spatial_log2_hashmap_size
+        self.temporal_log2_hashmap_size = temporal_log2_hashmap_size
+
+        # Store dimensions for output
+        self.spatial_dim = spatial_levels * features_per_level
+        self.spatiotemporal_dim = temporal_levels * features_per_level * 3  # 3 projections
+        self.output_dim = self.spatial_dim + self.spatiotemporal_dim
+
+        # Calculate max resolutions
         spatial_max_res = int(base_spatial_resolution * (growth_factor ** (spatial_levels - 1)))
-
-        # For temporal, use list for 3 projections with lower base resolution
         temporal_base_res = [int(base_temporal_resolution)] * 3
         temporal_max_res = [int(base_temporal_resolution * (growth_factor ** (temporal_levels - 1)))] * 3
 
-        # Initialize the encoder
-        self.encoder = Grid4DSpatiotemporalEncoder(
-            spatial_levels=spatial_levels,
-            spatial_features=features_per_level,
-            spatial_base_res=int(base_spatial_resolution),
-            spatial_max_res=spatial_max_res,
-            spatial_hashmap=spatial_log2_hashmap_size,
-            temporal_levels=temporal_levels,
-            temporal_features=features_per_level,
-            temporal_base_res=temporal_base_res,
-            temporal_max_res=temporal_max_res,
-            temporal_hashmap=temporal_log2_hashmap_size,
-            spatial_bound=1.0,
-            temporal_bound=1.0,
+        # Spatial encoder (xyz)
+        self.xyz_encoder = HashEncoder(
+            input_dim=3,
+            num_levels=spatial_levels,
+            level_dim=features_per_level,
+            per_level_scale=2,
+            base_resolution=int(base_spatial_resolution),
+            log2_hashmap_size=spatial_log2_hashmap_size,
+            desired_resolution=spatial_max_res,
             enable_learned_probing=enable_learned_probing,
             probing_range=probing_range,
-            index_codebook_size=index_codebook_size,
-            verbose=False  # We'll print our own info
+            index_codebook_size=index_codebook_size
+        )
+
+        # Spatiotemporal encoders (xyt, yzt, xzt)
+        self.xyt_encoder = HashEncoder(
+            input_dim=3,
+            num_levels=temporal_levels,
+            level_dim=features_per_level,
+            per_level_scale=2,
+            base_resolution=temporal_base_res,
+            log2_hashmap_size=temporal_log2_hashmap_size,
+            desired_resolution=temporal_max_res,
+            enable_learned_probing=enable_learned_probing,
+            probing_range=probing_range,
+            index_codebook_size=index_codebook_size
+        )
+
+        self.yzt_encoder = HashEncoder(
+            input_dim=3,
+            num_levels=temporal_levels,
+            level_dim=features_per_level,
+            per_level_scale=2,
+            base_resolution=temporal_base_res,
+            log2_hashmap_size=temporal_log2_hashmap_size,
+            desired_resolution=temporal_max_res,
+            enable_learned_probing=enable_learned_probing,
+            probing_range=probing_range,
+            index_codebook_size=index_codebook_size
+        )
+
+        self.xzt_encoder = HashEncoder(
+            input_dim=3,
+            num_levels=temporal_levels,
+            level_dim=features_per_level,
+            per_level_scale=2,
+            base_resolution=temporal_base_res,
+            log2_hashmap_size=temporal_log2_hashmap_size,
+            desired_resolution=temporal_max_res,
+            enable_learned_probing=enable_learned_probing,
+            probing_range=probing_range,
+            index_codebook_size=index_codebook_size
         )
 
         # Initialize collision tracking if enabled
         if self.enable_collision_tracking:
             self._init_collision_tracking()
 
-        if self.verbose:
+        if self.verbose and not self.use_adaptive_range:
             self._print_resolution_info()
-            if self.target_spatial_km is not None or self.target_temporal_days is not None:
-                self._print_target_resolution()
     
     def _init_collision_tracking(self):
         """Initialize collision tracking tensors."""
-        # Get spatial and temporal levels for all 4 grid spaces
-        spatial_levels = self.encoder.xyz_encoder.num_levels
-        temporal_levels = self.encoder.xyt_encoder.num_levels
-
-        # Initialize collision tracking data structure (indices only, flags computed during export)
-        # Create tensors on CPU - they will be moved to CUDA when .cuda() is called on the model
-        self.collision_tracking_data = {
-            'xyz': {
-                'collision_indices': torch.zeros((self.max_tracked_examples, spatial_levels), dtype=torch.int32),
-                'max_tracked_examples': self.max_tracked_examples,
-                'example_offset': 0
-            },
-            'xyt': {
-                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32),
-                'max_tracked_examples': self.max_tracked_examples,
-                'example_offset': 0
-            },
-            'yzt': {
-                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32),
-                'max_tracked_examples': self.max_tracked_examples,
-                'example_offset': 0
-            },
-            'xzt': {
-                'collision_indices': torch.zeros((self.max_tracked_examples, temporal_levels), dtype=torch.int32),
-                'max_tracked_examples': self.max_tracked_examples,
-                'example_offset': 0
-            },
-            # Coordinate tracking
-            'coordinates': {
-                'original': torch.zeros((self.max_tracked_examples, 4), dtype=torch.float32),  # lat, lon, elev, time
-                'normalized': torch.zeros((self.max_tracked_examples, 4), dtype=torch.float32),  # x_norm, y_norm, z_norm, time
-                'count': 0  # Number of examples tracked so far
-            }
-        }
+        self.collision_tracking_data = tracking.init(self, self.max_tracked_examples)
 
     def to(self, *args, **kwargs):
         """Override to() to also move collision tracking tensors."""
-        # Call parent to() to move all registered parameters/buffers
         super().to(*args, **kwargs)
-
-        # Move collision tracking tensors to same device
-        if hasattr(self, 'collision_tracking_data') and self.collision_tracking_data is not None:
-            for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
-                if grid_name in self.collision_tracking_data:
-                    self.collision_tracking_data[grid_name]['collision_indices'] = \
-                        self.collision_tracking_data[grid_name]['collision_indices'].to(*args, **kwargs)
-
-            if 'coordinates' in self.collision_tracking_data:
-                self.collision_tracking_data['coordinates']['original'] = \
-                    self.collision_tracking_data['coordinates']['original'].to(*args, **kwargs)
-                self.collision_tracking_data['coordinates']['normalized'] = \
-                    self.collision_tracking_data['coordinates']['normalized'].to(*args, **kwargs)
-
+        if self.collision_tracking_data is not None:
+            self.collision_tracking_data = tracking.move(self.collision_tracking_data, *args, **kwargs)
         return self
 
     def cuda(self, device=None):
         """Override cuda() to also move collision tracking tensors to GPU."""
-        # Call parent cuda() to move all registered parameters/buffers
         super().cuda(device)
-
-        # Move collision tracking tensors to CUDA
-        if hasattr(self, 'collision_tracking_data') and self.collision_tracking_data is not None:
-            for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
-                if grid_name in self.collision_tracking_data:
-                    self.collision_tracking_data[grid_name]['collision_indices'] = \
-                        self.collision_tracking_data[grid_name]['collision_indices'].cuda(device)
-
-            if 'coordinates' in self.collision_tracking_data:
-                self.collision_tracking_data['coordinates']['original'] = \
-                    self.collision_tracking_data['coordinates']['original'].cuda(device)
-                self.collision_tracking_data['coordinates']['normalized'] = \
-                    self.collision_tracking_data['coordinates']['normalized'].cuda(device)
-
+        if self.collision_tracking_data is not None:
+            device_str = 'cuda' if device is None else f'cuda:{device}'
+            self.collision_tracking_data = tracking.move(self.collision_tracking_data, device=device_str)
         return self
 
     def _print_resolution_info(self):
         """Print detailed resolution information."""
-        # Get resolution scales from encoder
-        results = self.encoder._calculate_resolution_scales()
+        config = {
+            'use_adaptive_range': self.use_adaptive_range,
+            'enable_learned_probing': self.enable_learned_probing,
+            'probing_range': self.probing_range,
+            'max_precision_level': self.max_precision_level,
+            'spatial_levels': self.spatial_levels,
+        }
+        print_resolution_info(self, config, self.adaptive_range)
 
-        print("\n" + "="*80)
-        print("EARTH4D RESOLUTION SCALE TABLE")
-        print("="*80)
+    def _encode_spatial(self, xyz: torch.Tensor, ct_data: dict = None) -> torch.Tensor:
+        """Encode spatial xyz coordinates."""
+        xyz_tracking = ct_data.get('xyz') if ct_data else None
+        return self.xyz_encoder(xyz, size=1.0, collision_tracking=xyz_tracking)
 
-        # Print spatial resolutions with improved precision
-        print("\nSPATIAL ENCODER (XYZ):")
-        print(f"{'Level':<6} {'Grid Res':<12} {'Meters/Cell':<15} {'KM/Cell':<12}")
-        print("-" * 50)
-        for item in results['spatial']:
-            # Format with appropriate precision for sub-meter values
-            if item['meters_per_cell'] >= 1000:
-                meters_str = f"{item['meters_per_cell']/1000:.1f}km"
-            elif item['meters_per_cell'] >= 100:
-                meters_str = f"{item['meters_per_cell']:.1f}m"
-            elif item['meters_per_cell'] >= 10:
-                meters_str = f"{item['meters_per_cell']:.2f}m"
-            elif item['meters_per_cell'] >= 1:
-                meters_str = f"{item['meters_per_cell']:.3f}m"
-            else:
-                # Sub-meter: show in millimeters if very small
-                if item['meters_per_cell'] < 0.01:
-                    meters_str = f"{item['meters_per_cell']*1000:.2f}mm"
-                else:
-                    meters_str = f"{item['meters_per_cell']:.4f}m"
+    def _encode_spatiotemporal(self, xyzt: torch.Tensor, ct_data: dict = None) -> torch.Tensor:
+        """Encode spatiotemporal projections (xyt, yzt, xzt)."""
+        # Scale time dimension
+        t_scaled = (xyzt[..., 3:] * 2 - 1) * 0.9
+        xyzt_scaled = torch.cat([xyzt[..., :3], t_scaled], dim=-1)
 
-            if item['km_per_cell'] >= 1:
-                km_str = f"{item['km_per_cell']:.2f}"
-            elif item['km_per_cell'] >= 0.001:
-                km_str = f"{item['km_per_cell']:.3f}"
-            else:
-                km_str = f"{item['km_per_cell']:.4f}"
+        # Create 3D projections
+        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
+        yzt = xyzt_scaled[..., 1:]
+        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
 
-            print(f"{item['level']:<6} {item['grid_resolution']:<12} "
-                  f"{meters_str:<15} {km_str:<12}")
+        xyt_tracking = ct_data.get('xyt') if ct_data else None
+        yzt_tracking = ct_data.get('yzt') if ct_data else None
+        xzt_tracking = ct_data.get('xzt') if ct_data else None
+        xyt_features = self.xyt_encoder(xyt, size=1.0, collision_tracking=xyt_tracking)
+        yzt_features = self.yzt_encoder(yzt, size=1.0, collision_tracking=yzt_tracking)
+        xzt_features = self.xzt_encoder(xzt, size=1.0, collision_tracking=xzt_tracking)
 
-        # Print temporal resolutions
-        print("\nTEMPORAL ENCODERS (XYT, YZT, XZT):")
-        print(f"{'Level':<6} {'Grid Res':<12} {'Seconds/Cell':<15} {'Days/Cell':<12}")
-        print("-" * 50)
-        for item in results['temporal']['xyt']:
-            print(f"{item['level']:<6} {item['grid_resolution']:<12} "
-                  f"{item['seconds_per_cell']:<15.1f} {item['days_per_cell']:<12.2f}")
-
-        # Calculate parameters
-        spatial_params = self.encoder.xyz_encoder.embeddings.numel()
-        temporal_params = (self.encoder.xyt_encoder.embeddings.numel() +
-                          self.encoder.yzt_encoder.embeddings.numel() +
-                          self.encoder.xzt_encoder.embeddings.numel())
-        total_params = spatial_params + temporal_params
-
-        # Memory calculations
-        spatial_memory = spatial_params * 4 / (1024 * 1024)  # float32 to MB
-        temporal_memory = temporal_params * 4 / (1024 * 1024)
-        total_memory = spatial_memory + temporal_memory
-
-        # Hash table configuration
-        spatial_hash_entries = 2 ** self.encoder.spatial_log2_hashmap_size
-        temporal_hash_entries = 2 ** self.encoder.temporal_log2_hashmap_size
-
-        print(f"\nHASH TABLE CONFIGURATION:")
-        print(f"  Spatial: 2^{self.encoder.spatial_log2_hashmap_size} = {spatial_hash_entries:,} entries")
-        print(f"  Temporal: 2^{self.encoder.temporal_log2_hashmap_size} = {temporal_hash_entries:,} entries")
-        print(f"  Total capacity: {spatial_hash_entries + temporal_hash_entries*3:,} entries")
-
-        print(f"\nACTUAL PARAMETERS (MEMORY FOOTPRINT):")
-        print(f"  Spatial encoders: {spatial_params:,} params = {spatial_memory:.2f} MB")
-        print(f"  Temporal encoders: {temporal_params:,} params = {temporal_memory:.2f} MB")
-        print(f"  Total: {total_params:,} params = {total_memory:.2f} MB")
-        print(f"  During training (4x): ~{total_memory * 4:.2f} MB")
-
-        # Explain the difference
-        if total_params < spatial_hash_entries + temporal_hash_entries*3:
-            utilization = (total_params / (spatial_hash_entries + temporal_hash_entries*3)) * 100
-            print(f"\n  Note: Using {utilization:.1f}% of hash table capacity")
-            print(f"  (Hash collisions allow encoding more locations than parameters)")
-
-    def _print_target_resolution(self):
-        """Print target resolution in user-friendly units."""
-        print(f"\nTARGET RESOLUTION:")
-        if self.target_spatial_km is not None:
-            # Convert to appropriate units
-            if self.target_spatial_km >= 1.0:
-                print(f"  Spatial: {self.target_spatial_km:.1f} km")
-            elif self.target_spatial_km >= 0.001:
-                print(f"  Spatial: {self.target_spatial_km * 1000:.1f} meters")
-            else:
-                print(f"  Spatial: {self.target_spatial_km * 1000000:.1f} millimeters")
-
-        if self.target_temporal_days is not None:
-            # Convert to appropriate units
-            if self.target_temporal_days >= 1.0:
-                print(f"  Temporal: {self.target_temporal_days:.1f} days")
-            elif self.target_temporal_days >= 1/24:
-                print(f"  Temporal: {self.target_temporal_days * 24:.1f} hours")
-            elif self.target_temporal_days >= 1/1440:
-                print(f"  Temporal: {self.target_temporal_days * 1440:.1f} minutes")
-            else:
-                print(f"  Temporal: {self.target_temporal_days * 86400:.1f} seconds")
-        print("="*80 + "\n")
+        return torch.cat([xyt_features, yzt_features, xzt_features], dim=-1)
 
     def forward(self, coords: torch.Tensor) -> torch.Tensor:
         """
@@ -850,451 +228,168 @@ class Earth4D(nn.Module):
         Args:
             coords: Input coordinates tensor (..., 4)
                     Format: [latitude, longitude, elevation_m, time_normalized]
-                    - Latitude: -90 to 90 degrees
-                    - Longitude: -180 to 180 degrees
-                    - Elevation: meters above sea level
-                    - Time: normalized to [0, 1]
 
         Returns:
             Concatenated features tensor
         """
-        # Convert lat/lon/elev to ECEF and normalize
-        lat = coords[..., 0]
-        lon = coords[..., 1]
-        elev = coords[..., 2]
+        x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
         time = coords[..., 3]
 
-        # Convert to ECEF using WGS84
-        lat_rad = torch.deg2rad(lat)
-        lon_rad = torch.deg2rad(lon)
-
-        sin_lat = torch.sin(lat_rad)
-        cos_lat = torch.cos(lat_rad)
-        sin_lon = torch.sin(lon_rad)
-        cos_lon = torch.cos(lon_rad)
-
-        # WGS84 parameters
-        N = self.WGS84_A / torch.sqrt(1 - self.WGS84_E2 * sin_lat * sin_lat)
-
-        x = (N + elev) * cos_lat * cos_lon
-        y = (N + elev) * cos_lat * sin_lon
-        z = (N * (1 - self.WGS84_E2) + elev) * sin_lat
-
-        # Normalize ECEF to [-1, 1]
-        # Earth radius is approximately 6371km, so max ECEF is ~6400km
-        norm_factor = 6400000.0  # 6400km in meters
-        x_norm = x / norm_factor
-        y_norm = y / norm_factor
-        z_norm = z / norm_factor
-
-        # Stack normalized coordinates
-        norm_coords = torch.stack([x_norm, y_norm, z_norm, time], dim=-1)
-
-        # Save coordinates for collision tracking if enabled
-        example_offset = 0
-        if self.enable_collision_tracking and self.collision_tracking_data['coordinates']['count'] < self.max_tracked_examples:
-            current_count = self.collision_tracking_data['coordinates']['count']
-            batch_size = coords.shape[0]
-            remaining_slots = self.max_tracked_examples - current_count
-            save_count = min(batch_size, remaining_slots)
-            
-            # Set the example_offset to where this batch should be stored (before updating count)
-            example_offset = current_count
-            
-            if save_count > 0:
-                # Save original coordinates (lat, lon, elev, time)
-                self.collision_tracking_data['coordinates']['original'][current_count:current_count+save_count] = coords[:save_count]
-                # Save normalized coordinates (x_norm, y_norm, z_norm, time)
-                self.collision_tracking_data['coordinates']['normalized'][current_count:current_count+save_count] = norm_coords[:save_count]
-                # Update count
-                self.collision_tracking_data['coordinates']['count'] += save_count
-
-        # Encode
-        if self.enable_collision_tracking:
-            # Update example_offset for each grid to reflect where this batch should be stored
-            for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
-                self.collision_tracking_data[grid_name]['example_offset'] = example_offset
-            
-            spatial_features, temporal_features = self.encoder(norm_coords, collision_tracking=self.collision_tracking_data)
+        # Normalize ECEF coordinates
+        if self.use_adaptive_range and self.adaptive_range is not None:
+            x_norm, y_norm, z_norm, time_norm = self.adaptive_range.normalize_ecef(x, y, z, time)
         else:
-            spatial_features, temporal_features = self.encoder(norm_coords)
-        return torch.cat([spatial_features, temporal_features], dim=-1)
+            x_norm = x / ECEF_NORM_FACTOR
+            y_norm = y / ECEF_NORM_FACTOR
+            z_norm = z / ECEF_NORM_FACTOR
+            time_norm = time
+
+        norm_coords = torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
+
+        ct_data = None
+        if self.enable_collision_tracking and self.collision_tracking_data is not None:
+            offset = tracking.save_coords(self.collision_tracking_data, coords, norm_coords, self.max_tracked_examples)
+            tracking.set_offsets(self.collision_tracking_data, offset)
+            ct_data = self.collision_tracking_data
+
+        spatial_features = self._encode_spatial(norm_coords[..., :3], ct_data)
+        spatiotemporal_features = self._encode_spatiotemporal(norm_coords, ct_data)
+
+        return torch.cat([spatial_features, spatiotemporal_features], dim=-1)
 
     def get_output_dim(self) -> int:
         """Return total output dimension."""
-        return self.encoder.output_dim
+        return self.output_dim
 
     def compute_loss(self, predictions, targets, criterion=None,
                     enable_probe_entropy_loss=None, probe_entropy_weight=None,
                     enable_gradient_validation=False):
-        """
-        Compute loss with optional regularization for learned hash probing.
-
-        This method ensures all loss computation happens in one place, making it easy
-        to enable/disable various penalties and validate gradients.
-
-        Args:
-            predictions: Model output features
-            targets: Ground truth targets
-            criterion: Loss function (default: MSELoss)
-            enable_probe_entropy_loss: Add entropy regularization on probe distributions
-                                      (default: automatic based on enable_learned_probing)
-            probe_entropy_weight: Weight for entropy loss (default: uses self.probe_entropy_weight)
-            enable_gradient_validation: Perform finite-difference gradient check
-
-        Returns:
-            Dictionary with:
-                'total_loss': Combined loss (differentiable, use for backward())
-                'task_loss': Task-specific loss component
-                'probe_entropy_loss': Entropy regularization (if enabled)
-                'gradient_valid': Boolean indicating gradient correctness (if validation enabled)
-        """
-        if criterion is None:
-            criterion = torch.nn.MSELoss()
-
-        # Auto-enable entropy loss if learned probing is enabled and not explicitly set
-        if enable_probe_entropy_loss is None:
-            enable_probe_entropy_loss = self.enable_learned_probing
-
-        # Use configured entropy weight if not explicitly provided
-        if probe_entropy_weight is None:
-            probe_entropy_weight = self.probe_entropy_weight
-
-        # Main task loss
-        task_loss = criterion(predictions, targets)
-        total_loss = task_loss
-
-        loss_dict = {
-            'task_loss': task_loss.item(),
-            'total_loss': task_loss.item()
-        }
-
-        # Entropy regularization for learned probing (automatic when enabled)
-        # This encourages uniform probe distribution, reducing collisions
-        if enable_probe_entropy_loss and hasattr(self.encoder, 'xyt_encoder') and \
-           hasattr(self.encoder.xyt_encoder, 'enable_learned_probing') and \
-           self.encoder.xyt_encoder.enable_learned_probing:
-
-            probe_entropy_loss = self._compute_probe_entropy_loss()
-
-            # Add to total (subtract because we want HIGH entropy)
-            total_loss = total_loss - probe_entropy_weight * probe_entropy_loss
-
-            loss_dict['probe_entropy_loss'] = probe_entropy_loss.item()
-            loss_dict['total_loss'] = total_loss.item()
-
-        # Optional: Gradient validation using finite differences
-        # NOTE: This is expensive and only for debugging - disabled by default
-        if enable_gradient_validation:
-            gradient_valid = self._validate_gradients()
-            loss_dict['gradient_valid'] = gradient_valid
-
-        # Return total_loss for backward(), plus diagnostic info
-        loss_dict['_total_loss_tensor'] = total_loss
-        return loss_dict
-
-    def _compute_probe_entropy_loss(self):
-        """
-        Compute entropy of probe distributions to encourage uniform hash usage.
-
-        High entropy → probes are uniformly distributed → less collision likelihood
-
-        Returns:
-            Average entropy across all encoders and levels (differentiable)
-        """
-        total_entropy = 0.0
-        num_encoders = 0
-
-        # Iterate over all encoders with learned probing
-        for encoder_name in ['xyz_encoder', 'xyt_encoder', 'yzt_encoder', 'xzt_encoder']:
-            if not hasattr(self.encoder, encoder_name):
-                continue
-
-            enc = getattr(self.encoder, encoder_name)
-
-            # Check if encoder has learned probing enabled
-            if not hasattr(enc, 'enable_learned_probing') or not enc.enable_learned_probing:
-                continue
-
-            if not hasattr(enc, 'index_logits') or enc.index_logits is None:
-                continue
-
-            # index_logits shape: [num_levels, N_c, N_p]
-            # Compute softmax probabilities
-            probs = torch.softmax(enc.index_logits, dim=-1)  # softmax over N_p
-
-            # Entropy: H = -sum(p * log(p))
-            # Add small epsilon to avoid log(0)
-            eps = 1e-10
-            entropy = -(probs * torch.log(probs + eps)).sum(dim=-1)  # [num_levels, N_c]
-
-            # Average entropy across levels and codebook entries
-            avg_entropy = entropy.mean()
-            total_entropy = total_entropy + avg_entropy
-            num_encoders += 1
-
-        if num_encoders == 0:
-            return torch.tensor(0.0, device=self.encoder.xyz_encoder.embeddings.device)
-
-        return total_entropy / num_encoders
-
-    def _validate_gradients(self):
-        """
-        Validate gradients exist and have reasonable magnitudes.
-
-        This is a simplified gradient check. Full finite-difference validation
-        would require recomputing the forward pass for each parameter perturbation,
-        which is prohibitively expensive for large models.
-
-        Returns:
-            Boolean indicating if gradients pass basic sanity checks
-        """
-        # Only validate if we have learned probing
-        if not hasattr(self.encoder, 'xyt_encoder'):
-            return True
-
-        if not hasattr(self.encoder.xyt_encoder, 'enable_learned_probing') or \
-           not self.encoder.xyt_encoder.enable_learned_probing:
-            return True
-
-        # Check embeddings have gradients
-        if self.encoder.xyz_encoder.embeddings.grad is None:
-            return False
-
-        # Check index_logits have gradients
-        if self.encoder.xyt_encoder.index_logits.grad is None:
-            return False
-
-        # Check gradient magnitudes are reasonable
-        embed_grad_norm = self.encoder.xyz_encoder.embeddings.grad.norm().item()
-        logit_grad_norm = self.encoder.xyt_encoder.index_logits.grad.norm().item()
-
-        # Gradients should exist and be finite
-        if not torch.isfinite(torch.tensor(embed_grad_norm)):
-            return False
-        if not torch.isfinite(torch.tensor(logit_grad_norm)):
-            return False
-
-        # Gradient magnitudes should be reasonable (not too large)
-        if embed_grad_norm > 1e6 or logit_grad_norm > 1e6:
-            return False
-
-        return True
-    
-    def export_collision_data(self, output_dir: str = "collision_analysis", format: str = 'csv'):
-        """
-        Export complete collision tracking data for scientific analysis.
-
-        Args:
-            output_dir: Directory to save output files
-            format: Export format ('csv' or 'pt'). 'pt' uses PyTorch tensors with float64 for GPU-accelerated analysis.
-
-        Returns:
-            dict: Summary of exported data
-        """
-        if not self.enable_collision_tracking:
-            raise RuntimeError("Collision tracking is not enabled. Initialize Earth4D with enable_collision_tracking=True")
-        
-        from pathlib import Path
-        import pandas as pd
-        import json
-        import numpy as np
-        
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-        
-        # Get number of tracked examples
-        tracked_count = self.collision_tracking_data['coordinates']['count']
-        if tracked_count == 0:
-            raise RuntimeError("No collision data tracked yet. Run some forward passes first.")
-        
-        print(f"Exporting collision data for {tracked_count} tracked examples...")
-        
-        # Extract coordinates
-        original_coords = self.collision_tracking_data['coordinates']['original'][:tracked_count].cpu().numpy()
-        normalized_coords = self.collision_tracking_data['coordinates']['normalized'][:tracked_count].cpu().numpy()
-        
-        # Create base DataFrame with coordinates
-        df_data = {
-            'latitude': original_coords[:, 0],
-            'longitude': original_coords[:, 1], 
-            'elevation_m': original_coords[:, 2],
-            'time_original': getattr(self, 'datetime_strings', original_coords[:, 3])[:tracked_count],  # Use datetime strings if available
-            'x_normalized': normalized_coords[:, 0],
-            'y_normalized': normalized_coords[:, 1],
-            'z_normalized': normalized_coords[:, 2], 
-            'time_normalized': normalized_coords[:, 3]
-        }
-        
-        # Add grid indices and compute collision flags for each grid space and level
-        grid_metadata = {}
-
-        for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
-            grid_data = self.collision_tracking_data[grid_name]
-            indices = grid_data['collision_indices'][:tracked_count].cpu().numpy()
-
-            num_levels = indices.shape[1]
-            # Get actual hash table size from encoder
-            if grid_name == 'xyz':
-                hash_table_size = 2 ** self.encoder.spatial_log2_hashmap_size
-            else:
-                hash_table_size = 2 ** self.encoder.temporal_log2_hashmap_size
-
-            grid_metadata[grid_name] = {
-                'num_levels': num_levels,
-                'hash_table_size': hash_table_size,
-                'note': 'Collision rates computed during analysis, not stored in export'
-            }
-
-            # Get relevant coordinates for this grid with SAME transformations as during encoding
-            # Must match what CUDA kernel receives after ALL transformations
-            if grid_name == 'xyz':
-                # Spatial grid: apply HashEncoder normalization (inputs + size) / (2 * size) with size=1.0
-                coords_for_grid = (normalized_coords[:, [0, 1, 2]] + 1.0) / 2.0
-            else:
-                # Temporal grids: apply BOTH transformations
-                # 1. Time scaling: t_scaled = (time * 2 - 1) * 0.9  → [-0.9, 0.9]
-                # 2. HashEncoder normalization: (coord + 1) / 2  → [0, 1]
-                t_scaled = (normalized_coords[:, 3:4] * 2.0 - 1.0) * 0.9
-                t_normalized = (t_scaled + 1.0) / 2.0
-
-                if grid_name == 'xyt':
-                    spatial_normalized = (normalized_coords[:, [0, 1]] + 1.0) / 2.0
-                    coords_for_grid = np.hstack([spatial_normalized, t_normalized])
-                elif grid_name == 'yzt':
-                    spatial_normalized = (normalized_coords[:, [1, 2]] + 1.0) / 2.0
-                    coords_for_grid = np.hstack([spatial_normalized, t_normalized])
-                elif grid_name == 'xzt':
-                    spatial_normalized = (normalized_coords[:, [0, 2]] + 1.0) / 2.0
-                    coords_for_grid = np.hstack([spatial_normalized, t_normalized])
-
-            # Add index columns for all levels (fast - just copying arrays)
-            for level in range(num_levels):
-                level_indices = indices[:, level]
-                col_name = f"{grid_name}_level_{level:02d}_index"
-                df_data[col_name] = level_indices
-
-                # Note: Collision flags computed during analysis, not export
-                # This speeds up export dramatically (96 levels × 1M points = 96M operations saved)
-        
-        # Build comprehensive column map for reconstructing CSV from .pt
-        column_map = {
-            'description': 'Column names and their order for reconstructing CSV from PyTorch tensors',
-            'coordinate_columns': {
-                'original': ['latitude', 'longitude', 'elevation_m', 'time_original'],
-                'normalized': ['x_normalized', 'y_normalized', 'z_normalized', 'time_normalized']
-            },
-            'hash_index_columns': {}
-        }
-
-        # Add all hash index column names for each grid
-        for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
-            grid_data = self.collision_tracking_data[grid_name]
-            num_levels = grid_data['collision_indices'].shape[1]
-            column_map['hash_index_columns'][grid_name] = [
-                f"{grid_name}_level_{level:02d}_index" for level in range(num_levels)
-            ]
-
-        # Full CSV column order
-        all_columns = (
-            column_map['coordinate_columns']['original'] +
-            column_map['coordinate_columns']['normalized']
+        """Compute loss with optional regularization for learned hash probing."""
+        return compute_loss(
+            predictions, targets, self, criterion,
+            self.enable_learned_probing,
+            probe_entropy_weight or self.probe_entropy_weight,
+            enable_probe_entropy_loss, enable_gradient_validation
         )
-        for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
-            all_columns.extend(column_map['hash_index_columns'][grid_name])
+    
+    def export_collision_data(self, output_dir: str = "collision_analysis", fmt: str = 'csv'):
+        """Export collision tracking data for scientific analysis."""
+        if not self.enable_collision_tracking:
+            raise RuntimeError("Collision tracking not enabled")
+        return tracking.export(self.collision_tracking_data, self, self.max_tracked_examples, output_dir, fmt)
 
-        column_map['full_csv_columns'] = all_columns
-        column_map['total_columns'] = len(all_columns)
+    def fit_range(self, coords: torch.Tensor, buffer_fraction: float = 0.25) -> 'Earth4D':
+        """Fit adaptive range from training coordinates for improved hash utilization."""
+        x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
+        ecef_coords = torch.stack([x, y, z], dim=-1)
 
-        # Export based on format
-        if format == 'pt':
-            # Export as PyTorch tensors for fast GPU processing
-            tensor_data = {
-                'coordinates': {
-                    'original': torch.from_numpy(original_coords).double(),
-                    'normalized': torch.from_numpy(normalized_coords).double()
-                },
-                'hash_indices': {}
-            }
+        self.adaptive_range = AdaptiveRange.from_ecef_coordinates(
+            ecef_coords, coords[..., 3], orig_coords=coords, buffer_fraction=buffer_fraction
+        )
+        self.use_adaptive_range = True
 
-            # Add hash indices for each grid
-            for grid_name in ['xyz', 'xyt', 'yzt', 'xzt']:
-                grid_data = self.collision_tracking_data[grid_name]
-                indices = grid_data['collision_indices'][:tracked_count].cpu()
-                tensor_data['hash_indices'][grid_name] = indices
+        if self.verbose:
+            self._print_resolution_info()
 
-            data_path = output_path / "collision_data.pt"
-            torch.save(tensor_data, data_path)
-            print(f"Exported collision data to {data_path}")
+        return self
 
-        else:  # csv format
-            df = pd.DataFrame(df_data)
-            csv_path = output_path / "earth4d_collision_data.csv"
-            df.to_csv(csv_path, index=False)
-            print(f"Exported grid indices to {csv_path}")
-        
-        # Create comprehensive metadata
-        metadata = {
-            'earth4d_config': {
-                'spatial_levels': self.encoder.xyz_encoder.num_levels,
-                'temporal_levels': self.encoder.xyt_encoder.num_levels,
-                'spatial_log2_hashmap_size': getattr(self.encoder.xyz_encoder, 'log2_hashmap_size', 'unknown'),
-                'temporal_log2_hashmap_size': getattr(self.encoder.xyt_encoder, 'log2_hashmap_size', 'unknown'),
-                'max_tracked_examples': self.max_tracked_examples,
-                'tracked_examples': tracked_count
-            },
-            'coordinate_ranges': {
-                'latitude': [float(original_coords[:, 0].min()), float(original_coords[:, 0].max())],
-                'longitude': [float(original_coords[:, 1].min()), float(original_coords[:, 1].max())],
-                'elevation_m': [float(original_coords[:, 2].min()), float(original_coords[:, 2].max())],
-                'time_original': [float(original_coords[:, 3].min()), float(original_coords[:, 3].max())]
-            },
-            'normalized_coordinate_ranges': {
-                'x_normalized': [float(normalized_coords[:, 0].min()), float(normalized_coords[:, 0].max())],
-                'y_normalized': [float(normalized_coords[:, 1].min()), float(normalized_coords[:, 1].max())],
-                'z_normalized': [float(normalized_coords[:, 2].min()), float(normalized_coords[:, 2].max())],
-                'time_normalized': [float(normalized_coords[:, 3].min()), float(normalized_coords[:, 3].max())]
-            },
-            'grid_analysis': grid_metadata,
-            'column_map': column_map,
-            'export_format': format,
-            'reconstruction_guide': {
-                'description': 'How to reconstruct full CSV from .pt file using column_map',
-                'steps': [
-                    '1. Load collision_data.pt with torch.load()',
-                    '2. Extract coordinates[\'original\'] and coordinates[\'normalized\'] tensors',
-                    '3. Extract hash_indices for each grid (xyz, xyt, yzt, xzt)',
-                    '4. Create DataFrame columns in order specified by column_map[\'full_csv_columns\']',
-                    '5. Use column_map[\'hash_index_columns\'][grid] for each grid\'s level naming'
-                ]
-            }
-        }
-        
-        # Export metadata JSON
-        json_path = output_path / "earth4d_collision_metadata.json"
-        with open(json_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-        print(f"Exported metadata to {json_path}")
-        
-        # Create summary report
-        output_files = {'json': str(json_path)}
-        if format == 'pt':
-            output_files['pt'] = str(data_path)
+    def precompute(self, coords: torch.Tensor) -> dict:
+        """
+        Precompute hash indices and weights for a fixed set of coordinates.
+
+        Call once before training. Enables forward_precomputed() for faster training.
+
+        Args:
+            coords: Input coordinates tensor (N, 4) - [lat, lon, elev, time]
+
+        Returns:
+            dict with memory usage statistics for all 4 encoders
+        """
+        # Convert coordinates to normalized form
+        x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
+        time = coords[..., 3]
+
+        if self.use_adaptive_range and self.adaptive_range is not None:
+            x_norm, y_norm, z_norm, time_norm = self.adaptive_range.normalize_ecef(x, y, z, time)
         else:
-            output_files['csv'] = str(csv_path)
+            x_norm = x / ECEF_NORM_FACTOR
+            y_norm = y / ECEF_NORM_FACTOR
+            z_norm = z / ECEF_NORM_FACTOR
+            time_norm = time
 
-        summary = {
-            'total_tracked_examples': tracked_count,
-            'format': format,
-            'output_files': output_files,
-            'note': 'Collision analysis performed by profiler script during analysis phase. Column mapping in metadata JSON.'
+        norm_coords = torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
+
+        # Scale time dimension
+        t_scaled = (norm_coords[..., 3:] * 2 - 1) * 0.9
+        xyzt_scaled = torch.cat([norm_coords[..., :3], t_scaled], dim=-1)
+
+        # Create 3D projections
+        xyz = norm_coords[..., :3]
+        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
+        yzt = xyzt_scaled[..., 1:]
+        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
+
+        # Precompute for each encoder
+        stats = {}
+        stats['xyz'] = self.xyz_encoder.precompute(xyz, size=1.0)
+        stats['xyt'] = self.xyt_encoder.precompute(xyt, size=1.0)
+        stats['yzt'] = self.yzt_encoder.precompute(yzt, size=1.0)
+        stats['xzt'] = self.xzt_encoder.precompute(xzt, size=1.0)
+
+        # Total memory
+        total_bytes = sum(s['total_bytes'] for s in stats.values())
+        total_mb = total_bytes / (1024 * 1024)
+
+        self._precomputed = True
+        self._precomp_coords_count = coords.shape[0]
+
+        if self.verbose:
+            print(f"\nPrecomputation complete:")
+            print(f"  Coordinates: {coords.shape[0]:,}")
+            print(f"  Total memory: {total_mb:.1f} MB ({total_bytes / coords.shape[0]:.1f} bytes/coord)")
+            for name, s in stats.items():
+                print(f"    {name}: {s['total_mb']:.1f} MB")
+
+        return {
+            'total_bytes': total_bytes,
+            'total_mb': total_mb,
+            'bytes_per_coord': total_bytes / coords.shape[0],
+            'num_coords': coords.shape[0],
+            'encoders': stats
         }
 
-        print(f"\nExport complete ({format} format). Column map included in metadata JSON.")
+    def forward_precomputed(self, batch_indices: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass using precomputed indices and weights.
 
-        return summary
+        Must call precompute() first with all training coordinates.
 
+        Args:
+            batch_indices: Tensor of indices into precomputed coordinates
 
+        Returns:
+            Concatenated features tensor (B, output_dim)
+        """
+        if not hasattr(self, '_precomputed') or not self._precomputed:
+            raise RuntimeError("Must call precompute() before forward_precomputed()")
+
+        # Get features from each encoder
+        spatial_features = self.xyz_encoder.forward_precomputed(batch_indices)
+        xyt_features = self.xyt_encoder.forward_precomputed(batch_indices)
+        yzt_features = self.yzt_encoder.forward_precomputed(batch_indices)
+        xzt_features = self.xzt_encoder.forward_precomputed(batch_indices)
+
+        spatiotemporal_features = torch.cat([xyt_features, yzt_features, xzt_features], dim=-1)
+        return torch.cat([spatial_features, spatiotemporal_features], dim=-1)
+
+    def clear_precomputed(self):
+        """Clear precomputed buffers to free memory."""
+        self._precomputed = False
+        self._precomp_coords_count = 0
+        self.xyz_encoder.clear_precomputed()
+        self.xyt_encoder.clear_precomputed()
+        self.yzt_encoder.clear_precomputed()
+        self.xzt_encoder.clear_precomputed()
 
 
 # Example usage and testing

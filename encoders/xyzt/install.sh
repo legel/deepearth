@@ -55,7 +55,7 @@ else
     echo -e "${GREEN}[✓]${NC} Ninja build system found"
 fi
 
-# Ensure setuptools and wheel are up-to-date (prevents bdist_wheel warnings)
+# Ensure setuptools and wheel are up-to-date
 echo "Checking build dependencies..."
 pip install --upgrade setuptools wheel -q 2>/dev/null || true
 echo -e "${GREEN}[✓]${NC} Build dependencies ready"
@@ -67,113 +67,90 @@ if [ -d "$TORCH_LIB_PATH" ]; then
     echo -e "${GREEN}[✓]${NC} Library paths configured"
 fi
 
-# Check if already compiled
-if [ -f "hashencoder/hashencoder_cuda.so" ]; then
-    FILE_SIZE=$(du -h hashencoder/hashencoder_cuda.so | cut -f1)
-    echo -e "${GREEN}[✓]${NC} CUDA extension already compiled (${FILE_SIZE}B)"
-    echo "  To rebuild, delete hashencoder/hashencoder_cuda.so"
-else
-    # Build CUDA extension
-    echo
-    echo "Building CUDA extension..."
-    cd hashencoder
+# Always clean and rebuild CUDA extension
+echo
+echo "Cleaning previous builds..."
+cd hashencoder
+rm -rf build dist *.egg-info __pycache__
+rm -f hashencoder_cuda*.so
+# Also clean JIT cache to avoid stale modules
+rm -rf ~/.cache/torch_extensions/py310_cu126/hashencoder_cuda 2>/dev/null || true
+echo -e "${GREEN}[✓]${NC} Cleaned previous builds"
 
-    # Clean previous builds
-    rm -rf build dist *.egg-info __pycache__
-    rm -f hashencoder_cuda*.so
+# Build CUDA extension
+echo
+echo "Building CUDA extension..."
 
-    # Detect CUDA architecture from nvidia-smi
-    if command -v nvidia-smi &> /dev/null; then
-        GPU_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.')
-        if [ ! -z "$GPU_ARCH" ]; then
-            export TORCH_CUDA_ARCH_LIST="${GPU_ARCH:0:1}.${GPU_ARCH:1}"
-            echo "  Detected GPU architecture: ${TORCH_CUDA_ARCH_LIST}"
+# Detect CUDA architecture from nvidia-smi
+if command -v nvidia-smi &> /dev/null; then
+    GPU_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.')
+    if [ ! -z "$GPU_ARCH" ]; then
+        export TORCH_CUDA_ARCH_LIST="${GPU_ARCH:0:1}.${GPU_ARCH:1}"
+        echo "  Detected GPU architecture: ${TORCH_CUDA_ARCH_LIST}"
+    fi
+fi
+
+echo "  Compiling CUDA kernels (this takes 5-10 minutes)..."
+
+TEMP_BUILD_LOG=$(mktemp)
+python3 setup.py build_ext --inplace > "$TEMP_BUILD_LOG" 2>&1 &
+BUILD_PID=$!
+
+while kill -0 $BUILD_PID 2>/dev/null; do
+    echo -n "."
+    sleep 2
+done
+wait $BUILD_PID
+BUILD_EXIT_CODE=$?
+echo ""
+
+# Show build output (filter noise but don't fail on empty)
+cat "$TEMP_BUILD_LOG" | grep -vE "(bdist_wheel|version bounds)" || true
+rm -f "$TEMP_BUILD_LOG"
+
+if [ $BUILD_EXIT_CODE -eq 0 ]; then
+    # Verify the .so file was created
+    if [ -f "hashencoder_cuda.so" ]; then
+        echo -e "${GREEN}[✓]${NC} CUDA extension built successfully!"
+        ls -lh hashencoder_cuda.so
+    else
+        echo -e "${YELLOW}[⚠]${NC} Build completed but .so file not found in expected location."
+        echo "  Checking build directory..."
+        if [ -f "build/hashencoder_cuda.so" ]; then
+            echo "  Found in build/, copying to current directory..."
+            cp build/hashencoder_cuda.so .
+            echo -e "${GREEN}[✓]${NC} CUDA extension ready!"
+            ls -lh hashencoder_cuda.so
+        else
+            echo -e "${RED}[✗]${NC} Could not find built .so file"
+            exit 1
         fi
     fi
-
-    # Run build with progress indication
-    # Note: bdist_wheel and g++ version warnings are harmless and can be ignored
-    echo "  Compiling CUDA kernels (this may take 30-60 seconds)..."
-
-    # Run build in background and show progress
-    TEMP_BUILD_LOG=$(mktemp)
-    python3 setup.py build_ext --inplace > "$TEMP_BUILD_LOG" 2>&1 &
-    BUILD_PID=$!
-
-    # Show progress dots while building
-    while kill -0 $BUILD_PID 2>/dev/null; do
-        echo -n "."
-        sleep 2
-    done
-    wait $BUILD_PID
-    BUILD_EXIT_CODE=$?
-    echo ""
-
-    # Show build output, filtering out known harmless warnings
-    cat "$TEMP_BUILD_LOG" | grep -vE "(ModuleNotFoundError while trying to load entry-point bdist_wheel|No module named 'setuptools\.command\.bdist_wheel'|warnings\.warn\(f'There are no.*version bounds|There are no .* version bounds defined for CUDA)"
-    rm -f "$TEMP_BUILD_LOG"
-
-    if [ $BUILD_EXIT_CODE -eq 0 ]; then
-        echo -e "${GREEN}[✓]${NC} CUDA extension built successfully!"
-    else
-        echo -e "${YELLOW}[⚠]${NC} CUDA build failed. Will compile on first use."
-    fi
-
-    cd ..
+else
+    echo -e "${YELLOW}[⚠]${NC} CUDA build failed."
+    exit 1
 fi
+
+cd ..
 
 # Test installation
 echo
 echo "Testing installation..."
-TEST_OUTPUT=$(python3 -c "
-import os
-import warnings
-warnings.filterwarnings('ignore')  # Suppress deprecation warnings during test
-
+python3 -c "
+import os, warnings
+warnings.filterwarnings('ignore')
 os.chdir('$(pwd)')
-try:
-    from earth4d import Earth4D
-    import torch
-    encoder = Earth4D(verbose=False)
+from earth4d import Earth4D
+import torch
+encoder = Earth4D(verbose=False)
+if torch.cuda.is_available():
+    encoder = encoder.cuda()
+    coords = torch.tensor([[40.7, -74.0, 100, 0.5]]).cuda()
+else:
+    coords = torch.tensor([[40.7, -74.0, 100, 0.5]])
+features = encoder(coords)
+print(f'Test passed: {features.shape}')
+"
 
-    if torch.cuda.is_available():
-        encoder = encoder.cuda()
-        coords = torch.tensor([[40.7, -74.0, 100, 0.5]]).cuda()
-        device = 'CUDA'
-    else:
-        coords = torch.tensor([[40.7, -74.0, 100, 0.5]])
-        device = 'CPU'
-
-    features = encoder(coords)
-    spatial_dim = encoder.encoder.spatial_dim
-    temporal_dim = encoder.encoder.temporal_dim
-    print(f'SUCCESS:{device}:{features.shape}:spatial={spatial_dim}:temporal={temporal_dim}')
-except Exception as e:
-    print(f'ERROR:{e}')
-" 2>/dev/null)
-
-if [[ $TEST_OUTPUT == SUCCESS:* ]]; then
-    IFS=':' read -r status device shape spatial temporal <<< "$TEST_OUTPUT"
-    echo -e "${GREEN}[✓]${NC} Earth4D test passed on $device"
-    echo "    Features shape: $shape ($spatial, $temporal)"
-else
-    echo -e "${RED}[✗]${NC} Test failed: ${TEST_OUTPUT#ERROR:}"
-    exit 1
-fi
-
-# Success message
 echo
-echo "=========================================="
 echo -e "${GREEN}Installation Complete!${NC}"
-echo "=========================================="
-echo
-echo "To use Earth4D:"
-echo "  from earth4d import Earth4D"
-echo "  encoder = Earth4D().cuda()  # if using GPU"
-echo "  coords = torch.tensor([[lat, lon, elev, time]]).cuda()"
-echo "  features = encoder(coords)"
-echo
-echo "Run example:"
-echo "  python earth4d.py"
-echo
-echo "Documentation: README.md"
