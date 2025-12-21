@@ -12,7 +12,7 @@ from typing import Optional
 
 from hashencoder.hashgrid import HashEncoder
 from coordinates import to_ecef, ECEF_NORM_FACTOR, AdaptiveRange
-from training import YOHOProfiler, compute_loss, print_resolution_info
+from training import compute_loss, print_resolution_info
 import tracking
 
 
@@ -36,9 +36,7 @@ class Earth4D(nn.Module):
                  probe_entropy_weight: float = 0.5,
                  use_adaptive_range: bool = False,
                  adaptive_range: Optional[AdaptiveRange] = None,
-                 max_precision_level: Optional[int] = None,
-                 use_yoho: bool = False,
-                 debug_yoho: bool = False):
+                 max_precision_level: Optional[int] = None):
         """
         Args:
             spatial_levels: Number of spatial resolution levels
@@ -59,9 +57,6 @@ class Earth4D(nn.Module):
             use_adaptive_range: Fit normalization to data extent (default: False)
             adaptive_range: Pre-computed AdaptiveRange object (optional)
             max_precision_level: Cap finest level (optional, for compute savings)
-            use_yoho: Enable YOHO optimization for coherent batches (default: False)
-            debug_yoho: Enable detailed YOHO profiling with timing breakdown (default: False)
-
         """
         super().__init__()
 
@@ -78,15 +73,10 @@ class Earth4D(nn.Module):
         self.index_codebook_size = index_codebook_size
         self.probe_entropy_weight = probe_entropy_weight
 
-        # Adaptive range and YOHO configuration
+        # Adaptive range configuration
         self.use_adaptive_range = use_adaptive_range
         self.adaptive_range = adaptive_range
         self.max_precision_level = max_precision_level
-        self.use_yoho = use_yoho
-        self.debug_yoho = debug_yoho
-        self._yoho_profiler = YOHOProfiler()
-        if debug_yoho:
-            self._yoho_profiler.enable(True)
 
         # Store base parameters for level analysis
         self.base_spatial_resolution = base_spatial_resolution
@@ -199,7 +189,6 @@ class Earth4D(nn.Module):
         """Print detailed resolution information."""
         config = {
             'use_adaptive_range': self.use_adaptive_range,
-            'use_yoho': self.use_yoho,
             'enable_learned_probing': self.enable_learned_probing,
             'probing_range': self.probing_range,
             'max_precision_level': self.max_precision_level,
@@ -207,14 +196,12 @@ class Earth4D(nn.Module):
         }
         print_resolution_info(self, config, self.adaptive_range)
 
-    def _encode_spatial(self, xyz: torch.Tensor, ct_data: dict = None, track_dedup: bool = False) -> torch.Tensor:
+    def _encode_spatial(self, xyz: torch.Tensor, ct_data: dict = None) -> torch.Tensor:
         """Encode spatial xyz coordinates."""
         xyz_tracking = ct_data.get('xyz') if ct_data else None
-        if self.use_yoho:
-            return self.xyz_encoder.forward_warp_yoho(xyz, size=1.0, track_dedup=track_dedup)
         return self.xyz_encoder(xyz, size=1.0, collision_tracking=xyz_tracking)
 
-    def _encode_spatiotemporal(self, xyzt: torch.Tensor, ct_data: dict = None, track_dedup: bool = False) -> torch.Tensor:
+    def _encode_spatiotemporal(self, xyzt: torch.Tensor, ct_data: dict = None) -> torch.Tensor:
         """Encode spatiotemporal projections (xyt, yzt, xzt)."""
         # Scale time dimension
         t_scaled = (xyzt[..., 3:] * 2 - 1) * 0.9
@@ -225,17 +212,12 @@ class Earth4D(nn.Module):
         yzt = xyzt_scaled[..., 1:]
         xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
 
-        if self.use_yoho:
-            xyt_features = self.xyt_encoder.forward_warp_yoho(xyt, size=1.0, track_dedup=track_dedup)
-            yzt_features = self.yzt_encoder.forward_warp_yoho(yzt, size=1.0, track_dedup=track_dedup)
-            xzt_features = self.xzt_encoder.forward_warp_yoho(xzt, size=1.0, track_dedup=track_dedup)
-        else:
-            xyt_tracking = ct_data.get('xyt') if ct_data else None
-            yzt_tracking = ct_data.get('yzt') if ct_data else None
-            xzt_tracking = ct_data.get('xzt') if ct_data else None
-            xyt_features = self.xyt_encoder(xyt, size=1.0, collision_tracking=xyt_tracking)
-            yzt_features = self.yzt_encoder(yzt, size=1.0, collision_tracking=yzt_tracking)
-            xzt_features = self.xzt_encoder(xzt, size=1.0, collision_tracking=xzt_tracking)
+        xyt_tracking = ct_data.get('xyt') if ct_data else None
+        yzt_tracking = ct_data.get('yzt') if ct_data else None
+        xzt_tracking = ct_data.get('xzt') if ct_data else None
+        xyt_features = self.xyt_encoder(xyt, size=1.0, collision_tracking=xyt_tracking)
+        yzt_features = self.yzt_encoder(yzt, size=1.0, collision_tracking=yzt_tracking)
+        xzt_features = self.xzt_encoder(xzt, size=1.0, collision_tracking=xzt_tracking)
 
         return torch.cat([xyt_features, yzt_features, xzt_features], dim=-1)
 
@@ -270,56 +252,14 @@ class Earth4D(nn.Module):
             tracking.set_offsets(self.collision_tracking_data, offset)
             ct_data = self.collision_tracking_data
 
-        # Profiling setup
-        if self.debug_yoho:
-            self._yoho_profiler.start_batch(norm_coords.shape[0])
-
-        track_dedup = self.debug_yoho and self.use_yoho
-        batch_size = norm_coords.shape[0]
-
-        # Encode spatial
-        if self.debug_yoho:
-            self._yoho_profiler.start_timer('spatial')
-        spatial_features = self._encode_spatial(norm_coords[..., :3], ct_data, track_dedup)
-        if self.debug_yoho:
-            spatial_time = self._yoho_profiler.stop_timer('spatial')
-            self._yoho_profiler.record_spatial_forward(spatial_time, batch_size, self.spatial_levels)
-            if track_dedup:
-                self._yoho_profiler.record_encoder_dedup('xyz', batch_size,
-                    self.xyz_encoder.get_last_dedup_stats())
-
-        # Encode spatiotemporal
-        if self.debug_yoho:
-            self._yoho_profiler.start_timer('spatiotemporal')
-        spatiotemporal_features = self._encode_spatiotemporal(norm_coords, ct_data, track_dedup)
-        if self.debug_yoho:
-            st_time = self._yoho_profiler.stop_timer('spatiotemporal')
-            self._yoho_profiler.record_spatiotemporal_forward(st_time, batch_size, self.temporal_levels)
-            if track_dedup:
-                self._yoho_profiler.record_encoder_dedup('xyt', batch_size,
-                    self.xyt_encoder.get_last_dedup_stats())
-                self._yoho_profiler.record_encoder_dedup('yzt', batch_size,
-                    self.yzt_encoder.get_last_dedup_stats())
-                self._yoho_profiler.record_encoder_dedup('xzt', batch_size,
-                    self.xzt_encoder.get_last_dedup_stats())
-
-        if self.debug_yoho:
-            self._yoho_profiler.end_batch()
+        spatial_features = self._encode_spatial(norm_coords[..., :3], ct_data)
+        spatiotemporal_features = self._encode_spatiotemporal(norm_coords, ct_data)
 
         return torch.cat([spatial_features, spatiotemporal_features], dim=-1)
 
     def get_output_dim(self) -> int:
         """Return total output dimension."""
         return self.output_dim
-
-    def get_yoho_profiler(self) -> YOHOProfiler:
-        """Get the YOHO profiler instance."""
-        return self._yoho_profiler
-
-    def print_yoho_profile(self, epoch: int):
-        """Print YOHO profiling summary for the current epoch."""
-        if self.debug_yoho:
-            self._yoho_profiler.print_summary(epoch, self.use_yoho)
 
     def compute_loss(self, predictions, targets, criterion=None,
                     enable_probe_entropy_loss=None, probe_entropy_weight=None,
@@ -353,6 +293,103 @@ class Earth4D(nn.Module):
 
         return self
 
+    def precompute(self, coords: torch.Tensor) -> dict:
+        """
+        Precompute hash indices and weights for a fixed set of coordinates.
+
+        Call once before training. Enables forward_precomputed() for faster training.
+
+        Args:
+            coords: Input coordinates tensor (N, 4) - [lat, lon, elev, time]
+
+        Returns:
+            dict with memory usage statistics for all 4 encoders
+        """
+        # Convert coordinates to normalized form
+        x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
+        time = coords[..., 3]
+
+        if self.use_adaptive_range and self.adaptive_range is not None:
+            x_norm, y_norm, z_norm, time_norm = self.adaptive_range.normalize_ecef(x, y, z, time)
+        else:
+            x_norm = x / ECEF_NORM_FACTOR
+            y_norm = y / ECEF_NORM_FACTOR
+            z_norm = z / ECEF_NORM_FACTOR
+            time_norm = time
+
+        norm_coords = torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
+
+        # Scale time dimension
+        t_scaled = (norm_coords[..., 3:] * 2 - 1) * 0.9
+        xyzt_scaled = torch.cat([norm_coords[..., :3], t_scaled], dim=-1)
+
+        # Create 3D projections
+        xyz = norm_coords[..., :3]
+        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
+        yzt = xyzt_scaled[..., 1:]
+        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
+
+        # Precompute for each encoder
+        stats = {}
+        stats['xyz'] = self.xyz_encoder.precompute(xyz, size=1.0)
+        stats['xyt'] = self.xyt_encoder.precompute(xyt, size=1.0)
+        stats['yzt'] = self.yzt_encoder.precompute(yzt, size=1.0)
+        stats['xzt'] = self.xzt_encoder.precompute(xzt, size=1.0)
+
+        # Total memory
+        total_bytes = sum(s['total_bytes'] for s in stats.values())
+        total_mb = total_bytes / (1024 * 1024)
+
+        self._precomputed = True
+        self._precomp_coords_count = coords.shape[0]
+
+        if self.verbose:
+            print(f"\nPrecomputation complete:")
+            print(f"  Coordinates: {coords.shape[0]:,}")
+            print(f"  Total memory: {total_mb:.1f} MB ({total_bytes / coords.shape[0]:.1f} bytes/coord)")
+            for name, s in stats.items():
+                print(f"    {name}: {s['total_mb']:.1f} MB")
+
+        return {
+            'total_bytes': total_bytes,
+            'total_mb': total_mb,
+            'bytes_per_coord': total_bytes / coords.shape[0],
+            'num_coords': coords.shape[0],
+            'encoders': stats
+        }
+
+    def forward_precomputed(self, batch_indices: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass using precomputed indices and weights.
+
+        Must call precompute() first with all training coordinates.
+
+        Args:
+            batch_indices: Tensor of indices into precomputed coordinates
+
+        Returns:
+            Concatenated features tensor (B, output_dim)
+        """
+        if not hasattr(self, '_precomputed') or not self._precomputed:
+            raise RuntimeError("Must call precompute() before forward_precomputed()")
+
+        # Get features from each encoder
+        spatial_features = self.xyz_encoder.forward_precomputed(batch_indices)
+        xyt_features = self.xyt_encoder.forward_precomputed(batch_indices)
+        yzt_features = self.yzt_encoder.forward_precomputed(batch_indices)
+        xzt_features = self.xzt_encoder.forward_precomputed(batch_indices)
+
+        spatiotemporal_features = torch.cat([xyt_features, yzt_features, xzt_features], dim=-1)
+        return torch.cat([spatial_features, spatiotemporal_features], dim=-1)
+
+    def clear_precomputed(self):
+        """Clear precomputed buffers to free memory."""
+        self._precomputed = False
+        self._precomp_coords_count = 0
+        self.xyz_encoder.clear_precomputed()
+        self.xyt_encoder.clear_precomputed()
+        self.yzt_encoder.clear_precomputed()
+        self.xzt_encoder.clear_precomputed()
 
 
 # Example usage and testing

@@ -191,46 +191,6 @@ __device__ inline float identity_derivative(float val) {
 }
 
 // =============================================================================
-// WARP-LEVEL YOHO HELPERS
-// =============================================================================
-
-// Pack pos_grid into a 64-bit key for warp-level matching
-template <uint32_t D>
-__device__ inline uint64_t pack_cell_key(const uint32_t pos_grid[D]) {
-    // For D=3: pack x, y, z into 64 bits (21 bits each, max resolution ~2M)
-    // For D=2: pack x, y into 64 bits (32 bits each)
-    uint64_t key = 0;
-    #pragma unroll
-    for (uint32_t d = 0; d < D; d++) {
-        key = (key << 21) | (pos_grid[d] & 0x1FFFFF);  // 21 bits per dimension
-    }
-    return key;
-}
-
-// Find the leader thread in the warp that shares the same cell
-// IMPORTANT: Uses __activemask() to handle warps where some threads have exited early
-__device__ inline void find_warp_cell_leader(
-    uint64_t cell_key,
-    unsigned int& match_mask,
-    int& leader_lane
-) {
-    // Get mask of currently active threads - critical for correctness when
-    // some threads have returned early (e.g., b >= B or out-of-bounds inputs)
-    unsigned int active_mask = __activemask();
-
-    uint32_t key_lo = (uint32_t)(cell_key & 0xFFFFFFFF);
-    uint32_t key_hi = (uint32_t)(cell_key >> 32);
-
-    // Only synchronize across active threads
-    unsigned int mask_lo = __match_any_sync(active_mask, key_lo);
-    unsigned int mask_hi = __match_any_sync(active_mask, key_hi);
-    match_mask = mask_lo & mask_hi;
-
-    // Leader is the first (lowest) thread in the match set
-    leader_lane = __ffs(match_mask) - 1;
-}
-
-// =============================================================================
 // LEARNED PROBING HELPERS
 // =============================================================================
 

@@ -1,8 +1,8 @@
 """
-Spatiotemporal sorting utilities for YOHO optimization.
+Spatiotemporal sorting utilities for improved data locality.
 
-These functions pre-sort data by 4D Morton code to maximize warp-level
-cell sharing in the hash encoder.
+These functions pre-sort data by 4D Morton code to improve cache locality
+during hash encoding operations.
 """
 
 import torch
@@ -58,14 +58,10 @@ def spatiotemporal_sort_indices(
     coord_ranges: Optional[Tuple[Tuple[float, float], ...]] = None
 ) -> torch.Tensor:
     """
-    Compute sort indices for spatiotemporal data to maximize YOHO warp coherence.
+    Compute sort indices for spatiotemporal data to improve cache locality.
 
     Sorts points by 4D Morton code so that spatiotemporally nearby points are
-    adjacent in memory. This maximizes cell sharing within GPU warps for ALL
-    Earth4D encoder grids (xyz, xyt, yzt, xzt).
-
-    For coherent data (e.g., satellite tiles), this can improve YOHO dedup ratios
-    from ~1.1x to 5-10x, dramatically accelerating training.
+    adjacent in memory. This improves cache efficiency for hash grid lookups.
 
     Args:
         coords: (N, 4) tensor of [x, y, z, t] coordinates (normalized or raw)
@@ -162,11 +158,11 @@ def block_shuffle_indices(
 
     Instead of fully random shuffling (which destroys spatial locality),
     this shuffles blocks of consecutive samples. Combined with spatiotemporal
-    sorting, this maintains YOHO efficiency while providing training randomness.
+    sorting, this maintains cache locality while providing training randomness.
 
     Args:
         n_samples: Total number of samples
-        block_size: Size of blocks to keep together (default 1024 = 32 warps)
+        block_size: Size of blocks to keep together (default 1024)
         device: Device for output tensor
 
     Returns:
