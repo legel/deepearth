@@ -70,8 +70,8 @@ With the fused Adam optimizer and precomputed hash indices:
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--epochs` | 2500 | Number of training epochs |
-| `--batch-size` | 1024 | Batch size (256 recommended for fused Adam) |
-| `--lr` | 0.001 | Learning rate (0.00025 recommended for fused Adam) |
+| `--batch-size` | 256 | Batch size |
+| `--lr` | 0.00025 | Learning rate |
 | `--fused-adam` | False | Use sparse fused Adam optimizer (9x faster) |
 | `--weight-decay` | 0.001 | AdamW weight decay |
 | `--species-dim` | 768 | Species embedding dimension |
