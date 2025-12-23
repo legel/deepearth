@@ -1,12 +1,7 @@
 """
-Training utilities for Earth4D encoder.
+Training operations for Earth4D.
 
-Provides generic training infrastructure with Protocol classes for type safety
-and callback patterns for task-specific customization.
-
-Includes optimizations:
-- Mixed precision (AMP) support for reduced memory bandwidth
-- Batched forward passes to reduce kernel launch overhead
+Use Earth4DTrainer from trainer.py for most use cases.
 """
 
 import torch

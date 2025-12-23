@@ -1,8 +1,7 @@
 """
-Spatiotemporal sorting utilities for improved data locality.
+Spatiotemporal sorting utilities.
 
-These functions pre-sort data by 4D Morton code to improve cache locality
-during hash encoding operations.
+Internal module for data locality optimization.
 """
 
 import torch
