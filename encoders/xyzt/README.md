@@ -9,7 +9,7 @@ Built on NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/inst
 Earth4D combines decomposed hash encoding with learned hash probing for state-of-the-art accuracy. Using separate spatial (xyz) and spatio-temporal (xyt, yzt, xzt) grids with learned probe selection, it achieves:
 
 - **State-of-the-Art Accuracy**: Surpasses pre-trained foundation models on ecological forecasting benchmarks using only coordinates
-- **Learned Hash Probing**: 27% MAE reduction and 30% R² improvement over baseline hash encoding
+- **Learned Hash Probing**: 25% MAE reduction and 28% R² improvement over baseline hash encoding
 - **Planetary Coverage**: Multi-resolution encoding from continental scale to sub-meter precision
 - **Temporal Dynamics**: Flexible temporal encoding from years to sub-second precision
 - **GPU Acceleration**: Custom CUDA kernels with learned probe selection, parallelizable across levels and spatio-temporal boundaries
@@ -22,26 +22,17 @@ Earth4D combines decomposed hash encoding with learned hash probing for state-of
 
 | Model | Data Inputs | MAE (pp) | RMSE (pp) | R² |
 |-------|-------------|----------|-----------|-----|
-| **Earth4D** (Learned Hashing) | (x,y,z,t) + Species Name | **12.1** | **19.9** | **0.755** |
-| Galileo (Pre-Trained) | (x,y,z,t) + Species + Remote Sensing | 12.6 | 18.9 | 0.72 |
+| **Earth4D** (Learned Hashing) | (x,y,z,t) + Species Name | **12.1** | 19.9 | **0.755** |
+| Galileo (Pre-Trained) | (x,y,z,t) + Species + Remote Sensing | 12.6 | **18.9** | 0.72 |
 
-*Earth4D surpasses Allen Institute for AI's Galileo foundation model (pre-trained on Sentinel-2 optical imagery, Sentinel-1 SAR, VIIRS night lights, ERA-5 weather, TerraClimate soil/water, and SRTM topography) using only (x,y,z,t) coordinates and learnable species embeddings—without satellite imagery, weather data, or topography.*
+*Earth4D surpasses Allen Institute for AI's Galileo foundation model in MAE and R², without access to pre-trained data or weights from Sentinel-2 optical imagery, Sentinel-1 SAR, VIIRS night lights, ERA-5 weather, TerraClimate soil/water, and SRTM topography. Earth4D only inputs (x,y,z,t) coordinates and learns species embeddings from scratch.*
 
-### Learned Hash Probing Improvements
+### Micro Earth4D
 
-| Configuration | Parameters | MAE (pp) | R² | vs. Baseline |
-|--------------|-----------|----------|-----|--------------|
-| **With Learned Probing** | 800M | **12.1** | **0.755** | **-27.1% MAE, +30.2% R²** |
-| Baseline (no probing) | 724M | 16.6 | 0.58 | - |
+| Configuration | Parameters | GPU Memory | Training Speed | MAE (pp) | R² |  
+|---------------|------------|------------|----------------|----------|----|
+| **Micro** | **5.1M** | **850MB** | **4× faster** | **15.0** | **0.668** |
 
-### Extreme Compression (Edge/Mobile Deployment)
-
-| Configuration | Parameters | GPU Memory | Training Speed | MAE (pp) | R² | vs. Baseline |
-|--------------|-----------|------------|----------------|----------|-----|--------------|
-| **Compressed (2^14 hash)** | **5.1M** | **850MB** | **4× faster** | **15.0** | **0.668** | **+14.7% R²** |
-| Baseline (2^22 hash) | 800M | 12GB+ | 1× | 16.6 | 0.58 | - |
-
-*99% parameter reduction (724M→5.1M) with 4× training speedup enables edge deployment while still outperforming baseline.*
 
 ## Quick Start
 
