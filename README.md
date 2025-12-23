@@ -11,10 +11,6 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 ## Exciting News:
 
-
-
-https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3
-
 - _December 22, 2025_  
   **10x faster.** Following state-of-the-art [Earth4D](https://github.com/legel/deepearth/blob/main/encoders/xyzt/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [commit](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3) and [CUDA code](https://github.com/legel/deepearth/blob/main/encoders/xyzt/hashencoder/src/precompute.cu). 
 
