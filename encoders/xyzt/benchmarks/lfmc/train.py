@@ -25,7 +25,7 @@ import torch.optim as optim
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from training import (
+from ops import (
     train_epoch, train_epoch_precomputed, train_epoch_batched_forward,
     train_epoch_fused_sgd, train_epoch_fused_adam, evaluate, compute_loss
 )
@@ -518,9 +518,9 @@ def main():
     # Training arguments
     parser.add_argument('--epochs', type=int, default=2500,
                        help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=1024,
+    parser.add_argument('--batch-size', type=int, default=256,
                        help='Batch size for training')
-    parser.add_argument('--lr', type=float, default=0.001,
+    parser.add_argument('--lr', type=float, default=0.00025,
                        help='Learning rate')
     parser.add_argument('--seed', type=int, default=0,
                        help='Random seed for reproducibility')
@@ -542,8 +542,10 @@ def main():
                        help='Use automatic mixed precision (fp16) for faster training')
     parser.add_argument('--fused-sgd', action='store_true',
                        help='Use fused CUDA backward+SGD for encoder embeddings (22x faster, SGD instead of AdamW for embeddings)')
-    parser.add_argument('--fused-adam', action='store_true',
-                       help='Use sparse Adam CUDA kernel for encoder embeddings (fast Adam, only updates touched embeddings)')
+    parser.add_argument('--fused-adam', action='store_true', default=True,
+                       help='Use sparse Adam CUDA kernel for encoder embeddings (default: enabled)')
+    parser.add_argument('--no-fused-adam', action='store_false', dest='fused_adam',
+                       help='Disable fused Adam, use standard training')
     parser.add_argument('--weight-decay', type=float, default=0.001,
                        help='Weight decay for AdamW (default: 0.001)')
 

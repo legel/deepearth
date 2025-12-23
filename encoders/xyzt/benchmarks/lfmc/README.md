@@ -13,8 +13,8 @@ This benchmark predicts LFMC values (vegetation moisture content as a percentage
 ## Quick Start
 
 ```bash
-# Run training with fused Adam optimizer (achieves SoTA in ~5 hours)
-python -m benchmarks.lfmc.train --epochs 10000 --batch-size 256 --fused-adam --weight-decay 0.001 --lr 0.00025 --output-dir ./outputs
+# Run training (fused Adam is now default, achieves SoTA in ~5 hours)
+python -m benchmarks.lfmc.train --epochs 10000 --output-dir ./outputs
 ```
 
 ## Dataset
@@ -54,15 +54,13 @@ Earth4D surpasses the pre-trained Galileo foundation model (Johnson et al., 2025
 
 ### Training Performance
 
-With the fused Adam optimizer and precomputed hash indices:
-
 | Metric | Training | Test |
 |--------|----------|------|
 | RMSE | 6.1pp | 19.9pp |
 | MAE | 1.8pp | 12.1pp |
 | R² | 0.977 | 0.755 |
 
-- **Training speed**: ~1.8s/epoch (9x faster than standard training)
+- **Training speed**: ~1.8s/epoch
 - **Total training time**: ~5 hours for 10,000 epochs
 
 ## Training Arguments
@@ -72,13 +70,12 @@ With the fused Adam optimizer and precomputed hash indices:
 | `--epochs` | 2500 | Number of training epochs |
 | `--batch-size` | 256 | Batch size |
 | `--lr` | 0.00025 | Learning rate |
-| `--fused-adam` | False | Use sparse fused Adam optimizer (9x faster) |
-| `--weight-decay` | 0.001 | AdamW weight decay |
+| `--weight-decay` | 0.001 | Weight decay |
 | `--species-dim` | 768 | Species embedding dimension |
 | `--seed` | 0 | Random seed |
-| `--use-adaptive-range` | False | Fit range to data extent |
-| `--no-precomputed` | False | Disable precomputed hash indices |
 | `--output-dir` | ./outputs | Output directory |
+| `--no-fused-adam` | - | Use standard training (10x slower) |
+| `--no-precomputed` | - | Disable index caching (higher memory efficiency) |
 
 ## Outputs
 

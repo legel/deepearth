@@ -58,7 +58,7 @@ bash install.sh
 
 ```bash
 # Train on Globe-LFMC 2.0 benchmark (achieves SoTA in ~5 hours)
-python -m benchmarks.lfmc.train --epochs 10000 --batch-size 256 --fused-adam --weight-decay 0.001 --lr 0.00025 --output-dir ./outputs
+python -m benchmarks.lfmc.train --epochs 10000 --output-dir ./outputs
 ```
 
 See [benchmarks/lfmc/README.md](benchmarks/lfmc/README.md) for full benchmark documentation.

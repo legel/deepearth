@@ -12,7 +12,7 @@ from typing import Optional
 
 from hashencoder.hashgrid import HashEncoder
 from coordinates import to_ecef, ECEF_NORM_FACTOR, AdaptiveRange
-from training import compute_loss, print_resolution_info
+from ops import compute_loss, print_resolution_info
 import tracking
 
 
