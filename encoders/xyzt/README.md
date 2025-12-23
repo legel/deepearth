@@ -1,13 +1,15 @@
 # Earth4D: Multi-Resolution 4D Space-Time Positional Encoder
 
-Earth4D is a planetary-scale 4D space-time positional encoder that enables deep learning on Earth observation data across space and time. Built on NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) architecture, extended to 4D space-time, and enhanced with [learned hash probing](https://research.nvidia.com/labs/toronto-ai/compact-ngp/) (Takikawa et al., 2023), Earth4D efficiently encodes latitude, longitude, elevation, and time into learnable features at multiple scales—from sub-meter spatial resolution to sub-second temporal precision.
+Earth4D is a planetary-scale 4D (_x_, _y_, _z_, _t_) space-time positional encoder for Earth observation data. 
+
+Built on NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) architecture, extended to 4D space-time, and enhanced with [learned hash probing](https://research.nvidia.com/labs/toronto-ai/compact-ngp/) (Takikawa et al., 2023), Earth4D efficiently encodes (**latitude**, **longitude**, **elevation**, **time**) into learnable features at multiple scales—from sub-meter spatial resolution to sub-second temporal precision.
 
 ## Core Innovation
 
 Earth4D combines decomposed hash encoding with learned hash probing for state-of-the-art accuracy. Using separate spatial (xyz) and spatio-temporal (xyt, yzt, xzt) grids with learned probe selection, it achieves:
 
 - **State-of-the-Art Accuracy**: Surpasses pre-trained foundation models on ecological forecasting benchmarks using only coordinates
-- **Learned Hash Probing**: 25% MAE reduction and 28% R² improvement over baseline hash encoding
+- **Learned Hash Probing**: 27% MAE reduction and 30% R² improvement over baseline hash encoding
 - **Planetary Coverage**: Multi-resolution encoding from continental scale to sub-meter precision
 - **Temporal Dynamics**: Flexible temporal encoding from years to sub-second precision
 - **GPU Acceleration**: Custom CUDA kernels with learned probe selection, parallelizable across levels and spatio-temporal boundaries
