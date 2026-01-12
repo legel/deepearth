@@ -50,6 +50,6 @@ DeepEarth is an open source project for solving intelligence across the planet ð
 Collaborators welcomed! Contact [Lance Legel](https://linkedin.com/in/legel) at lance@ecodash.ai or submit an issue/PR here.
 
 For further details, see papers:
-- [Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding](https://github.com/legel/deepearth/blob/main/docs/DeepEarth.pdf) (2025)
+- [Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding](https://github.com/legel/deepearth/blob/main/docs/DeepEarth.pdf) (2026)
 - [Inductive Neural Networks for Ecology](https://doi.org/10.13140/RG.2.2.25523.90406) (2025)
 - [AI Foundation Models for Biogeography and Ecophysiology](https://doi.org/10.13140/RG.2.2.12102.13123) (2024)
