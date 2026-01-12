@@ -4,13 +4,19 @@
 % Optional math commands from https://github.com/goodfeli/dlbook_notation.
 \input{math_commands.tex}
 
-\usepackage{hyperref}
-\usepackage{url}
-\usepackage{graphicx}
-\usepackage{amsmath}
-\usepackage{booktabs}
-\usepackage{xcolor}
-\usepackage{float}
+\usepackage{hyperref} % Hyperlinks
+\usepackage{url} % URL formatting
+\usepackage{graphicx} % Images
+\usepackage{amsmath} % Math
+\usepackage{booktabs} % Tables
+\usepackage{xcolor} % Colors
+\usepackage{float} % Floats
+
+% For drafting
+\usepackage{todonotes} % For TODOs, but remove for camera-ready version
+\setlength{\marginparwidth}{2cm} % remove for camera-ready version
+
+\newcommand{\outline}[1]{\textcolor{red}{#1}\\}
 
 % Reduce spacing around figures and tables
 \setlength{\textfloatsep}{8pt plus 1pt minus 1pt}
@@ -76,9 +82,29 @@ University of Illinois Urbana-Champaign \\
 \maketitle
 
 \begin{abstract}
-We present \textit{DeepEarth}, a self-supervised multi-modal world model with \textit{Earth4D}, a novel planetary-scale 4D space-time positional encoder. Earth4D extends 3D multi-resolution hash encoding to include time, efficiently scaling across the planet over centuries with sub-meter, sub-second precision. Multi-modal encoders (\textit{e.g.} vision-language models) are fused with Earth4D embeddings and trained via masked reconstruction. We demonstrate Earth4D's expressive power by achieving state-of-the-art performance on an ecological forecasting benchmark. Earth4D with learnable hash probing surpasses a multi-modal foundation model pre-trained on substantially more data. Access open source code and download models at: \\
+We present \textit{DeepEarth}, a self-supervised multi-modal world model with \textit{Earth4D}, a novel planetary-scale 4D space-time positional encoder. Earth4D extends 3D multi-resolution hash encoding to include time, with the potential to efficiently scale across the planet over centuries with sub-meter, sub-second precision. Multi-modal encoders (\textit{e.g.} vision-language models) are fused with Earth4D embeddings and trained via masked reconstruction. We demonstrate Earth4D's expressive power by achieving state-of-the-art performance on an ecological forecasting benchmark. Earth4D with learnable hash probing surpasses a multi-modal foundation model pre-trained on substantially more data. Access open source code and download models at: 
 \url{https://github.com/legel/deepearth}.
 \end{abstract}
+
+\section{Introduction}
+
+\todo[inline]{Revise introduction for world modeling audience (vs ecology audience) (Reviewer [VajQ])}
+\todo[inline]{Clarify distinction between world model and neural field in introduction (Reviewer [QJfa])}
+\todo[inline]{Expand literature review in introduction (Reviewers [QS1P], [QJfa])}
+\todo[inline]{Discuss dependence on coordinates and species labels alone and its limitations (Reviewer [QS1P])}
+\todo[inline]{More clarity on multimodality (Reviewer [QJfa])}
+
+\outline{context on what is world modeling}
+\outline{context on why you may want to use world modeling for ecology}
+\outline{review on types of world models}
+\outline{reference multi-modal world models}
+\outline{context on what is a neural field}
+\outline{connection on neural field for world modeling}
+\outline{context of Galileo, since used later in the paper}
+\outline{we present DeepEarth... Why coordinates and species alone?}
+
+
+
 
 \section{DeepEarth Architecture}
 \label{sec:deepearth_architecture}
@@ -136,7 +162,7 @@ Earth4D's hash encoding compresses spatial features into a fixed memory budget, 
 \textbf{Model} & \textbf{Data Inputs} & \textbf{MAE (pp)} & \textbf{RMSE (pp)} & \textbf{R²} \\
 \midrule
 \textbf{\textit{Galileo}} (Pre-Trained) & (\textit{x,y,z,t}) + Species Type + Remote Sensing & 12.6 & \textbf{18.9} & 0.72 \\
-\textbf{\textit{Earth4D}} (Learned Hashing) & (\textit{x,y,z,t}) + Species Name & \textbf{12.1} & 19.9 & \textbf{0.755} \\
+\textbf{\textit{Earth4D}} (Learned Hash) & (\textit{x,y,z,t}) + Species Name & \textbf{12.1} & 19.9 & \textbf{0.755} \\
 \bottomrule
 \end{tabular}
 \caption{\textbf{State-of-the-Art Ecological Forecasting Benchmark.} Earth4D surpasses the pre-trained Galileo foundation model without satellite imagery, weather data, or topography.}
