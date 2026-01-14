@@ -22,8 +22,8 @@ Earth4D combines decomposed hash encoding with learned hash probing for state-of
 
 | Model | Data Inputs | MAE (pp) | RMSE (pp) | R² |
 |-------|-------------|----------|-----------|-----|
-| **Earth4D** (Learned Hashing) | (x,y,z,t) + Species | **12.1** | 19.9 | **0.755** |
-| Galileo (Pre-Trained) | (x,y,z,t) + Species + Remote Sensing | 12.6 | **18.9** | 0.72 |
+| **Earth4D** (Learned Hashing) | (x,y,z,t) + Species | **11.7** | **18.7** | **0.783** |
+| Galileo (Pre-Trained) | (x,y,z,t) + Species + Remote Sensing | 12.6 | 18.9 | 0.72 |
 
 *Earth4D surpasses Allen Institute for AI's Galileo foundation model in MAE and R², without access to pre-trained data or weights from Sentinel-2 optical imagery, Sentinel-1 SAR, VIIRS night lights, ERA-5 weather, TerraClimate soil/water, and SRTM topography. Earth4D only inputs (x,y,z,t) coordinates and learns species embeddings from scratch.*
 
