@@ -11,7 +11,7 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 ## Exciting News:
 
-- _January 13, 2026_  
+- _January 14, 2026_  
   **New geospatial coordinate system.** A refined (_x_, _y_, _z_, _t_) = (_latitude_, _longitude_, _elevation_, _time_) coordinate system in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) improved a state-of-the-art forecasting benchmark by 4%. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
 
 - _December 22, 2025_  
