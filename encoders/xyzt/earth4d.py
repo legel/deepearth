@@ -8,10 +8,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import torch
 import torch.nn as nn
-from typing import Optional
+from typing import Optional, Literal
 
 from hashencoder.hashgrid import HashEncoder
-from coordinates import to_ecef, ECEF_NORM_FACTOR, AdaptiveRange
+from coordinates import to_ecef, ECEF_NORM_FACTOR, AdaptiveRange, GeoAdaptiveRange
 from ops import compute_loss, print_resolution_info
 import tracking
 
@@ -27,16 +27,22 @@ class Earth4D(nn.Module):
                  base_spatial_resolution: float = 32.0,
                  base_temporal_resolution: float = 32.0,
                  growth_factor: float = 2.0,
+                 temporal_growth_factor: float = None,  # If None, uses growth_factor
+                 latlon_growth_factor: float = None,    # If None, uses encoder-specific default
+                 elev_growth_factor: float = None,      # If None, uses encoder-specific default
                  verbose: bool = True,
                  enable_collision_tracking: bool = False,
                  max_tracked_examples: int = 1000000,
                  enable_learned_probing: bool = True,
                  probing_range: int = 32,
                  index_codebook_size: int = 512,
-                 probe_entropy_weight: float = 0.5,
+                 probe_entropy_weight: float = 0.0,
                  use_adaptive_range: bool = False,
                  adaptive_range: Optional[AdaptiveRange] = None,
-                 max_precision_level: Optional[int] = None):
+                 max_precision_level: Optional[int] = None,
+                 coordinate_system: Literal['geographic', 'ecef'] = 'ecef',
+                 geo_range: Optional[GeoAdaptiveRange] = None,
+                 resolution_mode: str = 'balanced'):
         """
         Args:
             spatial_levels: Number of spatial resolution levels
@@ -47,6 +53,8 @@ class Earth4D(nn.Module):
             base_spatial_resolution: Base resolution for spatial encoder
             base_temporal_resolution: Base resolution for temporal encoder
             growth_factor: Growth factor between levels (default: 2.0)
+            latlon_growth_factor: Growth factor for lat/lon dimensions (default: growth_factor for xyz, temporal_growth_factor for others)
+            elev_growth_factor: Growth factor for elevation dimension (default: growth_factor for xyz, temporal_growth_factor for others)
             verbose: Print resolution table on initialization
             enable_collision_tracking: Track hash indices for collision analysis
             max_tracked_examples: Maximum number of examples to track
@@ -80,9 +88,30 @@ class Earth4D(nn.Module):
 
         # Store base parameters for level analysis
         self.base_spatial_resolution = base_spatial_resolution
+        self.base_temporal_resolution = base_temporal_resolution
         self.spatial_levels = spatial_levels
         self.temporal_levels = temporal_levels
         self.growth_factor = growth_factor
+        self.temporal_growth_factor = temporal_growth_factor if temporal_growth_factor is not None else growth_factor
+        self.features_per_level = features_per_level
+
+        # Decoupled growth factors for lat/lon vs elevation
+        # For xyz (spatial-only): default to growth_factor (2.0)
+        # For xyt/yzt/xzt (spatiotemporal): default to temporal_growth_factor
+        self.latlon_growth_factor = latlon_growth_factor
+        self.elev_growth_factor = elev_growth_factor
+
+        # Coordinate system configuration
+        self.coordinate_system = coordinate_system
+        self.resolution_mode = resolution_mode
+        self.geo_range = geo_range
+
+        # Initialize geo_range for geographic mode if not provided
+        if coordinate_system == 'geographic' and geo_range is None:
+            self.geo_range = GeoAdaptiveRange.global_range()
+            self._geo_range_is_default = True
+        else:
+            self._geo_range_is_default = False
 
         # Check HashEncoder is available
         if HashEncoder is None:
@@ -103,57 +132,119 @@ class Earth4D(nn.Module):
         # Calculate max resolutions
         spatial_max_res = int(base_spatial_resolution * (growth_factor ** (spatial_levels - 1)))
         temporal_base_res = [int(base_temporal_resolution)] * 3
-        temporal_max_res = [int(base_temporal_resolution * (growth_factor ** (temporal_levels - 1)))] * 3
+        tgf = self.temporal_growth_factor
 
-        # Spatial encoder (xyz)
+        # Determine per-axis growth factors for each encoder
+        # xyz (lat, lon, elev): uses growth_factor by default, or explicit overrides
+        # xyt (lat, lon, time): uses temporal_growth_factor by default
+        # yzt (lon, elev, time): uses temporal_growth_factor by default
+        # xzt (lat, elev, time): uses temporal_growth_factor by default
+        llgf = latlon_growth_factor  # May be None
+        egf = elev_growth_factor     # May be None
+
+        # xyz encoder: [lat, lon, elev]
+        if llgf is not None or egf is not None:
+            # Per-axis growth specified - use list
+            xyz_llgf = llgf if llgf is not None else growth_factor
+            xyz_egf = egf if egf is not None else growth_factor
+            xyz_scale = [xyz_llgf, xyz_llgf, xyz_egf]
+            xyz_max_res = [
+                int(base_spatial_resolution * (xyz_llgf ** (spatial_levels - 1))),
+                int(base_spatial_resolution * (xyz_llgf ** (spatial_levels - 1))),
+                int(base_spatial_resolution * (xyz_egf ** (spatial_levels - 1))),
+            ]
+        else:
+            # Default: uniform growth_factor=2.0
+            xyz_scale = growth_factor
+            xyz_max_res = spatial_max_res
+
+        # Spatiotemporal encoders: use temporal_growth_factor as baseline
+        if llgf is not None or egf is not None:
+            # Per-axis growth specified
+            st_llgf = llgf if llgf is not None else tgf  # Default to tgf for spatiotemporal
+            st_egf = egf if egf is not None else tgf
+
+            # xyt: [lat, lon, time]
+            xyt_scale = [st_llgf, st_llgf, tgf]
+            xyt_max_res = [
+                int(base_temporal_resolution * (st_llgf ** (temporal_levels - 1))),
+                int(base_temporal_resolution * (st_llgf ** (temporal_levels - 1))),
+                int(base_temporal_resolution * (tgf ** (temporal_levels - 1))),
+            ]
+
+            # yzt: [lon, elev, time]
+            yzt_scale = [st_llgf, st_egf, tgf]
+            yzt_max_res = [
+                int(base_temporal_resolution * (st_llgf ** (temporal_levels - 1))),
+                int(base_temporal_resolution * (st_egf ** (temporal_levels - 1))),
+                int(base_temporal_resolution * (tgf ** (temporal_levels - 1))),
+            ]
+
+            # xzt: [lat, elev, time]
+            xzt_scale = [st_llgf, st_egf, tgf]
+            xzt_max_res = [
+                int(base_temporal_resolution * (st_llgf ** (temporal_levels - 1))),
+                int(base_temporal_resolution * (st_egf ** (temporal_levels - 1))),
+                int(base_temporal_resolution * (tgf ** (temporal_levels - 1))),
+            ]
+        else:
+            # Default: uniform tgf for all dimensions
+            xyt_scale = yzt_scale = xzt_scale = tgf
+            temporal_max_res = [int(base_temporal_resolution * (tgf ** (temporal_levels - 1)))] * 3
+            xyt_max_res = yzt_max_res = xzt_max_res = temporal_max_res
+
+        # Spatial encoder (xyz) - [lat, lon, elev]
         self.xyz_encoder = HashEncoder(
             input_dim=3,
             num_levels=spatial_levels,
             level_dim=features_per_level,
-            per_level_scale=2,
+            per_level_scale=xyz_scale,
             base_resolution=int(base_spatial_resolution),
             log2_hashmap_size=spatial_log2_hashmap_size,
-            desired_resolution=spatial_max_res,
+            desired_resolution=xyz_max_res,
             enable_learned_probing=enable_learned_probing,
             probing_range=probing_range,
             index_codebook_size=index_codebook_size
         )
 
-        # Spatiotemporal encoders (xyt, yzt, xzt)
+        # Spatiotemporal encoders with per-axis growth factors
+        # xyt: [lat, lon, time]
         self.xyt_encoder = HashEncoder(
             input_dim=3,
             num_levels=temporal_levels,
             level_dim=features_per_level,
-            per_level_scale=2,
+            per_level_scale=xyt_scale,
             base_resolution=temporal_base_res,
             log2_hashmap_size=temporal_log2_hashmap_size,
-            desired_resolution=temporal_max_res,
+            desired_resolution=xyt_max_res,
             enable_learned_probing=enable_learned_probing,
             probing_range=probing_range,
             index_codebook_size=index_codebook_size
         )
 
+        # yzt: [lon, elev, time]
         self.yzt_encoder = HashEncoder(
             input_dim=3,
             num_levels=temporal_levels,
             level_dim=features_per_level,
-            per_level_scale=2,
+            per_level_scale=yzt_scale,
             base_resolution=temporal_base_res,
             log2_hashmap_size=temporal_log2_hashmap_size,
-            desired_resolution=temporal_max_res,
+            desired_resolution=yzt_max_res,
             enable_learned_probing=enable_learned_probing,
             probing_range=probing_range,
             index_codebook_size=index_codebook_size
         )
 
+        # xzt: [lat, elev, time]
         self.xzt_encoder = HashEncoder(
             input_dim=3,
             num_levels=temporal_levels,
             level_dim=features_per_level,
-            per_level_scale=2,
+            per_level_scale=xzt_scale,
             base_resolution=temporal_base_res,
             log2_hashmap_size=temporal_log2_hashmap_size,
-            desired_resolution=temporal_max_res,
+            desired_resolution=xzt_max_res,
             enable_learned_probing=enable_learned_probing,
             probing_range=probing_range,
             index_codebook_size=index_codebook_size
@@ -193,8 +284,10 @@ class Earth4D(nn.Module):
             'probing_range': self.probing_range,
             'max_precision_level': self.max_precision_level,
             'spatial_levels': self.spatial_levels,
+            'coordinate_system': self.coordinate_system,
         }
-        print_resolution_info(self, config, self.adaptive_range)
+        adaptive_range = self.geo_range if self.coordinate_system == 'geographic' else self.adaptive_range
+        print_resolution_info(self, config, adaptive_range)
 
     def _encode_spatial(self, xyz: torch.Tensor, ct_data: dict = None) -> torch.Tensor:
         """Encode spatial xyz coordinates."""
@@ -232,19 +325,26 @@ class Earth4D(nn.Module):
         Returns:
             Concatenated features tensor
         """
-        x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
-        time = coords[..., 3]
-
-        # Normalize ECEF coordinates
-        if self.use_adaptive_range and self.adaptive_range is not None:
-            x_norm, y_norm, z_norm, time_norm = self.adaptive_range.normalize_ecef(x, y, z, time)
+        if self.coordinate_system == 'geographic':
+            # Geographic mode: normalize lat/lon/elev directly
+            lat, lon, elev, time = coords[..., 0], coords[..., 1], coords[..., 2], coords[..., 3]
+            x_norm, y_norm, z_norm, time_norm = self.geo_range.normalize(lat, lon, elev, time)
+            norm_coords = torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
         else:
-            x_norm = x / ECEF_NORM_FACTOR
-            y_norm = y / ECEF_NORM_FACTOR
-            z_norm = z / ECEF_NORM_FACTOR
-            time_norm = time
+            # ECEF mode: convert to Earth-centered coordinates
+            x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
+            time = coords[..., 3]
 
-        norm_coords = torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
+            # Normalize ECEF coordinates
+            if self.use_adaptive_range and self.adaptive_range is not None:
+                x_norm, y_norm, z_norm, time_norm = self.adaptive_range.normalize_ecef(x, y, z, time)
+            else:
+                x_norm = x / ECEF_NORM_FACTOR
+                y_norm = y / ECEF_NORM_FACTOR
+                z_norm = z / ECEF_NORM_FACTOR
+                time_norm = time
+
+            norm_coords = torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
 
         ct_data = None
         if self.enable_collision_tracking and self.collision_tracking_data is not None:
@@ -293,6 +393,33 @@ class Earth4D(nn.Module):
 
         return self
 
+    def fit_geo_range(self, coords: torch.Tensor,
+                      lat_coverage: float = 0.25,
+                      lon_coverage: float = 0.25,
+                      elev_coverage: float = 0.15,
+                      time_coverage: float = 1.0) -> 'Earth4D':
+        """Fit geographic range from training coordinates.
+
+        Args:
+            coords: Training coordinates (N, 4) - [lat, lon, elev, time]
+            lat_coverage: Target coverage fraction for latitude (smaller = tighter fit)
+            lon_coverage: Target coverage fraction for longitude
+            elev_coverage: Target coverage fraction for elevation
+            time_coverage: Target coverage fraction for time
+
+        Returns:
+            self for chaining
+        """
+        self.geo_range = GeoAdaptiveRange.balanced_regional(
+            coords, lat_coverage, lon_coverage, elev_coverage, time_coverage
+        )
+        self._geo_range_is_default = False
+
+        if self.verbose:
+            self._print_resolution_info()
+
+        return self
+
     def precompute(self, coords: torch.Tensor) -> dict:
         """
         Precompute hash indices and weights for a fixed set of coordinates.
@@ -306,16 +433,20 @@ class Earth4D(nn.Module):
             dict with memory usage statistics for all 4 encoders
         """
         # Convert coordinates to normalized form
-        x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
-        time = coords[..., 3]
-
-        if self.use_adaptive_range and self.adaptive_range is not None:
-            x_norm, y_norm, z_norm, time_norm = self.adaptive_range.normalize_ecef(x, y, z, time)
+        if self.coordinate_system == 'geographic':
+            lat, lon, elev, time = coords[..., 0], coords[..., 1], coords[..., 2], coords[..., 3]
+            x_norm, y_norm, z_norm, time_norm = self.geo_range.normalize(lat, lon, elev, time)
         else:
-            x_norm = x / ECEF_NORM_FACTOR
-            y_norm = y / ECEF_NORM_FACTOR
-            z_norm = z / ECEF_NORM_FACTOR
-            time_norm = time
+            x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
+            time = coords[..., 3]
+
+            if self.use_adaptive_range and self.adaptive_range is not None:
+                x_norm, y_norm, z_norm, time_norm = self.adaptive_range.normalize_ecef(x, y, z, time)
+            else:
+                x_norm = x / ECEF_NORM_FACTOR
+                y_norm = y / ECEF_NORM_FACTOR
+                z_norm = z / ECEF_NORM_FACTOR
+                time_norm = time
 
         norm_coords = torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
 

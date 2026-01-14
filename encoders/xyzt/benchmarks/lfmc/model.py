@@ -22,7 +22,13 @@ class SpeciesAwareLFMCModel(nn.Module):
     """
 
     def __init__(self, n_species: int, species_dim: int = 32,
-                 use_adaptive_range: bool = False, verbose: bool = True):
+                 use_adaptive_range: bool = False, verbose: bool = True,
+                 coordinate_system: str = 'ecef',
+                 resolution_mode: str = 'balanced',
+                 base_temporal_resolution: float = 32.0,
+                 temporal_growth_factor: float = None,
+                 latlon_growth_factor: float = None,
+                 elev_growth_factor: float = None):
         """
         Initialize species-aware LFMC model.
 
@@ -31,12 +37,24 @@ class SpeciesAwareLFMCModel(nn.Module):
             species_dim: Dimension of species embedding vectors
             use_adaptive_range: Whether to use adaptive range for Earth4D
             verbose: Print model architecture details
+            coordinate_system: 'geographic' or 'ecef'
+            resolution_mode: Resolution mode for geographic coordinates
+            base_temporal_resolution: Base resolution for temporal encoder
+            temporal_growth_factor: Growth factor for temporal resolution levels
+            latlon_growth_factor: Growth factor for lat/lon dimensions (decoupled from elevation)
+            elev_growth_factor: Growth factor for elevation dimension (decoupled from lat/lon)
         """
         super().__init__()
 
         self.earth4d = Earth4D(
             verbose=verbose,
             use_adaptive_range=use_adaptive_range,
+            coordinate_system=coordinate_system,
+            resolution_mode=resolution_mode,
+            base_temporal_resolution=base_temporal_resolution,
+            temporal_growth_factor=temporal_growth_factor,
+            latlon_growth_factor=latlon_growth_factor,
+            elev_growth_factor=elev_growth_factor,
         )
 
         earth4d_dim = self.earth4d.get_output_dim()
