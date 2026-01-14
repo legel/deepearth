@@ -177,16 +177,38 @@ def run_training_session(args, run_name: str = "") -> Dict[str, Any]:
 
     # Model with learnable species embeddings
     use_adaptive_range = getattr(args, 'use_adaptive_range', False)
+    coordinate_system = getattr(args, 'coordinate_system', 'ecef')
+    resolution_mode = getattr(args, 'resolution_mode', 'balanced')
+    base_temporal_res = getattr(args, 'base_temporal_res', 32)
+    temporal_growth = getattr(args, 'temporal_growth', 2.0)
+    latlon_growth = getattr(args, 'latlon_growth', None)
+    elev_growth = getattr(args, 'elev_growth', None)
 
     model = SpeciesAwareLFMCModel(
         dataset.n_species,
         species_dim=args.species_dim,
         use_adaptive_range=use_adaptive_range,
-        verbose=True
+        verbose=True,
+        coordinate_system=coordinate_system,
+        resolution_mode=resolution_mode,
+        base_temporal_resolution=float(base_temporal_res),
+        temporal_growth_factor=temporal_growth,
+        latlon_growth_factor=latlon_growth,
+        elev_growth_factor=elev_growth,
     ).to(device)
 
-    # Fit adaptive range if enabled
-    if use_adaptive_range:
+    # Fit geographic range if using geographic coordinates
+    if coordinate_system == 'geographic':
+        lat_cov = getattr(args, 'lat_coverage', 0.25)
+        lon_cov = getattr(args, 'lon_coverage', 0.25)
+        elev_cov = getattr(args, 'elev_coverage', 0.15)
+        time_cov = getattr(args, 'time_coverage', 1.0)
+        print(f"\nFitting geographic range (lat={lat_cov}, lon={lon_cov}, elev={elev_cov}, time={time_cov})...", flush=True)
+        all_coords = dataset.coords.cpu()
+        model.earth4d.fit_geo_range(all_coords, lat_cov, lon_cov, elev_cov, time_cov)
+
+    # Fit adaptive range if enabled (ECEF mode)
+    if use_adaptive_range and coordinate_system == 'ecef':
         print("\nFitting adaptive range to training data...", flush=True)
         train_coords = dataset.coords[splits['train']].cpu()
         model.earth4d.fit_range(train_coords, buffer_fraction=0.25)
@@ -520,13 +542,13 @@ def main():
                        help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=256,
                        help='Batch size for training')
-    parser.add_argument('--lr', type=float, default=0.00025,
+    parser.add_argument('--lr', type=float, default=0.0008,
                        help='Learning rate')
     parser.add_argument('--seed', type=int, default=0,
                        help='Random seed for reproducibility')
 
     # Model arguments
-    parser.add_argument('--species-dim', type=int, default=768,
+    parser.add_argument('--species-dim', type=int, default=256,
                        help='Dimension of learnable species embeddings')
 
     # Enhancement flags
@@ -548,6 +570,31 @@ def main():
                        help='Disable fused Adam, use standard training')
     parser.add_argument('--weight-decay', type=float, default=0.001,
                        help='Weight decay for AdamW (default: 0.001)')
+
+    # Geographic mode arguments
+    parser.add_argument('--coordinate-system', type=str, default='ecef',
+                       choices=['geographic', 'ecef'],
+                       help='Coordinate system to use (default: ecef)')
+    parser.add_argument('--resolution-mode', type=str, default='balanced',
+                       help='Resolution mode for geographic coordinates')
+    parser.add_argument('--lat-coverage', type=float, default=0.25,
+                       help='Latitude coverage fraction (default: 0.25)')
+    parser.add_argument('--lon-coverage', type=float, default=0.25,
+                       help='Longitude coverage fraction (default: 0.25)')
+    parser.add_argument('--elev-coverage', type=float, default=0.15,
+                       help='Elevation coverage fraction (default: 0.15)')
+    parser.add_argument('--time-coverage', type=float, default=1.0,
+                       help='Time coverage fraction (default: 1.0)')
+    parser.add_argument('--base-temporal-res', type=int, default=32,
+                       help='Base temporal resolution (default: 32)')
+    parser.add_argument('--temporal-growth', type=float, default=2.0,
+                       help='Temporal growth factor per level (default: 2.0)')
+    parser.add_argument('--latlon-growth', type=float, default=None,
+                       help='Lat/lon growth factor (decoupled from elevation). Default: match encoder baseline')
+    parser.add_argument('--elev-growth', type=float, default=None,
+                       help='Elevation growth factor (decoupled from lat/lon). Default: match encoder baseline')
+    parser.add_argument('--fast', action='store_true',
+                       help='Skip visualizations and CSV export for faster runs')
 
     # Output arguments
     parser.add_argument('--output-dir', type=str, default='./outputs',

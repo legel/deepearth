@@ -95,6 +95,75 @@ Earth4D outputs a **192-dimensional feature vector** per (x,y,z,t) coordinate:
 
 Default configuration requires **724M trainable parameters** (~11 GB GPU memory during training). Each level stores up to 2²² entries. The architecture is parallelizable across levels and spatio-temporal boundaries.
 
+## Coordinate System
+
+Earth4D supports two coordinate systems for mapping (latitude, longitude, elevation, time) to the internal (x, y, z, t) representation:
+
+### Geographic Mode (Default)
+
+The geographic coordinate system directly maps latitude, longitude, and elevation to the hash grid dimensions:
+
+| Dimension | Mapping | Range |
+|-----------|---------|-------|
+| x | Latitude | -90° to +90° |
+| y | Longitude | -180° to +180° |
+| z | Elevation | meters above MSL |
+| t | Time | normalized [0, 1] |
+
+**Key benefit**: Points at the same latitude share x-coordinate values across the globe. This enables **ecological prior transfer** between regions with similar latitudes.
+
+For example, San Francisco (37.8°N, -122.4°W) and the Amalfi Coast (37.8°N, 14.5°E) share the same x-value in the **xzt grid** (latitude, elevation, time), allowing the model to learn shared patterns between Mediterranean climate regions despite being on different continents.
+
+**Grid semantics in geographic mode:**
+- **xyz** (lat, lon, elev): Pure spatial features for location
+- **xyt** (lat, lon, time): Surface dynamics over time
+- **yzt** (lon, elev, time): Continental altitude-time patterns
+- **xzt** (lat, elev, time): **Enables ecological prior transfer across longitudes**
+
+### ECEF Mode (Legacy)
+
+The legacy Earth-Centered Earth-Fixed (ECEF) coordinate system transforms lat/lon/elev to Cartesian coordinates centered at Earth's center using the WGS84 ellipsoid:
+
+```python
+encoder = Earth4D(coordinate_system='ecef')  # Legacy mode
+```
+
+In ECEF mode, the latitude relationship is destroyed—points at the same latitude but different longitudes have completely different (x, y, z) coordinates.
+
+### Range Configuration
+
+**Global coverage** (default for geographic mode):
+```python
+encoder = Earth4D()  # Full Earth coverage by default
+```
+
+**Fit to training data** (recommended for regional datasets):
+```python
+encoder = Earth4D()
+encoder.fit_range(train_coords, buffer_fraction=0.25)
+# Allocates 25% buffer for generalization beyond training distribution
+# Warns if test data exceeds fitted range
+```
+
+**Custom regional range**:
+```python
+from coordinates import GeoAdaptiveRange
+
+mediterranean = GeoAdaptiveRange(
+    lat_min=30.0, lat_max=50.0,
+    lon_min=-10.0, lon_max=40.0,
+    elev_min=0.0, elev_max=3000.0
+)
+encoder = Earth4D(geo_range=mediterranean)
+```
+
+### Elevation Semantics
+
+Elevation is measured as **meters above Mean Sea Level (MSL)**, not relative to local terrain. This design choice:
+- Enables learning of altitude-dependent ecological patterns (temperature, pressure, vegetation zones)
+- Points at the same elevation share z-values regardless of underlying terrain
+- Mountain peaks at identical elevations (e.g., two 14,000ft peaks) will share hash cells in the xzt grid
+
 ## Resolution Scale Table
 
 ### Spatial Encoder (XYZ)
