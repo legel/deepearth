@@ -11,11 +11,11 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 ## Exciting News:
 
-- _January 13, 2026_
-  **Cross-continental pattern learning.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) now maps (lat, lon, elev, time) directly to hash grid axes, enabling shared learning across the same latitudes and elevations worldwide. MAE 11.7pp, R² 0.783 on Globe-LFMC. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
+- _January 13, 2026_  
+  **New geospatial coordinate system.** A refined (_x_, _y_, _z_, _t_) = (_latitude_, _longitude_, _elevation_, _time_) coordinate system in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) improved a state-of-the-art forecasting benchmark by 4%. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
 
-- _December 22, 2025_
-  **10x faster.** Following state-of-the-art [Earth4D](https://github.com/legel/deepearth/blob/main/encoders/xyzt/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [commit](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3) and [CUDA code](https://github.com/legel/deepearth/blob/main/encoders/xyzt/hashencoder/src/precompute.cu). 
+- _December 22, 2025_  
+  **10x faster.** Following state-of-the-art [Earth4D](https://github.com/legel/deepearth/blob/main/encoders/xyzt/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [_commit_](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3) and [_CUDA code_](https://github.com/legel/deepearth/blob/main/encoders/xyzt/hashencoder/src/precompute.cu). 
 
 - _December 19, 2025_  
   **Supercomputing award.** US DOE [National Energy Research Scientific Computing Center](https://www.nersc.gov) has awarded a DeepEarth team with supercomputing access in 2026 through [EESSD](https://science.osti.gov/ber/Research/eessd).
