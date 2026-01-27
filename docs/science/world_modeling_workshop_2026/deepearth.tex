@@ -94,15 +94,51 @@ We present \textit{DeepEarth}, a self-supervised multi-modal world model with \t
 \todo[inline]{Discuss dependence on coordinates and species labels alone and its limitations (Reviewer [QS1P])}
 \todo[inline]{More clarity on multimodality (Reviewer [QJfa])}
 
-\outline{context on what is world modeling}
-\outline{context on why you may want to use world modeling for ecology}
-\outline{review on types of world models}
-\outline{reference multi-modal world models}
-\outline{context on what is a neural field}
-\outline{connection on neural field for world modeling}
-\outline{context of Galileo, since used later in the paper}
-\outline{we present DeepEarth... Why coordinates and species alone?}
 
+As learning-based techniques expand into the real world, a broad area of disciplines feature related challenges of bringing geospatial data at sparse sites collected at irregular intervals into a unified framework.
+World models frame the learning problem as an interactive opportunity to consider counterfactuals or forecast future events, made even more pressing with the growing of artificial intelligence agents.
+\todo[inline]{Cite: \url{https://www.nvidia.com/en-us/glossary/world-models/}}
+In the context of land management (including, but not limited to, ecology, landscaping, or agriculture), decision-makers have the opportunity to weigh options based on the world model's predictions.
+For example, predicting the timing of flowering or live fuel moisture content across scales can inform downstream decisions, such as when and where to plant specific species or take mitigating actions against natural hazards.
+
+Many world models are built for artificial intelligence agents, though not necessarily for land management.
+\outline{review on types of world models}
+
+\outline{reference multi-modal world models}
+
+Recent world models have considered geospatial data.
+\outline{context of Galileo and AlphaEarth, since used later in the paper}
+
+We contrast this development of world models with the development of neural fields.
+These representations consider a maping of coordinate-based features to a physical value.
+For example, a neural gravitational field would map spatial coordinates to a gravitational potential \todo{cite}.
+Similar representations can be constructed for other physical fields, such as for glacial flows \todo{cite}, \todo{finish}.
+Many of these neural fields use physics-informed neural networks (PINNs) to constrain the learned mapping where known physical laws are directly included in the learning objective.
+However, in many settings in land management, such as ecological forecasting, clean physical laws are not easily available.
+One approach to learn neural fields is to use self-supervised learning, where the model is trained to reconstruct the input data.
+This approach has been successfully applied to weather forecasting \todo{cite}, \todo{finish}.
+Implicitly, the domain knowledge (e.g., meteorology) is built into the input-output pairs or model architecture and the method succeeds due to the availability of large amounts of data.
+
+A particular type of neural field that motivates this work is the neural radiance field (NeRF), which maps spatial coordinates and view directions to a color or density contribution \todo{cite}.
+The physics-based volumetric rendering constrains how the NeRF must allocate color or density contributions to the scene, to reconstruct the input training images.
+Early works in NeRF were extremely time-consuming to train, requiring hours or days on a single GPU \todo{cite}.
+Although many works aimed to reduce the training time \todo{cite}, the introduction of instant neural graphics primitives (INGPs) \citep{M_ller_2022} and multi-resolution hash encoding (MHE) \citep{takikawa2023compactneuralgraphicsprimitives} allowed for the training of NeRFs on small batches in minutes \todo{verify citations}.
+3D reconstruction is typically considered for small scenes (e.g., on the scale of homes), but recent works have demonstrated the ability to reconstruct large scenes (e.g., on the scale of cities) \todo{cite}.
+Other works have also considered aerial or satellite imagery \todo{cite} and have explored the ability to reconstruct across devices (e.g., ground and aerial) in a georeferenced manner \todo{cite}.
+Although some works have considered sensors beyond camera imagery (e.g., \todo{cite}), 
+These 3D reconstructions are effective and useful in the context of land management, but they constrain the type of data that can be stored and reconstructed.
+Fundamentally, the core of 3D reconstruction and neural fields in computer vision, is to recover the training images and generalize to new camera viewpoints or lighting conditions, rather than handle sparse geospatial data. 
+
+
+Our key insight is to reconsider what data could be effectively stored in a multi-resolution hash encoding and neural field that would elevate the performance of world models in land management, allowing more compact models and improved performance.
+We present DeepEarth, a self-supervised multi-modal world model that takes an interdisciplinary approach to efficiently and effectively represent geospatial data.
+Although applicable to a wide range of domains, we evaluate DeepEarth on \todo{check} three tasks: live fuel moisture content prediction, RGB aerial imagery reconstruction, and hydrological forecasting.
+Live fuel moisture content (LFMC) prediction is a key indicator of timely wildfire risk, impacting mitigation strategies before a fire starts as well as supporting fire suppression opertaions (e.g., where to deploy resources and which fuels to target).
+For LFMC prediction, we evaluate DeepEarth on the Globe-LFMC 2.0 ecological forecasting benchmark that separates LFMC by species allowing for land managers and AI agents to consider the how a species planting choice can impact future fire risk.
+For RGB aerial imagery reconstruction, we evaluate DeepEarth on the USGS 3DEP LiDAR and USDA NAIP imagery paired by Allred et al. \todo{cite} to reconstruct RGB pixels from a timestamped geolocated point cloud.
+This reconstruction task, similar to NeRF, addresses to what extent the visual appearance of the scene is accurately mapped to geolocated point queries.
+For hydrological forecasting, we evaluate DeepEarth on \todo{finish}.
+These tasks illustrate the verisitility of DeepEarth across domains and the potential of world models in land management.
 
 
 
