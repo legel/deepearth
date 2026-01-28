@@ -572,23 +572,23 @@ def main():
                        help='Weight decay for AdamW (default: 0.001)')
 
     # Geographic mode arguments
-    parser.add_argument('--coordinate-system', type=str, default='ecef',
+    parser.add_argument('--coordinate-system', type=str, default='geographic',
                        choices=['geographic', 'ecef'],
-                       help='Coordinate system to use (default: ecef)')
+                       help='Coordinate system to use (default: geographic)')
     parser.add_argument('--resolution-mode', type=str, default='balanced',
                        help='Resolution mode for geographic coordinates')
-    parser.add_argument('--lat-coverage', type=float, default=0.25,
-                       help='Latitude coverage fraction (default: 0.25)')
-    parser.add_argument('--lon-coverage', type=float, default=0.25,
-                       help='Longitude coverage fraction (default: 0.25)')
-    parser.add_argument('--elev-coverage', type=float, default=0.15,
-                       help='Elevation coverage fraction (default: 0.15)')
+    parser.add_argument('--lat-coverage', type=float, default=0.05,
+                       help='Latitude coverage fraction (default: 0.05)')
+    parser.add_argument('--lon-coverage', type=float, default=0.05,
+                       help='Longitude coverage fraction (default: 0.05)')
+    parser.add_argument('--elev-coverage', type=float, default=0.01,
+                       help='Elevation coverage fraction (default: 0.01)')
     parser.add_argument('--time-coverage', type=float, default=1.0,
                        help='Time coverage fraction (default: 1.0)')
-    parser.add_argument('--base-temporal-res', type=int, default=32,
-                       help='Base temporal resolution (default: 32)')
-    parser.add_argument('--temporal-growth', type=float, default=2.0,
-                       help='Temporal growth factor per level (default: 2.0)')
+    parser.add_argument('--base-temporal-res', type=int, default=2,
+                       help='Base temporal resolution (default: 2)')
+    parser.add_argument('--temporal-growth', type=float, default=1.2,
+                       help='Temporal growth factor per level (default: 1.2)')
     parser.add_argument('--latlon-growth', type=float, default=None,
                        help='Lat/lon growth factor (decoupled from elevation). Default: match encoder baseline')
     parser.add_argument('--elev-growth', type=float, default=None,
