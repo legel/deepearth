@@ -8,7 +8,85 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import torch
 import torch.nn as nn
-from typing import Optional, Literal
+from typing import Optional, Literal, Union, Tuple
+from datetime import datetime
+import re
+
+
+def parse_timestamp(timestamp: str, time_range: Tuple[int, int] = (1900, 2100)) -> float:
+    """
+    Parse a human-readable timestamp string into normalized time [0, 1].
+
+    Supports formats like:
+        "1941-06-01 09:00 GMT"
+        "1985-01-15 10:00 ET"
+        "2026-02-04 11:00 CET"
+
+    Args:
+        timestamp: Human-readable timestamp string
+        time_range: (start_year, end_year) for normalization (default: 1900-2100)
+
+    Returns:
+        Normalized time value in [0, 1]
+    """
+    # Common timezone offsets (hours from UTC)
+    tz_offsets = {
+        'UTC': 0, 'GMT': 0, 'Z': 0,
+        'ET': -5, 'EST': -5, 'EDT': -4,
+        'CT': -6, 'CST': -6, 'CDT': -5,
+        'MT': -7, 'MST': -7, 'MDT': -6,
+        'PT': -8, 'PST': -8, 'PDT': -7,
+        'CET': 1, 'CEST': 2,
+        'JST': 9, 'KST': 9,
+        'IST': 5.5,
+        'AEST': 10, 'AEDT': 11,
+    }
+
+    # Extract timezone from end of string
+    parts = timestamp.strip().split()
+    tz_str = parts[-1].upper() if parts else 'UTC'
+    tz_offset = tz_offsets.get(tz_str, 0)
+
+    # Remove timezone from timestamp for parsing
+    if tz_str in tz_offsets:
+        timestamp_clean = ' '.join(parts[:-1])
+    else:
+        timestamp_clean = timestamp
+        tz_offset = 0
+
+    # Try parsing various formats
+    formats = [
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%Y/%m/%d %H:%M",
+        "%Y/%m/%d",
+        "%d-%m-%Y %H:%M",
+        "%d/%m/%Y %H:%M",
+    ]
+
+    dt = None
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(timestamp_clean.strip(), fmt)
+            break
+        except ValueError:
+            continue
+
+    if dt is None:
+        raise ValueError(f"Could not parse timestamp: {timestamp}")
+
+    # Convert to Unix timestamp (seconds since 1970-01-01 UTC)
+    # Adjust for timezone
+    unix_ts = dt.timestamp() - (tz_offset * 3600)
+
+    # Normalize to [0, 1] based on time_range
+    start_year, end_year = time_range
+    start_ts = datetime(start_year, 1, 1).timestamp()
+    end_ts = datetime(end_year, 1, 1).timestamp()
+
+    normalized = (unix_ts - start_ts) / (end_ts - start_ts)
+    return max(0.0, min(1.0, normalized))  # Clamp to [0, 1]
 
 from hashencoder.hashgrid import HashEncoder
 from coordinates import to_ecef, ECEF_NORM_FACTOR, AdaptiveRange, GeoAdaptiveRange
@@ -314,17 +392,64 @@ class Earth4D(nn.Module):
 
         return torch.cat([xyt_features, yzt_features, xzt_features], dim=-1)
 
-    def forward(self, coords: torch.Tensor) -> torch.Tensor:
+    def forward(self, *args, **kwargs) -> torch.Tensor:
         """
         Forward pass through Earth4D encoder.
 
-        Args:
-            coords: Input coordinates tensor (..., 4)
-                    Format: [latitude, longitude, elevation_m, time_normalized]
+        Accepts either:
+            1. A tensor of shape (..., 4) with [lat, lon, elev, time_normalized]
+            2. Multiple tuples: (lat, lon, elev, "timestamp string"), ...
+
+        Examples:
+            # Tensor input (time pre-normalized to [0,1])
+            coords = torch.tensor([[37.77, -122.41, 50.0, 0.5]])
+            embeddings = model(coords)
+
+            # Tuple input with human-readable timestamps
+            embeddings = model(
+                (51.9976, -0.7416, 110, "1941-06-01 09:00 GMT"),
+                (40.4433, -79.9436, 270, "1985-01-15 10:00 ET"),
+            )
 
         Returns:
-            Concatenated features tensor
+            Concatenated features tensor of shape (N, 192)
         """
+        # Handle tuple input format
+        if len(args) > 0 and isinstance(args[0], (tuple, list)):
+            coords = self._parse_coordinate_tuples(args)
+        elif len(args) == 1 and isinstance(args[0], torch.Tensor):
+            coords = args[0]
+        else:
+            raise ValueError(
+                "Expected either a tensor or coordinate tuples. "
+                "Example: model((lat, lon, elev, 'timestamp'), ...)"
+            )
+
+        return self._forward_tensor(coords)
+
+    def _parse_coordinate_tuples(self, tuples) -> torch.Tensor:
+        """Convert coordinate tuples with string timestamps to tensor."""
+        coords_list = []
+        for t in tuples:
+            if len(t) != 4:
+                raise ValueError(f"Each coordinate tuple must have 4 elements (lat, lon, elev, time), got {len(t)}")
+
+            lat, lon, elev, time_val = t
+
+            # Parse timestamp if string, otherwise use as-is
+            if isinstance(time_val, str):
+                time_norm = parse_timestamp(time_val)
+            else:
+                time_norm = float(time_val)
+
+            coords_list.append([float(lat), float(lon), float(elev), time_norm])
+
+        # Determine device from model parameters
+        device = next(self.parameters()).device
+        return torch.tensor(coords_list, dtype=torch.float32, device=device)
+
+    def _forward_tensor(self, coords: torch.Tensor) -> torch.Tensor:
+        """Internal forward pass with tensor input."""
         if self.coordinate_system == 'geographic':
             # Geographic mode: normalize lat/lon/elev directly
             lat, lon, elev, time = coords[..., 0], coords[..., 1], coords[..., 2], coords[..., 3]
@@ -525,28 +650,19 @@ class Earth4D(nn.Module):
 
 # Example usage and testing
 if __name__ == "__main__":
-    print("Earth4D: Planetary Spatiotemporal Positional Encoder")
-    print("=" * 60)
-    
-    # Check device availability
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"   Using device: {device.upper()}")
+    # https://github.com/legel/deepearth
+    from deepearth.encoders.xyzt.earth4d import Earth4D
 
-    encoder = Earth4D(
-        spatial_levels=24,
-        temporal_levels=24,
-        spatial_log2_hashmap_size=22,
-        temporal_log2_hashmap_size=22,
-        verbose=True
-    ).to(device)
-
-    # Example coordinates: [lat, lon, elev_m, time_norm]
-    coords = torch.tensor([
-        [37.7749, -122.4194, 50.0, 0.5],   # San Francisco
-        [40.7128, -74.0060, 100.0, 0.7],   # New York
-        [-33.8688, 151.2093, 20.0, 0.3],   # Sydney
-    ], device=device)
-
-    features = encoder(coords)
-    print(f"\nInput shape: {coords.shape}")
-    print(f"Output shape: {features.shape}")
+    world_model = Earth4D()
+    embeddings = world_model(
+        # Bletchley Park (Turing breaks Enigma, 1941)
+        (51.9976, -0.7416, 110, "1941-06-01 09:00 GMT"),
+        # Carnegie Mellon (Hinton invents Boltzmann Machines, 1985)
+        (40.4433, -79.9436, 270, "1985-01-15 10:00 ET"),
+        # CERN (Berners-Lee invents WWW, 1989)
+        (46.2330, 6.0557, 430, "1989-03-12 10:00 CET"),
+        # Mila, Quebec (World Modeling Workshop 2026)
+        (45.5308, -73.6128, 63, "2026-02-04 11:00 ET"),
+    )
+    # embeddings.shape: [4, 192] -- trainable space-time features
+    print(f"embeddings.shape: {list(embeddings.shape)} -- trainable space-time features")
