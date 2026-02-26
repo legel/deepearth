@@ -47,18 +47,18 @@ Earth4D achieves state-of-the-art performance on the Globe-LFMC 2.0 benchmark:
 
 | Model | Data Inputs | MAE (pp) | RMSE (pp) | R² |
 |-------|-------------|----------|-----------|-----|
-| **Earth4D (Learned Hashing)** | (x,y,z,t) + Species Name | **12.1** | **19.9** | **0.755** |
-| Galileo (Pre-Trained) | (x,y,z,t) + Species Type + Remote Sensing | 12.6 | 18.9 | 0.72 |
+| **Earth4D (Learned Hashing)** | (x,y,z,t) + Species Name | **11.7** | **18.7** | **0.783** |
+| AI2 (Pre-Trained ViT) | (x,y,z,t) + Species Type + Vision (Remote Sensing) | 12.6 | 18.9 | 0.72 |
 
-Earth4D surpasses the pre-trained Galileo foundation model (Johnson et al., 2025; Tseng et al., 2025) without satellite imagery, weather data, or topography.
+Earth4D surpasses Allen Institute for AI's pre-trained Vision Transformer foundation model (Johnson et al., 2025; Tseng et al., 2025) without satellite imagery, weather data, or topography.
 
 ### Training Performance
 
 | Metric | Training | Test |
 |--------|----------|------|
-| RMSE | 6.1pp | 19.9pp |
-| MAE | 1.8pp | 12.1pp |
-| R² | 0.977 | 0.755 |
+| RMSE | 6.1pp | 18.7pp |
+| MAE | 1.8pp | 11.7pp |
+| R² | 0.977 | 0.783 |
 
 - **Training speed**: ~1.8s/epoch
 - **Total training time**: ~5 hours for 10,000 epochs
