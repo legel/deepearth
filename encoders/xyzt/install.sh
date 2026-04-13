@@ -4,6 +4,14 @@
 
 set -e  # Exit on error
 
+# Parse flags
+NO_SUDO=false
+for arg in "$@"; do
+    case $arg in
+        --no-sudo) NO_SUDO=true ;;
+    esac
+done
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -45,10 +53,17 @@ fi
 # Check for ninja
 if ! command -v ninja &> /dev/null; then
     echo -e "${YELLOW}[⚠]${NC} Installing ninja build system..."
-    if command -v apt-get &> /dev/null; then
-        sudo apt-get update && sudo apt-get install -y ninja-build
+    if pip install ninja -q 2>/dev/null; then
+        echo -e "${GREEN}[✓]${NC} Ninja installed via pip"
+    elif command -v conda &> /dev/null && conda install -y -c conda-forge ninja -q 2>/dev/null; then
+        echo -e "${GREEN}[✓]${NC} Ninja installed via conda"
+    elif [[ "$NO_SUDO" == false ]] && command -v apt-get &> /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build; then
+        echo -e "${GREEN}[✓]${NC} Ninja installed via apt-get"
     else
-        echo "Please install ninja manually: https://ninja-build.org/"
+        echo -e "${RED}[✗]${NC} Could not install ninja. Please install manually:"
+        echo "    pip install ninja"
+        echo "    conda install -c conda-forge ninja"
+        echo "    sudo apt-get install ninja-build"
         exit 1
     fi
 else
