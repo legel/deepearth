@@ -175,23 +175,23 @@ def marker_size(n_stations, global_max_n):
 
 
 def add_size_legend(fig, global_max_n, legend_counts=(1, 5, 10, 20)):
-    """Inset circle-size legend placed in the lower-left corner of the figure."""
+    """Vertical circle-size legend in the Atlantic Ocean gap between Florida and the colorbar."""
     fig.add_shape(
         type="rect", xref="paper", yref="paper",
-        x0=0.010, y0=0.060, x1=0.182, y1=0.282,
+        x0=0.796, y0=0.048, x1=0.938, y1=0.270,
         fillcolor="rgba(255,255,255,0.88)",
         line=dict(color="rgba(80,80,80,0.45)", width=0.8),
         layer="above",
     )
     fig.add_annotation(
-        xref="paper", yref="paper", x=0.096, y=0.258,
+        xref="paper", yref="paper", x=0.867, y=0.250,
         text="<b>Circle size</b>",
         showarrow=False, font=dict(size=10, color="#333"),
         xanchor="center",
     )
 
-    y_positions = [0.222, 0.178, 0.134, 0.090]
-    x_circle, x_label = 0.042, 0.082
+    y_positions = [0.212, 0.168, 0.124, 0.080]
+    x_circle, x_label = 0.822, 0.852
 
     for i, count in enumerate(legend_counts):
         sz  = marker_size(count, global_max_n)
@@ -319,6 +319,8 @@ for d in DURATIONS:
         tickfont=dict(size=10),
         thickness=15,
         len=0.65,
+        x=0.99,
+        xpad=0,
     )
 
     for m_num, m_name in MONTHS:
