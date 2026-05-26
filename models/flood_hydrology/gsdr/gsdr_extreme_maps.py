@@ -19,6 +19,12 @@ Colour design
   Why log  : compresses extreme outliers so mid-range variation is visible
              on all 5 plots simultaneously while remaining directly comparable
 
+Size legend
+-----------
+  An inset legend in the lower-left corner shows 4 reference circles
+  (1, 5, 10, 20 stations) so readers can interpret circle size.
+  Circle sizes in the legend use the same logarithmic formula as the map.
+
 Output
 ------
   gsdr/outputs/extreme_grid_{dur}hr.html  — interactive (zoom, hover)
@@ -29,7 +35,8 @@ Workflow
 1. Loads station index (gsdr_us_index.csv).
 2. Loads cached per-station maxima (gsdr_station_maxima.csv) if present,
    otherwise reads all gauge files (~15 min) and saves the cache.
-3. Generates HTML and PNG for each duration.
+3. Pre-builds all 5 grids to compute a globally consistent circle-size scale.
+4. Generates HTML and PNG for each duration.
 
 Environment variable
 --------------------
@@ -47,42 +54,52 @@ import warnings
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
 
 warnings.filterwarnings("ignore")
 
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-INDEX_PATH  = os.path.join(BASE_DIR, "gsdr_us_index.csv")
-CACHE_PATH  = os.path.join(BASE_DIR, "gsdr_station_maxima.csv")
-QC_DIR      = os.environ.get("GSDR_QC_DIR", os.path.expanduser("~/Desktop/GSDR/QC_d data - US"))
-OUTPUT_DIR  = os.path.join(BASE_DIR, "outputs")
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+INDEX_PATH = os.path.join(BASE_DIR, "gsdr_us_index.csv")
+CACHE_PATH = os.path.join(BASE_DIR, "gsdr_station_maxima.csv")
+QC_DIR     = os.environ.get("GSDR_QC_DIR", os.path.expanduser("~/Desktop/GSDR/QC_d data - US"))
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-DURATIONS    = [1, 3, 6, 12, 24]
-DUR_LABELS   = {1: "1-hr", 3: "3-hr", 6: "6-hr", 12: "12-hr", 24: "24-hr"}
-MM_TO_IN     = 1.0 / 25.4
+DURATIONS  = [1, 3, 6, 12, 24]
+DUR_LABELS = {1: "1-hr", 3: "3-hr", 6: "6-hr", 12: "12-hr", 24: "24-hr"}
+MM_TO_IN   = 1.0 / 25.4
 HEADER_LINES = 21
 MISSING_VAL  = -999.0
 GRID_DEG     = 1.0
 
-# ── ColorBrewer YlGnBu 9-class (colorblind-verified, multi-hue) ───────────
-# Yellow → green → teal → blue → dark navy across 5 hue families.
-# Far more perceptually distinct than single-hue Blues.
-# Standard in Nature/GRL/JHM precipitation maps.
 COLORSCALE = [
-    [0.000, "#ffffd9"],   # pale yellow   — trace/no rain
-    [0.125, "#edf8b1"],   # yellow-green  — very low
-    [0.250, "#c7e9b4"],   # light green   — low
-    [0.375, "#7fcdbb"],   # teal-green    — moderate-low
-    [0.500, "#41b6c4"],   # teal          — moderate
-    [0.625, "#1d91c0"],   # sky blue      — moderate-high
-    [0.750, "#225ea8"],   # medium blue   — high
-    [0.875, "#253494"],   # dark blue     — very high
-    [1.000, "#081d58"],   # dark navy     — extreme
+    [0.000, "#ffffd9"],
+    [0.125, "#edf8b1"],
+    [0.250, "#c7e9b4"],
+    [0.375, "#7fcdbb"],
+    [0.500, "#41b6c4"],
+    [0.625, "#1d91c0"],
+    [0.750, "#225ea8"],
+    [0.875, "#253494"],
+    [1.000, "#081d58"],
 ]
 
-# Colorbar tick values shown to the user (actual inches)
 TICK_INCHES = [0.5, 1, 2, 4, 6, 8, 10, 15]
+
+GEO_LAYOUT = dict(
+    scope="usa",
+    showland=True,
+    landcolor="rgb(235,235,235)",
+    showlakes=True,
+    lakecolor="rgb(210,228,255)",
+    showcoastlines=True,
+    coastlinecolor="rgb(130,130,130)",
+    coastlinewidth=0.8,
+    showsubunits=True,
+    subunitcolor="rgb(170,170,170)",
+    subunitwidth=0.5,
+    bgcolor="white",
+    projection_type="albers usa",
+)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -119,6 +136,55 @@ def build_grid(df, dur_col):
         )
         .reset_index()
     )
+
+
+def marker_size(n_stations, global_max_n):
+    return float(np.clip(
+        6 + 18 * np.log1p(n_stations - 1) / np.log1p(max(global_max_n - 1, 1)),
+        6, 24,
+    ))
+
+
+def add_size_legend(fig, global_max_n, legend_counts=(1, 5, 10, 20)):
+    """Inset circle-size legend placed in the lower-left corner of the figure."""
+    fig.add_shape(
+        type="rect", xref="paper", yref="paper",
+        x0=0.010, y0=0.060, x1=0.182, y1=0.282,
+        fillcolor="rgba(255,255,255,0.88)",
+        line=dict(color="rgba(80,80,80,0.45)", width=0.8),
+        layer="above",
+    )
+    fig.add_annotation(
+        xref="paper", yref="paper", x=0.096, y=0.258,
+        text="<b>Circle size</b>",
+        showarrow=False, font=dict(size=10, color="#333"),
+        xanchor="center",
+    )
+
+    y_positions = [0.222, 0.178, 0.134, 0.090]
+    x_circle, x_label = 0.042, 0.082
+
+    for i, count in enumerate(legend_counts):
+        sz = marker_size(count, global_max_n)
+        r_x = sz / 2 / 1400
+        r_y = sz / 2 / 800
+        y = y_positions[i]
+        fig.add_shape(
+            type="circle", xref="paper", yref="paper",
+            x0=x_circle - r_x, y0=y - r_y,
+            x1=x_circle + r_x, y1=y + r_y,
+            fillcolor="rgba(80,80,80,0.65)",
+            line=dict(color="rgba(0,0,0,0.5)", width=0.5),
+            layer="above",
+        )
+        label = "1 station" if count == 1 else f"{count} stations"
+        fig.add_annotation(
+            xref="paper", yref="paper",
+            x=x_label, y=y,
+            text=label, showarrow=False,
+            font=dict(size=9, color="#333"),
+            xanchor="left", yanchor="middle",
+        )
 
 
 # ── Step 1: Load station index ─────────────────────────────────────────────
@@ -167,17 +233,22 @@ for d in DURATIONS:
 print()
 
 
-# ── Step 3: Log normalization (shared across all 5 plots) ─────────────────
+# ── Step 3: Pre-build grids and global circle-size scale ───────────────────
 
-# Upper bound: 99th percentile of 24-hr values
-color_max_in  = maxima["max_24hr_in"].quantile(0.99)
-log_cmin      = 0.0
-log_cmax      = float(np.log1p(color_max_in))
+print("Building grid cells …")
+grids = {d: build_grid(maxima, f"max_{d}hr_in") for d in DURATIONS}
+global_max_n = max(int(g["n_stations"].max()) for g in grids.values() if len(g))
+print(f"  Global max stations per cell: {global_max_n}\n")
 
-# Colorbar: tick positions in log space, labels in actual inches
-tick_vals  = [float(np.log1p(t)) for t in TICK_INCHES if t <= color_max_in * 1.05]
-tick_text  = [f"{t} in" for t in TICK_INCHES if t <= color_max_in * 1.05]
-# Always include the max tick
+
+# ── Step 4: Shared log normalisation ───────────────────────────────────────
+
+color_max_in = maxima["max_24hr_in"].quantile(0.99)
+log_cmin     = 0.0
+log_cmax     = float(np.log1p(color_max_in))
+
+tick_vals = [float(np.log1p(t)) for t in TICK_INCHES if t <= color_max_in * 1.05]
+tick_text = [f"{t} in" for t in TICK_INCHES if t <= color_max_in * 1.05]
 if not any(abs(t - log_cmax) < 0.05 for t in tick_vals):
     tick_vals.append(log_cmax)
     tick_text.append(f"{color_max_in:.1f} in")
@@ -194,26 +265,7 @@ colorbar_cfg = dict(
 print(f"Shared log-normalised colour scale:")
 print(f"  Actual range : 0 – {color_max_in:.2f} in (99th pct of 24-hr)")
 print(f"  Log range    : {log_cmin:.3f} – {log_cmax:.3f}")
-print(f"  Colorbar ticks (actual inches): {[t for t in TICK_INCHES if t <= color_max_in*1.05]}\n")
-
-
-# ── Step 4: Map layout ─────────────────────────────────────────────────────
-
-geo_layout = dict(
-    scope="usa",
-    showland=True,
-    landcolor="rgb(235,235,235)",
-    showlakes=True,
-    lakecolor="rgb(210,228,255)",
-    showcoastlines=True,
-    coastlinecolor="rgb(130,130,130)",
-    coastlinewidth=0.8,
-    showsubunits=True,
-    subunitcolor="rgb(170,170,170)",
-    subunitwidth=0.5,
-    bgcolor="white",
-    projection_type="albers usa",
-)
+print(f"  Colorbar ticks: {[t for t in TICK_INCHES if t <= color_max_in*1.05]}\n")
 
 
 # ── Step 5: Generate 5 grid cell maps ─────────────────────────────────────
@@ -222,16 +274,10 @@ print("Generating maps …")
 
 for d in DURATIONS:
     dur_label = DUR_LABELS[d]
-    col_in    = f"max_{d}hr_in"
-    grid      = build_grid(maxima, col_in)
+    grid      = grids[d]
 
-    # Log-transform values for colour mapping
     log_vals = np.log1p(grid["max_val"].clip(lower=0))
-
-    # Circle size: log scale of station count, 8–36 px
-    max_n = grid["n_stations"].max()
-    sizes = (6 + 18 * np.log1p(grid["n_stations"] - 1) /
-             np.log1p(max(max_n - 1, 1))).clip(6, 24)
+    sizes    = np.array([marker_size(n, global_max_n) for n in grid["n_stations"]])
 
     hover_text = [
         (f"<b>{row.cell_lat:.1f}°N, {row.cell_lon:.1f}°W</b><br>"
@@ -261,13 +307,14 @@ for d in DURATIONS:
         name="",
     ))
 
+    add_size_legend(fig, global_max_n)
+
     fig.update_layout(
         title=dict(
             text=(
                 f"GSDR US — All-Time Maximum {dur_label} Rainfall<br>"
                 f"<sup>"
-                f"Colour: max inches per 1°×1° cell (log-scaled for visual clarity — "
-                f"hover shows actual value)  |  "
+                f"Colour: max inches per 1°×1° cell (log-scaled — hover shows actual value)  |  "
                 f"Size: station count in cell  |  "
                 f"Colour scale shared across all 5 duration maps"
                 f"</sup>"
@@ -276,7 +323,7 @@ for d in DURATIONS:
             x=0.5,
             xanchor="center",
         ),
-        geo=geo_layout,
+        geo=GEO_LAYOUT,
         margin=dict(l=0, r=0, t=75, b=10),
         paper_bgcolor="white",
     )
@@ -287,7 +334,8 @@ for d in DURATIONS:
     fig.write_image(out_png, width=1400, height=800, scale=2)
     sz_html = os.path.getsize(out_html) / 1024
     sz_png  = os.path.getsize(out_png)  / 1024
-    print(f"  extreme_grid_{d}hr.html  ({sz_html:.0f} KB)  |  extreme_grid_{d}hr.png  ({sz_png:.0f} KB)")
+    print(f"  extreme_grid_{d}hr.html  ({sz_html:.0f} KB)  |  "
+          f"extreme_grid_{d}hr.png  ({sz_png:.0f} KB)")
 
 print()
 print("=" * 65)
