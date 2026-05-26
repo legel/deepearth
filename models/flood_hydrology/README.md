@@ -12,9 +12,11 @@ models/flood_hydrology/
 │   ├── gsdr_build_index.py               One-time station index builder
 │   ├── gsdr_intensity_matrix.py          Query: sub-daily max precip by radius/duration
 │   ├── gsdr_visualizations.py            Dataset exploration figures
-│   ├── gsdr_extreme_maps.py              US extreme rainfall maps (5 durations)
+│   ├── gsdr_extreme_maps.py              US extreme rainfall maps (5 durations, all-time)
+│   ├── gsdr_monthly_maps.py              US monthly maximum rainfall maps (24 maps)
 │   ├── gsdr_us_index.csv                 Pre-built station metadata index
-│   ├── gsdr_station_maxima.csv           Pre-computed per-station maxima cache
+│   ├── gsdr_station_maxima.csv           Pre-computed per-station all-time maxima cache
+│   ├── gsdr_station_monthly_maxima.csv   Pre-computed per-station monthly maxima cache
 │   └── outputs/
 │       ├── fig01_us_stations.html        Interactive US station map
 │       ├── fig02_record_length.png       Record length distribution
@@ -26,7 +28,13 @@ models/flood_hydrology/
 │       ├── extreme_grid_3hr.html/.png    Extreme rainfall map — 3-hour duration
 │       ├── extreme_grid_6hr.html/.png    Extreme rainfall map — 6-hour duration
 │       ├── extreme_grid_12hr.html/.png   Extreme rainfall map — 12-hour duration
-│       └── extreme_grid_24hr.html/.png   Extreme rainfall map — 24-hour duration
+│       ├── extreme_grid_24hr.html/.png   Extreme rainfall map — 24-hour duration
+│       ├── max_1_hour_january_rainfall_us.png    Monthly map — 1-hr, January
+│       ├── max_1_hour_february_rainfall_us.png   Monthly map — 1-hr, February
+│       ├── ...                                   (10 more 1-hr monthly maps)
+│       ├── max_12_hour_january_rainfall_us.png   Monthly map — 12-hr, January
+│       ├── max_12_hour_february_rainfall_us.png  Monthly map — 12-hr, February
+│       └── ...                                   (10 more 12-hr monthly maps)
 └── README.md
 ```
 
@@ -69,6 +77,19 @@ Pre-computed all-time maximum rolling accumulation per station for each duration
 | `max_12hr_mm` | All-time max 12-hour accumulation (mm) |
 | `max_24hr_mm` | All-time max 24-hour accumulation (mm) |
 
+### Column structure of `gsdr_station_monthly_maxima.csv`
+
+Pre-computed per-month all-time maximum rolling accumulation per station for 1-hr and 12-hr windows. Used by `gsdr_monthly_maps.py`.
+
+| Column | Description |
+|---|---|
+| `ID` | Station identifier |
+| `max_1hr_jan_mm` | All-time max 1-hour accumulation in any January (mm) |
+| `max_1hr_feb_mm` | All-time max 1-hour accumulation in any February (mm) |
+| `...` | Columns follow the same pattern through December |
+| `max_12hr_jan_mm` | All-time max 12-hour accumulation in any January (mm) |
+| `...` | Columns follow the same pattern through December |
+
 ---
 
 ## Setup
@@ -92,6 +113,8 @@ export GSDR_QC_DIR="/path/to/QC_d data - US"
 If `GSDR_QC_DIR` is not set, scripts default to `~/Desktop/GSDR/QC_d data - US`.
 
 > `gsdr_extreme_maps.py` uses the pre-built cache files included in this package and does **not** require raw gauge files.
+>
+> `gsdr_monthly_maps.py` uses `gsdr_station_monthly_maxima.csv` if present and does **not** require raw gauge files. If the cache is absent it will read all gauge files (~15 min).
 
 ---
 
@@ -178,9 +201,37 @@ python3 gsdr/gsdr_extreme_maps.py
 | Design element | Detail |
 |---|---|
 | Circle position | Centre of 1°×1° grid cell |
-| Circle size | Number of GSDR stations in that cell |
+| Circle size | Number of GSDR stations in that cell; size legend inset on each map |
 | Circle colour | All-time maximum accumulation in inches |
 | Colour palette | ColorBrewer YlGnBu 9-class (colorblind-verified, journal standard) |
 | Colour scale | Shared log₁ₚ normalisation across all 5 maps (0–15 in) |
 | Hover tooltip | Actual inches and mm, station count, best station ID |
 | PNG resolution | 1400×800 px, 2× scale |
+
+---
+
+### `gsdr_monthly_maps.py`
+
+Generates 24 static PNG maps showing the spatial distribution of monthly-maximum sub-daily rainfall across the US. Two durations (1-hr, 12-hr) × 12 months = 24 maps. Uses the pre-built monthly cache — does **not** require raw GSDR data once the cache exists.
+
+```bash
+python3 gsdr/gsdr_monthly_maps.py
+```
+
+| Design element | Detail |
+|---|---|
+| Circle position | Centre of 1°×1° grid cell |
+| Circle size | Number of GSDR stations in that cell; size legend inset on each map |
+| Circle colour | All-time maximum accumulation for that month in inches |
+| Colour palette | ColorBrewer YlGnBu 9-class (colorblind-verified, journal standard) |
+| Colour scale | Shared log₁ₚ normalisation across the 12 monthly maps for each duration |
+| PNG resolution | 1400×800 px, 2× scale |
+
+Output filenames follow the pattern `max_{duration}_hour_{month}_rainfall_us.png`, e.g.:
+
+```
+outputs/max_1_hour_january_rainfall_us.png
+outputs/max_1_hour_july_rainfall_us.png
+outputs/max_12_hour_january_rainfall_us.png
+outputs/max_12_hour_july_rainfall_us.png
+```
