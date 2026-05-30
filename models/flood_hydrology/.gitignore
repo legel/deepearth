@@ -1,0 +1,17 @@
+# Large binary raster data — reproducible by running pipeline scripts
+**/*.tif
+
+# WatNet ML model directory — 148 MB of test imagery and model weights
+WatNet/
+
+# HTTP cache directory
+cache/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS artifacts
+.DS_Store
