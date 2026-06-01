@@ -1,0 +1,23 @@
+{
+  "source": "USGS 3DEP via py3dep",
+  "property": "17801 Champagne Dr, Winter Garden, FL 34787",
+  "center_lat": 28.521592,
+  "center_lon": -81.656981,
+  "radius_km": 1.0,
+  "bbox_wsen": [
+    -81.66723438863198,
+    28.51258299099099,
+    -81.64672761136802,
+    28.530601009009008
+  ],
+  "resolution_m": 3,
+  "crs": "EPSG:5070",
+  "shape_yx": [
+    868,
+    868
+  ],
+  "nodata": NaN,
+  "z_min_m": 26.91798973083496,
+  "z_max_m": 66.47734832763672,
+  "vertical_datum": "NAVD88 (hydro-flattened)"
+}
