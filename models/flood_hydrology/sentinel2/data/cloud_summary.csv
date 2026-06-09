@@ -1,0 +1,12 @@
+date,cloud_pct_scl,cloud_pixels,total_pixels,cloud_mask_path
+20220329,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20220329.tif
+20220408,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20220408.tif
+20220727,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20220727.tif
+20220930,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20220930.tif
+20230314,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20230314.tif
+20230503,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20230503.tif
+20231015,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20231015.tif
+20240207,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20240207.tif
+20240412,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20240412.tif
+20240726,26.6,13168,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20240726.tif
+20241024,3.35,1660,49506,/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/sentinel2/data/cloud_mask_20241024.tif

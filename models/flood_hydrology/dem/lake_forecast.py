@@ -138,8 +138,10 @@ def compute_watershed_area_km2(dem_path, lake_mask_path):
             ws = src.read(1)
             cell_m = abs(src.transform.a)
         area_km2 = float((ws > 0).sum() * cell_m ** 2 / 1e6)
-        print(f"  Watershed area from watershed.tif: {area_km2:.3f} km²")
-        return area_km2
+        if area_km2 > 0.01:  # only use if delineation captured a meaningful area
+            print(f"  Watershed area from watershed.tif: {area_km2:.3f} km²")
+            return area_km2
+        print(f"  Watershed delineation trivially small ({area_km2:.4f} km²) — using AOI fallback")
     # Fallback: 2×2 km AOI minus lake area
     import rasterio
     with rasterio.open(dem_path) as src:
@@ -179,7 +181,16 @@ def load_inflow_hydrograph(scenario, watershed_area_km2):
 
     df = pd.read_csv(hyeto_path)
     time_min = df["time_min"].values.astype(float)
-    rain_mm  = df["rainfall_mm"].values.astype(float)
+    # Support both column naming conventions
+    if "rainfall_mm" in df.columns:
+        rain_mm = df["rainfall_mm"].values.astype(float)
+    elif "incremental_depth_mm" in df.columns:
+        rain_mm = df["incremental_depth_mm"].values.astype(float)
+    elif "cumulative_depth_mm" in df.columns:
+        rain_mm = np.diff(df["cumulative_depth_mm"].values.astype(float), prepend=0.0)
+    else:
+        print(f"  ⚠ Unknown columns in hyetograph: {list(df.columns)}")
+        return None, None
 
     # SCS curve number from soil parameters
     cn = 79.0  # default HSG-C residential (Orange County)

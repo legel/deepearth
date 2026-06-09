@@ -1,0 +1,10 @@
+{
+  "year": "2021",
+  "date": "20211202",
+  "item_id": "fl_m_2808127_se_17_060_20211202",
+  "resolution_m": 0.6,
+  "bands": 4,
+  "crs": "EPSG:26917",
+  "rgb_path": "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/soil/data/naip_2021_RGB.tif",
+  "nir_path": "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/soil/data/naip_2021_NIR.tif"
+}
