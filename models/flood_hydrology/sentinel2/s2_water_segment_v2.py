@@ -1,41 +1,43 @@
 """
-SOTA Water Body Segmentation — Transformer-Based (Post-2025)
-=============================================================
-Replaces the CNN-based WatNet model with a state-of-the-art (SOTA)
-transformer-based water segmentation model that performs better on
-Sentinel-2 imagery, especially for complex lake boundaries and cloud edges.
+SOTA Water Body Segmentation — Prithvi-EO-2.0 (IBM/NASA Geospatial Foundation Model)
+======================================================================================
+Replaces the CNN-based WatNet with Prithvi-EO-2.0, a geospatial foundation model
+fine-tuned on SEN1Floods11 (446 global flood scenes, Sentinel-1 + Sentinel-2).
 
-Model selection
----------------
-Primary: SegFormer-B5 fine-tuned on SEN1Floods11 flood dataset
-  — Architecture: Hierarchical Vision Transformer encoder + lightweight MLP decoder
-  — Paper: Xie et al. 2021 (SegFormer); Bonafilia et al. 2020 (SEN1Floods11)
-  — Why: Outperforms CNN-based models (DeepLabv3+/WatNet) on satellite water
-    segmentation; no fixed receptive field; handles multiscale water features;
-    fine-tuned specifically on Sentinel-1 + Sentinel-2 flood scenes worldwide
-  — HuggingFace: kbgg/segformer-b5-finetuned-sen1floods11-sentinel2
-    or: COCLICO/segformer-b5-finetuned-sen1floods11-sentinel2
-  — Input: Sentinel-2 bands [B02, B03, B04, B08, B11, B12], normalized to [0,1]
-  — Output: Binary water mask (probability > threshold)
+Model
+-----
+  Prithvi-EO-2.0-300M-TL-Sen1Floods11
+  — Architecture: Masked Autoencoder ViT encoder (300M params) + UperNet decoder
+  — Pre-training: self-supervised MAE on 1M Sentinel-2 time series globally
+  — Fine-tuning: SEN1Floods11 binary flood/water segmentation
+  — Input: Sentinel-2 6-band [BLUE, GREEN, RED, NIR, SWIR1, SWIR2], scaled ×0.0001
+  — Output: Binary water mask (class 0 = land, class 1 = water)
+  — Benchmark: F1 ~0.93 on SEN1Floods11 (vs WatNet CNN F1 ~0.87)
+  — HuggingFace: ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11
+  — Requires: terratorch ≥ 0.99.8 (Python ≥ 3.10 only)
+              pip install terratorch torch torchvision timm einops albumentations
 
-Fallback: SegFormer-B2 from HuggingFace (lighter, faster)
-  — kbgg/segformer-b2-finetuned-sen1floods11-sentinel2
+Fallback (Python 3.9 / no terratorch)
+--------------------------------------
+  Physics-based multi-index ensemble: NDWI + MNDWI + AWEInsh + AWEIsh
+  Per-scene Otsu thresholding + majority vote (≥ 2 of 4 indices agree = water)
+  NOTE: this is a spectral-index method, NOT deep learning.
 
-Benchmark vs WatNet (CNN baseline):
-  WatNet (DeepLabv3+/MobileNetv2, 2021): F1 ~0.84–0.90 on SEN1Floods11
-  SegFormer-B5 (2024 fine-tune):         F1 ~0.90–0.94 on SEN1Floods11
-  Source: Konapala et al. 2021; Landuyt et al. 2023; Bonafilia 2020
+Outputs (sentinel2/data/)
+    segformer_mask_{date}.tif    — binary water mask (uint8 0/1)
+    segformer_prob_{date}.tif    — water probability (float32 0–1)
+    segformer_metrics.csv        — F1, IoU, precision, recall vs lake_mask_s2 reference
+    segformer_comparison.png     — RGB | MNDWI | Prithvi/ensemble | difference
 
-Outputs (saved under sentinel2/data/):
-    segformer_mask_{date}.tif     — binary water mask (uint8, 0/1)
-    segformer_prob_{date}.tif     — water probability map (float32, 0–1)
-    segformer_metrics.csv         — F1, IoU, precision, recall vs DEM lake mask
-    segformer_comparison.png      — side-by-side: RGB | WatNet | SegFormer | diff
+Usage
+    # With terratorch (Python 3.10+):
+    python3 sentinel2/s2_water_segment_v2.py --model prithvi
 
-Usage:
+    # Fallback physics ensemble (Python 3.9):
+    python3 sentinel2/s2_water_segment_v2.py --model ensemble
+
+    # Auto-detect best available model:
     python3 sentinel2/s2_water_segment_v2.py
-    python3 sentinel2/s2_water_segment_v2.py --threshold 0.4 --model_size b5
-    python3 sentinel2/s2_water_segment_v2.py --dates 20220329 20230817
 """
 
 import os
@@ -50,41 +52,33 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DEM_DIR  = os.path.join(BASE_DIR, "..", "dem", "data")
 
-# HuggingFace model IDs — tried in order until one loads
-SEGFORMER_MODEL_IDS = [
-    # NASA/IBM Prithvi-EO foundation models fine-tuned on SEN1Floods11 (SOTA 2024)
-    # Requires terratorch (not on PyPI) — skipped automatically if not installed
-    # "ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11",
-    # "ibm-nasa-geospatial/Prithvi-EO-1.0-100M-sen1floods11",
-    # SegFormer ADE20K — uses water/sea/river/lake class indices (21,26,60,128)
-    "nvidia/segformer-b5-finetuned-ade-640-640",
-    "nvidia/segformer-b4-finetuned-ade-512-512",
-]
+PRITHVI_REPO   = "ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11"
+PRITHVI_CKPT   = "Prithvi-EO-V2-300M-TL-Sen1Floods11.pt"
+PRITHVI_CONFIG = "config.yaml"
 
-# ADE20K class indices corresponding to water bodies
-ADE20K_WATER_CLASSES = {21, 26, 60, 109, 128}  # water, sea, river, swimming pool, lake
+# SEN1Floods11 per-band mean/std for Prithvi normalization (BLUE,GREEN,RED,NIR,SWIR1,SWIR2)
+# Source: terratorch Sen1Floods11NonGeoDataModule defaults (constant_scale=0.0001)
+PRITHVI_MEAN = [0.0582, 0.0874, 0.1070, 0.2988, 0.2069, 0.1434]
+PRITHVI_STD  = [0.0298, 0.0344, 0.0424, 0.0773, 0.0756, 0.0686]
 
-# Sentinel-2 band indices in the 6-band input stack
-# [0]=B02, [1]=B03, [2]=B04, [3]=B08, [4]=B11, [5]=B12
-BAND_ORDER = ["B02", "B03", "B04", "B08", "B11", "B12"]
+BAND_ORDER = ["B02", "B03", "B04", "B08", "B11", "B12"]  # = BLUE,GREEN,RED,NIR,SWIR1,SWIR2
 
-DEFAULT_THRESHOLD = 0.50  # majority-vote threshold: ≥2 of 4 spectral indices agree = water
-PATCH_SIZE = 512           # inference patch size in pixels
-OVERLAP    = 64            # overlap between patches to avoid edge artifacts
+DEFAULT_THRESHOLD = 0.50
+PATCH_SIZE = 512
+OVERLAP    = 64
 
+
+# ---------------------------------------------------------------------------
+# Band loading
+# ---------------------------------------------------------------------------
 
 def load_scene_6band(date, data_dir=DATA_DIR):
-    """
-    Load all 6 Sentinel-2 bands for a scene, return (6, H, W) array normalized [0, 1].
-    Returns (arr, transform, crs, shape) or (None, ...) if bands missing.
-    """
+    """Return (6,H,W) float32 [0,1] array, transform, crs, (H,W) or Nones."""
     import rasterio
     from rasterio.warp import reproject, Resampling
 
     bands = []
-    ref_transform = None
-    ref_crs = None
-    ref_shape = None
+    ref_transform = ref_crs = ref_shape = None
 
     for band_name in BAND_ORDER:
         fpath = os.path.join(data_dir, f"s2_{date}_{band_name}.tif")
@@ -99,7 +93,6 @@ def load_scene_6band(date, data_dir=DATA_DIR):
                 ref_crs = src.crs
                 ref_shape = (src.height, src.width)
             elif arr.shape != ref_shape:
-                # Resample to reference shape (10m bands define ref)
                 out = np.zeros(ref_shape, dtype=np.float32)
                 reproject(source=arr, destination=out,
                           src_transform=src.transform, src_crs=src.crs,
@@ -108,67 +101,111 @@ def load_scene_6band(date, data_dir=DATA_DIR):
                 arr = out
         bands.append(arr)
 
-    stack = np.stack(bands, axis=0)  # (6, H, W)
-
-    # Normalize: divide by 10000 (S2 surface reflectance scale)
-    stack = stack / 10000.0
-    # Clip to [0, 1] (remove outliers from shadows/saturation)
-    stack = np.clip(stack, 0.0, 1.0)
-
-    return stack, ref_transform, ref_crs, ref_shape
+    stack = np.stack(bands, axis=0) / 10000.0  # (6, H, W) in [0,1]
+    return np.clip(stack, 0.0, 1.0), ref_transform, ref_crs, ref_shape
 
 
-def load_segformer_model(model_size="b5"):
+# ---------------------------------------------------------------------------
+# Prithvi-EO-2.0 inference  (requires terratorch + Python ≥ 3.10)
+# ---------------------------------------------------------------------------
+
+def load_prithvi_model():
     """
-    Load SegFormer model from HuggingFace.
-    Tries each model ID until one loads successfully.
-    Falls back to MNDWI if no model can be loaded.
+    Download Prithvi checkpoint from HuggingFace and load via terratorch.
+    Returns (lightning_model, img_size) or raises ImportError if unavailable.
     """
     try:
-        from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
-        import torch
+        from terratorch.cli_tools import LightningInferenceModel
+        from huggingface_hub import hf_hub_download
     except ImportError:
-        print("  ⚠ transformers/torch not installed.")
-        print("  Install: pip install transformers torch")
-        return None, None, "mndwi_fallback"
+        raise ImportError(
+            "terratorch is required for Prithvi-EO-2.0.  "
+            "Install it on Python ≥ 3.10:  pip install terratorch"
+        )
 
-    model_ids_to_try = [m for m in SEGFORMER_MODEL_IDS if f"b{model_size[-1]}" in m]
-    model_ids_to_try += [m for m in SEGFORMER_MODEL_IDS if m not in model_ids_to_try]
+    print(f"  Downloading Prithvi checkpoint from {PRITHVI_REPO} …")
+    ckpt_path   = hf_hub_download(PRITHVI_REPO, PRITHVI_CKPT)
+    config_path = hf_hub_download(PRITHVI_REPO, PRITHVI_CONFIG)
 
-    for model_id in model_ids_to_try:
-        try:
-            print(f"  Loading model: {model_id}")
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                processor = SegformerImageProcessor.from_pretrained(model_id)
-                model = SegformerForSemanticSegmentation.from_pretrained(model_id)
-            model.eval()
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            model = model.to(device)
-            print(f"  ✓ Model loaded on {device}")
-            return model, processor, model_id
-        except Exception as e:
-            print(f"    Skipping {model_id}: {e}")
-            continue
+    print("  Loading Prithvi-EO-2.0 via terratorch …")
+    lightning_model = LightningInferenceModel.from_config(config_path, ckpt_path)
+    lightning_model.model.eval()
+    print("  ✓ Prithvi-EO-2.0 loaded")
+    return lightning_model, 512  # SEN1Floods11 training tile size
 
-    print("  ⚠ No SegFormer model could be loaded. Using MNDWI fallback.")
-    return None, None, "mndwi_fallback"
 
+def prithvi_predict(lightning_model, scene_6band, img_size=512):
+    """
+    Run Prithvi-EO-2.0 inference on a full Sentinel-2 scene.
+    scene_6band: (6, H, W) float32 [0,1] (already /10000)
+    Returns binary water mask (H, W) uint8.
+    """
+    import torch
+    import albumentations as A
+    from albumentations.pytorch import ToTensorV2
+    from einops import rearrange
+
+    device = next(lightning_model.model.parameters()).device
+
+    # Normalize per Prithvi training statistics
+    img = scene_6band.copy()  # (6, H, W)
+    for c in range(6):
+        img[c] = (img[c] - PRITHVI_MEAN[c]) / PRITHVI_STD[c]
+
+    _, H, W = img.shape
+
+    # Pad to multiple of img_size
+    pad_h = (img_size - H % img_size) % img_size
+    pad_w = (img_size - W % img_size) % img_size
+    img_pad = np.pad(img, ((0, 0), (0, pad_h), (0, pad_w)), mode="reflect")
+
+    # Prithvi input shape: (batch, bands, time, H, W) — single time step
+    inp = torch.tensor(img_pad, dtype=torch.float32).unsqueeze(0).unsqueeze(2)  # (1,6,1,H,W)
+
+    # Sliding window tiling
+    windows = inp.unfold(3, img_size, img_size).unfold(4, img_size, img_size)
+    h1, w1  = windows.shape[3:5]
+    windows = rearrange(windows, "b c t h1 w1 h w -> (b h1 w1) c t h w",
+                        h=img_size, w=img_size)
+
+    transform = A.Compose([ToTensorV2(transpose_mask=False)])
+
+    pred_tiles = []
+    for i in range(windows.shape[0]):
+        tile = windows[i]  # (6, 1, img_size, img_size)
+        tile_2d = tile[:, 0, :, :]  # (6, img_size, img_size) — drop time dim for albumentations
+        x = transform(image=tile_2d.numpy().transpose(1, 2, 0))["image"]  # (img_size,img_size,6)
+        x = x.unsqueeze(0).unsqueeze(2).to(device)  # (1,6,1,img_size,img_size) — re-add time
+
+        with torch.no_grad():
+            out = lightning_model.model(x, temporal_coords=None, location_coords=None)
+            pred = out.output.detach().cpu()  # (1, 2, img_size, img_size)
+
+        pred_class = pred.argmax(dim=1)  # (1, img_size, img_size)
+        pred_tiles.append(pred_class)
+
+    pred_tiles = torch.cat(pred_tiles, dim=0)  # (h1*w1, img_size, img_size)
+
+    # Reassemble
+    pred_img = rearrange(pred_tiles, "(h1 w1) h w -> (h1 h) (w1 w)",
+                         h1=h1, w1=w1, h=img_size, w=img_size)
+    pred_img = pred_img[:H, :W]  # strip padding
+
+    return pred_img.numpy().astype(np.uint8)
+
+
+# ---------------------------------------------------------------------------
+# Physics-based ensemble fallback  (Python 3.9 compatible, no deep learning)
+# ---------------------------------------------------------------------------
 
 def enhanced_spectral_predict(scene_6band):
     """
-    Physics-informed multi-index ensemble water detection with per-scene Otsu thresholding.
-    Ensemble of NDWI + MNDWI + AWEInsh + AWEIsh — more robust than single-index MNDWI,
-    especially at complex shorelines and turbid water.
+    Physics-based multi-index ensemble: NDWI + MNDWI + AWEInsh + AWEIsh.
+    Each index gets a per-scene Otsu threshold; majority vote (≥2/4) = water.
+    Returns vote fraction [0,1]; threshold at 0.5 → majority agrees.
 
-    Indices (all positive = water):
-      NDWI     (McFeeters 1996): (Green - NIR) / (Green + NIR)
-      MNDWI    (Xu 2006):        (Green - SWIR1) / (Green + SWIR1)
-      AWEInsh  (Feyisa 2014):    4*(Green-SWIR1) - (0.25*NIR + 2.75*SWIR1)
-      AWEIsh   (Feyisa 2014):    Blue + 2.5*Green - 1.5*(NIR+SWIR1) - 0.25*SWIR2
-
-    Returns probability in [0,1]: fraction of indices that voted water.
-    Threshold 0.5 → majority vote (≥2 of 4 agree).
+    NOTE: this is NOT deep learning — it is a spectral-index method.
+    Use Prithvi-EO-2.0 (--model prithvi) for true SOTA deep learning results.
     """
     b02 = scene_6band[0]  # Blue
     b03 = scene_6band[1]  # Green
@@ -190,178 +227,79 @@ def enhanced_spectral_predict(scene_6band):
         if len(valid) < 10:
             continue
         try:
-            # Per-scene Otsu threshold: optimal separation between water and land
             from skimage.filters import threshold_otsu
             t = threshold_otsu(valid)
         except Exception:
-            t = 0.0  # fallback to sign-based threshold
+            t = 0.0
         votes += (arr > t).astype(np.float32)
 
-    # Return vote fraction [0,1]; threshold at 0.5 means majority agrees
     return np.clip(votes / 4.0, 0.0, 1.0).astype(np.float32)
 
 
-def mndwi_predict(scene_6band):
-    """Legacy single-index MNDWI (kept for backward compatibility)."""
-    b03 = scene_6band[1]
-    b11 = scene_6band[4]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        mndwi = np.where((b03 + b11) > 0, (b03 - b11) / (b03 + b11), 0.0)
-    return np.clip((mndwi + 1.0) / 2.0, 0.0, 1.0)
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
 
-
-def segformer_predict_patch(model, processor, patch, device, model_id):
-    """
-    Run SegFormer inference on a single (H, W, 3) patch.
-    SegFormer expects RGB input; we use the visible bands (B04, B03, B02).
-    Returns probability map (H, W).
-    """
-    import torch
-    import torch.nn.functional as F
-
-    h, w = patch.shape[:2]
-    # Convert to uint8 [0, 255] for the image processor
-    patch_uint8 = (np.clip(patch, 0, 1) * 255).astype(np.uint8)
-
-    inputs = processor(images=patch_uint8, return_tensors="pt")
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-
-    with torch.no_grad():
-        outputs = model(**inputs)
-
-    logits = outputs.logits  # (1, num_labels, H/4, W/4)
-    # Upsample to original patch size
-    logits_up = F.interpolate(logits, size=(h, w), mode="bilinear", align_corners=False)
-
-    n_labels = logits_up.shape[1]
-    probs = torch.softmax(logits_up[0], dim=0).cpu().numpy()  # (n_labels, H, W)
-
-    if n_labels == 2:
-        # Binary flood model (SEN1Floods11-style): label 1 = water
-        prob = probs[1]
-    elif n_labels > 2:
-        # Multi-class model (e.g. ADE20K 150-class): sum probabilities of water-related classes
-        water_indices = [i for i in ADE20K_WATER_CLASSES if i < n_labels]
-        prob = probs[water_indices].sum(axis=0)
-        prob = np.clip(prob, 0.0, 1.0)
-    else:
-        prob = torch.sigmoid(logits_up[0, 0]).cpu().numpy()
-
-    return prob.astype(np.float32)
-
-
-def predict_full_image(model, processor, scene_6band, model_id,
-                       patch_size=PATCH_SIZE, overlap=OVERLAP):
-    """
-    Run patch-based inference on full scene, stitch results.
-    Uses B04 (Red), B03 (Green), B02 (Blue) as RGB input to SegFormer.
-    """
-    _, H, W = scene_6band.shape
-
-    if model is None or model_id == "mndwi_fallback":
-        return enhanced_spectral_predict(scene_6band)
-
-    # ADE20K SegFormer was trained on photographic indoor/outdoor scenes, not satellite
-    # imagery.  Its 150-class softmax spreads probability across classes irrelevant to
-    # Sentinel-2 reflectance, so summing water-class probs gives ≈0 everywhere.
-    # Fall back to physics-based multi-index ensemble for any ADE20K model.
-    if "ade" in model_id.lower():
-        warnings.warn(
-            f"Model {model_id} is an ADE20K scene-parsing model, not suitable for "
-            "Sentinel-2 satellite water detection.  Using physics-based multi-index "
-            "ensemble (NDWI+MNDWI+AWEInsh+AWEIsh) instead.  For true SOTA transformer "
-            "performance install terratorch and use ibm-nasa-geospatial/Prithvi-EO-2.0.",
-            RuntimeWarning,
-        )
-        return enhanced_spectral_predict(scene_6band)
-
-    import torch
-    device = next(model.parameters()).device
-
-    # Build visible RGB from S2 bands (B04=Red, B03=Green, B02=Blue)
-    rgb_full = np.stack([scene_6band[2], scene_6band[1], scene_6band[0]], axis=-1)  # (H, W, 3)
-
-    prob_full   = np.zeros((H, W), dtype=np.float32)
-    weight_full = np.zeros((H, W), dtype=np.float32)
-
-    step = patch_size - overlap
-    for r0 in range(0, H, step):
-        for c0 in range(0, W, step):
-            r1 = min(r0 + patch_size, H)
-            c1 = min(c0 + patch_size, W)
-            patch = rgb_full[r0:r1, c0:c1]
-
-            if patch.shape[0] < 8 or patch.shape[1] < 8:
-                continue
-
-            try:
-                prob_patch = segformer_predict_patch(model, processor, patch, device, model_id)
-            except Exception as e:
-                warnings.warn(f"Patch [{r0}:{r1},{c0}:{c1}] failed: {e}")
-                continue
-
-            # Gaussian blend weight (soft edges)
-            ph, pw = prob_patch.shape
-            gy = np.hanning(ph).reshape(-1, 1)
-            gx = np.hanning(pw).reshape(1, -1)
-            w_patch = gy * gx
-
-            prob_full[r0:r1, c0:c1]   += prob_patch * w_patch
-            weight_full[r0:r1, c0:c1] += w_patch
-
-    # Normalize by weight
-    prob_full = np.where(weight_full > 0, prob_full / weight_full, 0.0)
-    return prob_full.astype(np.float32)
-
-
-def compute_metrics(pred_mask, ref_mask, method="SegFormer"):
-    """Compute F1, IoU, precision, recall vs reference lake mask."""
-    pred = (pred_mask > 0).astype(bool)
-    ref  = (ref_mask > 0).astype(bool)
-
+def compute_metrics(pred_mask, ref_mask, method="unknown"):
+    pred = pred_mask.astype(bool)
+    ref  = ref_mask.astype(bool)
     tp = int((pred & ref).sum())
     fp = int((pred & ~ref).sum())
     fn = int((~pred & ref).sum())
     tn = int((~pred & ~ref).sum())
-
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1        = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    precision = tp / (tp + fp)  if (tp + fp) > 0 else 0.0
+    recall    = tp / (tp + fn)  if (tp + fn) > 0 else 0.0
+    f1        = 2*precision*recall / (precision+recall) if (precision+recall) > 0 else 0.0
     iou       = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else 0.0
     accuracy  = (tp + tn) / (tp + fp + fn + tn) if (tp + fp + fn + tn) > 0 else 0.0
-
-    return {
-        "method": method, "tp": tp, "fp": fp, "fn": fn, "tn": tn,
-        "precision": round(precision, 4), "recall": round(recall, 4),
-        "f1": round(f1, 4), "iou": round(iou, 4), "accuracy": round(accuracy, 4),
-    }
+    return dict(method=method, tp=tp, fp=fp, fn=fn, tn=tn,
+                precision=round(precision,4), recall=round(recall,4),
+                f1=round(f1,4), iou=round(iou,4), accuracy=round(accuracy,4))
 
 
-def main(dates=None, threshold=DEFAULT_THRESHOLD, model_size="b5"):
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main(dates=None, threshold=DEFAULT_THRESHOLD, model_choice="auto"):
     import rasterio
 
-    # Get dates to process
+    # Resolve scene list
     if dates:
         date_list = dates
     else:
         b03_files = sorted(glob.glob(os.path.join(DATA_DIR, "s2_*_B03.tif")))
-        date_list = [os.path.basename(f).replace("s2_", "").replace("_B03.tif", "")
+        date_list = [os.path.basename(f).replace("s2_","").replace("_B03.tif","")
                      for f in b03_files]
-
     if not date_list:
         sys.exit("No Sentinel-2 scenes found. Run s2_download.py first.")
 
-    print(f"SOTA Water Segmentation — Physics-Informed Multi-Index Ensemble")
-    print(f"Scenes to process: {len(date_list)}")
-    print(f"Threshold: {threshold}")
+    # Load model
+    use_prithvi = False
+    prithvi_model = None
 
-    # Load SegFormer model
-    print("\nLoading SegFormer model …")
-    model, processor, model_id = load_segformer_model(model_size)
-    actual_method = "SegFormer" if model is not None else "MNDWI-enhanced"
-    print(f"  Method: {actual_method} ({model_id})")
+    if model_choice in ("prithvi", "auto"):
+        try:
+            prithvi_model, _ = load_prithvi_model()
+            use_prithvi = True
+            method_label = "Prithvi-EO-2.0 (IBM/NASA, SEN1Floods11)"
+        except ImportError as e:
+            if model_choice == "prithvi":
+                sys.exit(f"ERROR: {e}")
+            warnings.warn(str(e) + " — falling back to physics-based ensemble.", RuntimeWarning)
 
-    # Load reference mask (DEM-derived lake mask for metrics)
+    if not use_prithvi:
+        method_label = "Physics-based multi-index ensemble (NDWI+MNDWI+AWEInsh+AWEIsh) [NOT deep learning]"
+        print(f"\n  ⚠  Prithvi unavailable. Using spectral fallback.")
+        print(f"     To run Prithvi: install Python 3.10+ then pip install terratorch")
+        print(f"     Then rerun: python3 s2_water_segment_v2.py --model prithvi\n")
+
+    print(f"SOTA Water Segmentation")
+    print(f"  Method : {method_label}")
+    print(f"  Scenes : {len(date_list)}")
+    print(f"  Threshold: {threshold}")
+
+    # Reference mask for metrics
     ref_mask_path = (os.path.join(DEM_DIR, "lake_mask_s2.tif")
                      if os.path.exists(os.path.join(DEM_DIR, "lake_mask_s2.tif"))
                      else os.path.join(DEM_DIR, "lake_mask.tif"))
@@ -375,60 +313,55 @@ def main(dates=None, threshold=DEFAULT_THRESHOLD, model_size="b5"):
 
     for date in date_list:
         print(f"\n  Processing {date} …")
-
         scene_6band, transform, crs, shape = load_scene_6band(date)
         if scene_6band is None:
-            print(f"    Skipped (missing bands)")
             continue
-
         H, W = shape
 
-        # Run SOTA model inference
-        prob = predict_full_image(model, processor, scene_6band, model_id)
-        binary = (prob > threshold).astype(np.uint8)
+        # Run inference
+        if use_prithvi:
+            binary = prithvi_predict(prithvi_model, scene_6band)
+            prob   = binary.astype(np.float32)  # Prithvi gives hard labels directly
+        else:
+            prob   = enhanced_spectral_predict(scene_6band)
+            binary = (prob > threshold).astype(np.uint8)
 
-        # Cloud-mask: skip cloud pixels in water detection
+        # Apply cloud mask if available
         cm_path = os.path.join(DATA_DIR, f"cloud_mask_{date}.tif")
         if os.path.exists(cm_path):
             with rasterio.open(cm_path) as src:
                 cm = src.read(1).astype(np.uint8)
             if cm.shape != binary.shape:
                 from scipy.ndimage import zoom
-                scale = (binary.shape[0] / cm.shape[0], binary.shape[1] / cm.shape[1])
+                scale = (binary.shape[0]/cm.shape[0], binary.shape[1]/cm.shape[1])
                 cm = zoom(cm.astype(np.float32), scale, order=0).astype(np.uint8)
-            binary = np.where(cm > 0, 0, binary)  # zero out cloud pixels
+            binary = np.where(cm > 0, 0, binary)
             prob   = np.where(cm > 0, 0.0, prob)
 
         # Save probability map
-        prob_path = os.path.join(DATA_DIR, f"segformer_prob_{date}.tif")
-        profile = {
-            "driver": "GTiff", "dtype": "float32", "count": 1,
-            "height": H, "width": W, "crs": crs, "transform": transform,
-            "compress": "lzw", "nodata": -1.0,
-        }
-        with rasterio.open(prob_path, "w", **profile) as dst:
+        profile = dict(driver="GTiff", dtype="float32", count=1,
+                       height=H, width=W, crs=crs, transform=transform,
+                       compress="lzw", nodata=-1.0)
+        with rasterio.open(os.path.join(DATA_DIR, f"segformer_prob_{date}.tif"), "w", **profile) as dst:
             dst.write(prob, 1)
 
         # Save binary mask
+        pu8 = {**profile, "dtype": "uint8", "nodata": 255}
         mask_path = os.path.join(DATA_DIR, f"segformer_mask_{date}.tif")
-        profile_u8 = profile.copy()
-        profile_u8.update(dtype="uint8", nodata=255)
-        with rasterio.open(mask_path, "w", **profile_u8) as dst:
+        with rasterio.open(mask_path, "w", **pu8) as dst:
             dst.write(binary, 1)
 
-        area_ha = float(binary.sum() * abs(transform.a) ** 2 / 1e4)
+        area_ha = float(binary.sum() * abs(transform.a)**2 / 1e4)
         print(f"    Water area: {area_ha:.2f} ha | Mask saved → {os.path.basename(mask_path)}")
 
-        # Compute metrics if reference available
+        # Metrics vs reference
         if ref_mask_raw is not None:
             from scipy.ndimage import zoom as ndzoom
-            ref_resized = ref_mask_raw
-            if ref_mask_raw.shape != binary.shape:
-                scale_r = binary.shape[0] / ref_mask_raw.shape[0]
-                scale_c = binary.shape[1] / ref_mask_raw.shape[1]
-                ref_resized = ndzoom(ref_mask_raw.astype(np.float32),
-                                     (scale_r, scale_c), order=0).astype(np.uint8)
-            m = compute_metrics(binary, ref_resized, actual_method)
+            ref = ref_mask_raw
+            if ref.shape != binary.shape:
+                sr = binary.shape[0]/ref.shape[0]; sc = binary.shape[1]/ref.shape[1]
+                ref = ndzoom(ref.astype(np.float32), (sr, sc), order=0).astype(np.uint8)
+            m = compute_metrics(binary, ref, method_label)
             m["date"] = date
             metrics_rows.append(m)
             print(f"    F1={m['f1']:.3f} | IoU={m['iou']:.3f} | "
@@ -439,106 +372,91 @@ def main(dates=None, threshold=DEFAULT_THRESHOLD, model_size="b5"):
         mdf = pd.DataFrame(metrics_rows)
         metrics_path = os.path.join(DATA_DIR, "segformer_metrics.csv")
         mdf.to_csv(metrics_path, index=False)
-        print(f"\nMetrics saved → {metrics_path}")
-        print(f"Mean F1:  {mdf['f1'].mean():.3f}")
+        print(f"\nMetrics → {metrics_path}")
+        print(f"Mean F1 : {mdf['f1'].mean():.3f}")
         print(f"Mean IoU: {mdf['iou'].mean():.3f}")
 
-        # Compare with WatNet if available
-        watnet_metrics_path = os.path.join(DATA_DIR, "watnet_metrics.csv")
-        if os.path.exists(watnet_metrics_path):
-            wdf = pd.read_csv(watnet_metrics_path)
-            print(f"\nBenchmark comparison:")
-            wf1 = wdf['f1'].mean() if 'f1' in wdf.columns else float('nan')
-            print(f"  WatNet (CNN, 2021):       mean F1={wf1:.3f}" if not np.isnan(wf1) else "  WatNet (CNN, 2021):       mean F1=N/A")
-            print(f"  {actual_method} (transformer): mean F1={mdf['f1'].mean():.3f}")
+        watnet_path = os.path.join(DATA_DIR, "watnet_metrics.csv")
+        if os.path.exists(watnet_path):
+            wdf = pd.read_csv(watnet_path)
+            wf1 = wdf["watnet_f1"].mean() if "watnet_f1" in wdf.columns else float("nan")
+            mf1 = wdf["mndwi_f1"].mean()  if "mndwi_f1"  in wdf.columns else float("nan")
+            print(f"\nBenchmark on Johns Lake / Winter Garden FL:")
+            print(f"  WatNet CNN (2021):           mean F1 = {wf1:.3f}")
+            print(f"  MNDWI spectral index:         mean F1 = {mf1:.3f}")
+            print(f"  {method_label[:40]}: mean F1 = {mdf['f1'].mean():.3f}")
 
-    _make_comparison_viz(date_list[:4])  # visualize first 4 scenes
+    _make_comparison_viz(date_list[:4], method_label)
 
 
-def _make_comparison_viz(dates):
-    """4-panel comparison: RGB | MNDWI mask | SegFormer mask | difference."""
+def _make_comparison_viz(dates, method_label):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import rasterio
 
-    n_dates = min(len(dates), 4)
-    if n_dates == 0:
+    n = min(len(dates), 4)
+    if n == 0:
         return
 
-    fig, axes = plt.subplots(n_dates, 4, figsize=(16, 4 * n_dates))
-    if n_dates == 1:
+    fig, axes = plt.subplots(n, 4, figsize=(16, 4*n))
+    if n == 1:
         axes = axes[np.newaxis, :]
+    fig.suptitle(f"Water Segmentation: RGB | MNDWI | {method_label[:60]} | Difference",
+                 fontsize=9, fontweight="bold")
 
-    fig.suptitle("Water Segmentation Comparison: RGB | MNDWI baseline | SegFormer SOTA | Difference",
-                 fontsize=11, fontweight="bold")
-
-    for i, date in enumerate(dates[:n_dates]):
-        # RGB
+    for i, date in enumerate(dates[:n]):
+        b04 = os.path.join(DATA_DIR, f"s2_{date}_B04.tif")
+        b03 = os.path.join(DATA_DIR, f"s2_{date}_B03.tif")
+        b02 = os.path.join(DATA_DIR, f"s2_{date}_B02.tif")
         ax = axes[i, 0]
-        b04_path = os.path.join(DATA_DIR, f"s2_{date}_B04.tif")
-        b03_path = os.path.join(DATA_DIR, f"s2_{date}_B03.tif")
-        b02_path = os.path.join(DATA_DIR, f"s2_{date}_B02.tif")
-        if all(os.path.exists(p) for p in [b04_path, b03_path, b02_path]):
-            with rasterio.open(b04_path) as s: r = s.read(1).astype(np.float32)
-            with rasterio.open(b03_path) as s: g = s.read(1).astype(np.float32)
-            with rasterio.open(b02_path) as s: b = s.read(1).astype(np.float32)
-            rgb = np.stack([r, g, b], axis=-1) / 10000.0
+        if all(os.path.exists(p) for p in [b04, b03, b02]):
+            with rasterio.open(b04) as s: r = s.read(1).astype(np.float32)
+            with rasterio.open(b03) as s: g = s.read(1).astype(np.float32)
+            with rasterio.open(b02) as s: b = s.read(1).astype(np.float32)
+            rgb = np.stack([r,g,b], axis=-1) / 10000.0
             p2, p98 = np.percentile(rgb, 2), np.percentile(rgb, 98)
-            rgb = np.clip((rgb - p2) / (p98 - p2 + 1e-9), 0, 1)
-            ax.imshow(rgb, origin="upper")
-        ax.set_title(f"{date}\nS2 True-Color", fontsize=8)
-        ax.axis("off")
+            rgb = np.clip((rgb-p2)/(p98-p2+1e-9), 0, 1)
+            ax.imshow(rgb)
+        ax.set_title(f"{date}\nS2 True-Color", fontsize=8); ax.axis("off")
 
-        # MNDWI baseline
         ax = axes[i, 1]
-        mndwi_path = os.path.join(DATA_DIR, f"water_mask_{date}.tif")
-        if os.path.exists(mndwi_path):
-            with rasterio.open(mndwi_path) as s:
-                mndwi_mask = s.read(1)
-            ax.imshow(mndwi_mask, cmap="Blues", origin="upper", vmin=0, vmax=1)
-        ax.set_title("MNDWI\n(baseline)", fontsize=8)
-        ax.axis("off")
+        mndwi_p = os.path.join(DATA_DIR, f"water_mask_{date}.tif")
+        if os.path.exists(mndwi_p):
+            with rasterio.open(mndwi_p) as s: ax.imshow(s.read(1), cmap="Blues", vmin=0, vmax=1)
+        ax.set_title("MNDWI\n(spectral baseline)", fontsize=8); ax.axis("off")
 
-        # SegFormer mask
         ax = axes[i, 2]
-        sf_path = os.path.join(DATA_DIR, f"segformer_mask_{date}.tif")
-        if os.path.exists(sf_path):
-            with rasterio.open(sf_path) as s:
-                sf_mask = s.read(1)
-            ax.imshow(sf_mask, cmap="Blues", origin="upper", vmin=0, vmax=1)
-        ax.set_title("SegFormer SOTA\n(transformer)", fontsize=8)
-        ax.axis("off")
+        sf_p = os.path.join(DATA_DIR, f"segformer_mask_{date}.tif")
+        if os.path.exists(sf_p):
+            with rasterio.open(sf_p) as s: sf = s.read(1)
+            ax.imshow(sf, cmap="Blues", vmin=0, vmax=1)
+        ax.set_title("This method", fontsize=8); ax.axis("off")
 
-        # Difference
         ax = axes[i, 3]
-        if os.path.exists(mndwi_path) and os.path.exists(sf_path):
-            with rasterio.open(mndwi_path) as s: mm = s.read(1).astype(np.int8)
-            with rasterio.open(sf_path) as s:     sm = s.read(1).astype(np.int8)
-            diff = sm.astype(np.int16) - mm.astype(np.int16)
-            ax.imshow(diff, cmap="RdBu", origin="upper", vmin=-1, vmax=1)
-            n_agree = int((diff == 0).sum())
-            n_total = diff.size
-            ax.set_title(f"Difference\n(blue=SF only, red=MNDWI only)\n"
-                         f"Agreement: {100*n_agree/n_total:.1f}%", fontsize=7)
+        if os.path.exists(mndwi_p) and os.path.exists(sf_p):
+            with rasterio.open(mndwi_p) as s: mm = s.read(1).astype(np.int16)
+            with rasterio.open(sf_p)    as s: sm = s.read(1).astype(np.int16)
+            diff = sm - mm
+            ax.imshow(diff, cmap="RdBu", vmin=-1, vmax=1)
+            agree = int((diff==0).sum())*100//diff.size
+            ax.set_title(f"Difference\n(blue=this only, red=MNDWI only)\nAgreement {agree}%",
+                         fontsize=7)
         ax.axis("off")
 
     plt.tight_layout()
-    out_path = os.path.join(BASE_DIR, "segformer_comparison.png")
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    out = os.path.join(BASE_DIR, "segformer_comparison.png")
+    plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"Comparison visualization → {out_path}")
+    print(f"Comparison visualization → {out}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="SOTA transformer-based water body segmentation (SegFormer)")
-    parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
-                        help="Water probability threshold (default: 0.45)")
-    parser.add_argument("--model_size", type=str, default="b5",
-                        choices=["b0", "b1", "b2", "b3", "b4", "b5"],
-                        help="SegFormer backbone size (default: b5)")
-    parser.add_argument("--dates", nargs="+", default=None,
-                        help="Specific scene dates (e.g. 20220329 20230817)")
+    parser = argparse.ArgumentParser(description="SOTA water body segmentation for Sentinel-2")
+    parser.add_argument("--model", choices=["prithvi","ensemble","auto"], default="auto",
+                        help="prithvi=Prithvi-EO-2.0 (needs terratorch+Python3.10), "
+                             "ensemble=physics fallback, auto=try prithvi then fall back")
+    parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    parser.add_argument("--dates", nargs="+", default=None)
     args = parser.parse_args()
-    main(args.dates, args.threshold, args.model_size)
+    main(args.dates, args.threshold, args.model)
