@@ -247,12 +247,10 @@ def main():
     ax1.set_title(f"Lake depth map\n(water surface {water_surface:.1f}m − lake bed)\n"
                   f"Max depth: {max_depth:.2f}m", fontsize=9)
     ax1.set_xlabel("col"); ax1.set_ylabel("row")
-    ax1.text(0.02, 0.02,
-             "⚠ Depth from shoreline slope extrapolation\n"
-             "FL karst lakes typically 2–6 m deep at centre\n"
-             "FWC/FDEP bathymetry survey data pending",
-             transform=ax1.transAxes, fontsize=6.5, color="darkred", va="bottom",
-             bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", alpha=0.85))
+    _bed_label = "FWC survey" if "fwc" in _bed_src else "Shoreline-slope estimate (no survey)"
+    ax1.text(0.02, 0.02, f"Bed: {_bed_label}",
+             transform=ax1.transAxes, fontsize=7, color="navy", va="bottom",
+             bbox=dict(boxstyle="round,pad=0.3", fc="aliceblue", alpha=0.85))
 
     # Panel 2: Depth histogram
     ax2 = fig.add_subplot(2, 3, 2)
@@ -268,24 +266,24 @@ def main():
                   f"Volume = Σ depth × {cell_m:.1f}² m² = {vol_m3:,.0f} m³\n"
                   f"({vol_m3/1e6:.4f} km³ | {area_ha:.1f} ha total area)", fontsize=9)
 
-    # Panel 3: VAE curve (Volume-Area-Elevation)
+    # Panel 3: Hypsometric curve (Volume–Elevation, standard hydrology)
     ax3 = fig.add_subplot(2, 3, 3)
-    z_steps = np.linspace(water_surface - max(max_depth, 0.5), water_surface, 60)
-    vae_vols = []
-    vae_areas = []
+    z_steps = np.linspace(water_surface - max(max_depth, 0.5), water_surface + 1.0, 80)
+    hyps_vols = []
+    hyps_areas = []
     for z in z_steps:
         submerged = lake_bool & np.isfinite(lake_bed) & (lake_bed < z)
         depth_at_z = np.where(submerged, z - lake_bed, 0.0)
-        vae_vols.append(float(depth_at_z.sum() * cell_m**2))
-        vae_areas.append(float(submerged.sum() * cell_m**2 / 1e4))
-    ax3.plot(vae_vols, z_steps, color="steelblue", lw=2)
+        hyps_vols.append(float(depth_at_z.sum() * cell_m**2))
+        hyps_areas.append(float(submerged.sum() * cell_m**2 / 1e4))
+    ax3.plot(hyps_vols, z_steps, color="steelblue", lw=2)
     ax3.axhline(water_surface, color="royalblue", lw=1.5, linestyle="--",
-                label=f"Current surface: {water_surface:.1f}m")
-    ax3.fill_betweenx(z_steps, vae_vols, alpha=0.3, color="steelblue")
+                label=f"Current surface: {water_surface:.1f} m")
+    ax3.fill_betweenx(z_steps, hyps_vols, alpha=0.3, color="steelblue")
     ax3.set_xlabel("Cumulative volume [m³]")
     ax3.set_ylabel("Water surface elevation [m NAVD88]")
-    ax3.set_title("Volume–Elevation (VAE) curve\n"
-                  "(How volume changes with lake level rise/fall)", fontsize=9)
+    ax3.set_title("Hypsometric curve (Volume–Elevation)\n"
+                  "Physics-based: Σ max(WSE−bed, 0) × cell_area per elevation step", fontsize=9)
     ax3.legend(fontsize=8)
 
     # Panel 4: 3D lake volume — z-axis = depth below surface (0=surface, negative=deeper)
@@ -381,7 +379,7 @@ def main():
         ax6.set_xticklabels(seasonal_df["date"], rotation=45, ha="right", fontsize=7)
         ax6.set_ylabel("Lake volume [m³]")
         ax6.set_title("Seasonal lake volume\n"
-                      "(S2 water mask extent × DEM-estimated depth)\n"
+                      "(S2 water mask extent × DEM-derived depth integral)\n"
                       "Sandy=dry, Blue=wet, Green=shoulder", fontsize=9)
         ax6.legend(fontsize=8)
         # Volume range

@@ -11,9 +11,12 @@ Sentinel-2 bands downloaded:
     B08 — NIR   (10m native) — NDWI / WatNet input band 4
     B11 — SWIR1 (20m native, resampled to 10m) — MNDWI denominator / WatNet band 5
     B12 — SWIR2 (20m native, resampled to 10m) — WatNet input band 6
+    SCL — Scene Classification Layer (20m native) — pixel-level cloud/shadow mask
 
-WatNet requires all 6 bands (B02,B03,B04,B08,B11,B12). Previously only B03,B08,B11
-were downloaded. All scenes are now downloaded with the full 6-band stack.
+WatNet requires all 6 bands (B02,B03,B04,B08,B11,B12).
+SCL is downloaded alongside spectral bands for pixel-level cloud masking.
+SCL classes: 3=cloud shadow, 8=cloud medium, 9=cloud high, 10=thin cirrus.
+Run sentinel2/s2_cloud_mask.py after download to generate per-pixel cloud masks.
 
 One cloud-free scene per season is selected (wet/dry contrast):
     Dry   : Jan–Mar   (low lake level, minimal rainfall)
@@ -29,6 +32,7 @@ Outputs (saved under sentinel2/data/):
     s2_{date}_B08.tif   — NIR band
     s2_{date}_B11.tif   — SWIR1 band (resampled to 10m)
     s2_{date}_B12.tif   — SWIR2 band (resampled to 10m)
+    s2_{date}_SCL.tif   — Scene Classification Layer (20m, pixel cloud classes)
     s2_scene_index.csv  — table of downloaded scenes (date, cloud%, tile)
 
 Usage:
@@ -177,13 +181,13 @@ def main(max_cloud=CLOUD_MAX, years=SEARCH_YEARS):
             print(f"  [{year} {season_label}] Best scene: {date_str}  cloud={cloud_pct:.1f}%  tile={tile}")
 
             scene_ok = True
-            for band in ["B02", "B03", "B04", "B08", "B11", "B12"]:
+            for band in ["B02", "B03", "B04", "B08", "B11", "B12", "SCL"]:
                 out_path = os.path.join(DATA_DIR, f"s2_{date_str}_{band}.tif")
                 if os.path.exists(out_path):
                     print(f"    {band} already cached, skipping download")
                     continue
                 ok = download_band(best, band, bbox, out_path)
-                if not ok:
+                if not ok and band != "SCL":  # SCL failure is non-fatal
                     scene_ok = False
 
             scene_records.append({

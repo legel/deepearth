@@ -2,17 +2,19 @@
 DEM Visualization — 17801 Champagne Dr, Winter Garden FL
 =========================================================
 Standalone visualization of the USGS 3DEP DEM and all derived layers.
-Produces dem_visualization.png with six clearly labeled panels.
+Produces dem_visualization.png with seven clearly labeled panels.
 
 Panels
 ------
 1. Hillshade with property pin
 2. Elevation color-coded relative to lake water surface (0 = water surface,
    negative = would be submerged, positive = above water)
-3. Lake mask overlay on hillshade — distinguishes DEM lake surface vs estimated bed
+3. Lake mask overlay on hillshade — S2-authoritative lake boundary + estimated bed depth
 4. Flow accumulation (log scale) — drainage network
 5. Elevation histogram with lake surface and mean marked
 6. N–S cross-section through property + lake
+7. (wide, bottom row) DEM filled contours at 1 m intervals with S2 lake boundary
+   and SSURGO soil unit boundaries — geospatial accuracy check
 
 Usage:
     python3 dem/dem_visualize.py
@@ -20,12 +22,14 @@ Usage:
 
 import os
 import sys
+import json
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
+import matplotlib.gridspec as gridspec
 from matplotlib.colors import LightSource
 import rasterio
 from rasterio.transform import xy
@@ -84,14 +88,18 @@ def pct_clip(arr, lo=2, hi=98):
 def main():
     print("Loading rasters …")
     dem, meta     = load("winter_garden_dem.tif")
-    lake_mask, _  = load("lake_mask.tif")
+    # Prefer S2-authoritative lake mask (confirmed open water from satellite imagery)
+    # over DEM-derived mask which may include false positives (flat roads, rooftops)
+    _mask_src = ("lake_mask_s2.tif"
+                 if os.path.exists(os.path.join(DATA_DIR, "lake_mask_s2.tif"))
+                 else "lake_mask.tif")
+    lake_mask, _  = load(_mask_src)
     # Prefer FWC bathymetric survey; fall back to shoreline-slope estimate
-    import os as _os
-    _data_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "data")
     _bed_src  = ("lake_bed_dem_fwc.tif"
-                 if _os.path.exists(_os.path.join(_data_dir, "lake_bed_dem_fwc.tif"))
+                 if os.path.exists(os.path.join(DATA_DIR, "lake_bed_dem_fwc.tif"))
                  else "lake_bed_dem_estimated.tif")
     lake_bed, _   = load(_bed_src)
+    print(f"  Lake mask source: {_mask_src}")
     print(f"  Lake bed source: {_bed_src}")
     flow_acc, _   = load("flow_acc.tif")
 
@@ -123,7 +131,11 @@ def main():
 
     hs = hillshade(dem)
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig = plt.figure(figsize=(18, 16))
+    gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.45, wspace=0.35)
+    axes = np.array([[fig.add_subplot(gs[r, c]) for c in range(3)] for r in range(2)])
+    ax_contour = fig.add_subplot(gs[2, :])   # bottom row spanning all 3 columns
+
     fig.suptitle(
         "DEM Verification — 17801 Champagne Dr, Winter Garden FL\n"
         f"2×2 km AOI | USGS 3DEP 3m | NAVD88 hydro-flattened | "
@@ -171,9 +183,10 @@ def main():
         ax.imshow(np.where(lake_bool, 1, np.nan), cmap="Blues", origin="upper", alpha=0.7)
     ax.plot(prop_col, prop_row, "r*", markersize=12, markeredgecolor="white",
             markeredgewidth=0.6, zorder=5)
-    ax.set_title(f"Lake mask + estimated depth\n"
-                 f"DEM is HYDRO-FLATTENED (shows water surface, not bed)\n"
-                 f"Depth extrapolated from shoreline slope", fontsize=9)
+    _bed_label = "FWC survey" if "fwc" in _bed_src else "Estimated (shoreline slope)"
+    _mask_label = "S2-authoritative" if "s2" in _mask_src else "DEM-derived"
+    ax.set_title(f"Lake mask ({_mask_label}) + depth\n"
+                 f"Bed source: {_bed_label}", fontsize=9)
     ax.set_xlabel("col (px)"); ax.set_ylabel("row (px)")
 
     # ── Panel 4: Flow accumulation ───────────────────────────────────────────
@@ -241,6 +254,75 @@ def main():
                  "Shows lake surface flatness vs extrapolated bed", fontsize=9)
     ax.legend(fontsize=7, loc="upper right")
     ax.set_ylim(bottom=max(0, float(np.nanmin(dem)) - 2))
+
+    # ── Panel 7: DEM Filled Contours — geospatial accuracy check ────────────
+    ax = ax_contour
+    valid_dem = np.where(np.isfinite(dem), dem, np.nan)
+    z_min = np.nanpercentile(valid_dem, 1)
+    z_max = np.nanpercentile(valid_dem, 99)
+    levels = np.arange(np.floor(z_min), np.ceil(z_max) + 1.0, 1.0)
+    cf = ax.contourf(valid_dem, levels=levels, cmap="terrain", origin="upper", extend="both")
+    ax.contour(valid_dem, levels=levels, colors="white", linewidths=0.3, alpha=0.4, origin="upper")
+    cb7 = fig.colorbar(cf, ax=ax, fraction=0.015, pad=0.01)
+    cb7.set_label("Elevation [m NAVD88]", fontsize=8)
+    # S2 lake boundary (white contour line at mask=0.5)
+    if lake_mask is not None:
+        ax.contour(lake_mask.astype(np.float32), levels=[0.5],
+                   colors=["cyan"], linewidths=2.0, origin="upper",
+                   linestyles="solid")
+        mpatches_lake = mpatches.Patch(color="cyan", label=f"S2 lake boundary ({_mask_label})")
+    else:
+        mpatches_lake = None
+    # SSURGO soil unit boundaries (optional)
+    _ssurgo_path = os.path.join(BASE_DIR, "..", "soil", "data", "ssurgo_mapunits.geojson")
+    _ssurgo_plotted = False
+    if os.path.exists(_ssurgo_path):
+        try:
+            with open(_ssurgo_path) as f:
+                ssurgo = json.load(f)
+            from rasterio.transform import rowcol
+            import pyproj
+            _transformer = pyproj.Transformer.from_crs("epsg:4326", str(crs), always_xy=True) \
+                if "4326" not in str(crs) else None
+            for feat in ssurgo.get("features", []):
+                geom = feat.get("geometry", {})
+                if geom.get("type") not in ("Polygon", "MultiPolygon"):
+                    continue
+                rings = (geom["coordinates"] if geom["type"] == "MultiPolygon"
+                         else [geom["coordinates"]])
+                for poly in rings:
+                    for ring in poly:
+                        coords = np.array(ring)
+                        if _transformer:
+                            xs, ys = _transformer.transform(coords[:, 0], coords[:, 1])
+                        else:
+                            xs, ys = coords[:, 0], coords[:, 1]
+                        cols_s = (xs - transform.c) / transform.a
+                        rows_s = (ys - transform.f) / transform.e
+                        ax.plot(cols_s, rows_s, color="gold", lw=0.7, alpha=0.7)
+            _ssurgo_plotted = True
+        except Exception as e:
+            print(f"  SSURGO overlay skipped: {e}")
+    # Property pin
+    ax.plot(prop_col, prop_row, marker="*", color="red", markersize=14,
+            markeredgecolor="white", markeredgewidth=0.8, zorder=5, label="Property")
+    legend_handles = [
+        mpatches.Patch(color="red", label="Property"),
+    ]
+    if mpatches_lake:
+        legend_handles.append(mpatches_lake)
+    if _ssurgo_plotted:
+        legend_handles.append(mpatches.Patch(color="gold", label="SSURGO soil units"))
+    ax.legend(handles=legend_handles, fontsize=8, loc="upper right")
+    ax.set_title(
+        "DEM Contours at 1 m intervals — Geospatial Accuracy Check\n"
+        "Cyan = S2 lake boundary (verify contours hug the lake shore; misalignment = DEM/CRS error)",
+        fontsize=10)
+    ax.set_xlabel("col (px)"); ax.set_ylabel("row (px)")
+    ax.text(5, nrows - 10, f"Cell: {cell_m:.1f} m | Contour interval: 1 m | "
+            f"Elev range: {z_min:.1f}–{z_max:.1f} m NAVD88",
+            color="white", fontsize=7, va="bottom",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.5))
 
     plt.tight_layout()
     plt.savefig(OUT_PATH, dpi=150, bbox_inches="tight")

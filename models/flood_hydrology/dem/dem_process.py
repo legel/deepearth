@@ -331,6 +331,100 @@ def estimate_lake_bed(dem, lake_mask_arr, labeled, large, cell_m, buffer_cells=5
     return lake_bed
 
 
+def merge_dem_bathymetry(dem_path, lake_mask_path=None, out_path=None):
+    """
+    Merge terrain DEM with lake bathymetry into a single continuous raster.
+
+    Standard approach (USACE / NHD Plus):
+      - Above lake surface  → use lidar DEM elevation (terrain)
+      - Below lake surface  → substitute bathymetric survey depth converted to
+                              elevation NAVD88:  bed_elev = survey depth file values
+
+    Priority for bathymetry source:
+      lake_bed_dem_fwc.tif      (FWC survey — highest priority)
+      lake_bed_dem_survey.tif   (SJRWMD/FDEP survey)
+      lake_bed_dem_estimated.tif (shoreline-slope estimate — fallback, warns user)
+
+    The output winter_garden_dem_merged.tif can be fed directly into flood_sim.py.
+    """
+    import rasterio
+    import warnings
+
+    dem_dir = os.path.dirname(dem_path)
+
+    # Resolve bathymetry source
+    bed_candidates = [
+        ("lake_bed_dem_fwc.tif",       "FWC survey"),
+        ("lake_bed_dem_survey.tif",     "SJRWMD/FDEP survey"),
+        ("lake_bed_dem_estimated.tif",  "shoreline-slope estimate — consider getting real survey data"),
+    ]
+    bed_path = None
+    bed_label = None
+    for fname, label in bed_candidates:
+        candidate = os.path.join(dem_dir, fname)
+        if os.path.exists(candidate):
+            bed_path = candidate
+            bed_label = label
+            break
+
+    if bed_path is None:
+        print("  merge_dem_bathymetry: no lake bed file found — returning unmodified DEM")
+        return dem_path
+
+    if "estimate" in bed_label:
+        warnings.warn(
+            "merge_dem_bathymetry: using ESTIMATED lake bed (shoreline-slope extrapolation). "
+            "Run dem/fetch_sjrwmd_bathymetry.py to get real survey data.",
+            UserWarning, stacklevel=2)
+    print(f"  Merging DEM + bathymetry [{bed_label}]")
+
+    # Resolve lake mask
+    if lake_mask_path is None:
+        lake_mask_path = (os.path.join(dem_dir, "lake_mask_s2.tif")
+                          if os.path.exists(os.path.join(dem_dir, "lake_mask_s2.tif"))
+                          else os.path.join(dem_dir, "lake_mask.tif"))
+
+    if out_path is None:
+        out_path = os.path.join(dem_dir, "winter_garden_dem_merged.tif")
+
+    with rasterio.open(dem_path) as src:
+        dem_arr  = src.read(1).astype(np.float32)
+        dem_prof = src.profile.copy()
+        nd = src.nodata or -9999.0
+
+    with rasterio.open(bed_path) as src:
+        bed_arr = src.read(1).astype(np.float32)
+        bed_nd  = src.nodata
+        if bed_nd is not None:
+            bed_arr[bed_arr == bed_nd] = np.nan
+
+    with rasterio.open(lake_mask_path) as src:
+        lake_mask_arr = src.read(1).astype(np.uint8)
+        if lake_mask_arr.shape != dem_arr.shape:
+            from scipy.ndimage import zoom as _zoom
+            lake_mask_arr = (_zoom(lake_mask_arr.astype(np.float32),
+                                   (dem_arr.shape[0] / lake_mask_arr.shape[0],
+                                    dem_arr.shape[1] / lake_mask_arr.shape[1]),
+                                   order=0) > 0.5).astype(np.uint8)
+
+    lake_bool = (lake_mask_arr == 1) & np.isfinite(bed_arr)
+
+    # Merge: DEM everywhere, bed elevation inside lake
+    merged = dem_arr.copy()
+    merged[lake_bool] = bed_arr[lake_bool]
+    # Ensure no lake cell is above the water surface (sanity check)
+    water_surface = float(np.nanmean(dem_arr[lake_bool])) if lake_bool.any() else 0.0
+    merged[lake_bool] = np.minimum(merged[lake_bool], water_surface - 0.05)
+
+    dem_prof.update(dtype="float32", nodata=nd, compress="lzw")
+    with rasterio.open(out_path, "w", **dem_prof) as dst:
+        dst.write(merged.astype(np.float32), 1)
+
+    n_merged = int(lake_bool.sum())
+    print(f"  Merged {n_merged:,} lake cells | Saved → {out_path}")
+    return out_path
+
+
 def save_raster(grid, array, out_path, dtype=None):
     """Write a numpy array as a GeoTIFF using the grid's affine transform."""
     import rasterio
@@ -452,6 +546,14 @@ def main(dem_path=DEFAULT_DEM, acc_threshold=ACC_THRESHOLD):
 
     raster_to_geojson(streams,  grid, os.path.join(DATA_DIR, "streams.geojson"))
     raster_to_geojson(lake_mask, grid, os.path.join(DATA_DIR, "lake_mask.geojson"))
+
+    # Build merged DEM (terrain + bathymetry) for use by flood_sim.py
+    print("\nBuilding merged DEM + bathymetry raster …")
+    merge_dem_bathymetry(
+        dem_path=DEFAULT_DEM,
+        lake_mask_path=os.path.join(DATA_DIR, "lake_mask_s2.tif")
+        if lake_s2_bool is not None else None,
+    )
 
     print("\n── DEM Processing Complete ──────────────────────────────────")
     print(f"  Cell size          : {cell_m:.1f} m")
