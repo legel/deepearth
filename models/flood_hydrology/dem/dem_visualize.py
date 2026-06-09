@@ -319,6 +319,8 @@ def main():
         "Cyan = S2 lake boundary (verify contours hug the lake shore; misalignment = DEM/CRS error)",
         fontsize=10)
     ax.set_xlabel("col (px)"); ax.set_ylabel("row (px)")
+    ax.set_xlim(0, ncols)
+    ax.set_ylim(nrows, 0)  # origin=upper: row 0 at top
     ax.text(5, nrows - 10, f"Cell: {cell_m:.1f} m | Contour interval: 1 m | "
             f"Elev range: {z_min:.1f}–{z_max:.1f} m NAVD88",
             color="white", fontsize=7, va="bottom",
