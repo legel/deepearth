@@ -31,11 +31,16 @@ METHODS = {
     "Prithvi": "segformer_mask_{date}.tif",
 }
 
+# Independent ground truth options
+GT_OPTIONS = {
+    "s2_mndwi_consensus": os.path.join(DEM_DIR, "lake_mask_s2.tif"),   # MNDWI-derived (biased)
+    "nhd_official":       os.path.join(DEM_DIR, "lake_mask_nhd.tif"),   # USGS NHD survey (independent)
+}
 
-def load_ref_mask():
-    ref_path = os.path.join(DEM_DIR, "lake_mask_s2.tif")
+
+def load_ref_mask(ref_path):
     if not os.path.exists(ref_path):
-        raise FileNotFoundError(f"S2 reference mask not found: {ref_path}")
+        raise FileNotFoundError(f"Reference mask not found: {ref_path}")
     with rasterio.open(ref_path) as src:
         arr  = src.read(1).astype(np.uint8)
         meta = {
@@ -43,9 +48,10 @@ def load_ref_mask():
             "transform": src.transform, "crs": src.crs,
         }
         px_area_m2 = abs(src.transform.a) * abs(src.transform.e)
+        epsg = src.crs.to_epsg()
+        res  = src.res[0]
     area_ha = float(arr.sum() * px_area_m2 / 1e4)
-    print(f"Reference: lake_mask_s2.tif  ({area_ha:.1f} ha, S2-observed, "
-          f"{src.crs.to_epsg()} at {src.res[0]:.1f}m)")
+    print(f"  {os.path.basename(ref_path)}: {area_ha:.1f} ha  (EPSG:{epsg}, {res:.1f}m px)")
     return arr, meta
 
 
@@ -90,115 +96,156 @@ def metrics(pred, ref):
                 f1=round(f1,4), iou=round(iou,4))
 
 
-def main():
-    ref, ref_meta = load_ref_mask()
-    ref_shape = ref.shape
-
-    # Discover all dates with at least one method mask
-    dates = sorted({
-        os.path.basename(f).replace("water_mask_","").replace(".tif","")
-        for f in glob.glob(os.path.join(DATA_DIR, "water_mask_2*.tif"))
-    })
-    print(f"Dates: {dates}\n")
-
+def run_comparison(ref_arr, ref_meta, ref_label, dates):
     rows = []
     for date in dates:
         row = {"date": date}
         for method, pattern in METHODS.items():
             path = os.path.join(DATA_DIR, pattern.format(date=date))
             if not os.path.exists(path):
-                print(f"  [{date}] {method}: missing")
                 continue
             pred, area = load_mask(path, ref_meta)
-            m = metrics(pred, ref)
-            row[f"{method}_area_ha"]  = round(area, 2)
-            row[f"{method}_f1"]       = m["f1"]
-            row[f"{method}_iou"]      = m["iou"]
-            row[f"{method}_precision"]= m["precision"]
-            row[f"{method}_recall"]   = m["recall"]
+            m = metrics(pred, ref_arr)
+            row[f"{method}_area_ha"]   = round(area, 2)
+            row[f"{method}_f1"]        = m["f1"]
+            row[f"{method}_iou"]       = m["iou"]
+            row[f"{method}_precision"] = m["precision"]
+            row[f"{method}_recall"]    = m["recall"]
             print(f"  [{date}] {method:8s}  area={area:6.1f} ha  "
                   f"F1={m['f1']:.3f}  IoU={m['iou']:.3f}  "
                   f"Prec={m['precision']:.3f}  Rec={m['recall']:.3f}")
         rows.append(row)
+    return pd.DataFrame(rows)
 
-    df = pd.DataFrame(rows)
-    out_csv = os.path.join(BASE_DIR, "method_comparison.csv")
-    df.to_csv(out_csv, index=False)
-    print(f"\nSaved → {out_csv}")
 
-    # Summary
-    print("\n" + "="*65)
-    print(f"MEAN METRICS vs S2-observed ground truth (lake_mask_s2.tif)")
-    print("="*65)
+def main():
+    dates = sorted({
+        os.path.basename(f).replace("water_mask_","").replace(".tif","")
+        for f in glob.glob(os.path.join(DATA_DIR, "water_mask_2*.tif"))
+    })
+
+    all_results = {}
+    for gt_name, gt_path in GT_OPTIONS.items():
+        if not os.path.exists(gt_path):
+            print(f"Skipping {gt_name}: {gt_path} not found")
+            continue
+        print(f"\n{'='*65}")
+        print(f"Ground truth: {gt_name}  ({gt_path.split('/')[-1]})")
+        print(f"{'='*65}")
+        ref, ref_meta = load_ref_mask(gt_path)
+        print(f"Dates: {dates}\n")
+        df = run_comparison(ref, ref_meta, gt_name, dates)
+        all_results[gt_name] = df
+
+        # Per-GT summary
+        print(f"\nMEAN METRICS vs {gt_name}:")
+        for method in METHODS:
+            col = f"{method}_f1"
+            if col in df.columns:
+                print(f"  {method:8s}  F1={df[col].mean():.3f}  "
+                      f"IoU={df[f'{method}_iou'].mean():.3f}  "
+                      f"Prec={df[f'{method}_precision'].mean():.3f}  "
+                      f"Rec={df[f'{method}_recall'].mean():.3f}")
+
+    # Save per-GT CSVs
+    for gt_name, df in all_results.items():
+        out = os.path.join(BASE_DIR, f"method_comparison_{gt_name}.csv")
+        df.to_csv(out, index=False)
+        print(f"Saved → {out}")
+
+    _plot_both(all_results)
+
+    # Side-by-side summary table
+    print("\n" + "="*70)
+    print("SUMMARY: impact of ground truth choice on method ranking")
+    print("="*70)
+    print(f"{'Method':10s}  {'vs MNDWI-consensus':22s}  {'vs NHD official':22s}")
+    print(f"{'':10s}  {'F1    IoU   Prec  Rec ':22s}  {'F1    IoU   Prec  Rec ':22s}")
+    print("-"*70)
     for method in METHODS:
-        col = f"{method}_f1"
-        if col in df.columns:
-            f1  = df[col].mean()
-            iou = df[f"{method}_iou"].mean()
-            rec = df[f"{method}_recall"].mean()
-            pre = df[f"{method}_precision"].mean()
-            print(f"  {method:8s}  F1={f1:.3f}  IoU={iou:.3f}  "
-                  f"Precision={pre:.3f}  Recall={rec:.3f}")
+        parts = []
+        for gt_name, df in all_results.items():
+            if f"{method}_f1" in df.columns:
+                parts.append(
+                    f"{df[f'{method}_f1'].mean():.3f} "
+                    f"{df[f'{method}_iou'].mean():.3f} "
+                    f"{df[f'{method}_precision'].mean():.3f} "
+                    f"{df[f'{method}_recall'].mean():.3f}"
+                )
+            else:
+                parts.append("N/A")
+        print(f"  {method:8s}  {parts[0] if len(parts)>0 else 'N/A':22s}  "
+              f"{parts[1] if len(parts)>1 else 'N/A'}")
 
-    _plot(df)
 
-
-def _plot(df):
+def _plot_both(all_results):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     method_colors = {"MNDWI": "#4C72B0", "WatNet": "#DD8452", "Prithvi": "#55A868"}
-    dates = df["date"].tolist()
-    x = np.arange(len(dates))
-    width = 0.25
+    gt_labels = {
+        "s2_mndwi_consensus": "S2 MNDWI consensus (93.7 ha)\n⚠ biased: MNDWI-derived reference",
+        "nhd_official":       "USGS NHD official survey (143.1 ha)\n✓ independent ground truth",
+    }
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
-    fig.suptitle("Water Segmentation Method Comparison\n"
-                 "Ground truth: S2-observed lake_mask_s2.tif (94.4 ha)",
-                 fontsize=12, fontweight="bold")
+    n_gt = len(all_results)
+    fig, axes = plt.subplots(n_gt, 2, figsize=(16, 5 * n_gt))
+    if n_gt == 1:
+        axes = axes[np.newaxis, :]
+    fig.suptitle("Water Segmentation Method Comparison — Johns Lake, Winter Garden FL\n"
+                 "Left: F1 per scene  |  Right: Mean F1 / IoU / Precision / Recall",
+                 fontsize=11, fontweight="bold")
 
-    metrics_to_plot = [
-        ("f1",        "F1 Score",  axes[0,0]),
-        ("iou",       "IoU",       axes[0,1]),
-        ("precision", "Precision", axes[1,0]),
-        ("recall",    "Recall",    axes[1,1]),
-    ]
+    for row_i, (gt_name, df) in enumerate(all_results.items()):
+        dates = df["date"].tolist()
+        x = np.arange(len(dates))
+        width = 0.25
+        gt_label = gt_labels.get(gt_name, gt_name)
 
-    for metric, label, ax in metrics_to_plot:
+        # Left: F1 bar chart per scene
+        ax = axes[row_i, 0]
         for i, (method, color) in enumerate(method_colors.items()):
-            col = f"{method}_{metric}"
+            col = f"{method}_f1"
             if col not in df.columns:
                 continue
             vals = df[col].tolist()
-            bars = ax.bar(x + (i - 1) * width, vals, width,
-                          label=method, color=color, alpha=0.85)
-            # Mean line
-            mean_val = np.mean(vals)
-            ax.axhline(mean_val, color=color, linestyle="--", linewidth=1, alpha=0.6)
-
+            ax.bar(x + (i-1)*width, vals, width, label=method, color=color, alpha=0.85)
+            ax.axhline(np.mean(vals), color=color, linestyle="--", lw=1.2, alpha=0.7)
         ax.set_xticks(x)
         ax.set_xticklabels([d[2:] for d in dates], rotation=45, ha="right", fontsize=7)
-        ax.set_ylabel(label)
-        ax.set_title(label)
-        ax.set_ylim(0, 1.05)
-        ax.legend(fontsize=8)
+        ax.set_ylim(0, 1.05); ax.set_ylabel("F1 Score"); ax.legend(fontsize=8)
+        ax.set_title(f"F1 per scene\nGround truth: {gt_label}", fontsize=8)
         ax.grid(axis="y", alpha=0.3)
-
-        # Annotate means in legend area
         for i, (method, color) in enumerate(method_colors.items()):
-            col = f"{method}_{metric}"
+            col = f"{method}_f1"
             if col in df.columns:
-                ax.text(0.02, 0.97 - i*0.07,
-                        f"{method} mean={df[col].mean():.3f}",
-                        transform=ax.transAxes, fontsize=8,
-                        color=color, va="top", fontweight="bold")
+                ax.text(0.02, 0.97-i*0.08, f"{method} mean={df[col].mean():.3f}",
+                        transform=ax.transAxes, fontsize=8, color=color,
+                        va="top", fontweight="bold")
+
+        # Right: mean metrics bar chart
+        ax2 = axes[row_i, 1]
+        metric_names = ["f1", "iou", "precision", "recall"]
+        metric_labels = ["F1", "IoU", "Precision", "Recall"]
+        x2 = np.arange(len(metric_names))
+        for i, (method, color) in enumerate(method_colors.items()):
+            means = [df[f"{method}_{m}"].mean() if f"{method}_{m}" in df.columns else 0
+                     for m in metric_names]
+            ax2.bar(x2 + (i-1)*0.25, means, 0.25, label=method, color=color, alpha=0.85)
+            for j, v in enumerate(means):
+                ax2.text(x2[j]+(i-1)*0.25, v+0.01, f"{v:.3f}", ha="center",
+                         fontsize=6, color=color, fontweight="bold")
+        ax2.set_xticks(x2); ax2.set_xticklabels(metric_labels)
+        ax2.set_ylim(0, 1.15); ax2.set_ylabel("Score"); ax2.legend(fontsize=8)
+        ax2.set_title(f"Mean metrics\nGround truth: {gt_label}", fontsize=8)
+        ax2.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
     out = os.path.join(BASE_DIR, "method_comparison.png")
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"Plot → {out}")
+    print(f"\nPlot → {out}")
 
 
 if __name__ == "__main__":
