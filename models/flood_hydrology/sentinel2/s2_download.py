@@ -5,17 +5,21 @@ Downloads cloud-free Sentinel-2 Level-2A (surface reflectance) imagery
 for the 2×2 km study area around the Winter Garden FL property.
 
 Sentinel-2 bands downloaded:
-    B02 — Blue  (10m native) — WatNet input band 1
+    B01 — Coastal aerosol (60m native) — s2cloudless cloud detection band
+    B02 — Blue  (10m native) — WatNet/Prithvi input band 1
     B03 — Green (10m native) — MNDWI numerator / WatNet input band 2
-    B04 — Red   (10m native) — WatNet input band 3
-    B08 — NIR   (10m native) — NDWI / WatNet input band 4
+    B04 — Red   (10m native) — WatNet/Prithvi input band 3
+    B05 — Red Edge 1 (20m native) — s2cloudless cloud detection band
+    B08 — NIR   (10m native) — NDWI / WatNet/Prithvi input band 4
+    B8A — Narrow NIR (20m native) — s2cloudless cloud detection band
+    B09 — Water vapour (60m native) — s2cloudless cloud detection band
     B11 — SWIR1 (20m native, resampled to 10m) — MNDWI denominator / WatNet band 5
-    B12 — SWIR2 (20m native, resampled to 10m) — WatNet input band 6
+    B12 — SWIR2 (20m native, resampled to 10m) — WatNet/Prithvi input band 6
     SCL — Scene Classification Layer (20m native) — pixel-level cloud/shadow mask
 
-WatNet requires all 6 bands (B02,B03,B04,B08,B11,B12).
-SCL is downloaded alongside spectral bands for pixel-level cloud masking.
-SCL classes: 3=cloud shadow, 8=cloud medium, 9=cloud high, 10=thin cirrus.
+WatNet/Prithvi requires 6 bands (B02,B03,B04,B08,B11,B12).
+s2cloudless ML cloud detection uses 10 bands: B01,B02,B04,B05,B08,B8A,B09,B10(zeros in L2A),B11,B12.
+SCL is the primary cloud mask; s2cloudless is the secondary ML-based cloud probability layer.
 Run sentinel2/s2_cloud_mask.py after download to generate per-pixel cloud masks.
 
 One cloud-free scene per season is selected (wet/dry contrast):
@@ -181,7 +185,7 @@ def main(max_cloud=CLOUD_MAX, years=SEARCH_YEARS):
             print(f"  [{year} {season_label}] Best scene: {date_str}  cloud={cloud_pct:.1f}%  tile={tile}")
 
             scene_ok = True
-            for band in ["B02", "B03", "B04", "B08", "B11", "B12", "SCL"]:
+            for band in ["B01", "B02", "B03", "B04", "B05", "B08", "B8A", "B09", "B11", "B12", "SCL"]:
                 out_path = os.path.join(DATA_DIR, f"s2_{date_str}_{band}.tif")
                 if os.path.exists(out_path):
                     print(f"    {band} already cached, skipping download")

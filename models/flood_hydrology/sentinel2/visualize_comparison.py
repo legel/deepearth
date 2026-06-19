@@ -29,10 +29,11 @@ DEM_DIR  = os.path.join(BASE_DIR, "..", "dem", "data")
 
 # Methods: label, mask filename pattern, color
 METHODS = [
-    ("NHD official\n(ground truth)", None,                         "#FF3333", 2.5),
-    ("MNDWI",                        "water_mask_{date}.tif",       "#4477CC", 1.5),
-    ("WatNet (CNN)",                  "watnet_mask_{date}.tif",      "#FF8800", 1.5),
-    ("Prithvi-EO-2.0",               "segformer_mask_{date}.tif",   "#22AA55", 1.5),
+    ("NHD official\n(ground truth)", None,                              "#FF3333", 2.5),
+    ("MNDWI",                        "water_mask_{date}.tif",            "#4477CC", 1.5),
+    ("WatNet (CNN)",                  "watnet_mask_{date}.tif",           "#FF8800", 1.5),
+    ("Prithvi-EO-2.0",               "prithvi_mask_{date}.tif",        "#22AA55", 1.5),
+    ("OmniWaterMask",                "omniwatermask_mask_{date}.tif",   "#CC44AA", 1.5),
 ]
 
 # Representative scenes — pick clear-sky ones
@@ -122,8 +123,8 @@ def main():
     fig.suptitle(
         "Water Boundary Comparison — Johns Lake, Winter Garden FL\n"
         "ROI = western bay of Johns Lake (143 ha of 1044 ha full lake)\n"
-        "Red = NHD official survey (ground truth)  |  "
-        "Blue = MNDWI  |  Orange = WatNet  |  Green = Prithvi-EO-2.0",
+        "Red = NHD (ground truth)  |  Blue = MNDWI  |  Orange = WatNet  |  "
+        "Green = Prithvi-EO-2.0  |  Purple = OmniWaterMask",
         fontsize=9, fontweight="bold"
     )
 
@@ -141,8 +142,9 @@ def main():
         mpatches.Patch(color="#4477CC", label="MNDWI"),
         mpatches.Patch(color="#FF8800", label="WatNet (CNN, 2021)"),
         mpatches.Patch(color="#22AA55", label="Prithvi-EO-2.0 (transformer, 2024)"),
+        mpatches.Patch(color="#CC44AA", label="OmniWaterMask (DPIRD-DMA, 2024)"),
     ]
-    fig.legend(handles=legend_handles, loc="lower center", ncol=4,
+    fig.legend(handles=legend_handles, loc="lower center", ncol=5,
                fontsize=8, framealpha=0.9,
                bbox_to_anchor=(0.5, 0.0))
 
@@ -172,40 +174,26 @@ def main():
             ax.axis("off"); continue
         plot_scene(ax, date, rgb, t, crs)
 
-        # Add per-method F1 annotation from NHD comparison
+        # F1 annotations below the image (not overlapping the scene content)
         if df_nhd is not None:
             row = df_nhd[df_nhd["date"] == int(date)]
             if not row.empty:
-                txt_lines = ["vs NHD:"]
-                for col, label, color in [
-                    ("MNDWI_f1",   "MNDWI",   "#4477CC"),
-                    ("WatNet_f1",  "WatNet",  "#FF8800"),
-                    ("Prithvi_f1", "Prithvi", "#22AA55"),
-                ]:
+                parts = []
+                for col, label in [("MNDWI_f1","MNDWI"),("WatNet_f1","WatNet"),
+                                    ("Prithvi_f1","Prithvi"),("OmniWaterMask_f1","OmniWM")]:
                     if col in row.columns:
-                        val = row[col].values[0]
-                        txt_lines.append(f"{label}: F1={val:.3f}")
-
-                y_pos = 0.98
-                for line in txt_lines:
-                    color = "white" if line == "vs NHD:" else (
-                        "#4477CC" if "MNDWI" in line else
-                        "#FF8800" if "WatNet" in line else "#22AA55"
-                    )
-                    ax.text(0.02, y_pos, line, transform=ax.transAxes,
-                            fontsize=7.5, color=color, va="top",
-                            fontweight="bold",
-                            bbox=dict(boxstyle="round,pad=0.1",
-                                      fc="black", alpha=0.55, ec="none"))
-                    y_pos -= 0.09
+                        parts.append(f"{label}: {row[col].values[0]:.3f}")
+                if parts:
+                    ax.set_xlabel("F1 vs NHD: " + "  |  ".join(parts), fontsize=7.5)
 
     legend_handles = [
         mpatches.Patch(color="#FF3333", label="NHD official (ground truth)"),
         mpatches.Patch(color="#4477CC", label="MNDWI"),
         mpatches.Patch(color="#FF8800", label="WatNet (CNN, 2021)"),
         mpatches.Patch(color="#22AA55", label="Prithvi-EO-2.0 (IBM/NASA, 2024)"),
+        mpatches.Patch(color="#CC44AA", label="OmniWaterMask (DPIRD-DMA, 2024)"),
     ]
-    fig2.legend(handles=legend_handles, loc="lower center", ncol=4,
+    fig2.legend(handles=legend_handles, loc="lower center", ncol=5,
                 fontsize=9, framealpha=0.9,
                 bbox_to_anchor=(0.5, 0.0))
 

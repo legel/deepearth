@@ -24,7 +24,7 @@ Fallback (Python 3.9 / no terratorch)
   NOTE: this is a spectral-index method, NOT deep learning.
 
 Outputs (sentinel2/data/)
-    segformer_mask_{date}.tif    — binary water mask (uint8 0/1)
+    prithvi_mask_{date}.tif    — binary water mask (uint8 0/1)
     segformer_prob_{date}.tif    — water probability (float32 0–1)
     segformer_metrics.csv        — F1, IoU, precision, recall vs lake_mask_s2 reference
     segformer_comparison.png     — RGB | MNDWI | Prithvi/ensemble | difference
@@ -347,7 +347,7 @@ def main(dates=None, threshold=DEFAULT_THRESHOLD, model_choice="auto"):
 
         # Save binary mask
         pu8 = {**profile, "dtype": "uint8", "nodata": 255}
-        mask_path = os.path.join(DATA_DIR, f"segformer_mask_{date}.tif")
+        mask_path = os.path.join(DATA_DIR, f"prithvi_mask_{date}.tif")
         with rasterio.open(mask_path, "w", **pu8) as dst:
             dst.write(binary, 1)
 
@@ -427,7 +427,7 @@ def _make_comparison_viz(dates, method_label):
         ax.set_title("MNDWI\n(spectral baseline)", fontsize=8); ax.axis("off")
 
         ax = axes[i, 2]
-        sf_p = os.path.join(DATA_DIR, f"segformer_mask_{date}.tif")
+        sf_p = os.path.join(DATA_DIR, f"prithvi_mask_{date}.tif")
         if os.path.exists(sf_p):
             with rasterio.open(sf_p) as s: sf = s.read(1)
             ax.imshow(sf, cmap="Blues", vmin=0, vmax=1)

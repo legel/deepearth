@@ -338,10 +338,21 @@ def main():
     if not b03_files:
         sys.exit(f"No S2 scenes found in {DATA_DIR} — run s2_download.py first")
 
+    # Optionally restrict to keep==True scenes from scene_ranking.csv
+    ranking_csv = os.path.join(DATA_DIR, "scene_ranking.csv")
+    if "--from-ranking" in sys.argv and os.path.exists(ranking_csv):
+        import pandas as _pd
+        kept = set(_pd.read_csv(ranking_csv).query("keep == True")["date"].astype(str).tolist())
+        print(f"--from-ranking: restricting to {len(kept)} kept scenes")
+    else:
+        kept = None
+
     # Filter to scenes with all 6 bands
     scenes = []
     for f in b03_files:
         date_str = os.path.basename(f).replace("s2_", "").replace("_B03.tif", "")
+        if kept is not None and date_str not in kept:
+            continue
         all_bands_present = all(
             os.path.exists(os.path.join(DATA_DIR, f"s2_{date_str}_{b}.tif"))
             for b in ["B02", "B03", "B04", "B08", "B11", "B12"]
@@ -357,6 +368,10 @@ def main():
     plot_records = []
 
     for date_str in scenes:
+        out_path = os.path.join(DATA_DIR, f"watnet_mask_{date_str}.tif")
+        if os.path.exists(out_path) and "--rerun" not in sys.argv:
+            print(f"  [{date_str}] already done — skip (use --rerun to overwrite)")
+            continue
         print(f"\n── {date_str} ──────────────────────────────")
 
         # Load 6-band stack
