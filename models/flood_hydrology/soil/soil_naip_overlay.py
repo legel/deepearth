@@ -53,6 +53,21 @@ HSG_COLORS = {
     "":    "#95a5a6",  # unknown
 }
 
+# Distinct colors for individual soil series (used in panel 2 for unit-level detail)
+MUNAME_COLORS = [
+    "#e41a1c",  # 0 Basinger fine sand  — red
+    "#d4a843",  # 1 Candler fine sand   — sandy golden/tan (not blue)
+    "#4daf4a",  # 2 Candler sand        — green
+    "#984ea3",  # 3 Cassia sand         — purple
+    "#ff7f00",  # 4 Florahome fine sand — orange
+    "#a65628",  # 5 Orlando fine sand   — brown
+    "#f781bf",  # 6 (fallback)          — pink
+    "#999999",  # 7                     — grey
+    "#66c2a5",  # 8                     — teal
+    "#fc8d62",  # 9                     — salmon
+    "#e6d800",  # 10                    — yellow (was blue-grey)
+]
+
 
 def load_raster(fpath, dtype=np.float32):
     import rasterio
@@ -108,8 +123,45 @@ def latlon_to_pixel(lat, lon, transform, crs):
     return row, col
 
 
-def overlay_ssurgo_on_ax(ax, ssurgo_path, transform, crs, shape, alpha=0.5):
-    """Draw SSURGO soil unit polygons as colored patches on ax."""
+def _naip_bbox_latlon(transform, crs, shape):
+    """Return the NAIP image extent as a shapely box in EPSG:4326 (lon/lat)."""
+    import shapely.geometry as sg
+    import pyproj
+    nrows, ncols = shape
+    # Four corners in NAIP CRS (projected metres)
+    left   = transform.c
+    right  = transform.c + transform.a * ncols
+    top    = transform.f
+    bottom = transform.f + transform.e * nrows   # negative step → bottom < top
+    to_ll = pyproj.Transformer.from_crs(crs, "epsg:4326", always_xy=True)
+    xs, ys = to_ll.transform([left, right, right, left],
+                              [top,  top,  bottom, bottom])
+    return sg.box(min(xs), min(ys), max(xs), max(ys))
+
+
+def _extract_rings(clipped_geom):
+    """Yield (coords_array,) for every exterior ring in a (Multi)Polygon."""
+    import shapely.geometry as sg
+    if clipped_geom.is_empty:
+        return
+    if clipped_geom.geom_type == "Polygon":
+        yield np.array(clipped_geom.exterior.coords)
+    elif clipped_geom.geom_type == "MultiPolygon":
+        for p in clipped_geom.geoms:
+            yield np.array(p.exterior.coords)
+    elif hasattr(clipped_geom, "geoms"):
+        for g in clipped_geom.geoms:
+            yield from _extract_rings(g)
+
+
+def overlay_ssurgo_on_ax(ax, ssurgo_path, transform, crs, shape, alpha=0.5,
+                         use_muname=False):
+    """Draw SSURGO soil unit polygons clipped to NAIP bounds.
+
+    Clips every polygon to the NAIP image extent (via shapely intersection)
+    before drawing — prevents oversized lake/watershed polygons from flooding
+    the entire panel with one colour.
+    """
     if not os.path.exists(ssurgo_path):
         return []
     try:
@@ -118,37 +170,76 @@ def overlay_ssurgo_on_ax(ax, ssurgo_path, transform, crs, shape, alpha=0.5):
     except Exception:
         return []
 
-    import pyproj
-    use_transform = "4326" not in str(crs) and "WGS" not in str(crs).upper()
-    if use_transform:
-        proj = pyproj.Transformer.from_crs("epsg:4326", crs, always_xy=True)
+    # Build mukey → (HSG, muname) lookup
+    mukey_to_hsg  = {}
+    mukey_to_name = {}
+    params_path = os.path.join(DATA_DIR, "soil_parameters.json")
+    if os.path.exists(params_path):
+        with open(params_path) as f:
+            soil_params = json.load(f)
+        for mukey, vals in soil_params.items():
+            hsg = str(vals.get("hsg", "")).strip()
+            if hsg:
+                mukey_to_hsg[str(mukey)] = hsg
+            muname = str(vals.get("muname", "")).strip()
+            if muname:
+                mukey_to_name[str(mukey)] = muname.split(",")[0].strip()
+
+    all_names = sorted(set(mukey_to_name.values()))
+    name_color_map = {name: MUNAME_COLORS[i % len(MUNAME_COLORS)]
+                      for i, name in enumerate(all_names)}
+
+    import pyproj, shapely.geometry as sg
+    # Clip box in SSURGO coordinates (EPSG:4326 lon/lat)
+    naip_clip_box = _naip_bbox_latlon(transform, crs, shape)
+
+    # Projector: EPSG:4326 → NAIP CRS (projected metres)
+    proj = pyproj.Transformer.from_crs("epsg:4326", crs, always_xy=True)
 
     patches_added = {}
     for feat in data.get("features", []):
         geom  = feat.get("geometry", {})
         props = feat.get("properties", {})
-        hsg   = str(props.get("hydgrp", props.get("hsg", props.get("HSG", "")))).strip()
-        hsg   = hsg if hsg else ""
-        color = HSG_COLORS.get(hsg, HSG_COLORS.get("", "#95a5a6"))
+        mukey = str(props.get("mukey", ""))
+
+        hsg = str(props.get("hydgrp", props.get("hsg", props.get("HSG", "")))).strip()
+        if not hsg or hsg.upper() in ("NONE", "NULL", "NAN"):
+            hsg = mukey_to_hsg.get(mukey, "")
+
+        if use_muname:
+            muname = mukey_to_name.get(mukey, "Unknown")
+            color = "#3498db" if muname == "Water" else name_color_map.get(muname, "#95a5a6")
+            legend_key = muname
+        else:
+            color = HSG_COLORS.get(hsg, HSG_COLORS.get("", "#95a5a6"))
+            legend_key = f"HSG {hsg}" if hsg else "Unknown"
 
         if geom.get("type") not in ("Polygon", "MultiPolygon"):
             continue
-        rings = (geom["coordinates"] if geom["type"] == "MultiPolygon"
-                 else [geom["coordinates"]])
-        for poly in rings:
-            for ring in poly:
-                coords = np.array(ring)
-                if use_transform:
-                    xs, ys = proj.transform(coords[:, 0], coords[:, 1])
-                else:
-                    xs, ys = coords[:, 0], coords[:, 1]
-                cols_px = (xs - transform.c) / transform.a
-                rows_px = (ys - transform.f) / transform.e
-                ax.fill(cols_px, rows_px, color=color, alpha=alpha, linewidth=0)
-                ax.plot(cols_px, rows_px, color="white", lw=0.5, alpha=0.6)
 
-        if hsg not in patches_added:
-            patches_added[hsg] = mpatches.Patch(color=color, label=f"HSG {hsg}" if hsg else "Unknown")
+        # Clip to NAIP bounds before drawing
+        try:
+            feat_shape = sg.shape(geom)
+            clipped = feat_shape.intersection(naip_clip_box)
+        except Exception:
+            continue
+        if clipped.is_empty:
+            continue
+
+        drawn = False
+        for ring_coords in _extract_rings(clipped):
+            if len(ring_coords) < 3:
+                continue
+            # Convert lon/lat → NAIP CRS metres → pixel coords
+            xs, ys = proj.transform(ring_coords[:, 0], ring_coords[:, 1])
+            cols_px = (xs - transform.c) / transform.a
+            rows_px = (ys - transform.f) / transform.e
+            ax.fill(cols_px, rows_px, color=color, alpha=alpha, linewidth=0)
+            ax.plot(cols_px, rows_px, color="white", lw=0.5, alpha=0.6)
+            drawn = True
+
+        if drawn and legend_key not in patches_added:
+            patches_added[legend_key] = mpatches.Patch(color=color, label=legend_key)
 
     return list(patches_added.values())
 
@@ -195,24 +286,78 @@ def main():
     prop_row = np.clip(prop_row, 0, nrows - 1)
     prop_col = np.clip(prop_col, 0, ncols - 1)
 
-    # Reproject MNDWI water mask to NAIP grid (for overlay)
-    mndwi_files = sorted(glob.glob(os.path.join(S2_DIR, "water_mask_*.tif")))
-    water_freq = np.zeros(naip_shape, dtype=np.float32)
-    for wf in mndwi_files:
-        try:
-            from rasterio.warp import reproject as warp_reproject, Resampling
-            with rasterio.open(wf) as src:
+    # Water boundary: compute NDWI directly from NAIP NIR/Green bands.
+    # Using NAIP's own spectral bands gives a boundary perfectly aligned
+    # with the visible lake in the aerial image — no reprojection artefacts.
+    from rasterio.warp import reproject as warp_reproject, Resampling
+    from scipy.ndimage import binary_opening, binary_fill_holes, gaussian_filter
+
+    nir_path = naip_meta.get("nir_path") or os.path.join(DATA_DIR, f"naip_{naip_meta['year']}_NIR.tif")
+    if nir_path and os.path.exists(nir_path):
+        with rasterio.open(rgb_path) as src:
+            g_band = src.read(2).astype(np.float32)   # band 2 = Green
+            px_size = abs(src.transform.a)
+        with rasterio.open(nir_path) as src:
+            nir_band_raw = src.read(1).astype(np.float32)
+        ndwi = (g_band - nir_band_raw) / (g_band + nir_band_raw + 1e-9)
+        # Threshold + morphological cleaning
+        from scipy.ndimage import label as nd_label
+        water_raw = ndwi > 0.2
+        water_opened = binary_opening(water_raw, iterations=3)
+        water_filled = binary_fill_holes(water_opened)
+        # Keep only connected components ≥ 1 ha (removes retention ponds, shadows)
+        min_px_1ha = int(1e4 / px_size ** 2)
+        labeled_cc, n_cc = nd_label(water_filled)
+        water_persistent = np.zeros_like(water_filled)
+        for comp_id in range(1, n_cc + 1):
+            if (labeled_cc == comp_id).sum() >= min_px_1ha:
+                water_persistent |= (labeled_cc == comp_id)
+        ndwi_available = True
+        n_components_kept = int(water_persistent.any())  # count kept
+        print(f"NAIP NDWI water: {water_persistent.sum() * px_size**2 / 1e4:.1f} ha "
+              f"({n_cc} raw components → filtered to ≥1 ha bodies)")
+    else:
+        # Fall back: reproject S2 consensus mask
+        ndwi = None
+        ndwi_available = False
+        lake_mask_path = os.path.join(S2_DIR, "..", "dem", "data", "lake_mask_s2.tif")
+        if os.path.exists(lake_mask_path):
+            with rasterio.open(lake_mask_path) as src:
                 out = np.zeros(naip_shape, dtype=np.float32)
                 warp_reproject(
                     source=src.read(1).astype(np.float32), destination=out,
                     src_transform=src.transform, src_crs=src.crs,
                     dst_transform=naip_transform, dst_crs=naip_crs,
-                    resampling=Resampling.nearest)
-            water_freq += (out > 0.5)
-        except Exception:
-            pass
+                    resampling=Resampling.bilinear)
+            out_smooth = gaussian_filter(out, sigma=6.0)
+            water_persistent = binary_fill_holes(out_smooth > 0.35)
+        else:
+            water_persistent = np.zeros(naip_shape, dtype=bool)
 
-    water_persistent = water_freq >= max(1, len(mndwi_files) * 0.5)
+    # Secondary boundary: OmniWaterMask majority-vote consensus reprojected to NAIP.
+    # OmniWaterMask masks are in EPSG:32617 (UTM zone 17N) — same UTM zone as NAIP
+    # (EPSG:26917), so reprojection artefacts are minimal.
+    s2_water_boundary = None
+    owm_files = sorted(glob.glob(os.path.join(S2_DIR, "omniwatermask_mask_*.tif")))
+    if owm_files:
+        vote_stack = np.zeros(naip_shape, dtype=np.float32)
+        for fp in owm_files:
+            with rasterio.open(fp) as src:
+                out_owm = np.zeros(naip_shape, dtype=np.float32)
+                warp_reproject(
+                    source=src.read(1).astype(np.float32), destination=out_owm,
+                    src_transform=src.transform, src_crs=src.crs,
+                    dst_transform=naip_transform, dst_crs=naip_crs,
+                    resampling=Resampling.nearest)
+                vote_stack += out_owm
+        owm_consensus = (vote_stack >= len(owm_files) / 2).astype(bool)
+        # Where OmniWaterMask is below majority threshold (including partial-vote
+        # pixels that cause notch artifacts) and NAIP NDWI confirms water, fill in.
+        if ndwi_available:
+            no_s2_coverage = (vote_stack < len(owm_files) / 2)
+            owm_consensus = owm_consensus | (no_s2_coverage & water_persistent)
+        s2_water_boundary = owm_consensus
+        print(f"OmniWaterMask consensus: {owm_consensus.sum() * px_size**2 / 1e4:.1f} ha")
 
     # SSURGO soil map
     ssurgo_path = os.path.join(DATA_DIR, "ssurgo_mapunits.geojson")
@@ -232,66 +377,112 @@ def main():
     # ── Figure ──────────────────────────────────────────────────────────────
     fig, axes = plt.subplots(1, 3, figsize=(21, 8))
     fig.suptitle(
-        f"NAIP Aerial Imagery + SSURGO Soil Verification — Winter Garden FL\n"
-        f"NAIP {naip_meta['year']} ({naip_meta.get('resolution_m','?')} m) | "
-        f"SSURGO soil units | S2 persistent water boundary",
-        fontsize=12, fontweight="bold")
+        f"NAIP Aerial Imagery + SSURGO Soil Verification — Winter Garden FL (Johns Lake)\n"
+        f"NAIP {naip_meta['year']} | {naip_meta.get('resolution_m','?')} m resolution | "
+        f"SSURGO soil map units from USDA Web Soil Survey | "
+        f"Water boundary from NAIP NDWI (Green−NIR)/(Green+NIR)",
+        fontsize=10, fontweight="bold")
 
-    # ── Panel 1: NAIP RGB + SSURGO boundaries ───────────────────────────────
+    def _add_water_boundary(ax, water_mask, color="cyan", lw=1.8, linestyle="solid", label="NAIP NDWI water"):
+        """Draw water boundary contour, suppressing the straight frame-edge artifact.
+
+        When the lake extends beyond the NAIP boundary, contour() would draw a
+        straight line along the image edge (row 0 / col 0).  Zeroing the 5-pixel
+        border strip ensures only interior water/land transitions are drawn.
+        """
+        if water_mask is None or not water_mask.any():
+            return None
+        # Suppress contour at image border (prevents straight-line frame artifact)
+        interior = water_mask.copy().astype(np.float32)
+        interior[:3,  :] = 0
+        interior[-3:, :] = 0
+        interior[:,  :3] = 0
+        interior[:, -3:] = 0
+        if not interior.any():
+            return None
+        x_px = np.arange(water_mask.shape[1])
+        y_px = np.arange(water_mask.shape[0])
+        ax.contour(x_px, y_px, interior, levels=[0.5],
+                   colors=[color], linewidths=[lw], linestyles=[linestyle])
+        return mpatches.Patch(color=color, label=label)
+
+    # ── Panel 1: NAIP RGB + SSURGO HSG boundaries + water ───────────────────
     ax = axes[0]
     ax.imshow(rgb_display, origin="upper", extent=[0, ncols, nrows, 0])
     soil_patches = overlay_ssurgo_on_ax(
         ax, ssurgo_path, naip_transform, naip_crs, naip_shape, alpha=0.35)
-    if water_persistent.any():
-        ax.contour(water_persistent.astype(np.float32), levels=[0.5],
-                   colors=["cyan"], linewidths=1.8, origin="upper")
-        soil_patches.append(mpatches.Patch(color="cyan", label="S2 water boundary"))
+    # Primary: NAIP NDWI water boundary (perfectly aligned with aerial)
+    p = _add_water_boundary(ax, water_persistent, color="cyan", lw=2.0,
+                            label="NAIP NDWI water boundary")
+    if p: soil_patches.append(p)
+    # Secondary: S2 consensus mask boundary (dashed, for cross-check)
+    if ndwi_available and s2_water_boundary is not None:
+        p2 = _add_water_boundary(ax, s2_water_boundary, color="yellow", lw=1.2,
+                                  linestyle="dashed", label="S2 consensus boundary")
+        if p2: soil_patches.append(p2)
     ax.plot(prop_col, prop_row, "r*", markersize=12, markeredgecolor="white",
             markeredgewidth=0.8, zorder=5)
-    soil_patches.append(mpatches.Patch(color="red", label="Property"))
-    ax.legend(handles=soil_patches, fontsize=7, loc="lower right",
-              framealpha=0.85, ncol=2)
-    ax.set_title(f"NAIP {naip_meta['year']} True-Color\n+ SSURGO HSG boundaries + S2 water",
-                 fontsize=10)
+    soil_patches.append(mpatches.Patch(color="red", label="Property pin"))
+    ax.set_xlim(0, ncols); ax.set_ylim(nrows, 0)
+    ax.legend(handles=soil_patches, fontsize=6.5, loc="lower right",
+              framealpha=0.88, ncol=2)
+    ax.set_title(f"NAIP {naip_meta['year']} True-Color + SSURGO HSG\n"
+                 f"Cyan = NAIP NDWI water  |  Yellow dashed = OmniWaterMask consensus",
+                 fontsize=9)
     ax.set_xlabel("col (px)"); ax.set_ylabel("row (px)")
-    ax.text(5, nrows - 8, f"Resolution: {naip_meta.get('resolution_m','?')} m",
+    ax.text(5, nrows - 8, f"NAIP {naip_meta['year']} | {naip_meta.get('resolution_m','?')} m",
             color="white", fontsize=7, va="bottom",
             bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.6))
 
-    # ── Panel 2: SSURGO HSG choropleth on NAIP background ───────────────────
+    # ── Panel 2: SSURGO soil series names on NAIP background ───────────────
     ax = axes[1]
     ax.imshow(rgb_display, origin="upper", extent=[0, ncols, nrows, 0], alpha=0.4)
     soil_patches2 = overlay_ssurgo_on_ax(
-        ax, ssurgo_path, naip_transform, naip_crs, naip_shape, alpha=0.65)
-    if water_persistent.any():
-        ax.contour(water_persistent.astype(np.float32), levels=[0.5],
-                   colors=["white"], linewidths=1.5, origin="upper")
-    ax.plot(prop_col, prop_row, "r*", markersize=12, markeredgecolor="white",
+        ax, ssurgo_path, naip_transform, naip_crs, naip_shape, alpha=0.55,
+        use_muname=True)
+    p = _add_water_boundary(ax, water_persistent, color="cyan", lw=1.8,
+                            label="NAIP NDWI water boundary")
+    if p: soil_patches2.append(p)
+    ax.set_xlim(0, ncols); ax.set_ylim(nrows, 0)
+    ax.plot(prop_col, prop_row, "r*", markersize=10, markeredgecolor="white",
             markeredgewidth=0.8, zorder=5)
-    ax.legend(handles=soil_patches2 + [mpatches.Patch(color="red", label="Property")],
-              fontsize=8, loc="lower right", framealpha=0.9, ncol=2)
-    ax.set_title("SSURGO Hydrologic Soil Groups\n"
-                 "(A=green/fast, B=orange, C=red, D=purple/slow)\n"
-                 "on NAIP background", fontsize=9)
+    soil_patches2.append(mpatches.Patch(color="red", label="Property pin"))
+    ax.legend(handles=soil_patches2, fontsize=6, loc="lower right",
+              framealpha=0.9, ncol=1)
+    ax.set_title("SSURGO Soil Map Units — Individual Series Names\n"
+                 "Verify: do unit boundaries match visible land cover in NAIP?",
+                 fontsize=9)
     ax.set_xlabel("col (px)"); ax.set_ylabel("row (px)")
 
-    # Panel 3: NDVI or NAIP NIR channel
+    # ── Panel 3: NAIP NDWI map — directly shows water vs land ──────────────
     ax = axes[2]
-    if ndvi_arr is not None:
+    if ndwi_available:
+        # NDWI: blue = water (>0), brown/red = dry land (<0)
+        im3 = ax.imshow(ndwi, cmap="RdYlBu", vmin=-0.4, vmax=0.6,
+                        origin="upper", extent=[0, ncols, nrows, 0])
+        cb3 = fig.colorbar(im3, ax=ax, fraction=0.046, pad=0.04)
+        cb3.set_label("NDWI (Green−NIR)/(Green+NIR)\nBlue=water  |  Red=dry land/vegetation", fontsize=7.5)
+        ax.set_title("NAIP NDWI — Water Index\n"
+                     "Blue ≥ 0.2 = open water  |  Red < 0 = vegetation/impervious",
+                     fontsize=9)
+        # SSURGO boundaries thin overlay
+        overlay_ssurgo_on_ax(ax, ssurgo_path, naip_transform, naip_crs, naip_shape, alpha=0.12)
+        p = _add_water_boundary(ax, water_persistent, color="black", lw=1.2,
+                                label="NDWI > 0.2 threshold")
+        if p: ax.legend(handles=[p], fontsize=7, loc="lower right")
+    elif ndvi_arr is not None:
         im3 = ax.imshow(ndvi_arr, cmap="RdYlGn", vmin=-0.3, vmax=0.8,
                         origin="upper", extent=[0, ncols, nrows, 0])
         cb3 = fig.colorbar(im3, ax=ax, fraction=0.046, pad=0.04)
         cb3.set_label("NDVI (NIR−Red)/(NIR+Red)", fontsize=8)
-        ax.set_title("NAIP NDVI\n(dark green = dense vegetation,\n"
-                     "red/yellow = bare soil/impervious, blue = water)", fontsize=9)
-        # SSURGO boundaries overlay
+        ax.set_title("NAIP NDVI\n(green = vegetation, red/yellow = bare/impervious)", fontsize=9)
         overlay_ssurgo_on_ax(ax, ssurgo_path, naip_transform, naip_crs, naip_shape, alpha=0.15)
-        if water_persistent.any():
-            ax.contour(water_persistent.astype(np.float32), levels=[0.5],
-                       colors=["blue"], linewidths=1.5, origin="upper")
+        p = _add_water_boundary(ax, water_persistent, color="blue", lw=1.5, label="Water boundary")
+        if p: ax.legend(handles=[p], fontsize=7, loc="lower right")
     else:
         ax.imshow(rgb_display, origin="upper", extent=[0, ncols, nrows, 0])
-        ax.set_title("NAIP True-Color (NIR/NDVI not available)", fontsize=10)
+        ax.set_title("NAIP True-Color (NIR not available)", fontsize=10)
+    ax.set_xlim(0, ncols); ax.set_ylim(nrows, 0)
     ax.plot(prop_col, prop_row, "r*", markersize=12, markeredgecolor="white",
             markeredgewidth=0.8, zorder=5)
     ax.set_xlabel("col (px)"); ax.set_ylabel("row (px)")

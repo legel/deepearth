@@ -36,7 +36,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 PROPERTY_LAT = 28.521592
 PROPERTY_LON = -81.656981
-RADIUS_KM    = 1.1
+RADIUS_KM    = 1.8   # widened from 1.1 to capture adjacent quarter-quad tiles
 
 PC_STAC_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
 
@@ -65,7 +65,7 @@ def search_naip(bbox, years=None):
                 collections=["naip"],
                 bbox=bbox,
                 datetime=f"{year}-01-01/{year}-12-31",
-                max_items=5,
+                max_items=20,
             )
             items = list(search.get_items())
             if items:
@@ -79,9 +79,14 @@ def search_naip(bbox, years=None):
     return all_items
 
 
-def download_naip(item, bbox, data_dir):
-    """Download NAIP scene clipped to AOI, save as GeoTIFFs."""
+def download_naip_mosaic(items, bbox, data_dir):
+    """Download ALL NAIP tiles intersecting bbox, mosaic them, clip to AOI, save GeoTIFFs.
+
+    Replaces the single-tile download_naip() to avoid black edges when the AOI
+    spans multiple quarter-quad tiles.
+    """
     import rasterio
+    from rasterio.merge import merge as rio_merge
     from rasterio.mask import mask as rio_mask
     from shapely.geometry import box as shapely_box
     import pyproj
@@ -90,97 +95,112 @@ def download_naip(item, bbox, data_dir):
     west, south, east, north = bbox
     aoi_geom = shapely_box(west, south, east, north)
 
-    date_str = item.datetime.strftime("%Y%m%d") if item.datetime else "unknown"
+    date_str = items[0].datetime.strftime("%Y%m%d") if items[0].datetime else "unknown"
     year = date_str[:4]
-    print(f"  Downloading NAIP: {date_str}")
+    print(f"  Downloading {len(items)} NAIP tile(s): {year}")
 
-    # NAIP on Planetary Computer: asset key is "image" (4-band RGBN)
-    asset_key = None
-    for k in ["image", "data", "B01", "visual"]:
-        if k in item.assets:
-            asset_key = k
-            break
-    if asset_key is None:
-        print(f"  ⚠ No recognized asset key. Available: {list(item.assets.keys())}")
-        asset_key = list(item.assets.keys())[0]
+    def _asset_href(item):
+        for k in ["image", "data", "B01", "visual"]:
+            if k in item.assets:
+                return item.assets[k].href
+        return next(iter(item.assets.values())).href
 
-    href = item.assets[asset_key].href
+    open_datasets = []
+    mosaic_crs = None
+    for item in items:
+        try:
+            ds = rasterio.open(_asset_href(item))
+            open_datasets.append(ds)
+            if mosaic_crs is None:
+                mosaic_crs = ds.crs
+        except Exception as e:
+            print(f"    Warning: {item.id}: {e}")
 
-    try:
-        with rasterio.open(href) as src:
-            # Reproject AOI to image CRS
-            if "4326" not in str(src.crs) and "WGS" not in str(src.crs).upper():
-                transformer = pyproj.Transformer.from_crs(
-                    "epsg:4326", src.crs, always_xy=True)
-                aoi_geom_crs = shp_transform(transformer.transform, aoi_geom)
-            else:
-                aoi_geom_crs = aoi_geom
-
-            out_image, out_transform = rio_mask(
-                src, [aoi_geom_crs.__geo_interface__], crop=True)
-            out_meta = src.meta.copy()
-            out_meta.update({
-                "driver": "GTiff",
-                "height": out_image.shape[1],
-                "width":  out_image.shape[2],
-                "transform": out_transform,
-                "compress": "lzw",
-            })
-
-            print(f"  Image shape: {out_image.shape} (bands×rows×cols)")
-            print(f"  Resolution: {abs(out_transform.a):.2f} m")
-
-            n_bands = out_image.shape[0]
-
-            # Save RGB (bands 1-3)
-            rgb_path = os.path.join(data_dir, f"naip_{year}_RGB.tif")
-            rgb_meta = out_meta.copy()
-            rgb_meta.update(count=min(3, n_bands), dtype="uint8")
-            with rasterio.open(rgb_path, "w", **rgb_meta) as dst:
-                dst.write(out_image[:min(3, n_bands)].astype(np.uint8))
-            print(f"  Saved RGB → {rgb_path}")
-
-            # Save NIR (band 4 if available)
-            if n_bands >= 4:
-                nir_path = os.path.join(data_dir, f"naip_{year}_NIR.tif")
-                nir_meta = out_meta.copy()
-                nir_meta.update(count=1, dtype="uint8")
-                with rasterio.open(nir_path, "w", **nir_meta) as dst:
-                    dst.write(out_image[3:4].astype(np.uint8))
-                print(f"  Saved NIR → {nir_path}")
-
-                # Compute NDVI = (NIR - Red) / (NIR + Red)
-                red = out_image[0].astype(np.float32)
-                nir = out_image[3].astype(np.float32)
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    ndvi = np.where((nir + red) > 0, (nir - red) / (nir + red), 0.0)
-                ndvi_path = os.path.join(data_dir, f"naip_{year}_NDVI.tif")
-                ndvi_meta = out_meta.copy()
-                ndvi_meta.update(count=1, dtype="float32")
-                with rasterio.open(ndvi_path, "w", **ndvi_meta) as dst:
-                    dst.write(ndvi.astype(np.float32)[np.newaxis, :, :])
-                print(f"  Saved NDVI → {ndvi_path}")
-
-            # Save metadata
-            meta_info = {
-                "year": year,
-                "date": date_str,
-                "item_id": item.id,
-                "resolution_m": round(abs(out_transform.a), 3),
-                "bands": n_bands,
-                "crs": str(src.crs),
-                "rgb_path": rgb_path,
-                "nir_path": nir_path if n_bands >= 4 else None,
-            }
-            meta_path = os.path.join(data_dir, "naip_meta.json")
-            with open(meta_path, "w") as f:
-                json.dump(meta_info, f, indent=2)
-
-            return meta_info
-
-    except Exception as e:
-        print(f"  ✗ Download failed: {e}")
+    if not open_datasets:
+        print("  ✗ No tiles could be opened")
         return None
+
+    print(f"  Mosaicking {len(open_datasets)} tile(s)…")
+    mosaic, mosaic_transform = rio_merge(open_datasets)
+    meta = open_datasets[0].meta.copy()
+    for ds in open_datasets:
+        ds.close()
+
+    # Reproject AOI bbox to image CRS for clipping
+    if "4326" not in str(mosaic_crs) and "WGS" not in str(mosaic_crs).upper():
+        transformer = pyproj.Transformer.from_crs("epsg:4326", mosaic_crs, always_xy=True)
+        aoi_crs = shp_transform(transformer.transform, aoi_geom)
+    else:
+        aoi_crs = aoi_geom
+
+    meta.update({
+        "driver": "GTiff",
+        "height": mosaic.shape[1],
+        "width":  mosaic.shape[2],
+        "transform": mosaic_transform,
+    })
+    with rasterio.MemoryFile() as mf:
+        with mf.open(**meta) as ds:
+            ds.write(mosaic)
+            out_image, out_transform = rio_mask(
+                ds, [aoi_crs.__geo_interface__], crop=True)
+            out_meta = ds.meta.copy()
+
+    out_meta.update({
+        "driver": "GTiff",
+        "height": out_image.shape[1],
+        "width":  out_image.shape[2],
+        "transform": out_transform,
+        "compress": "lzw",
+    })
+
+    n_bands = out_image.shape[0]
+    print(f"  Mosaic shape: {out_image.shape} (bands×rows×cols), "
+          f"res: {abs(out_transform.a):.2f} m")
+
+    # Save RGB (bands 1-3)
+    rgb_path = os.path.join(data_dir, f"naip_{year}_RGB.tif")
+    rgb_meta = out_meta.copy()
+    rgb_meta.update(count=min(3, n_bands), dtype="uint8")
+    with rasterio.open(rgb_path, "w", **rgb_meta) as dst:
+        dst.write(out_image[:min(3, n_bands)].astype(np.uint8))
+    print(f"  Saved RGB → {rgb_path}")
+
+    nir_path = None
+    if n_bands >= 4:
+        nir_path = os.path.join(data_dir, f"naip_{year}_NIR.tif")
+        nir_meta = out_meta.copy()
+        nir_meta.update(count=1, dtype="uint8")
+        with rasterio.open(nir_path, "w", **nir_meta) as dst:
+            dst.write(out_image[3:4].astype(np.uint8))
+        print(f"  Saved NIR → {nir_path}")
+
+        red = out_image[0].astype(np.float32)
+        nir = out_image[3].astype(np.float32)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ndvi = np.where((nir + red) > 0, (nir - red) / (nir + red), 0.0)
+        ndvi_path = os.path.join(data_dir, f"naip_{year}_NDVI.tif")
+        ndvi_meta = out_meta.copy()
+        ndvi_meta.update(count=1, dtype="float32")
+        with rasterio.open(ndvi_path, "w", **ndvi_meta) as dst:
+            dst.write(ndvi.astype(np.float32)[np.newaxis, :, :])
+        print(f"  Saved NDVI → {ndvi_path}")
+
+    meta_info = {
+        "year": year,
+        "date": date_str,
+        "item_ids": [i.id for i in items],
+        "n_tiles": len(items),
+        "resolution_m": round(abs(out_transform.a), 3),
+        "bands": n_bands,
+        "crs": str(mosaic_crs),
+        "rgb_path": rgb_path,
+        "nir_path": nir_path,
+    }
+    with open(os.path.join(data_dir, "naip_meta.json"), "w") as f:
+        json.dump(meta_info, f, indent=2)
+
+    return meta_info
 
 
 def main(years=None):
@@ -204,12 +224,12 @@ def main(years=None):
         print("  https://earthexplorer.usgs.gov/")
         return
 
-    best_item = items[0]
-    meta = download_naip(best_item, bbox, DATA_DIR)
+    meta = download_naip_mosaic(items, bbox, DATA_DIR)
     if meta:
         print(f"\n✓ NAIP downloaded successfully")
-        print(f"  Year: {meta['year']}, Resolution: {meta['resolution_m']:.2f} m")
-        print(f"  Run: python3 soil/soil_naip_overlay.py")
+        print(f"  Year: {meta['year']}, Tiles: {meta['n_tiles']}, "
+              f"Resolution: {meta['resolution_m']:.2f} m")
+        print(f"  Run: python3 viewer/preprocess/export_overlays.py")
 
 
 if __name__ == "__main__":
