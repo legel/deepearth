@@ -88,19 +88,6 @@ def pct_clip(arr, lo=2, hi=98):
 def main():
     print("Loading rasters …")
     dem, meta     = load("winter_garden_dem.tif")
-    # Prefer S2-authoritative lake mask (confirmed open water from satellite imagery)
-    # over DEM-derived mask which may include false positives (flat roads, rooftops)
-    _mask_src = ("lake_mask_s2.tif"
-                 if os.path.exists(os.path.join(DATA_DIR, "lake_mask_s2.tif"))
-                 else "lake_mask.tif")
-    lake_mask, _  = load(_mask_src)
-    # Prefer FWC bathymetric survey; fall back to shoreline-slope estimate
-    _bed_src  = ("lake_bed_dem_fwc.tif"
-                 if os.path.exists(os.path.join(DATA_DIR, "lake_bed_dem_fwc.tif"))
-                 else "lake_bed_dem_estimated.tif")
-    lake_bed, _   = load(_bed_src)
-    print(f"  Lake mask source: {_mask_src}")
-    print(f"  Lake bed source: {_bed_src}")
     flow_acc, _   = load("flow_acc.tif")
 
     if dem is None:
@@ -116,15 +103,15 @@ def main():
     prop_col = np.clip(prop_col, 0, ncols - 1)
     print(f"  Property pixel: row={prop_row}, col={prop_col}")
 
-    # Water surface reference elevation (mean of lake mask cells in original DEM)
-    lake_bool = (lake_mask == 1) & np.isfinite(dem)
-    if lake_bool.sum() > 0:
-        water_surface_elev = float(np.nanmean(dem[lake_bool]))
-    else:
-        water_surface_elev = float(np.nanmean(dem))
+    # Lake mask: OmniWaterMask majority-vote + NHD supplement; FWC interpolated
+    print("  Building lake mask + interpolating FWC ...")
+    sys.path.insert(0, BASE_DIR)
+    from lake_utils import get_lake_mask_and_fwc
+    S2_DATA = os.path.join(BASE_DIR, "..", "sentinel2", "data")
+    lake_bool, lake_bed, water_surface_elev, _mask_label = get_lake_mask_and_fwc(
+        dem, transform, crs, cell_m, DATA_DIR, s2_data_dir=S2_DATA)
     print(f"  Water surface reference: {water_surface_elev:.2f} m NAVD88")
-    print(f"  DEM is hydro-flattened: lakes shown at SURFACE elevation, not bed")
-    print(f"  Lake bed DEM: estimated by shoreline slope extrapolation")
+    print(f"  Lake mask: {_mask_label}")
 
     # Elevation relative to water surface
     dem_rel = dem - water_surface_elev
@@ -183,10 +170,8 @@ def main():
         ax.imshow(np.where(lake_bool, 1, np.nan), cmap="Blues", origin="upper", alpha=0.7)
     ax.plot(prop_col, prop_row, "r*", markersize=12, markeredgecolor="white",
             markeredgewidth=0.6, zorder=5)
-    _bed_label = "FWC survey" if "fwc" in _bed_src else "Estimated (shoreline slope)"
-    _mask_label = "S2-authoritative" if "s2" in _mask_src else "DEM-derived"
-    ax.set_title(f"Lake mask ({_mask_label}) + depth\n"
-                 f"Bed source: {_bed_label}", fontsize=9)
+    ax.set_title("Lake mask (OmniWaterMask+NHD) + depth\n"
+                 "Bed source: FWC survey (interpolated)", fontsize=9)
     ax.set_xlabel("col (px)"); ax.set_ylabel("row (px)")
 
     # ── Panel 4: Flow accumulation ───────────────────────────────────────────
@@ -266,13 +251,12 @@ def main():
     cb7 = fig.colorbar(cf, ax=ax, fraction=0.015, pad=0.01)
     cb7.set_label("Elevation [m NAVD88]", fontsize=8)
     # S2 lake boundary (white contour line at mask=0.5)
-    if lake_mask is not None:
-        ax.contour(lake_mask.astype(np.float32), levels=[0.5],
-                   colors=["cyan"], linewidths=2.0, origin="upper",
-                   linestyles="solid")
-        mpatches_lake = mpatches.Patch(color="cyan", label=f"S2 lake boundary ({_mask_label})")
-    else:
-        mpatches_lake = None
+    lake_contour_arr = lake_bool.astype(np.float32)
+    lake_contour_arr[:3, :] = 0; lake_contour_arr[-3:, :] = 0
+    lake_contour_arr[:, :3] = 0; lake_contour_arr[:, -3:] = 0
+    ax.contour(lake_contour_arr, levels=[0.5],
+               colors=["cyan"], linewidths=2.0, origin="upper", linestyles="solid")
+    mpatches_lake = mpatches.Patch(color="cyan", label="OmniWaterMask+NHD boundary")
     # SSURGO soil unit boundaries (optional)
     _ssurgo_path = os.path.join(BASE_DIR, "..", "soil", "data", "ssurgo_mapunits.geojson")
     _ssurgo_plotted = False

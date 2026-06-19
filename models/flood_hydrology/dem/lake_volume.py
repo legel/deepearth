@@ -130,27 +130,21 @@ def build_voxel_grid(lake_mask_bool, dem, lake_bed, cell_m, z_resolution=0.5):
 def main():
     print("Loading rasters …")
     dem,      (transform, cell_m) = load_tif("winter_garden_dem.tif")
-    # Prefer S2-derived lake mask (135k cells, true open-water surface confirmed by
-    # optical imagery) over the DEM-based mask (216k cells, includes misclassified
-    # flat suburban terrain). Fall back to DEM mask if S2 mask not available.
-    _mask_src = ("lake_mask_s2.tif"
-                 if os.path.exists(os.path.join(DATA_DIR, "lake_mask_s2.tif"))
-                 else "lake_mask.tif")
-    lake_mask, _                  = load_tif(_mask_src)
-    # Prefer FWC bathymetric survey; fall back to shoreline-slope estimate
-    _bed_src = ("lake_bed_dem_fwc.tif"
-                if os.path.exists(os.path.join(DATA_DIR, "lake_bed_dem_fwc.tif"))
-                else "lake_bed_dem_estimated.tif")
-    lake_bed, _                   = load_tif(_bed_src)
-    print(f"  Lake mask source: {_mask_src}")
-    print(f"  Lake bed source : {_bed_src}")
+    if dem is None:
+        sys.exit("Missing DEM. Run dem_download.py first.")
 
-    if dem is None or lake_mask is None or lake_bed is None:
-        sys.exit("Missing DEM files. Run dem_download.py and dem_process.py first.")
+    # CRS is not returned by load_tif — read it separately
+    with rasterio.open(os.path.join(DATA_DIR, "winter_garden_dem.tif")) as _src:
+        dem_crs = _src.crs
 
-    lake_bool = (lake_mask == 1) & np.isfinite(dem)
+    print("  Building lake mask + interpolating FWC ...")
+    sys.path.insert(0, BASE_DIR)
+    from lake_utils import get_lake_mask_and_fwc
+    lake_bool, lake_bed, water_surface_ref, _mask_label = get_lake_mask_and_fwc(
+        dem, transform, dem_crs, cell_m, DATA_DIR, s2_data_dir=S2_DIR)
+    print(f"  Lake mask: {_mask_label}")
     if lake_bool.sum() == 0:
-        sys.exit("No lake cells found in lake_mask.tif")
+        sys.exit("No lake cells found.")
 
     # ── 1. Baseline volume (full lake mask from DEM) ─────────────────────
     print("\n── Baseline Lake Volume (DEM lake mask) ─────────────────────")
@@ -247,8 +241,7 @@ def main():
     ax1.set_title(f"Lake depth map\n(water surface {water_surface:.1f}m − lake bed)\n"
                   f"Max depth: {max_depth:.2f}m", fontsize=9)
     ax1.set_xlabel("col"); ax1.set_ylabel("row")
-    _bed_label = "FWC survey" if "fwc" in _bed_src else "Shoreline-slope estimate (no survey)"
-    ax1.text(0.02, 0.02, f"Bed: {_bed_label}",
+    ax1.text(0.02, 0.02, "Bed: FWC survey (interpolated)",
              transform=ax1.transAxes, fontsize=7, color="navy", va="bottom",
              bbox=dict(boxstyle="round,pad=0.3", fc="aliceblue", alpha=0.85))
 
@@ -325,9 +318,8 @@ def main():
         ax4.set_zlabel("Depth below surface [m]", fontsize=7)
         # Z-axis: surface at 0, extend below actual max depth
         ax4.set_zlim(-(max_depth * 1.15), 0.3)
-        bed_src_label = _bed_src.replace("lake_bed_dem_", "").replace(".tif", "")
         ax4.set_title(f"3D lake volume (depth below surface)\n"
-                      f"Max depth: {max_depth:.1f} m | Source: {bed_src_label}\n"
+                      f"Max depth: {max_depth:.1f} m | Source: FWC survey (interpolated)\n"
                       f"Colour: darker blue = deeper", fontsize=8)
         ax4.view_init(elev=30, azim=-60)
 
