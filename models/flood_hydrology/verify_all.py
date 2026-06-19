@@ -135,8 +135,18 @@ def verify_dem():
 
     # Derivatives
     acc_arr, _ = load_tif(os.path.join(DEM, "flow_acc.tif"))
-    lake_arr, _= load_tif(os.path.join(DEM, "lake_mask.tif"))
     hand_arr, _= load_tif(os.path.join(DEM, "hand.tif"))
+    # Use OmniWaterMask+NHD lake boundary (same as lake_depth_viz)
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(DEM))  # dem/ not dem/data/
+    from lake_utils import get_lake_mask_and_fwc as _get_lake
+    import rasterio as _rio
+    with _rio.open(os.path.join(DEM, "winter_garden_dem.tif")) as _s:
+        _t, _crs, _res = _s.transform, _s.crs, _s.res[0]
+    _lake_bool, _, _, _ = _get_lake(
+        dem_arr, _t, _crs, _res,
+        DEM, s2_data_dir=os.path.join(os.path.dirname(DEM), "sentinel2", "data"))
+    lake_arr = _lake_bool.astype(np.uint8)
 
     if acc_arr is not None:
         acc_max = float(np.nanmax(acc_arr))

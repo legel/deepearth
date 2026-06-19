@@ -1,11 +1,16 @@
+# Secrets — never commit
+.env
+
 # Large binary raster data — reproducible by running pipeline scripts
 **/*.tif
+sentinel2/data/s2_*.tif
 
 # WatNet ML model directory — 148 MB of test imagery and model weights
 WatNet/
 
-# HTTP cache directory
+# HTTP cache directories
 cache/
+OWM_cache/
 
 # Python artifacts
 __pycache__/

@@ -1,3 +1,5 @@
+> **Scope note:** this README covers only the GSDR sub-daily precipitation module below. `flood_hydrology` is a much larger pipeline — DEM/lake hydrology, Sentinel-2 water segmentation, soil/NAIP overlays, the 2D flood simulation, and the Three.js viewer. See **[`CLAUDE.md`](./CLAUDE.md)** for the full project map, data catalogue, and current status, and **[`RESEARCH_FINDINGS.md`](./RESEARCH_FINDINGS.md)** for dataset/model benchmarking notes (Sentinel-2 resolution limits, PlanetScope, drone RTK, HEC-RAS, HydroGraphNet).
+
 # GSDR Sub-Daily Precipitation Extremes — Data Description and Usage Guide
 
 This package contains analysis scripts, pre-computed station indices, and pre-generated visualizations derived from the Global Sub-Daily Rainfall dataset (GSDR) for the US. The outputs characterise historical extreme sub-daily rainfall at any geospatial coordinate and are designed as input features for property-level flood risk modelling.
