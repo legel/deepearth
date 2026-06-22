@@ -135,8 +135,18 @@ def verify_dem():
 
     # Derivatives
     acc_arr, _ = load_tif(os.path.join(DEM, "flow_acc.tif"))
-    lake_arr, _= load_tif(os.path.join(DEM, "lake_mask.tif"))
     hand_arr, _= load_tif(os.path.join(DEM, "hand.tif"))
+    # Use OmniWaterMask+NHD lake boundary (same as lake_depth_viz)
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(DEM))  # dem/ not dem/data/
+    from lake_utils import get_lake_mask_and_fwc as _get_lake
+    import rasterio as _rio
+    with _rio.open(os.path.join(DEM, "winter_garden_dem.tif")) as _s:
+        _t, _crs, _res = _s.transform, _s.crs, _s.res[0]
+    _lake_bool, _, _, _ = _get_lake(
+        dem_arr, _t, _crs, _res,
+        DEM, s2_data_dir=os.path.join(os.path.dirname(DEM), "sentinel2", "data"))
+    lake_arr = _lake_bool.astype(np.uint8)
 
     if acc_arr is not None:
         acc_max = float(np.nanmax(acc_arr))
@@ -176,15 +186,16 @@ def verify_dem():
     ax3 = fig.add_subplot(gs[0, 2])
     if acc_arr is not None:
         log_acc = np.log1p(acc_arr.copy().astype(np.float32))
-        B = 100
+        B = 3
         log_acc[:B, :] = np.nan; log_acc[-B:, :] = np.nan
         log_acc[:, :B] = np.nan; log_acc[:, -B:] = np.nan
         # Clip to 98th percentile so boundary-artifact outliers don't dominate colorscale
         pct98 = float(np.nanpercentile(log_acc, 98))
         log_acc = np.clip(log_acc, 0, pct98)
-        ax3.imshow(log_acc, cmap="Blues", vmin=0, vmax=pct98)
+        cmap_acc = plt.colormaps["Blues"].copy(); cmap_acc.set_bad("whitesmoke")
+        ax3.imshow(log_acc, cmap=cmap_acc, vmin=0, vmax=pct98)
         ax3.set_title(f"Flow Accumulation (log)\nmax={int(np.nanmax(acc_arr)):,} cells (land only)\n"
-                      f"(lake body masked; 100-px border + 98th-pct clip)", fontsize=7)
+                      f"(lake body masked; 98th-pct clip)", fontsize=7)
     else:
         ax3.text(0.5, 0.5, "flow_acc.tif\nnot found", ha="center", va="center", transform=ax3.transAxes)
 
@@ -201,7 +212,7 @@ def verify_dem():
     ax5 = fig.add_subplot(gs[1, 0])
     if hand_arr is not None and len(hand_arr[np.isfinite(hand_arr)]) > 1000:
         hand_clip = hand_arr.copy().astype(np.float32)
-        B = 100
+        B = 3
         hand_clip[:B, :] = np.nan; hand_clip[-B:, :] = np.nan
         hand_clip[:, :B] = np.nan; hand_clip[:, -B:] = np.nan
         # Clip to 95th percentile so extreme outlier cells don't flatten the scale
@@ -209,11 +220,12 @@ def verify_dem():
         pct95_h = float(np.percentile(valid_h, 95)) if len(valid_h) > 0 else 10.0
         vmax_h  = min(pct95_h, 10.0)
         hand_clip = np.clip(hand_clip, 0, vmax_h)
-        im5 = ax5.imshow(hand_clip, cmap="RdYlGn_r", vmin=0, vmax=vmax_h)
+        cmap_hand = plt.colormaps["RdYlGn_r"].copy(); cmap_hand.set_bad("whitesmoke")
+        im5 = ax5.imshow(hand_clip, cmap=cmap_hand, vmin=0, vmax=vmax_h)
         cb5 = plt.colorbar(im5, ax=ax5, fraction=0.046, pad=0.08)
         cb5.set_label("HAND [m]", labelpad=8)
         ax5.set_title(f"HAND: Height Above Drainage\n(red=flood-prone, vmax={vmax_h:.1f}m)\n"
-                      f"(100-px border + 95th-pct clip — D8 artifact removed)", fontsize=7)
+                      f"(95th-pct clip)", fontsize=7)
     else:
         ax5.text(0.5, 0.5, "HAND computation\nshowed NaN — pysheds\nCRS issue (see notes)",
                  ha="center", va="center", transform=ax5.transAxes, fontsize=8)
@@ -403,7 +415,14 @@ def verify_soil_precip():
                f"{set(hsg_vals)}", "Orange County FL is mostly sandy")
 
         ax = axes[0, 0]
-        mu_names = [v.get("muname", k)[:25] for k, v in soil.items()]
+        # Exclude Water map units (no meaningful infiltration params); sort by fc ascending
+        soil_land = {k: v for k, v in soil.items()
+                     if "water" not in v.get("muname", "").lower()}
+        soil_land = dict(sorted(soil_land.items(), key=lambda x: x[1]["fc_mm_hr"]))
+        mu_names = [v.get("muname", k)[:25] for k, v in soil_land.items()]
+        f0_vals  = [v["f0_mm_hr"] for v in soil_land.values()]
+        fc_vals  = [v["fc_mm_hr"] for v in soil_land.values()]
+        hsg_vals = [v["hsg"]      for v in soil_land.values()]
         all_fc_same = len(set(round(v, 1) for v in fc_vals)) == 1
         ax.barh(range(len(f0_vals)), f0_vals, color="steelblue", label="f0 (initial)")
         ax.barh(range(len(fc_vals)), fc_vals, color="orange", label="fc (final Ksat)")
@@ -643,8 +662,12 @@ def verify_soil_precip():
     if os.path.exists(soil_path):
         _soil = json.load(open(soil_path)) if not 'soil' in dir() else \
                 {k: v for k, v in soil.items()}
-        short_names = [v.get("muname","")[:20] for v in _soil.values()]
-        fc_v = [v["fc_mm_hr"] for v in _soil.values()]
+        # Exclude Water units; sort by fc ascending
+        _soil_land = {k: v for k, v in _soil.items()
+                      if "water" not in v.get("muname", "").lower()}
+        _soil_land = dict(sorted(_soil_land.items(), key=lambda x: x[1]["fc_mm_hr"]))
+        short_names = [v.get("muname","")[:20] for v in _soil_land.values()]
+        fc_v = [v["fc_mm_hr"] for v in _soil_land.values()]
         colors = ["#e74c3c" if v < 50 else "#f39c12" if v < 200 else "#27ae60" for v in fc_v]
         ax2.barh(range(len(fc_v)), fc_v, color=colors)
         ax2.set_yticks(range(len(short_names))); ax2.set_yticklabels(short_names, fontsize=6)
