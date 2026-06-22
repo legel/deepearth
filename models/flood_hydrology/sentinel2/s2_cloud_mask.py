@@ -316,7 +316,7 @@ def main(dates=None):
             "cloud_pct_combined":  round(100 * frac_cloudy, 2),
             "cloud_pixels": int(cloud_mask_arr.sum()),
             "total_pixels": int(cloud_mask_arr.size),
-            "cloud_mask_path": cm_path,
+            "cloud_mask_path": os.path.basename(cm_path),
         })
 
     if summary_rows:

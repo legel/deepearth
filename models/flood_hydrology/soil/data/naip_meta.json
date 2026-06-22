@@ -8,6 +8,6 @@
   "resolution_m": 0.6,
   "bands": 4,
   "crs": "EPSG:26917",
-  "rgb_path": "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/soil/data/naip_2021_RGB.tif",
-  "nir_path": "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/soil/data/naip_2021_NIR.tif"
+  "rgb_path": "naip_2021_RGB.tif",
+  "nir_path": "naip_2021_NIR.tif"
 }

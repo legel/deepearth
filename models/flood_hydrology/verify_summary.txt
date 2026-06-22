@@ -124,7 +124,7 @@ RESULT: 53/53 checks passed
        value: f0>fc always true (Horton requirement)
 
 [PASS] HSG A/B dominant (sandy FL soils)
-       value: {'A', 'B'}
+       value: {'B', 'A'}
        note:  Orange County FL is mostly sandy
 
 [PASS] SSURGO components table non-empty

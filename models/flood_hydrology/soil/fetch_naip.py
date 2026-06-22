@@ -194,8 +194,8 @@ def download_naip_mosaic(items, bbox, data_dir):
         "resolution_m": round(abs(out_transform.a), 3),
         "bands": n_bands,
         "crs": str(mosaic_crs),
-        "rgb_path": rgb_path,
-        "nir_path": nir_path,
+        "rgb_path": os.path.basename(rgb_path),
+        "nir_path": os.path.basename(nir_path) if nir_path else None,
     }
     with open(os.path.join(data_dir, "naip_meta.json"), "w") as f:
         json.dump(meta_info, f, indent=2)

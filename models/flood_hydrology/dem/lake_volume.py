@@ -4,8 +4,8 @@ Lake Volume Calculation — Voxelization + Marching Cubes Mesh
 Explicitly calculates lake volume using a voxel-counting approach on the DEM
 and the estimated lake-bed DEM, then visualizes the 3D lake body.
 
-Method (as described by team lead)
------------------------------------
+Method
+------
 1. Define lake extent from dem/data/lake_mask.tif
 2. Water surface elevation = mean elevation of lake cells in the hydro-flattened DEM
 3. Lake bed elevation = from lake_bed_dem.tif (extrapolated from shoreline slope)

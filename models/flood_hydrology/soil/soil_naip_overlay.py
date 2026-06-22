@@ -4,9 +4,6 @@ NAIP + SSURGO Soil Verification Overlay
 Overlays NAIP true-color aerial imagery with SSURGO HSG soil units and
 Sentinel-2 MNDWI water boundary to visually verify soil data accuracy.
 
-Team lead requirement: "overlay NAIP soil data satellite images with our
-current soil data to verify". This script creates the verification figure.
-
 Panels
 ------
 1. NAIP true-color aerial (1m resolution) with SSURGO soil unit boundaries
@@ -255,7 +252,8 @@ def main():
     with open(naip_meta_path) as f:
         naip_meta = json.load(f)
 
-    rgb_path = naip_meta.get("rgb_path") or os.path.join(DATA_DIR, f"naip_{naip_meta['year']}_RGB.tif")
+    rgb_name = naip_meta.get("rgb_path") or f"naip_{naip_meta['year']}_RGB.tif"
+    rgb_path = os.path.join(DATA_DIR, os.path.basename(rgb_name))
     nir_path = naip_meta.get("nir_path")
     ndvi_path = os.path.join(DATA_DIR, f"naip_{naip_meta['year']}_NDVI.tif")
 
@@ -292,7 +290,8 @@ def main():
     from rasterio.warp import reproject as warp_reproject, Resampling
     from scipy.ndimage import binary_opening, binary_fill_holes, gaussian_filter
 
-    nir_path = naip_meta.get("nir_path") or os.path.join(DATA_DIR, f"naip_{naip_meta['year']}_NIR.tif")
+    nir_name = naip_meta.get("nir_path") or f"naip_{naip_meta['year']}_NIR.tif"
+    nir_path = os.path.join(DATA_DIR, os.path.basename(nir_name))
     if nir_path and os.path.exists(nir_path):
         with rasterio.open(rgb_path) as src:
             g_band = src.read(2).astype(np.float32)   # band 2 = Green
