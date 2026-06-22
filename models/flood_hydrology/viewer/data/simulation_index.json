@@ -1,0 +1,72 @@
+[
+  {
+    "id": "flash_1hr_100yr",
+    "label": "Flash: 1-hr / 100-yr return",
+    "duration_hr": 1,
+    "data_source": "NOAA Atlas 14",
+    "total_rain_mm": 119.0,
+    "peak_flooded_ha": 181.72,
+    "peak_lake_rise_m": 0.077,
+    "n_frames": 13
+  },
+  {
+    "id": "flash_1hr_10yr",
+    "label": "Flash: 1-hr / 10-yr return",
+    "duration_hr": 1,
+    "data_source": "NOAA Atlas 14",
+    "total_rain_mm": 75.0,
+    "peak_flooded_ha": 80.08,
+    "peak_lake_rise_m": 0.037,
+    "n_frames": 13
+  },
+  {
+    "id": "sustained_12hr_100yr",
+    "label": "Sustained: 12-hr / 100-yr return",
+    "duration_hr": 12,
+    "data_source": "NOAA Atlas 14",
+    "total_rain_mm": 240.0,
+    "peak_flooded_ha": 110.79,
+    "peak_lake_rise_m": 0.049,
+    "n_frames": 25
+  },
+  {
+    "id": "sustained_12hr_10yr",
+    "label": "Sustained: 12-hr / 10-yr return",
+    "duration_hr": 12,
+    "data_source": "NOAA Atlas 14",
+    "total_rain_mm": 151.0,
+    "peak_flooded_ha": 11.27,
+    "peak_lake_rise_m": 0.011,
+    "n_frames": 25
+  },
+  {
+    "id": "historical_20240212",
+    "label": "Historical: Feb 7\u201314, 2024",
+    "duration_hr": 168,
+    "data_source": "NOAA CDO USC00088788",
+    "total_rain_mm": 1.2,
+    "peak_flooded_ha": 0.0,
+    "peak_lake_rise_m": 0.0,
+    "n_frames": 8
+  },
+  {
+    "id": "historical_gsdr",
+    "label": "Historical: GSDR extreme (pre-1985)",
+    "duration_hr": null,
+    "data_source": "GSDR US_086638",
+    "total_rain_mm": 208.0,
+    "peak_flooded_ha": 190.3,
+    "peak_lake_rise_m": 0.154,
+    "n_frames": 25
+  },
+  {
+    "id": "historical_gsdr_extreme",
+    "label": "Historical: biggest GSDR storm (1945-09-16)",
+    "duration_hr": 24,
+    "data_source": "GSDR US_086638",
+    "total_rain_mm": 245.6,
+    "peak_flooded_ha": 98.05,
+    "peak_lake_rise_m": 0.041,
+    "n_frames": 24
+  }
+]

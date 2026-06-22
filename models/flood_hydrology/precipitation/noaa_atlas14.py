@@ -29,6 +29,7 @@ import os
 import sys
 import json
 import argparse
+import warnings
 import requests
 import numpy as np
 import pandas as pd
@@ -131,6 +132,13 @@ def _central_florida_defaults(lat, lon):
     Source: NOAA Atlas 14, Volume 9, Region 1 (Southeast US), Table 3.1.
     These are the point estimates (50th percentile) for the Orlando area.
     """
+    warnings.warn(
+        f"NOAA PFDS query failed for ({lat}, {lon}) — falling back to hard-coded "
+        "Central Florida Atlas 14 values (Orange County, 50th percentile). "
+        "Results may not reflect site-specific precipitation frequency. "
+        "Verify connectivity to https://hdsc.nws.noaa.gov/cgi-bin/hdsc/new/cgi_readH5.py",
+        UserWarning, stacklevel=3
+    )
     print("  Using hard-coded Atlas 14 values for Central Florida (Orange County).")
     # depth_mm[duration_hr][return_period_yr]
     # Approximate values from Atlas 14 Vol 9 for Orlando area

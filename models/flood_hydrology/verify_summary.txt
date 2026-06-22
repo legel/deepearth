@@ -30,7 +30,7 @@ RESULT: 53/53 checks passed
        note:  stream channel present
 
 [PASS] Lake area 5-200 ha
-       value: 150.8 ha
+       value: 144.0 ha
        note:  plausible for 2×2km FL
 
 [PASS] HAND computed (not all NaN)
@@ -124,7 +124,7 @@ RESULT: 53/53 checks passed
        value: f0>fc always true (Horton requirement)
 
 [PASS] HSG A/B dominant (sandy FL soils)
-       value: {'A', 'B'}
+       value: {'B', 'A'}
        note:  Orange County FL is mostly sandy
 
 [PASS] SSURGO components table non-empty
@@ -139,44 +139,44 @@ RESULT: 53/53 checks passed
        note:  ~60% expected; 50% acceptable with 1-hr discretization
 
 [PASS] flash_1hr_100yr: depth > 0 exists
-       value: max=3.98m
+       value: max=3.43m
 
 [PASS] flash_1hr_100yr: max depth < 10m
-       value: 3.98m
+       value: 3.43m
        note:  FL suburban < 10m
 
 [PASS] flash_1hr_100yr: some flooding
-       value: 210ha
+       value: 200ha
 
 [PASS] flash_1hr_100yr: velocity < 10m/s
-       value: 3.52m/s
+       value: 3.31m/s
        note:  physically plausible
 
 [PASS] sustained_12hr_100yr: depth > 0 exists
-       value: max=4.78m
+       value: max=2.82m
 
 [PASS] sustained_12hr_100yr: max depth < 10m
-       value: 4.78m
+       value: 2.82m
        note:  FL suburban < 10m
 
 [PASS] sustained_12hr_100yr: some flooding
-       value: 175ha
+       value: 118ha
 
 [PASS] sustained_12hr_100yr: velocity < 10m/s
-       value: 2.29m/s
+       value: 1.93m/s
        note:  physically plausible
 
 [PASS] flash_1hr_100yr: peak area > 0 ha
-       value: 199.4ha at t=30min
+       value: 181.7ha at t=35min
 
 [PASS] sustained_12hr_100yr: peak area > 0 ha
-       value: 170.5ha at t=360min
+       value: 110.8ha at t=420min
 
 [PASS] flash_1hr_100yr: lake rise > 0 cm
-       value: +10.5cm
+       value: +7.7cm
 
 [PASS] sustained_12hr_100yr: lake rise > 0 cm
-       value: +13.4cm
+       value: +4.9cm
 
 [PASS] VAE curve has positive volume gradient
        value: monotone increasing ✓

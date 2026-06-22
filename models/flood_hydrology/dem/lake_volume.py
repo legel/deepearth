@@ -4,8 +4,8 @@ Lake Volume Calculation — Voxelization + Marching Cubes Mesh
 Explicitly calculates lake volume using a voxel-counting approach on the DEM
 and the estimated lake-bed DEM, then visualizes the 3D lake body.
 
-Method (as described by team lead)
------------------------------------
+Method
+------
 1. Define lake extent from dem/data/lake_mask.tif
 2. Water surface elevation = mean elevation of lake cells in the hydro-flattened DEM
 3. Lake bed elevation = from lake_bed_dem.tif (extrapolated from shoreline slope)
@@ -130,27 +130,21 @@ def build_voxel_grid(lake_mask_bool, dem, lake_bed, cell_m, z_resolution=0.5):
 def main():
     print("Loading rasters …")
     dem,      (transform, cell_m) = load_tif("winter_garden_dem.tif")
-    # Prefer S2-derived lake mask (135k cells, true open-water surface confirmed by
-    # optical imagery) over the DEM-based mask (216k cells, includes misclassified
-    # flat suburban terrain). Fall back to DEM mask if S2 mask not available.
-    _mask_src = ("lake_mask_s2.tif"
-                 if os.path.exists(os.path.join(DATA_DIR, "lake_mask_s2.tif"))
-                 else "lake_mask.tif")
-    lake_mask, _                  = load_tif(_mask_src)
-    # Prefer FWC bathymetric survey; fall back to shoreline-slope estimate
-    _bed_src = ("lake_bed_dem_fwc.tif"
-                if os.path.exists(os.path.join(DATA_DIR, "lake_bed_dem_fwc.tif"))
-                else "lake_bed_dem_estimated.tif")
-    lake_bed, _                   = load_tif(_bed_src)
-    print(f"  Lake mask source: {_mask_src}")
-    print(f"  Lake bed source : {_bed_src}")
+    if dem is None:
+        sys.exit("Missing DEM. Run dem_download.py first.")
 
-    if dem is None or lake_mask is None or lake_bed is None:
-        sys.exit("Missing DEM files. Run dem_download.py and dem_process.py first.")
+    # CRS is not returned by load_tif — read it separately
+    with rasterio.open(os.path.join(DATA_DIR, "winter_garden_dem.tif")) as _src:
+        dem_crs = _src.crs
 
-    lake_bool = (lake_mask == 1) & np.isfinite(dem)
+    print("  Building lake mask + interpolating FWC ...")
+    sys.path.insert(0, BASE_DIR)
+    from lake_utils import get_lake_mask_and_fwc
+    lake_bool, lake_bed, water_surface_ref, _mask_label = get_lake_mask_and_fwc(
+        dem, transform, dem_crs, cell_m, DATA_DIR, s2_data_dir=S2_DIR)
+    print(f"  Lake mask: {_mask_label}")
     if lake_bool.sum() == 0:
-        sys.exit("No lake cells found in lake_mask.tif")
+        sys.exit("No lake cells found.")
 
     # ── 1. Baseline volume (full lake mask from DEM) ─────────────────────
     print("\n── Baseline Lake Volume (DEM lake mask) ─────────────────────")
@@ -247,12 +241,9 @@ def main():
     ax1.set_title(f"Lake depth map\n(water surface {water_surface:.1f}m − lake bed)\n"
                   f"Max depth: {max_depth:.2f}m", fontsize=9)
     ax1.set_xlabel("col"); ax1.set_ylabel("row")
-    ax1.text(0.02, 0.02,
-             "⚠ Depth from shoreline slope extrapolation\n"
-             "FL karst lakes typically 2–6 m deep at centre\n"
-             "FWC/FDEP bathymetry survey data pending",
-             transform=ax1.transAxes, fontsize=6.5, color="darkred", va="bottom",
-             bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", alpha=0.85))
+    ax1.text(0.02, 0.02, "Bed: FWC survey (interpolated)",
+             transform=ax1.transAxes, fontsize=7, color="navy", va="bottom",
+             bbox=dict(boxstyle="round,pad=0.3", fc="aliceblue", alpha=0.85))
 
     # Panel 2: Depth histogram
     ax2 = fig.add_subplot(2, 3, 2)
@@ -268,24 +259,24 @@ def main():
                   f"Volume = Σ depth × {cell_m:.1f}² m² = {vol_m3:,.0f} m³\n"
                   f"({vol_m3/1e6:.4f} km³ | {area_ha:.1f} ha total area)", fontsize=9)
 
-    # Panel 3: VAE curve (Volume-Area-Elevation)
+    # Panel 3: Hypsometric curve (Volume–Elevation, standard hydrology)
     ax3 = fig.add_subplot(2, 3, 3)
-    z_steps = np.linspace(water_surface - max(max_depth, 0.5), water_surface, 60)
-    vae_vols = []
-    vae_areas = []
+    z_steps = np.linspace(water_surface - max(max_depth, 0.5), water_surface + 1.0, 80)
+    hyps_vols = []
+    hyps_areas = []
     for z in z_steps:
         submerged = lake_bool & np.isfinite(lake_bed) & (lake_bed < z)
         depth_at_z = np.where(submerged, z - lake_bed, 0.0)
-        vae_vols.append(float(depth_at_z.sum() * cell_m**2))
-        vae_areas.append(float(submerged.sum() * cell_m**2 / 1e4))
-    ax3.plot(vae_vols, z_steps, color="steelblue", lw=2)
+        hyps_vols.append(float(depth_at_z.sum() * cell_m**2))
+        hyps_areas.append(float(submerged.sum() * cell_m**2 / 1e4))
+    ax3.plot(hyps_vols, z_steps, color="steelblue", lw=2)
     ax3.axhline(water_surface, color="royalblue", lw=1.5, linestyle="--",
-                label=f"Current surface: {water_surface:.1f}m")
-    ax3.fill_betweenx(z_steps, vae_vols, alpha=0.3, color="steelblue")
+                label=f"Current surface: {water_surface:.1f} m")
+    ax3.fill_betweenx(z_steps, hyps_vols, alpha=0.3, color="steelblue")
     ax3.set_xlabel("Cumulative volume [m³]")
     ax3.set_ylabel("Water surface elevation [m NAVD88]")
-    ax3.set_title("Volume–Elevation (VAE) curve\n"
-                  "(How volume changes with lake level rise/fall)", fontsize=9)
+    ax3.set_title("Hypsometric curve (Volume–Elevation)\n"
+                  "Physics-based: Σ max(WSE−bed, 0) × cell_area per elevation step", fontsize=9)
     ax3.legend(fontsize=8)
 
     # Panel 4: 3D lake volume — z-axis = depth below surface (0=surface, negative=deeper)
@@ -327,9 +318,8 @@ def main():
         ax4.set_zlabel("Depth below surface [m]", fontsize=7)
         # Z-axis: surface at 0, extend below actual max depth
         ax4.set_zlim(-(max_depth * 1.15), 0.3)
-        bed_src_label = _bed_src.replace("lake_bed_dem_", "").replace(".tif", "")
         ax4.set_title(f"3D lake volume (depth below surface)\n"
-                      f"Max depth: {max_depth:.1f} m | Source: {bed_src_label}\n"
+                      f"Max depth: {max_depth:.1f} m | Source: FWC survey (interpolated)\n"
                       f"Colour: darker blue = deeper", fontsize=8)
         ax4.view_init(elev=30, azim=-60)
 
@@ -381,7 +371,7 @@ def main():
         ax6.set_xticklabels(seasonal_df["date"], rotation=45, ha="right", fontsize=7)
         ax6.set_ylabel("Lake volume [m³]")
         ax6.set_title("Seasonal lake volume\n"
-                      "(S2 water mask extent × DEM-estimated depth)\n"
+                      "(S2 water mask extent × DEM-derived depth integral)\n"
                       "Sandy=dry, Blue=wet, Green=shoulder", fontsize=9)
         ax6.legend(fontsize=8)
         # Volume range
