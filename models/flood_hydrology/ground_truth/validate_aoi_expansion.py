@@ -1,5 +1,5 @@
 """
-Track G, steps 1-2 (scoping/validation only — see plans/track_G_aoi_expansion.md).
+AOI-expansion scoping/validation — see CLAUDE.md "Future work" item 2.
 
 1. Fetch Johns Lake's real shoreline geometry from USGS NHDPlus HR (via pynhd)
    and derive a bounding box (+250 m buffer) that should fully contain it.
@@ -10,7 +10,7 @@ Track G, steps 1-2 (scoping/validation only — see plans/track_G_aoi_expansion.
    the current AOI's 502/450/127/5 edge-clipping problem.
 
 Does NOT touch Sentinel-2, water segmentation, the lake mask consensus, or
-any production file. Outputs land in ground_truth/track_G_test_data/.
+any production file. Outputs land in ground_truth/aoi_expansion_test_data/.
 """
 
 import os
@@ -22,11 +22,11 @@ import rasterio
 from rasterio.features import rasterize
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUT_DIR = os.path.join(BASE_DIR, "track_G_test_data")
+OUT_DIR = os.path.join(BASE_DIR, "aoi_expansion_test_data")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 SEARCH_BBOX_4326 = (-81.70, 28.49, -81.62, 28.55)  # generous search window around Johns Lake
-BUFFER_M = 250  # watershed-context buffer, matches current AOI's rationale per plan
+BUFFER_M = 250  # watershed-context buffer, matches the current AOI's rationale
 RESOLUTION_M = 3
 
 
@@ -94,10 +94,10 @@ def main():
     print(f"Buffered bbox (4326): {bbox}")
     print(f"Box size: {km_ew:.2f} km (E-W) x {km_ns:.2f} km (N-S)  (current AOI: 2.0 x 2.0 km)")
 
-    dem_path = os.path.join(OUT_DIR, "dem_track_g_test.tif")
+    dem_path = os.path.join(OUT_DIR, "dem_aoi_expansion_test.tif")
     download_dem(bbox, dem_path)
 
-    mask_path = os.path.join(OUT_DIR, "lake_mask_nhd_track_g_test.tif")
+    mask_path = os.path.join(OUT_DIR, "lake_mask_nhd_aoi_expansion_test.tif")
     mask, dem_t = build_nhd_mask(dem_path, lake_gdf, mask_path)
 
     res_x, res_y = dem_t.a, -dem_t.e
