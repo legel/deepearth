@@ -206,7 +206,7 @@ def train_and_evaluate(config, device):
     line = " | ".join(f"{k} {v:.3f}" for k, v in scores.items())
     print(f"held-out regions (conditioning on {given}): {line}", flush=True)
     # The frozen benchmark suite + harmonic-mean north star (the autoresearch objective).
-    from deepearth.core import benchmarks
+    from deepearth.autoresearch import benchmarks
     raw = benchmarks.evaluate_benchmarks(model, source, device)
     print(benchmarks.format_benchmarks(raw), flush=True)
     ns = benchmarks.net_score(raw)

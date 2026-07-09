@@ -21,6 +21,11 @@ variables:
   - {name: identity,    kind: categorical, classes: identity, neighbor: true}
   - {name: phylo,       kind: continuous}                    # an evolutionary-position vector
   - {expand: trait_classes}                                  # one categorical per descriptor, widths from the data
+  - {name: climate,  kind: continuous}                       # Daymet 180-day x 7  (universal environmental input)
+  - {name: soil,     kind: continuous}                       # SSURGO soil properties
+  - {name: naip_rgb, kind: continuous}                       # NAIP aerial DINOv3-SAT493M (RGB)
+  - {name: naip_ir,  kind: continuous}                       # NAIP aerial DINOv3-SAT493M (IR)
+  - {name: clay,     kind: continuous}                       # Clay v1.5 / Sentinel-2 embedding
 
 condition_on: [vision_dino, vision_bio]    # the widely-available inputs used at evaluation
 
