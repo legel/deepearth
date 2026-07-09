@@ -8,7 +8,8 @@ config marks as widely available.
 Usage:  python train.py configs/deepcal.yaml [--device cuda] [--steps N]
 """
 from __future__ import annotations
-import argparse, time
+import argparse, os, time
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")   # reduce fragmentation for large models
 from pathlib import Path
 import numpy as np
 import torch
@@ -236,8 +237,8 @@ def evaluate(model, source, given, targets, device):
     model.eval()
     correct = {t: 0.0 for t in targets}; total = 0
     kinds = {v.name: v.kind for v in model.variables}
-    for c0 in range(0, len(source.test), 4096):
-        idx = torch.tensor(source.test[c0:c0 + 4096], device=device)
+    for c0 in range(0, len(source.test), 2048):
+        idx = torch.tensor(source.test[c0:c0 + 2048], device=device)
         values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
         ctx = model.context(coords, nbr_coords, manifold_coords, nbr_values)
         preds = model.infer(values, given, targets, ctx)
@@ -257,6 +258,9 @@ def main():
     ap.add_argument("--device", default="cuda"); ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--cache_dir", default=None)
     ap.add_argument("--eval_ckpt", default=None, help="score an existing checkpoint (skip training)")
+    ap.add_argument("--time_budget", type=float, default=None, help="stop training after N seconds (experiment budget)")
+    ap.add_argument("--no_mxm", action="store_true", help="skip the M x M matrix at eval (faster experiments)")
+    ap.add_argument("--tag", default=None, help="a label for this run (recorded, e.g. the experiment id)")
     a = ap.parse_args()
     config = yaml.safe_load(open(a.config))
     if a.steps is not None:
@@ -265,6 +269,10 @@ def main():
         config["data"]["cache_dir"] = a.cache_dir
     if a.eval_ckpt is not None:
         config["_eval_ckpt"] = a.eval_ckpt
+    if a.time_budget is not None:
+        config["training"]["time_budget_s"] = a.time_budget
+    if a.no_mxm:
+        config["mxm"] = False
     model, _ = train_and_evaluate(config, a.device)
     if a.eval_ckpt is None:                              # don't overwrite the checkpoint we just scored
         torch.save(model.state_dict(), Path(a.config).with_suffix(".pt"))
