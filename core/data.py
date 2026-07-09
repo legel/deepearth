@@ -161,6 +161,7 @@ class California:
             setattr(self, k, v.to(device) if torch.is_tensor(v) else v)
         self.extra = {n: (t.to(device), h.to(device), d) for n, (t, h, d) in blob["extra"].items()}
         self.tree = blob["tree"]
+        self.train_index = torch.tensor(self.train, device=device)     # derived: train row indices as a device tensor
 
     @staticmethod
     def _find_meta(cache: Path):

@@ -65,7 +65,7 @@ def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, 
 
 
 @torch.no_grad()
-def evaluate_benchmarks(model, source, device, batch: int = 4096) -> Dict[str, float]:
+def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, float]:
     """Compute every active benchmark's raw value over the held-out split. Context is built once per batch and
     reused across the different ``given`` sets, so the whole suite costs a handful of passes over the test set."""
     model.eval()
@@ -77,6 +77,10 @@ def evaluate_benchmarks(model, source, device, batch: int = 4096) -> Dict[str, f
     fam_of_species = source.class_group if hasattr(source, "class_group") else None   # family index per species class
 
     vision = [v for v in ("vision_dino", "vision_bio") if v in have]
+    # "U" -- universal inputs, obtainable anywhere without observing the organism (space-time is always present via
+    # the position token; environmental/remote-sensing modalities join it when configured). Growing U is the principled
+    # way to lift species-from-location (A1). Definition fixed; only available content changes as modalities enable.
+    universal = [v for v in ("climate", "soil", "naip_rgb", "naip_ir", "clay") if v in have]
     # accumulators: [sum, count] for means; confusion pieces handled inline via stored preds
     acc = {k: [0.0, 0.0] for k in ("A2_top1", "A2_top5", "A1_top1", "A5_cos", "A6_cos", "Q3_gain", "Q8_fam")}
     # trait F1 needs full pred/target vectors; collect per trait
@@ -95,7 +99,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 4096) -> Dict[str, f
 
         # --- A2: U + ground photo -> species (the flagship) ---
         if vision:
-            pr = infer(vision, ["identity"])["identity"]
+            pr = infer(universal + vision, ["identity"])["identity"]
             top5 = pr.topk(5, dim=-1).indices
             correct1 = (pr.argmax(-1) == values["identity"])
             acc["A2_top1"][0] += correct1.float().sum().item(); acc["A2_top1"][1] += B
@@ -106,16 +110,16 @@ def evaluate_benchmarks(model, source, device, batch: int = 4096) -> Dict[str, f
                 acc["Q8_fam"][1] += B
             # A5: U + photo -> evolutionary-position vector
             if "phylo" in have:
-                pc = infer(vision, ["phylo"])["phylo"]
+                pc = infer(universal + vision, ["phylo"])["phylo"]
                 acc["A5_cos"][0] += F.cosine_similarity(pc, values["phylo"], dim=-1).sum().item(); acc["A5_cos"][1] += B
             # A4: U + photo -> traits (collect for macro-F1)
             if traits:
-                pt = infer(vision, traits)
+                pt = infer(universal + vision, traits)
                 for t in traits:
                     tr_pred[t].append(pt[t].argmax(-1).cpu()); tr_true[t].append(values[t].cpu()); tr_obs[t].append(observed[t].cpu())
 
         # --- A1: U (position + geometry-only neighbors) -> species, no photo ---
-        pr0 = infer([], ["identity"])["identity"]
+        pr0 = infer(universal, ["identity"])["identity"]
         acc["A1_top1"][0] += (pr0.argmax(-1) == values["identity"]).float().sum().item(); acc["A1_top1"][1] += B
         # Q3: marginal value of location = (geo+vision top1) - (vision-only top1) is approximated by A2 - A1 at net time
 
