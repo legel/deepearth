@@ -77,6 +77,12 @@ long as certain constraints are met.
 17. Inspired by **[MADE: Masked Autoencoder for Distribution Estimation][made]**, DeepEarth must be trained as a
     Bayesian probabilistic model, such that the inclusion of additional evidence (e.g. unmasking of information)
     gives rise to the most likely posterior estimation of overall system state.
+18. **All available data must be included.** DeepEarth must ingest every prepared modality, not a curated subset. By
+    the Bayesian principle of rule 17, additional evidence can only sharpen (or leave unchanged) a posterior — never
+    degrade it. Therefore **every modality must lift induction, or at worst not strongly support it**. If adding a
+    modality measurably *hurts* any benchmark, that is a **bug** in how the data is integrated (fusion, masking,
+    missing-value handling, or loss balance) to be found and fixed — never a reason to drop the modality. We do not
+    validate "a better model without certain data"; we make the model correctly use all of it.
 
 ## References
 
