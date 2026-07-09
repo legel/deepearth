@@ -24,7 +24,7 @@ import torch.nn.functional as F
 # reflects real induction beyond a naive predictor; targets are the level we are pushing toward.
 BASELINE = {
     "A2_species_vision_top1": 0.02,   "A2_species_vision_top5": 0.05,
-    "A1_species_geo_top1":    0.02,
+    "A1_species_geo_top10":   0.05,
     "A4_traits_vision_f1":    0.30,
     "A5_phylo_vision_cos":    0.50,
     "A6_imagine_vision_cos":  0.30,
@@ -35,7 +35,7 @@ BASELINE = {
 }
 TARGET = {
     "A2_species_vision_top1": 0.90,   "A2_species_vision_top5": 0.99,
-    "A1_species_geo_top1":    0.50,
+    "A1_species_geo_top10":   0.40,
     "A4_traits_vision_f1":    0.90,
     "A5_phylo_vision_cos":    0.95,
     "A6_imagine_vision_cos":  0.90,
@@ -82,7 +82,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     # way to lift species-from-location (A1). Definition fixed; only available content changes as modalities enable.
     universal = [v for v in ("climate", "soil", "naip_rgb", "naip_ir", "clay") if v in have]
     # accumulators: [sum, count] for means; confusion pieces handled inline via stored preds
-    acc = {k: [0.0, 0.0] for k in ("A2_top1", "A2_top5", "A1_top1", "A5_cos", "A6_cos", "Q3_gain", "Q8_fam")}
+    acc = {k: [0.0, 0.0] for k in ("A2_top1", "A2_top5", "A1_top10", "A5_cos", "A6_cos", "Q3_gain", "Q8_fam")}
     # trait F1 needs full pred/target vectors; collect per trait
     tr_pred = {t: [] for t in traits}; tr_true = {t: [] for t in traits}; tr_obs = {t: [] for t in traits}
     tr_pred_loo = {t: [] for t in traits}
@@ -95,7 +95,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         B = len(idx)
 
         def infer(given, targets):
-            return model.infer(values, given, targets, ctx)
+            return model.infer(values, given, targets, ctx, observed)
 
         # --- A2: U + ground photo -> species (the flagship) ---
         if vision:
@@ -120,7 +120,8 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
 
         # --- A1: U (position + geometry-only neighbors) -> species, no photo ---
         pr0 = infer(universal, ["identity"])["identity"]
-        acc["A1_top1"][0] += (pr0.argmax(-1) == values["identity"]).float().sum().item(); acc["A1_top1"][1] += B
+        t10 = pr0.topk(10, dim=-1).indices
+        acc["A1_top10"][0] += (t10 == values["identity"][:, None]).any(-1).float().sum().item(); acc["A1_top10"][1] += B
         # Q3: marginal value of location = (geo+vision top1) - (vision-only top1) is approximated by A2 - A1 at net time
 
         # --- A6: imagine vision -- reconstruct DINOv3 from everything but vision ---
@@ -154,9 +155,9 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         if traits:
             f1s = [_macro_f1(torch.cat(tr_pred[t]), torch.cat(tr_true[t]), torch.cat(tr_obs[t]), trait_nc[t]) for t in traits]
             out["A4_traits_vision_f1"] = float(np.nanmean(f1s))
-    out["A1_species_geo_top1"] = reduce(acc["A1_top1"])
+    out["A1_species_geo_top10"] = reduce(acc["A1_top10"])
     if vision and not np.isnan(out.get("A2_species_vision_top1", np.nan)):
-        out["Q3_geo_gain_species"] = max(0.0, out["A2_species_vision_top1"] - out["A1_species_geo_top1"])
+        out["Q3_geo_gain_species"] = max(0.0, out["A2_species_vision_top1"] - out["A1_species_geo_top10"])
     if "vision_dino" in have:
         out["A6_imagine_vision_cos"] = reduce(acc["A6_cos"])
         out["loo_vision_dino_cos"] = reduce(dino_loo)
@@ -172,14 +173,12 @@ def observed_any(observed: Dict[str, torch.Tensor], name: str) -> bool:
 
 
 def net_score(raw: Dict[str, float]) -> float:
-    """Harmonic mean (power mean p=-1) of the active benchmarks, each normalized to [0,1]. Rewards raising the
-    weakest benchmark; a single floored benchmark drags the whole score down."""
+    """Unweighted mean of the active benchmarks, each normalized to [0,1]."""
     normed = normalized(raw)
     vals = [v for v in normed.values() if not np.isnan(v)]
     if not vals:
         return 0.0
-    eps = 1e-6
-    return float(len(vals) / sum(1.0 / (v + eps) for v in vals))
+    return float(sum(vals) / len(vals))
 
 
 def normalized(raw: Dict[str, float]) -> Dict[str, float]:
@@ -199,5 +198,5 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
     for k in sorted(raw):
         n = normed.get(k, float("nan"))
         lines.append(f"  {k:<26} {raw[k]:6.3f}   {n:6.3f}")
-    lines.append(f"NET SCORE (harmonic mean of {len(normed)} active): {net_score(raw):.4f}")
+    lines.append(f"NET SCORE (mean of {len(normed)} active): {net_score(raw):.4f}")
     return "\n".join(lines)

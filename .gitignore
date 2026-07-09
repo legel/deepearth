@@ -65,8 +65,8 @@ Thumbs.db
 .env
 .env.local
 # autoresearch working state (local only)
-core/AUTORESEARCH_STATE.md
-core/results.tsv
-core/.autoresearch/
 *.pt
 __pycache__/
+
+# generated data + experiments (never committed)
+/data/

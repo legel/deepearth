@@ -389,12 +389,14 @@ class DeepEarth(nn.Module):
 
     @torch.no_grad()
     def infer(self, values: Dict[str, torch.Tensor], given: Sequence[str], targets: Sequence[str],
-              context: dict) -> Dict[str, torch.Tensor]:
-        """Predict ``targets`` conditioned only on the variables in ``given`` (plus the space-time and neighbor context)."""
+              context: dict, observed: Optional[Dict[str, torch.Tensor]] = None) -> Dict[str, torch.Tensor]:
+        """Predict ``targets`` from the variables in ``given`` (plus space-time + neighbor context). A given variable
+        is revealed only where actually ``observed`` (else a missing value would enter as a spurious zero token)."""
         B = context["position"].shape[0]
         dev = self.type_emb.device
         present = {n: torch.zeros(B, dtype=torch.bool, device=dev) for n in self.names}
         for n in given:
-            present[n] = torch.ones(B, dtype=torch.bool, device=dev)
+            present[n] = observed[n] if (observed is not None and n in observed) \
+                else torch.ones(B, dtype=torch.bool, device=dev)
         z = self.encode(values, present, context)
         return {t: self.decode(z, t) for t in targets}
