@@ -7,7 +7,6 @@ import warnings
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Optional, Literal, Tuple, Dict, Any
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -361,15 +360,6 @@ class Earth4D(nn.Module):
         # resolution range. Axes are (N/x, E/y, elev/z, time); initialized to identity.
         self.freq_log_scale = nn.Parameter(torch.full((4,), float(freq_log_scale_init)))
         self.freq_center = nn.Parameter(torch.zeros(4))
-        if self.verbose and not self.use_adaptive_range:
-            self._print_resolution_info()
-
-    def _print_resolution_info(self):
-        config = {'use_adaptive_range': self.use_adaptive_range, 'enable_learned_probing': self.enable_learned_probing,
-                  'probing_range': self.probing_range, 'max_precision_level': self.max_precision_level,
-                  'spatial_levels': self.spatial_levels, 'coordinate_system': self.coordinate_system}
-        adaptive_range = self.geo_range if self.coordinate_system == 'geographic' else self.adaptive_range
-        print_resolution_info(self, config, adaptive_range)
 
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
         return self.xyz_encoder(xyz, size=1.0)
@@ -480,8 +470,6 @@ class Earth4D(nn.Module):
         self.adaptive_range = AdaptiveRange.from_ecef_coordinates(
             torch.stack([x, y, z], dim=-1), coords[..., 3], orig_coords=coords, buffer_fraction=buffer_fraction)
         self.use_adaptive_range = True
-        if self.verbose:
-            self._print_resolution_info()
         return self
 
     def fit_geo_range(self, coords: torch.Tensor, lat_coverage: float = 0.25, lon_coverage: float = 0.25,
@@ -489,8 +477,6 @@ class Earth4D(nn.Module):
         """Fit geographic range from training coordinates (N, 4) = [lat, lon, elev, time]."""
         self.geo_range = GeoAdaptiveRange.balanced_regional(coords, lat_coverage, lon_coverage, elev_coverage, time_coverage)
         self._geo_range_is_default = False
-        if self.verbose:
-            self._print_resolution_info()
         return self
 
     def precompute(self, coords: torch.Tensor) -> dict:
@@ -531,143 +517,6 @@ class Earth4D(nn.Module):
         self._precomputed = False; self._precomp_coords_count = 0
         self.xyz_encoder.clear_precomputed(); self.xyt_encoder.clear_precomputed()
         self.yzt_encoder.clear_precomputed(); self.xzt_encoder.clear_precomputed()
-
-
-def print_resolution_info(encoder, config: Dict[str, Any], adaptive_range: Optional[Any] = None):
-    """Print resolution scale table and parameter footprint for an Earth4D encoder."""
-    is_geographic = config.get('coordinate_system', 'ecef') == 'geographic'
-    results = (_calculate_resolution_scales_geographic(encoder, adaptive_range)
-               if is_geographic and adaptive_range is not None else _calculate_resolution_scales(encoder))
-
-    print("\n" + "=" * 80 + "\nEARTH4D INITIALIZATION REPORT\n" + "=" * 80)
-    print("\n┌─ COORDINATE SYSTEM ─────────────────────────────────────────────────────┐")
-    if is_geographic:
-        print("│  Mode: GEOGRAPHIC (lat/lon/elev) - preserves latitude relationships     │\n"
-              "│    x = Latitude   (-90° to +90°)                                        │\n"
-              "│    y = Longitude  (-180° to +180°)                                      │\n"
-              "│    z = Elevation  (meters above MSL)                                    │")
-        if adaptive_range is not None:
-            print(f"│  Range: lat [{adaptive_range.lat_min:.1f}°, {adaptive_range.lat_max:.1f}°], " +
-                  f"lon [{adaptive_range.lon_min:.1f}°, {adaptive_range.lon_max:.1f}°]    │")
-    else:
-        print("│  Mode: ECEF (Earth-Centered Earth-Fixed) - WGS84 ellipsoid             │\n"
-              "│    x, y, z = Cartesian coordinates centered at Earth's center          │")
-    print("└─────────────────────────────────────────────────────────────────────────┘")
-
-    print("\n┌─ ENHANCEMENT CONFIGURATION ─────────────────────────────────────────────┐")
-    if is_geographic:
-        range_str = f"GEOGRAPHIC ({adaptive_range.mode})" if adaptive_range else "GEOGRAPHIC (global)"
-        print(f"│  Coordinate Range:   {range_str:24}              │")
-    else:
-        print(f"│  Adaptive Range:     {'ENABLED' if config.get('use_adaptive_range') else 'disabled':12}                                  │")
-    lp_str = f"ENABLED (N_p={config.get('probing_range', 0)})" if config.get('enable_learned_probing') else 'disabled'
-    print(f"│  Learned Probing:    {lp_str:24}              │")
-    print("└─────────────────────────────────────────────────────────────────────────┘")
-
-    print("\n" + "-" * 80 + "\nRESOLUTION SCALE TABLE\n" + "-" * 80)
-    if is_geographic:
-        print("\nSPATIAL ENCODER (LAT, LON, ELEV):\n"
-              f"{'Level':<6} {'Lat Grid':<10} {'Lon Grid':<10} {'Elev Grid':<10} {'Lat/Cell':<12} {'Lon/Cell':<12} {'Elev/Cell':<12}\n"
-              + "-" * 82)
-        for item in results['spatial']:
-            def fmt(m):
-                return f"{m/1000:.2f} km" if m >= 1000 else (f"{m:.1f} m" if m >= 1 else f"{m:.3f} m")
-            print(f"{item['level']:<6} {item.get('lat_grid', 0):<10} {item.get('lon_grid', 0):<10} "
-                  f"{item.get('elev_grid', 0):<10} {fmt(item.get('lat_m', 0)):<12} {fmt(item.get('lon_m', 0)):<12} "
-                  f"{fmt(item.get('elev_m', 0)):<12}")
-    else:
-        print("\nSPATIAL ENCODER (XYZ):\n"
-              f"{'Level':<6} {'Grid Res':<12} {'Meters/Cell':<15} {'KM/Cell':<12}\n" + "-" * 70)
-        for item in results['spatial']:
-            meters = item['meters_per_cell']
-            meters_str = f"{meters/1000:.1f}km" if meters >= 1000 else (f"{meters:.2f}m" if meters >= 1 else f"{meters:.3f}m")
-            km_str = f"{item['km_per_cell']:.3f}" if item['km_per_cell'] < 1 else f"{item['km_per_cell']:.2f}"
-            print(f"{item['level']:<6} {item['grid_resolution']:<12} {meters_str:<15} {km_str:<12}")
-
-    if is_geographic:
-        print("\nSPATIOTEMPORAL ENCODERS:\n  xyt = (lat, lon, time)    - Surface dynamics over time\n"
-              "  yzt = (lon, elev, time)   - Continental altitude-time patterns\n"
-              "  xzt = (lat, elev, time)   - KEY: Same latitudes share cells!")
-
-    print("\nTEMPORAL RESOLUTION:")
-    time_scale = results.get('time_output_scale', 1.0)
-    if time_scale != 1.0:
-        print(f"  (time_output_scale={time_scale:.2f} - effective range compressed to {time_scale*100:.0f}%)")
-    print(f"{'Level':<6} {'Grid Res':<12} {'Time/Cell':<15} {'Days/Cell':<12}\n" + "-" * 70)
-    temporal_data = results['temporal'] if isinstance(results['temporal'], list) else results['temporal'].get('xyt', [])
-    for item in temporal_data:
-        secs, days = item['seconds_per_cell'], item['days_per_cell']
-        if secs >= 86400 * 30:
-            time_str = f"{days:.1f} days"
-        elif secs >= 86400:
-            time_str = f"{days:.2f} days"
-        elif secs >= 3600:
-            time_str = f"{secs/3600:.1f} hrs"
-        elif secs >= 60:
-            time_str = f"{secs/60:.1f} min"
-        else:
-            time_str = f"{secs:.1f} sec"
-        print(f"{item['level']:<6} {item['grid_resolution']:<12} {time_str:<15} {days:<12.2f}")
-
-    spatial_params = encoder.xyz_encoder.embeddings.numel()
-    temporal_params = sum(getattr(encoder, f'{n}_encoder').embeddings.numel() for n in ['xyt', 'yzt', 'xzt'])
-    total_params = spatial_params + temporal_params; total_memory = total_params * 4 / (1024 * 1024)
-    spatial_hash_entries = 2 ** encoder.spatial_log2_hashmap_size
-    temporal_hash_entries = 2 ** encoder.temporal_log2_hashmap_size
-    print(f"\nHASH TABLE CONFIGURATION:\n"
-          f"  Spatial: 2^{encoder.spatial_log2_hashmap_size} = {spatial_hash_entries:,} entries\n"
-          f"  Spatiotemporal: 2^{encoder.temporal_log2_hashmap_size} = {temporal_hash_entries:,} entries\n"
-          f"  Total capacity: {spatial_hash_entries + temporal_hash_entries*3:,} entries")
-    print(f"\nACTUAL PARAMETERS (MEMORY FOOTPRINT):\n"
-          f"  Spatial encoders: {spatial_params:,} params = {spatial_params * 4 / (1024*1024):.2f} MB\n"
-          f"  Spatiotemporal encoders: {temporal_params:,} params = {temporal_params * 4 / (1024*1024):.2f} MB\n"
-          f"  Total: {total_params:,} params = {total_memory:.2f} MB\n"
-          f"  During training (4x): ~{total_memory * 4:.2f} MB")
-
-
-def _calculate_resolution_scales(encoder) -> Dict:
-    """Resolution scales for all encoders (ECEF mode)."""
-    physical_range = 2 * 6371000.0
-    results = {'spatial': [], 'temporal': {'xyt': [], 'yzt': [], 'xzt': []}}
-    se = encoder.xyz_encoder
-    for level in range(se.num_levels):
-        grid = np.ceil(se.base_resolution[0].item() * (se.per_level_scale[0].item() ** level)); mpc = physical_range / grid
-        results['spatial'].append({'level': level, 'grid_resolution': int(grid),
-                                   'meters_per_cell': mpc, 'km_per_cell': mpc / 1000})
-    seconds_per_year = 365.25 * 24 * 3600
-    for name, enc in [('xyt', encoder.xyt_encoder), ('yzt', encoder.yzt_encoder), ('xzt', encoder.xzt_encoder)]:
-        for level in range(enc.num_levels):
-            grid = np.ceil(enc.base_resolution[0].item() * (enc.per_level_scale[0].item() ** level)); spc = seconds_per_year / grid
-            results['temporal'][name].append({'level': level, 'grid_resolution': int(grid),
-                                              'seconds_per_cell': spc, 'days_per_cell': spc / 86400})
-    return results
-
-
-def _calculate_resolution_scales_geographic(encoder, geo_range) -> Dict:
-    """Resolution scales for geographic mode: per-axis [lat, lon, elev] spatial, time from xzt encoder."""
-    results = {'spatial': [], 'temporal': []}
-    mid_lat = (geo_range.lat_max + geo_range.lat_min) / 2.0
-    lat_range_m = (geo_range.lat_max - geo_range.lat_min) * 111000.0
-    lon_range_m = (geo_range.lon_max - geo_range.lon_min) * 111000.0 * np.cos(np.radians(mid_lat))
-    elev_range_m = geo_range.elev_max - geo_range.elev_min
-    se = encoder.xyz_encoder
-    for level in range(se.num_levels):
-        lat_grid = np.ceil(se.base_resolution[0].item() * (se.per_level_scale[0].item() ** level))
-        lon_grid = np.ceil(se.base_resolution[1].item() * (se.per_level_scale[1].item() ** level))
-        elev_grid = np.ceil(se.base_resolution[2].item() * (se.per_level_scale[2].item() ** level))
-        results['spatial'].append({'level': level, 'lat_grid': int(lat_grid), 'lon_grid': int(lon_grid),
-                                   'elev_grid': int(elev_grid), 'lat_m': lat_range_m / lat_grid,
-                                   'lon_m': lon_range_m / lon_grid, 'elev_m': elev_range_m / elev_grid})
-    seconds_per_year = 365.25 * 24 * 3600
-    time_scale_factor = getattr(geo_range, 'time_output_scale', 1.0)
-    enc = encoder.xzt_encoder
-    for level in range(enc.num_levels):
-        time_grid = np.ceil(enc.base_resolution[2].item() * (enc.per_level_scale[2].item() ** level))
-        spc = seconds_per_year / (time_grid * time_scale_factor)
-        results['temporal'].append({'level': level, 'grid_resolution': int(time_grid),
-                                    'seconds_per_cell': spc, 'days_per_cell': spc / 86400})
-    results['time_output_scale'] = time_scale_factor
-    return results
 
 
 if __name__ == "__main__":
