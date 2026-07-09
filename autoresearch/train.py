@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 import yaml
 
-from deepearth.core import data as data_module
+from deepearth.autoresearch import data as data_module
 from deepearth.core.fusion import DeepEarth, Variable
 
 
@@ -191,18 +191,14 @@ def train_and_evaluate(config, device):
     scores = evaluate(model, source, given, targets, device)
     line = " | ".join(f"{k} {v:.3f}" for k, v in scores.items())
     print(f"held-out regions (conditioning on {given}): {line}", flush=True)
-    # The frozen benchmark suite + harmonic-mean north star (the autoresearch objective).
-    from deepearth.autoresearch import benchmarks
-    raw = benchmarks.evaluate_benchmarks(model, source, device)
-    print(benchmarks.format_benchmarks(raw), flush=True)
-    ns = benchmarks.net_score(raw)
+    from deepearth.autoresearch import evaluate as ev      # the frozen benchmark suite -> net-score north star
+    raw = ev.evaluate_benchmarks(model, source, device)
+    print(ev.format_benchmarks(raw), flush=True)
+    ns = ev.net_score(raw)
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if device.startswith("cuda") else 0.0
-    print(f"net_score:        {ns:.6f}", flush=True)          # Karpathy-parseable north star
+    print(f"net_score:        {ns:.6f}", flush=True)          # parseable north star
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}", flush=True)
     scores["net_score"] = ns
-    if config.get("mxm", True):
-        from deepearth.autoresearch import mxm
-        print(mxm.format_matrix(mxm.reconstruction_matrix(model, source, source.test, device)), flush=True)
     return model, scores
 
 

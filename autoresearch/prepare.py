@@ -102,7 +102,7 @@ def ensure_kernel() -> None:
 def ensure_prepared(config: dict, data_dir: Path, device: str) -> str:
     """Build the assembled-dataset cache (the slow glob + KD-tree) once, so runs spin up instantly."""
     import hashlib, json
-    from deepearth.core import data as data_module
+    from deepearth.autoresearch import data as data_module
     d = dict(config["data"]); d["cache_dir"] = str(data_dir)
     keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km")}
     tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
@@ -122,7 +122,7 @@ def ensure_test_io(prepared: str, device: str) -> None:
     """Materialize a small held-out inference bundle (indices + truth) so the benchmark harness is ready to score
     and results are inspectable. Lightweight; the full suite runs at eval time in ``benchmarks.py``."""
     import torch
-    from deepearth.core import data as data_module
+    from deepearth.autoresearch import data as data_module
     bundle = DATA_DIR / "test_io_sample.pt"
     if bundle.exists():
         print(f"[test-io] present: {bundle}")
