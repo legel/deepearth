@@ -56,7 +56,19 @@ primary edit targets for improving the model.
 **Fixed harness — never edit** (not part of the surface above): `prepare.py` (data + kernel setup) and `evaluate.py`
 (the benchmark suite and scoring, the immutable ground truth). `data.py` is the data adapter, fixed alongside them.
 
-<!-- QUANTIFY -->
+### Size of the surface (rule 19)
+
+Currently **23 files, ~50k tokens** (tiktoken `cl100k`). Every condensing pass re-measures this and drives it down.
+
+| group | files | tokens |
+|---|---|---|
+| model + config (edit targets) | 4 | 22.8k |
+| training regime (`train.py`) | 1 | 3.3k |
+| CUDA kernel (`hashencoder/`) | 7 | 18.6k |
+| docs | 4 | 4.6k |
+| package `__init__.py` | 7 | 0.5k |
+
+The fixed harness (`prepare.py`, `evaluate.py`, `data.py` — ~10k tokens) is **excluded** by rule 19.
 
 ## End-to-end, from nothing
 
