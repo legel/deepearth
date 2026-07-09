@@ -23,7 +23,7 @@ Run on a dedicated branch (`autoresearch/<tag>`). The first run is the unmodifie
 
 1. Read the current `results.tsv` and the benchmark profile; form a hypothesis grounded in `science.md`.
 2. Edit a model file (or `deepcal.yaml`); `git commit`.
-3. Train: `python -m deepearth.autoresearch.train --time_budget 600 --no_mxm > run.log 2>&1` (10 min; redirect —
+3. Train: `python -m deepearth.autoresearch.train --time_budget 600 > run.log 2>&1` (10 min; redirect —
    never flood context).
 4. Read `grep "^net_score:\|^peak_vram_mb:" run.log`. Empty ⇒ crash: `tail -50 run.log`, fix if simple else revert.
 5. Append to `results.tsv` (untracked). If `net_score` rose, keep the commit; else `git reset --hard` to the base.
@@ -36,5 +36,5 @@ combine near-misses, try more radical architecture. Fix crashes at the root; don
 ## First actions
 
 1. `python -m deepearth.autoresearch.prepare` — downloads + caches data, builds the CUDA kernel, precaches test I/O.
-2. Baseline: `python -m deepearth.autoresearch.train --time_budget 600 --no_mxm`; record row 1 of `results.tsv`.
+2. Baseline: `python -m deepearth.autoresearch.train --time_budget 600`; record row 1 of `results.tsv`.
 3. Begin the loop.

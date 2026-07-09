@@ -190,15 +190,14 @@ def evaluate(model, source, given, targets, device):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Train a DeepEarth model from a config file.")
-    default_config = str(Path(__file__).with_name("deepcal.yaml"))   # core/train.py defaults to core/deepcal.yaml
-    ap.add_argument("config", nargs="?", default=default_config)
+    ap = argparse.ArgumentParser(description="Train a DeepEarth model from a config (default deepcal.yaml).")
+    ap.add_argument("config", nargs="?", default=str(Path(__file__).with_name("deepcal.yaml")))
     ap.add_argument("--device", default="cuda"); ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--cache_dir", default=None)
     ap.add_argument("--eval_ckpt", default=None, help="score an existing checkpoint (skip training)")
     ap.add_argument("--time_budget", type=float, default=None, help="stop training after N seconds (experiment budget)")
-    ap.add_argument("--no_mxm", action="store_true", help="skip the M x M matrix at eval (faster experiments)")
     ap.add_argument("--tag", default=None, help="a label for this run (recorded, e.g. the experiment id)")
+    ap.add_argument("--save", action="store_true", help="save the checkpoint (off by default; on only for champion runs)")
     a = ap.parse_args()
     config = yaml.safe_load(open(a.config))
     if a.steps is not None:
@@ -209,10 +208,8 @@ def main():
         config["_eval_ckpt"] = a.eval_ckpt
     if a.time_budget is not None:
         config["training"]["time_budget_s"] = a.time_budget
-    if a.no_mxm:
-        config["mxm"] = False
     model, _ = train_and_evaluate(config, a.device)
-    if a.eval_ckpt is None:                              # don't overwrite the checkpoint we just scored
+    if a.save and a.eval_ckpt is None:
         torch.save(model.state_dict(), Path(a.config).with_suffix(".pt"))
 
 

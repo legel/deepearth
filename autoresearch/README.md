@@ -18,7 +18,7 @@ python -m deepearth.autoresearch.train              # trains DeepCal and prints 
 prepared cache so every later run starts in ~1 s. Then an experiment is one command:
 
 ```bash
-python -m deepearth.autoresearch.train --time_budget 600 --no_mxm    # a 10-minute experiment
+python -m deepearth.autoresearch.train --time_budget 600    # a 10-minute experiment
 ```
 
 ## The objective
