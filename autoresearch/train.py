@@ -86,6 +86,10 @@ def train_and_evaluate(config, device):
     freq_lr = t.get("freq_lr", lr0 * 0.3)   # swept: 9e-5 (0.3x) beat 3e-5 (0.1x)
     freq_params = [p for n, p in model.named_parameters() if any(k in n for k in freq_keys)]
     freq_ids = {id(p) for p in freq_params}
+    sparse_hash = m.get("sparse_hash", False)
+    if sparse_hash:
+        model.enable_sparse_hash(source.coords, lr=lr0, weight_decay=wd0)
+        freq_ids |= {id(p) for p in model.absolute_hash_params()}
     rest_params = [p for p in model.parameters() if id(p) not in freq_ids]
     opt = torch.optim.AdamW([{"params": rest_params, "lr": lr0},
                              {"params": freq_params, "lr": freq_lr}], weight_decay=wd0, fused=True)
@@ -107,7 +111,13 @@ def train_and_evaluate(config, device):
     cuda_graphs = _cm in ("full", "graph")
     tc_mode = "reduce-overhead" if cuda_graphs else "default"
     # bf16 covers the Processor and decoders; the Earth4D hash stays fp32 (bf16 rounding near the [-0.9,0.9] coord edge reads OOB), so context() is fp32 and only masked_loss casts.
-    if compile_full:
+    if sparse_hash and compile_full:
+        def _sparse_step(values, observed, present, flat, coords, nbr, mani, nbrv):
+            ctx = model.context_from_flat(flat, coords, nbr, mani, nbrv)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
+                return model.masked_loss(values, observed, present, ctx)
+        sparse_step_fn = torch.compile(_sparse_step, mode=tc_mode)
+    elif compile_full:
         def _step(values, observed, present, coords, nbr, mani, nbrv):
             ctx = model.context(coords, nbr, mani, nbrv)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
@@ -131,6 +141,29 @@ def train_and_evaluate(config, device):
             print(f"  [time budget {time_budget}s reached at step {step}]", flush=True); break
         idx = source.train_index[torch.randint(0, len(source.train_index), (batch,), device=device)]
         values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
+        if sparse_hash:
+            flat = model.absolute_encoder.forward_precomputed(idx).detach().requires_grad_(True)
+            if compile_full:
+                if cuda_graphs:
+                    torch.compiler.cudagraph_mark_step_begin()
+                present = {n: (torch.rand(batch, device=device) > hide_prob) & observed[n] for n in model.names}
+                loss = sparse_step_fn(values, observed, present, flat, coords, nbr_coords,
+                                      manifold_coords, nbr_values)
+                if cuda_graphs:
+                    loss = loss.clone()
+            else:
+                ctx = model.context_from_flat(flat, coords, nbr_coords, manifold_coords, nbr_values)
+                loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
+            if torch.isfinite(loss):
+                opt.zero_grad(); loss.backward()
+                model.sparse_hash_step(flat, idx)                        # sparse Adam on the absolute hash table
+                torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
+                if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
+                opt.step(); clamp_res()   # AdamW on everything else
+            model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
+            if step % 500 == 0:
+                print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
+            continue
         if compile_full:
             # CUDA-graph mode: mark the new iteration and clone the loss so the graph's recycled static buffers are never read afterward.
             if cuda_graphs:
