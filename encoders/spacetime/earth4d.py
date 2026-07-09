@@ -479,6 +479,45 @@ class Earth4D(nn.Module):
         self._geo_range_is_default = False
         return self
 
+    def precompute(self, coords: torch.Tensor) -> dict:
+        """Precompute hash indices/weights for a fixed coordinate set (N, 4). Enables forward_precomputed()."""
+        norm_coords = self._normalize_coords(coords)
+        t_scaled = (norm_coords[..., 3:] * 2 - 1) * 0.9
+        xyzt_scaled = torch.cat([norm_coords[..., :3], t_scaled], dim=-1)
+        xyz = norm_coords[..., :3]
+        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
+        yzt = xyzt_scaled[..., 1:]
+        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
+        stats = {'xyz': self.xyz_encoder.precompute(xyz, size=1.0),
+                 'xyt': self.xyt_encoder.precompute(xyt, size=1.0),
+                 'yzt': self.yzt_encoder.precompute(yzt, size=1.0),
+                 'xzt': self.xzt_encoder.precompute(xzt, size=1.0)}
+        total_bytes = sum(s['total_bytes'] for s in stats.values()); total_mb = total_bytes / (1024 * 1024)
+        self._precomputed = True; self._precomp_coords_count = coords.shape[0]
+        if self.verbose:
+            print(f"\nPrecomputation complete:\n  Coordinates: {coords.shape[0]:,}\n"
+                  f"  Total memory: {total_mb:.1f} MB ({total_bytes / coords.shape[0]:.1f} bytes/coord)")
+            for name, s in stats.items():
+                print(f"    {name}: {s['total_mb']:.1f} MB")
+        return {'total_bytes': total_bytes, 'total_mb': total_mb,
+                'bytes_per_coord': total_bytes / coords.shape[0], 'num_coords': coords.shape[0], 'encoders': stats}
+
+    def forward_precomputed(self, batch_indices: torch.Tensor) -> torch.Tensor:
+        """Forward using precomputed indices/weights (call precompute() first)."""
+        if not hasattr(self, '_precomputed') or not self._precomputed:
+            raise RuntimeError("Must call precompute() before forward_precomputed()")
+        spatial_features = self.xyz_encoder.forward_precomputed(batch_indices)
+        spatiotemporal_features = torch.cat([self.xyt_encoder.forward_precomputed(batch_indices),
+                                             self.yzt_encoder.forward_precomputed(batch_indices),
+                                             self.xzt_encoder.forward_precomputed(batch_indices)], dim=-1)
+        return torch.cat([spatial_features, spatiotemporal_features], dim=-1)
+
+    def clear_precomputed(self):
+        """Clear precomputed buffers to free memory."""
+        self._precomputed = False; self._precomp_coords_count = 0
+        self.xyz_encoder.clear_precomputed(); self.xyt_encoder.clear_precomputed()
+        self.yzt_encoder.clear_precomputed(); self.xzt_encoder.clear_precomputed()
+
 
 if __name__ == "__main__":
     # https://github.com/legel/deepearth
