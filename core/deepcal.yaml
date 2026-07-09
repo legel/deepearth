@@ -1,0 +1,32 @@
+# DeepCal: DeepEarth over variables observed across California.
+name: DeepCal
+
+data:
+  adapter: california
+  cache_dir: /home/photon/ecological/phylo_deepearth/data/cache
+  n_neighbors: 24
+
+model:
+  d_model: 256
+  n_latents: 24
+  n_layers: 4
+  capacity: 16                       # space-time encoder resolution (hash levels)
+  relative_window: [8000, 8000, 300, 130]   # neighbor-offset half-window: north_m, east_m, up_m, days
+  manifolds:                          # vector subspaces treated like space and time
+    biological: phylo                 # the biological subspace uses the evolutionary-position vector's width
+
+variables:
+  - {name: vision_dino, kind: continuous, neighbor: true}   # a ground-image representation, also read from neighbors
+  - {name: vision_bio,  kind: continuous}                    # a second ground-image representation
+  - {name: identity,    kind: categorical, classes: identity, neighbor: true}
+  - {name: phylo,       kind: continuous}                    # an evolutionary-position vector
+  - {expand: trait_classes}                                  # one categorical per descriptor, widths from the data
+
+condition_on: [vision_dino, vision_bio]    # the widely-available inputs used at evaluation
+
+training:
+  steps: 8000
+  batch: 512
+  hide_prob: 0.35
+  lr: 0.0003
+  weight_decay: 0.0003

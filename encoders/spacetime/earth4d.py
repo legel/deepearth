@@ -120,7 +120,14 @@ class Earth4D(nn.Module):
                  max_precision_level: Optional[int] = None,
                  coordinate_system: Literal['geographic', 'ecef'] = 'ecef',
                  geo_range: Optional[GeoAdaptiveRange] = None,
-                 resolution_mode: str = 'balanced'):
+                 resolution_mode: str = 'balanced',
+                 enable_absolute: bool = True,
+                 freq_log_scale_init: float = 0.0,
+                 enable_relative: bool = False,
+                 relative_levels: int = 24,
+                 relative_log2_hashmap_size: int = 20,
+                 relative_window: Tuple[float, float, float, float] = (8000.0, 8000.0, 300.0, 130.0),
+                 relative_finest: Tuple[float, float, float, float] = (15.0, 15.0, 3.0, 1.0)):
         """
         Args:
             spatial_levels: Number of spatial resolution levels
@@ -328,6 +335,39 @@ class Earth4D(nn.Module):
             index_codebook_size=index_codebook_size
         )
 
+        # A relative-only field (neighbor offsets) never reads the four absolute projections above, so it can opt out
+        # of carrying them. The default keeps them: a standalone field encodes absolute positions.
+        self.enable_absolute = enable_absolute
+        if not enable_absolute:
+            self.xyz_encoder = self.xyt_encoder = self.yzt_encoder = self.xzt_encoder = None
+
+        # ------------------------------------------------------------------ RELATIVE (translation-equivariant) mode
+        # The relative mode encodes the OFFSET between two observations. Because the encoding depends only on the
+        # offset, a pattern learned at one place and time applies at every other place and time. The offset window
+        # is fitted to the local offset distribution so the coarse-to-fine hierarchy spans the range of neighbor
+        # offsets. Four 3D projections (as above), each with per-axis resolution and learned probing.
+        self.enable_relative = enable_relative
+        if enable_relative:
+            self._rel_projections = ((0, 1, 2), (0, 1, 3), (1, 2, 3), (0, 2, 3))  # axes: 0=N,1=E,2=elev,3=time
+            self.register_buffer('_rel_window', torch.tensor(list(relative_window), dtype=torch.float32))
+            base_r = 16
+            rel_res = [max(int(round(2.0 * relative_window[a] / relative_finest[a])), base_r + 1) for a in range(4)]
+            self.rel_encoders = nn.ModuleList(
+                HashEncoder(input_dim=3, num_levels=relative_levels, level_dim=features_per_level,
+                            base_resolution=base_r, desired_resolution=[rel_res[a] for a in axes],
+                            log2_hashmap_size=relative_log2_hashmap_size,
+                            enable_learned_probing=enable_learned_probing, probing_range=probing_range,
+                            index_codebook_size=index_codebook_size)
+                for axes in self._rel_projections)
+            self.relative_output_dim = 4 * relative_levels * features_per_level
+
+        # Learnable per-axis frequency. A scale and center on the normalized coordinate let the model choose the
+        # effective resolution range of each axis instead of fixing it: a regional dataset can fill the hash capacity,
+        # and the model learns whether an axis wants coarse (broad memorization) or fine (high-frequency) structure.
+        # tanh keeps the result in [-0.9, 0.9]. Axes are (N/x, E/y, elev/z, time). Initialized to identity.
+        self.freq_log_scale = nn.Parameter(torch.full((4,), float(freq_log_scale_init)))
+        self.freq_center = nn.Parameter(torch.zeros(4))
+
         # Initialize collision tracking if enabled
         if self.enable_collision_tracking:
             self._init_collision_tracking()
@@ -391,6 +431,41 @@ class Earth4D(nn.Module):
         xzt_features = self.xzt_encoder(xzt, size=1.0, collision_tracking=xzt_tracking)
 
         return torch.cat([xyt_features, yzt_features, xzt_features], dim=-1)
+
+    def _learnable_freq(self, norm: torch.Tensor) -> torch.Tensor:
+        """Apply the learnable per-axis frequency (scale + center), bounded to [-0.9, 0.9] by tanh. The scale sets
+        each axis's effective resolution range (coarse vs fine) and the center places the region within it."""
+        return 0.9 * torch.tanh((norm - self.freq_center) * self.freq_log_scale.exp())
+
+    def pyramid(self, coords: torch.Tensor) -> torch.Tensor:
+        """Per-projection, per-level features for scale mixing.
+
+        Returns ``[..., 4, n_levels, features_per_level]`` for the four projections (xyz, xyt, yzt, xzt), from
+        coarse level 0 to fine level L-1. ``coords`` is ``[..., 4]`` = (lat, lon, elev, time in [0,1]). Requires
+        matched spatial and temporal level counts (set ``capacity`` uniformly)."""
+        assert self.spatial_levels == self.temporal_levels, \
+            "pyramid() needs spatial_levels == temporal_levels"
+        L, F = self.spatial_levels, self.features_per_level
+        if self.coordinate_system == 'geographic':
+            x_norm, y_norm, z_norm, time_norm = self.geo_range.normalize(
+                coords[..., 0], coords[..., 1], coords[..., 2], coords[..., 3])
+        else:
+            x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
+            if self.use_adaptive_range and self.adaptive_range is not None:
+                x_norm, y_norm, z_norm, time_norm = self.adaptive_range.normalize_ecef(x, y, z, coords[..., 3])
+            else:
+                x_norm, y_norm, z_norm = x / ECEF_NORM_FACTOR, y / ECEF_NORM_FACTOR, z / ECEF_NORM_FACTOR
+                time_norm = coords[..., 3]
+        norm = torch.stack([x_norm, y_norm, z_norm, time_norm * 2 - 1], dim=-1)     # time to [-1,1] like the rest
+        norm = self._learnable_freq(norm)                                          # learnable per-axis resolution
+        t = norm[..., 3:]
+        projections = [norm[..., :3],                                              # xyz
+                       torch.cat([norm[..., :2], t], dim=-1),                       # xyt
+                       torch.cat([norm[..., 1:3], t], dim=-1),                      # yzt
+                       torch.cat([norm[..., :1], norm[..., 2:3], t], dim=-1)]       # xzt
+        encoders = [self.xyz_encoder, self.xyt_encoder, self.yzt_encoder, self.xzt_encoder]
+        feats = [enc(proj, size=1.0).reshape(*proj.shape[:-1], L, F) for enc, proj in zip(encoders, projections)]
+        return torch.stack(feats, dim=-3)
 
     def forward(self, *args, **kwargs) -> torch.Tensor:
         """
@@ -485,6 +560,33 @@ class Earth4D(nn.Module):
     def get_output_dim(self) -> int:
         """Return total output dimension."""
         return self.output_dim
+
+    def encode_relative(self, offset: torch.Tensor) -> torch.Tensor:
+        """Translation-equivariant encoding of a metric relative offset ``(dN, dE, dElev, dTime)``.
+
+        Requires ``enable_relative=True``. The offset is normalized by ``relative_window`` and clamped to
+        ``[-0.9, 0.9]`` (interior of the hash cube), then encoded by four 3D projections. Because the encoding
+        depends only on the offset it is invariant to absolute position (a spatio-temporal pattern learned at one
+        place/time transfers to all others). Returns ``(..., relative_output_dim)``.
+        """
+        if not self.enable_relative:
+            raise RuntimeError("Earth4D was constructed with enable_relative=False")
+        lead = offset.shape[:-1]
+        norm = (offset / self._rel_window).clamp(-1.0, 1.0)
+        norm = self._learnable_freq(norm)          # learnable per-axis frequency (also bounds to [-0.9, 0.9])
+        norm = norm.reshape(-1, 4)
+        feats = torch.cat([enc(norm[:, list(axes)].contiguous(), size=1.0)
+                           for enc, axes in zip(self.rel_encoders, self._rel_projections)], dim=-1)
+        return feats.reshape(*lead, -1)
+
+    @staticmethod
+    def fit_relative_window(offsets: torch.Tensor, quantile: float = 0.99) -> list:
+        """Suggest a per-axis relative window (half-extent) from a sample of metric offsets ``(..., 4)``.
+
+        Size the window to a high quantile of the observed offsets so the multi-resolution hierarchy stays useful
+        (most offsets span the cube; coarse levels are not wasted).
+        """
+        return torch.quantile(offsets.reshape(-1, 4).abs(), quantile, dim=0).clamp_min(1e-6).tolist()
 
     def compute_loss(self, predictions, targets, criterion=None,
                     enable_probe_entropy_loss=None, probe_entropy_weight=None,
@@ -651,7 +753,7 @@ class Earth4D(nn.Module):
 # Example usage and testing
 if __name__ == "__main__":
     # https://github.com/legel/deepearth
-    from deepearth.encoders.xyzt.earth4d import Earth4D
+    from deepearth.encoders.spacetime.earth4d import Earth4D
 
     world_model = Earth4D()
     embeddings = world_model(

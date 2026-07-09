@@ -78,7 +78,7 @@ __global__ void kernel_grid(
     double scale[D];
     uint32_t resolution[D];
     for (uint32_t d = 0; d < D; d++) {
-        scale[d] = exp2(level * (double)per_level_scale[d]) * (double)base_resolution[d] - 1.0;
+        scale[d] = exp2((double)per_level_scale[level * D + d]) * (double)base_resolution[d] - 1.0;
         resolution[d] = (uint32_t)ceil(scale[d]) + 1;
     }
 
@@ -263,7 +263,7 @@ __global__ void kernel_grid_backward(
     double scale[D];
     uint32_t resolution[D];
     for (uint32_t d = 0; d < D; d++) {
-        scale[d] = exp2(level * (double)per_level_scale[d]) * (double)base_resolution[d] - 1.0;
+        scale[d] = exp2((double)per_level_scale[level * D + d]) * (double)base_resolution[d] - 1.0;
         resolution[d] = (uint32_t)ceil(scale[d]) + 1;
     }
 
@@ -530,7 +530,7 @@ __global__ void kernel_grid_second_backward_embedding(
     double scale[D];
     uint32_t resolution[D];
     for (uint32_t d = 0; d < D; d++) {
-        scale[d] = exp2(level * (double)per_level_scale[d]) * (double)base_resolution[d] - 1.0;
+        scale[d] = exp2((double)per_level_scale[level * D + d]) * (double)base_resolution[d] - 1.0;
         resolution[d] = (uint32_t)ceil(scale[d]) + 1;
     }
 
