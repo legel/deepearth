@@ -214,8 +214,7 @@ class DeepEarth(nn.Module):
 
     def context(self, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
                 manifold_positions: Optional[Dict[str, torch.Tensor]] = None,
-                neighbor_values: Optional[Dict[str, torch.Tensor]] = None,
-                batch_indices: Optional[torch.Tensor] = None) -> dict:
+                neighbor_values: Optional[Dict[str, torch.Tensor]] = None) -> dict:
         """Encode the query's space-time position and its neighbor tokens.
 
         query_coords [B,4]=(lat,lon,elev,time); neighbor_coords [B,K,4]; manifold_positions {name: [B,K,dim]};
@@ -231,23 +230,7 @@ class DeepEarth(nn.Module):
             if manifold_positions:
                 manifold_positions = {n: p * keep.view(Bd, *([1] * (p.dim() - 1))).to(p.dtype)
                                       for n, p in manifold_positions.items()}
-        # Sparse-hash path: read the absolute encoder from precomputed indices as a detached leaf so its hash trains through sparse Adam; the leaf grad is captured for the sparse step.
-        if getattr(self, "_sparse_hash", False) and batch_indices is not None:
-            flat = self.absolute_encoder.forward_precomputed(batch_indices).detach().requires_grad_(True)
-            self._abs_leaf = (flat, batch_indices)
-            position = self.absolute_proj(flat)
-        else:
-            position = self.absolute_proj(self.absolute_encoder(query_coords))
-        feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
-                 for name, val in (neighbor_values or {}).items()}
-        tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
-        return {"position": position, "tokens": tokens}
-
-    def context_from_flat(self, flat: torch.Tensor, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
-                          manifold_positions: Optional[Dict[str, torch.Tensor]] = None,
-                          neighbor_values: Optional[Dict[str, torch.Tensor]] = None) -> dict:
-        """Same as :meth:`context` but the absolute encoding is supplied as an already-read leaf ``flat``, keeping the precompute+detach out of the compiled region."""
-        position = self.absolute_proj(flat)
+        position = self.absolute_proj(self.absolute_encoder(query_coords))
         feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
                  for name, val in (neighbor_values or {}).items()}
         tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
@@ -257,39 +240,6 @@ class DeepEarth(nn.Module):
         """Install the experience-replay memory bank (a key and per-anchor features), refreshed between epochs."""
         self._memory_key = key
         self._memory_features = features
-
-    def enable_sparse_hash(self, coords: torch.Tensor, lr: float = 3e-4, weight_decay: float = 3e-4) -> None:
-        """Precompute the absolute encoder over a fixed coordinate set and route it through sparse Adam (each batch reads few entries). Then pass ``batch_indices`` to :meth:`context` and call :meth:`sparse_hash_step` after backward."""
-        self.absolute_encoder.precompute(coords)
-        e = self.absolute_encoder
-        self._abs_encs = [e.xyz_encoder, e.xyt_encoder, e.yzt_encoder, e.xzt_encoder]
-        for en in self._abs_encs:
-            en.init_sparse_adam(lr=lr, weight_decay=weight_decay)
-        self._abs_odims = [en.num_levels * en.level_dim for en in self._abs_encs]
-        self._abs_L = e.xyz_encoder.num_levels
-        self._abs_F = e.features_per_level
-        self._sparse_hash = True
-
-    def absolute_hash_params(self):
-        """The absolute-encoder embeddings, optimized by sparse Adam and so excluded from the main optimizer."""
-        return [en.embeddings for en in self._abs_encs]
-
-    def set_sparse_lr(self, lr: float) -> None:
-        for en in self._abs_encs:
-            en.set_adam_lr(lr)
-
-    def sparse_hash_step(self, flat: torch.Tensor = None, bidx: torch.Tensor = None) -> None:
-        """Apply the sparse Adam update to the absolute encoder from the leaf gradient; call after ``loss.backward()``. Pass the leaf (compiled path) or omit to use the one captured in :meth:`context`; the accumulation buffer is cleared first."""
-        if flat is None:
-            flat, bidx = self._abs_leaf
-        g = flat.grad
-        off = 0
-        for en, d in zip(self._abs_encs, self._abs_odims):
-            en._adam_grad_buffer.zero_()
-            en.accumulate_grad(g[:, off:off + d].contiguous(), bidx)
-            off += d
-        for en in self._abs_encs:
-            en.adam_step(bidx)
 
     def encode(self, values: Dict[str, torch.Tensor], present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
         """Fuse the present variable tokens and neighbor tokens into the latents. Every variable token carries the query position; tokens are scaled by the present-mask, then the latents read across them and attend among themselves."""

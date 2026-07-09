@@ -83,6 +83,18 @@ long as certain constraints are met.
     modality measurably *hurts* any benchmark, that is a **bug** in how the data is integrated (fusion, masking,
     missing-value handling, or loss balance) to be found and fixed — never a reason to drop the modality. We do not
     validate "a better model without certain data"; we make the model correctly use all of it.
+19. **Minimize files and tokens.** The whole system must express its function in as few files and tokens as possible,
+    without compromising baseline production-quality clarity — self-documenting names and standard abbreviations,
+    code that does the talking. Fewer, denser, sharper files always beat more, thinner ones. This is measured over the
+    **critical-path surface that is *subject to change*** — every file whose content shapes end-to-end system behavior
+    and that an autoresearch agent may edit: all model/encoder/fusion code on the champion path, the config, and the
+    `README.md` / `science.md` / `autoresearch.md` documents. It **excludes** the fixed harness that is not subject to
+    change — `prepare.py` (downloads + caches data) and `evaluate.py` (runs the benchmarks and computes the final
+    score, the immutable ground truth). Each condensing pass must **quantify** that surface (file count + total
+    tokens, `.md` included) and drive it down. Every autoresearch agent reads exactly this enumerated surface, no more.
+20. **Fixed experiment budget: 10 minutes.** Each autoresearch experiment trains for 10 minutes of wall-clock (startup
+    and compilation excluded), then is scored by `evaluate.py`. Report benchmarks at that budget; compare experiments
+    at equal time so improvements reflect real efficiency, not just more steps.
 
 ## References
 
