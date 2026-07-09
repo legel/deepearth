@@ -1,18 +1,10 @@
-"""
-Earth4D Installation Script
-
-Installs Earth4D with its CUDA hash encoder extension.
-"""
-
+"""Earth4D installation: installs Earth4D with its CUDA hash-encoder extension."""
+import os, shutil, subprocess, sys
 from setuptools import setup, find_packages, Extension
 from setuptools.command.build_ext import build_ext
 from setuptools.command.install import install
-import subprocess
-import sys
-import os
-import shutil
 
-# Read the README for long description
+
 def read_readme():
     readme_path = os.path.join(os.path.dirname(__file__), 'README.md')
     if os.path.exists(readme_path):
@@ -23,22 +15,16 @@ def read_readme():
 class BuildHashEncoder(build_ext):
     """Custom build command to compile the CUDA extension."""
     def run(self):
-        # Build the hash encoder
         print("\n" + "="*60)
         print("Building HashEncoder CUDA extension...")
         print("="*60)
-
         hashencoder_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'hashencoder')
-
-        # Check if already built
         compiled_path = os.path.join(hashencoder_dir, 'hashencoder_cuda.so')
-        if os.path.exists(compiled_path):
+        if os.path.exists(compiled_path):                       # already built
             print(f"✓ CUDA extension already compiled: {compiled_path}")
             print(f"  Size: {os.path.getsize(compiled_path) / 1024 / 1024:.1f} MB")
             super().run()
             return
-
-        # Build the extension
         result = subprocess.run(
             [sys.executable, 'setup.py', 'build_ext', '--inplace'],
             cwd=hashencoder_dir,
