@@ -1,31 +1,17 @@
-"""Phylogenomic species network: a learnable representation per species that shares information between relatives.
+"""Phylogenomic species network: a learnable embedding per species, refined by sharing information between relatives.
 
-Every species carries a learnable embedding. Because related species share ancestry, what is learned about one
-should inform its relatives, so this module refines the per-species embeddings — before any species-linked readout —
-by passing information along evolutionary structure. An observation of one species therefore back-propagates into
-its relatives (extended backprop, and, within a batch, into every in-context neighbour). A free discriminative
-component is kept alongside the refinement so congeners stay separable rather than collapsing onto a shared mean.
-A new species of unknown placement can be projected into the same space (:meth:`SpeciesGraph.distance_from_embedding`
-maps any per-species embedding to the distances the attention operator consumes).
-
-This one file holds the whole phylogenomic stack: loading the scientifically-derived tree (:func:`parse_newick`,
-:func:`build_tree_buffers`) and the two operators that refine the species states over it, selected by ``operator``:
-
-* ``"ou-attention"`` — multi-head attention among species biased toward phylogenetic neighbors: for head ``h`` the
-  logit between species ``i`` and ``j`` is the content score minus ``alpha_h`` times their phylogenetic distance,
-  so a species borrows most from close relatives. The per-head rate ``alpha_h`` is learned, following the
-  Ornstein-Uhlenbeck view that trait covariance decays with evolutionary distance. The distance it consumes is a
-  *precomputed matrix* — in practice derived from an embedding (a lossy shadow of the tree), not the tree itself.
-  This is the fast, differentiable default; it needs only a distance matrix, so it processes neighbours cheaply.
-
-* ``"tree"`` — tree-structured message passing over the *actual* dated phylogeny (topology + branch lengths). The
-  species states are placed at the tree's tips; a level-synchronous upward sweep carries information from tips to
-  the root, with internal nodes accumulating genuine ancestral state; a downward sweep carries it back to the tips.
-  Each message is gated by ``exp(-softplus(theta) * branch_length)``, so information decays along real evolutionary
-  time, and ``theta`` is learned. This puts the tree *in the loop* rather than approximating it with a distance
-  matrix, and lets a tip that is rare or entirely held out inherit a state from its training relatives through the
-  shared ancestral nodes. It is the topology-faithful graph neural network the OU operator approximates, and the
-  direction we encourage for continued work (see :class:`TreeMessagePassing`).
+Each species carries a free learnable embedding; because relatives share ancestry, this module refines them (before any
+readout) by propagating state along evolutionary structure, so an observation of one species back-propagates into its
+relatives and, within a batch, into every in-context neighbour. A free discriminative component keeps congeners
+separable rather than collapsing onto a shared mean; a new species projects in via :meth:`SpeciesGraph.distance_from_embedding`.
+Two operators (selected by ``operator``) refine the states:
+* ``"ou-attention"`` (default) — distance-biased attention, logit(i,j) = content − ``alpha_h``·phylo_distance(i,j), so a
+  species borrows most from close relatives (Ornstein-Uhlenbeck: covariance decays with evolutionary distance). Consumes
+  a precomputed distance matrix (in practice an embedding-derived shadow of the tree); differentiable and cheap.
+* ``"tree"`` — message passing over the actual dated phylogeny: tips seed the states, an upward sweep aggregates
+  ancestral state at internal nodes and a downward sweep returns it, each message gated by ``exp(-softplus(theta)·blen)``.
+  Puts the tree in the loop so a rare/held-out tip inherits state from relatives; the topology-faithful GNN the OU
+  operator approximates (see :class:`TreeMessagePassing`).
 """
 from __future__ import annotations
 import math
@@ -47,8 +33,7 @@ try:                                                        # FlexAttention: blo
                 {"BLOCK_M1": 32, "BLOCK_N1": 32, "BLOCK_M2": 32, "BLOCK_N2": 32, "num_warps": 4, "num_stages": 2})
 
     def _flex_attention(*a, **kw):
-        """Prefer the compiled (fused) kernel; fall back to eager if the backend cannot autotune it (e.g. the
-        FlexAttention backward on some Ampere GPUs). Same math either way."""
+        """Prefer the compiled (fused) kernel; fall back to eager if autotune fails (e.g. Ampere backward). Same math."""
         global _flex_attention
         try:
             return _compiled_flex(*a, **kw)
@@ -60,26 +45,19 @@ except Exception:
 
 
 # ============================================================================ tree loading (Newick -> buffers)
-# The species graph can refine states over the *actual* evolutionary tree -- topology and branch lengths -- rather
-# than a precomputed distance matrix. The tree is static, so it is read once at data-load time: parse the Newick,
-# prune to the model's tips (preserving every root-to-tip path length), compact node ids so model species occupy
-# leaf ids 0..n_species-1, and group edges by level for a level-synchronous GPU sweep.
+# Read once at data-load: parse the Newick, prune to the model's tips (preserving every root-to-tip path length),
+# compact node ids so model species occupy leaf ids 0..n_species-1, group edges by level for a synchronous GPU sweep.
 
 def parse_newick(path: str):
-    """Parse a Newick tree into ``parent``, ``branch_length`` and ``label`` arrays (``parent == -1`` is the root).
+    """Parse a Newick tree into ``parent``, ``branch_length``, ``label`` arrays (``parent == -1`` is the root).
 
-    A small recursive-descent parser (the tree nests only ~50 deep). Handles a leading rooting comment such as
-    ``[&U]`` and optional internal-node labels.
+    Recursive-descent (the tree nests only ~50 deep); handles a leading rooting comment (e.g. ``[&U]``) and
+    optional internal-node labels.
     """
     s = open(path).read().strip()
-    if s.startswith("[&"):                                    # strip a rooting comment, e.g. "[&U]"
-        s = s[s.index("]") + 1:].strip()
-    if s.endswith(";"):
-        s = s[:-1]
-    parent: List[int] = []
-    blen: List[float] = []
-    label: List[str] = []
-    pos = 0
+    if s.startswith("[&"): s = s[s.index("]") + 1:].strip()   # strip a rooting comment, e.g. "[&U]"
+    if s.endswith(";"): s = s[:-1]
+    parent: List[int] = []; blen: List[float] = []; label: List[str] = []; pos = 0
 
     def node(p: int) -> int:
         parent.append(p); blen.append(0.0); label.append("")
@@ -88,22 +66,18 @@ def parse_newick(path: str):
     def read_label_len(nd: int) -> None:
         nonlocal pos
         start = pos
-        while pos < len(s) and s[pos] not in "(),:;":
-            pos += 1
-        if pos > start:
-            label[nd] = s[start:pos]
+        while pos < len(s) and s[pos] not in "(),:;": pos += 1
+        if pos > start: label[nd] = s[start:pos]
         if pos < len(s) and s[pos] == ":":
             pos += 1; start = pos
-            while pos < len(s) and s[pos] not in "(),:;":
-                pos += 1
+            while pos < len(s) and s[pos] not in "(),:;": pos += 1
             blen[nd] = float(s[start:pos])
 
     def parse(p: int) -> int:
         nonlocal pos
         nd = node(p)
         if s[pos] == "(":                                    # internal node: parse its children
-            pos += 1
-            parse(nd)
+            pos += 1; parse(nd)
             while s[pos] == ",":
                 pos += 1; parse(nd)
             assert s[pos] == ")", f"malformed newick near position {pos}"
@@ -116,20 +90,13 @@ def parse_newick(path: str):
 
 
 def build_tree_buffers(newick_path: str, tip_labels: Sequence[str]) -> Dict:
-    """Build level-synchronous message-passing buffers for a set of model species.
+    """Build level-synchronous message-passing buffers for model species (``tip_labels[i]`` = Newick label of species i).
 
-    Args:
-        newick_path: path to the dated Newick tree.
-        tip_labels: ``tip_labels[i]`` is the Newick leaf label of model species ``i`` (model/local order).
-
-    Returns a dict of buffers. Compact node ids place the ``n_species`` model tips at ids ``0 .. n_species-1`` (so
-    the refined leaf states are ``H[:n_species]``), then the internal ancestral nodes. Branch lengths are scaled to
-    unit mean (the operator's learnable decay adapts the absolute rate). Keys:
-      ``n_nodes, n_species, root``;
-      upward (children->parents, grouped by parent height): ``up_child, up_parent, up_blen`` (flat, level-ordered)
-        with ``up_edge_ptr`` offsets, and ``up_par, up_par_ptr`` the unique parents updated at each level;
-      downward (parents->children, grouped by child depth): ``down_parent, down_child, down_blen`` with
-        ``down_edge_ptr`` offsets (each level's ``down_child`` is already the unique set updated there).
+    Compact ids place the ``n_species`` model tips at ``0..n_species-1`` (refined leaf states = ``H[:n_species]``),
+    then internal nodes; branch lengths scaled to unit mean (the operator's learnable decay adapts the absolute rate).
+    Keys: ``n_nodes, n_species, root``; upward (children->parents, grouped by parent height) ``up_child, up_parent,
+    up_blen`` + ``up_edge_ptr`` offsets, ``up_par, up_par_ptr`` (unique parents updated per level); downward
+    (parents->children, grouped by child depth) ``down_parent, down_child, down_blen`` + ``down_edge_ptr`` offsets.
     """
     parent, blen, label = parse_newick(newick_path)
     N = len(parent)
@@ -139,19 +106,15 @@ def build_tree_buffers(newick_path: str, tip_labels: Sequence[str]) -> Dict:
         raise KeyError(f"{len(missing)} model tips absent from the tree, e.g. {missing[:3]}")
     want_node = np.array([lab2node[t] for t in tip_labels])       # original node id per model species
     n_sp = len(tip_labels)
-
-    # keep = wanted leaf or has a kept descendant (children always have a larger id than their parent)
+    # keep = wanted leaf or has a kept descendant (a child always has a larger id than its parent)
     keep = np.zeros(N, bool); keep[want_node] = True
     for nd in range(N - 1, 0, -1):
-        if keep[nd]:
-            keep[parent[nd]] = True
+        if keep[nd]: keep[parent[nd]] = True
     kept_children = np.zeros(N, int)
     for nd in range(N):
-        if keep[nd] and parent[nd] >= 0:
-            kept_children[parent[nd]] += 1
+        if keep[nd] and parent[nd] >= 0: kept_children[parent[nd]] += 1
     is_wanted_leaf = np.zeros(N, bool); is_wanted_leaf[want_node] = True
     retain = is_wanted_leaf | (keep & (kept_children >= 2))       # tips + genuine branching ancestors
-
     # each retained node's nearest retained ancestor, accumulating the suppressed branch lengths between them
     eff_parent = np.full(N, -1); eff_blen = np.zeros(N)
     for nd in range(N):
@@ -161,52 +124,42 @@ def build_tree_buffers(newick_path: str, tip_labels: Sequence[str]) -> Dict:
         while p >= 0 and not retain[p]:
             acc += blen[p]; p = parent[p]
         eff_parent[nd] = p; eff_blen[nd] = acc
-
     # compact ids: model tips first (model order), then internal retained nodes
     newid = np.full(N, -1)
     for i, on in enumerate(want_node):
         newid[on] = i
     nxt = n_sp
     for nd in np.where(retain)[0]:
-        if newid[nd] < 0:
-            newid[nd] = nxt; nxt += 1
+        if newid[nd] < 0: newid[nd] = nxt; nxt += 1
     n_nodes = nxt
     cparent = np.full(n_nodes, -1); cblen = np.zeros(n_nodes)
     for nd in np.where(retain)[0]:
         ci = newid[nd]
-        if eff_parent[nd] >= 0:
-            cparent[ci] = newid[eff_parent[nd]]; cblen[ci] = eff_blen[nd]
-
+        if eff_parent[nd] >= 0: cparent[ci] = newid[eff_parent[nd]]; cblen[ci] = eff_blen[nd]
     # heights (edges to nearest descendant leaf) and depths (edges from root) via a topological sweep
     children: List[List[int]] = [[] for _ in range(n_nodes)]
     for ci in range(n_nodes):
-        if cparent[ci] >= 0:
-            children[cparent[ci]].append(ci)
+        if cparent[ci] >= 0: children[cparent[ci]].append(ci)
     indeg = np.array([len(children[c]) for c in range(n_nodes)])
     dq = deque([c for c in range(n_nodes) if indeg[c] == 0]); order: List[int] = []
     while dq:
         c = dq.popleft(); order.append(c); p = cparent[c]
         if p >= 0:
             indeg[p] -= 1
-            if indeg[p] == 0:
-                dq.append(p)
+            if indeg[p] == 0: dq.append(p)
     height = np.zeros(n_nodes, int); depth = np.zeros(n_nodes, int)
     for c in order:                                              # children before parents
-        for ch in children[c]:
-            height[c] = max(height[c], height[ch] + 1)
+        for ch in children[c]: height[c] = max(height[c], height[ch] + 1)
     for c in reversed(order):                                    # parents before children
-        for ch in children[c]:
-            depth[ch] = depth[c] + 1
+        for ch in children[c]: depth[ch] = depth[c] + 1
     root = int(np.where(cparent < 0)[0][0])
-
     scale = float(cblen[cblen > 0].mean())                       # scale branch lengths to unit mean
     edges = [(c, int(cparent[c]), float(cblen[c] / scale)) for c in range(n_nodes) if cparent[c] >= 0]
 
     def flatten(sorted_edges, level_of):
         levels = sorted(set(level_of(e) for e in sorted_edges))
         by_level = {k: [] for k in levels}
-        for e in sorted_edges:
-            by_level[level_of(e)].append(e)
+        for e in sorted_edges: by_level[level_of(e)].append(e)
         child, par, bl, ptr = [], [], [], [0]
         par_nodes, par_ptr = [], [0]
         for k in levels:
@@ -217,8 +170,7 @@ def build_tree_buffers(newick_path: str, tip_labels: Sequence[str]) -> Dict:
         return (np.array(child, np.int64), np.array(par, np.int64), np.array(bl, np.float32), ptr,
                 np.array(par_nodes, np.int64), par_ptr)
 
-    # ``flatten`` returns (child, parent, ...): edges are (child, parent) tuples. Upward groups by parent height;
-    # downward groups by child depth. Keep child/parent labelled correctly for the downward buffers.
+    # edges are (child, parent) tuples: upward groups by parent height, downward by child depth.
     uc, up_, ub, up_ptr, upar, upar_ptr = flatten(sorted(edges, key=lambda e: height[e[1]]), lambda e: height[e[1]])
     dc, dp, db, dn_ptr, _, _ = flatten(sorted(edges, key=lambda e: depth[e[0]]), lambda e: depth[e[0]])
     buf = dict(n_nodes=n_nodes, n_species=n_sp, root=root,
@@ -229,9 +181,8 @@ def build_tree_buffers(newick_path: str, tip_labels: Sequence[str]) -> Dict:
 
 
 def _check_buffers(b: Dict) -> None:
-    """Structural invariants that guard the level-synchronous sweep (a swapped child/parent would silently break
-    induction rather than error): every non-root node is updated exactly once by each sweep, and each edge points
-    to a strictly shallower parent (upward) / from a strictly shallower parent (downward)."""
+    """Structural invariants guarding the sweep (a swapped child/parent breaks induction silently rather than erroring):
+    every non-root node updated exactly once per sweep, and up/down traverse the same (child, parent) edge set."""
     n, root = b["n_nodes"], b["root"]
     non_root = np.setdiff1d(np.arange(n), [root])
     assert np.array_equal(np.sort(b["down_child"]), non_root), "downward sweep must update every non-root node once"
@@ -246,32 +197,25 @@ def _check_buffers(b: Dict) -> None:
 class OrnsteinUhlenbeckAttention(nn.Module):
     """One layer of multi-head attention among species, biased toward phylogenetic neighbors (the default operator).
 
-    Each attention logit is the usual content score minus ``rate * phylo_distance`` (then softmaxed), so covariance
-    decays with evolutionary distance exactly as an Ornstein-Uhlenbeck process on the tree. This is a fast, fully
-    differentiable stand-in for tree-structured message passing that needs only a distance matrix -- even the
-    embedding-derived shadow of the tree -- and so processes phylogenetic neighbors cheaply, which may prove the best
-    trade-off in the long run. It is, however, an approximation of the topology-faithful GNN; see
-    :class:`TreeMessagePassing` for the message-passing operator we consider the direction for continued work.
+    Each logit is content score − ``rate·phylo_distance`` before softmax, so covariance decays with evolutionary
+    distance as an Ornstein-Uhlenbeck process on the tree. A fast, fully differentiable stand-in for tree message
+    passing that needs only a distance matrix (even the embedding-derived shadow of the tree). An approximation of the
+    topology-faithful GNN in :class:`TreeMessagePassing`.
     """
 
     def __init__(self, d_model: int, n_heads: int):
         super().__init__()
         assert d_model % n_heads == 0
-        self.n_heads = n_heads
-        self.d_head = d_model // n_heads
-        self.q = nn.Linear(d_model, d_model)
-        self.k = nn.Linear(d_model, d_model)
-        self.v = nn.Linear(d_model, d_model)
-        self.o = nn.Linear(d_model, d_model)
-        # alpha_h = softplus(log_rate). Init to ~2 (not 0): at rate 0.69 the phylo prior is near-inert (within/across
-        # attention ratio only ~1.3x over 2141 species), so the phylogeny is under-exploited; a stronger start lets the
-        # OU locality actually concentrate attention on relatives from the beginning (rate stays learnable).
+        self.n_heads = n_heads; self.d_head = d_model // n_heads
+        self.q = nn.Linear(d_model, d_model); self.k = nn.Linear(d_model, d_model)
+        self.v = nn.Linear(d_model, d_model); self.o = nn.Linear(d_model, d_model)
+        # alpha_h = softplus(log_rate). Init ~2 (not 0): at rate 0.69 the phylo prior is near-inert (within/across ratio
+        # only ~1.3x over 2141 species); a stronger start concentrates attention on relatives from the start (learnable).
         self.log_rate = nn.Parameter(torch.full((n_heads,), 1.85))
         self.norm = nn.LayerNorm(d_model)
-        # The FlexAttention path folds the learnable OU rate into 3 extra q/k dimensions instead of a differentiable
-        # score_mod (which is 15-24x slower because FlexAttention's backward through a captured tensor is weak). The
-        # factorization q+.k+ = q.k - r*(p_i - p_j)^2 gives an RBF bias on ordinal clade-order position. The head is
-        # padded to the next power of two for the kernel.
+        # FlexAttention path folds the OU rate into 3 extra q/k dims instead of a differentiable score_mod (15-24x slower:
+        # weak backward through a captured tensor). Factorization q+.k+ = q.k - r*(p_i - p_j)^2 is an RBF bias on ordinal
+        # clade-order position; head padded to the next power of two for the kernel.
         self.flex_rate = nn.Parameter(torch.full((n_heads,), 0.1))
         aug = self.d_head + 3
         self._flex_pad = (1 << (aug - 1).bit_length()) - aug
@@ -279,10 +223,9 @@ class OrnsteinUhlenbeckAttention(nn.Module):
     def forward(self, h: torch.Tensor, phylo_distance: torch.Tensor = None,
                 neighbor_idx: torch.Tensor = None, neighbor_dist: torch.Tensor = None,
                 flex_mask=None) -> torch.Tensor:
-        """``h`` is ``[N, d_model]`` species states. Three modes, same math: ``flex_mask`` uses block-sparse fused
-        FlexAttention with the OU bias in ``score_mod`` (scales to 100k+ species); dense takes ``phylo_distance``
-        ``[N, N]``; sparse takes ``neighbor_idx``/``neighbor_dist`` ``[N, K]``. The OU locality (covariance decays
-        with evolutionary distance) makes the block-sparse form both faithful and O(N*window)."""
+        """``h`` = ``[N, d_model]`` species states. Three modes, same math: ``flex_mask`` = block-sparse fused
+        FlexAttention with OU bias folded in (scales to 100k+, O(N*window)); dense = ``phylo_distance`` ``[N,N]``;
+        sparse = ``neighbor_idx``/``neighbor_dist`` ``[N,K]``. OU locality keeps the block-sparse form faithful."""
         N, H, dh = h.shape[0], self.n_heads, self.d_head
         rate = F.softplus(self.log_rate)
         q = self.q(h).view(N, H, dh)
@@ -313,16 +256,12 @@ class OrnsteinUhlenbeckAttention(nn.Module):
         return self.norm(h + self.o(out))                                  # residual keeps discrimination
 
 
-def _mlp(d: int, hidden: int) -> nn.Module:
-    return nn.Sequential(nn.Linear(d, hidden), nn.GELU(), nn.Linear(hidden, d))
-
-
 class _TreeRound(nn.Module):
-    """One upward+downward message-passing sweep over the tree, mapping species states to refined species states.
+    """One upward+downward message-passing sweep over the tree, refining species states.
 
-    The species states seed the tree's tips; internal nodes seed a learned ``unk`` prior. The upward sweep sends
-    gated messages from children to parents (ancestral state is aggregated), the downward sweep sends them back from
-    parents to children, and the refined tip states are read off with a residual so discrimination is preserved.
+    Species states seed the tips, internal nodes seed a learned ``unk`` prior; the upward sweep sends gated
+    child->parent messages (aggregating ancestral state), the downward sweep returns parent->child messages, and the
+    refined tip states are read off with a residual so discrimination is preserved.
     """
 
     def __init__(self, d_model: int, hidden: int):
@@ -361,34 +300,16 @@ class _TreeRound(nn.Module):
 class TreeMessagePassing(nn.Module):
     """Refine per-species states by message passing over the actual dated phylogeny (topology + branch lengths).
 
-    Why the tree, and why a GNN. The phylogeny is not merely a distance matrix to be approximated: its topology and
-    branch lengths *are* the record of evolutionary history, and by descent-with-modification that history is what
-    makes traits, ecophysiology, phenology, and ecological function phylogenetically conserved. Relatives resemble
-    each other because they share ancestry, so propagating state along the real tree edges -- internal nodes carrying
-    reconstructed ancestral state, branch lengths gating how much signal survives each split -- is the principled way
-    to share information across species, most of all for rare and held-out clades where a species has few or no direct
-    observations of its own. For this reason we regard a graph neural network over the phylogeny as the right
-    architecture for continued experimentation, and treat :class:`OrnsteinUhlenbeckAttention` (the default operator,
-    which biases dense attention by an embedding-derived distance) as an efficient approximation rather than the
-    destination -- we are deliberately not ready to rely wholly on an embedding from which distances were derived.
+    The phylogeny is not just a distance matrix: its topology and branch lengths *are* the record of evolutionary
+    history, and by descent-with-modification that is what makes traits, phenology, and ecological function
+    phylogenetically conserved. Propagating state along the real edges — internal nodes carrying reconstructed ancestral
+    state, branch lengths gating how much signal survives each split — is the principled way to share information across
+    species, above all for rare/held-out clades. A GNN over the phylogeny is the direction for continued work; cf.
+    GraphCast (Science 2023), GenCast (Nature 2025) — phylogeny as the mesh, ancestral state as the propagated field.
+    :class:`OrnsteinUhlenbeckAttention` is an efficient approximation, not the destination. See ``core/science.md``.
 
-    Research direction (encouraged). The frontier is efficient *multi-hop* propagation restricted to the species
-    actually present in a given context window (the batch's focal clades) rather than a full-tree sweep every step --
-    the same problem weather models solve by message passing over a fixed multi-scale mesh. See GraphCast (Lam et al.,
-    "Learning skillful medium-range global weather forecasting," Science 382:1416-1421, 2023) for deterministic
-    message-passing forecasting over a graph, and GenCast (Price et al., "Probabilistic weather forecasting with
-    machine learning," Nature 637:84-90, 2025) for its diffusion-based probabilistic successor; the analogue here is
-    the phylogeny as the mesh and ancestral state as the propagated field. Concrete lines worth pursuing: subtree-local
-    message passing keyed to the context window (only the induced subtree spanning the focal species), learned
-    long-range "skip" edges between distant but ecologically convergent clades, and a diffusion/generative readout for
-    calibrated uncertainty over induced traits and community composition. See ``core/science.md`` for the full framing.
-
-    Args:
-        n_species: number of species (tips seeded with the species states).
-        d_model: representation width.
-        tree: the buffer dict from :func:`build_tree_buffers` (static topology, precomputed once).
-        n_layers: number of upward+downward sweeps (each a :class:`_TreeRound`); more sweeps propagate further.
-        hidden: message-MLP width (defaults to ``d_model``).
+    Args: ``n_species`` (tips), ``d_model`` (width), ``tree`` (buffers from :func:`build_tree_buffers`), ``n_layers``
+    (upward+downward sweeps, each a :class:`_TreeRound`; more sweeps propagate further), ``hidden`` (message-MLP width).
     """
 
     def __init__(self, n_species: int, d_model: int, tree: dict, n_layers: int = 2, hidden: int = None):
@@ -412,22 +333,17 @@ class TreeMessagePassing(nn.Module):
         self.rounds = nn.ModuleList([_TreeRound(d_model, hidden or d_model) for _ in range(max(1, n_layers))])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for r in self.rounds:
-            x = r(x, self)
+        for r in self.rounds: x = r(x, self)
         return x
 
 
 class SpeciesGraph(nn.Module):
     """A learnable per-species representation refined by a phylogenetic operator (``ou-attention`` or ``tree``).
 
-    Args:
-        n_species: number of species.
-        d_model: representation width.
-        phylo_distance: ``[n_species, n_species]`` phylogenetic distances (for ``operator="ou-attention"``).
-        n_heads, n_layers: attention heads (ou-attention) and refinement depth (both operators).
-        operator: ``"ou-attention"`` (distance-biased attention; the default) or ``"tree"`` (message passing over the
-            real phylogeny -- see :class:`TreeMessagePassing`, the sanctioned GNN research direction).
-        tree: the buffer dict from :func:`build_tree_buffers` (required for ``operator="tree"``).
+    Args: ``n_species``, ``d_model``; ``phylo_distance`` ``[n_species, n_species]`` (for ou-attention); ``n_heads`` and
+    ``n_layers`` (heads and refinement depth); ``operator`` = ``"ou-attention"`` (distance-biased attention, default) or
+    ``"tree"`` (message passing over the real phylogeny, see :class:`TreeMessagePassing`); ``tree`` buffers from
+    :func:`build_tree_buffers` (required for ``operator="tree"``).
     """
 
     def __init__(self, n_species: int, d_model: int, phylo_distance: torch.Tensor = None, n_heads: int = 4,
@@ -442,8 +358,7 @@ class SpeciesGraph(nn.Module):
             self.layers = None
             for name in ("phylo_distance", "neighbor_idx", "neighbor_dist", "order", "inv_order"):
                 self.register_buffer(name, None)
-            self.flex_mask = None
-            return
+            self.flex_mask = None; return
         assert phylo_distance is not None, "operator='ou-attention' requires a phylo_distance matrix"
         self.tree = None
         self.layers = nn.ModuleList([OrnsteinUhlenbeckAttention(d_model, n_heads) for _ in range(n_layers)])
@@ -483,16 +398,15 @@ class SpeciesGraph(nn.Module):
     def forward(self) -> torch.Tensor:
         """Refine and return the species representations ``[n_species, d_model]``.
 
-        Takes no per-observation input: the refinement is a function of the static species table and the tree
-        alone, so a query's own hidden identity can never leak into its own prediction through this module.
+        No per-observation input: refinement depends only on the static species table and tree, so a query's own
+        hidden identity can never leak into its own prediction.
         """
         if self.operator == "tree":                                        # message passing over the real tree
             return self.tree(self.free)
         h = self.free
         if self.flex_mask is not None:                                     # clade-contiguous order -> banded attention
             h = h[self.order]
-            for layer in self.layers:
-                h = layer(h, flex_mask=self.flex_mask)
+            for layer in self.layers: h = layer(h, flex_mask=self.flex_mask)
             return h[self.inv_order]
         for layer in self.layers:
             if self.neighbor_idx is not None:
@@ -506,8 +420,7 @@ class SpeciesGraph(nn.Module):
 def _test():
     torch.manual_seed(0)
     N, d = 60, 32
-    # a synthetic phylogeny: species in a few clades, close within a clade, far across
-    clade = torch.randint(0, 5, (N,))
+    clade = torch.randint(0, 5, (N,))                        # synthetic phylogeny: close within clade, far across
     centers = torch.randn(5, d)
     e1 = centers[clade] + 0.1 * torch.randn(N, d)
     D = SpeciesGraph.distance_from_embedding(e1)
@@ -516,12 +429,8 @@ def _test():
     graph = SpeciesGraph(N, d, D, n_heads=4, n_layers=2)
     h = graph()
     assert h.shape == (N, d)
-
-    # discrimination: refined species stay distinct (no collapse onto a shared mean)
-    spread = (h - h.mean(0)).norm(dim=-1)
-    assert (spread > 1e-3).all(), "species must not collapse"
-
-    # phylogenetic borrowing: force a large rate and check attention concentrates on close relatives
+    assert ((h - h.mean(0)).norm(dim=-1) > 1e-3).all(), "species must not collapse onto a shared mean"
+    # phylo borrowing: force a large rate, check attention concentrates on close relatives
     layer = graph.layers[0]
     with torch.no_grad():
         layer.log_rate.fill_(4.0)
@@ -532,33 +441,26 @@ def _test():
         same = clade[:, None] == clade[None, :]
         within = attn[same].mean(); across = attn[~same].mean()
     assert within > across, f"attention must favor phylo neighbors ({within:.3f} vs {across:.3f})"
-
-    # extended backprop: a loss on ONE species' refined state sends gradient to OTHER species' free embeddings
+    # extended backprop: a loss on ONE species reaches OTHER species' free embeddings
     fresh = SpeciesGraph(N, d, D, n_heads=4, n_layers=2)   # default rates, un-mutated
     fresh()[0].pow(2).sum().backward()                     # squared: not degenerate under the output LayerNorm
     reached = fresh.free.grad.abs().sum(dim=1) > 0
     assert reached[1:].any(), "an observation of one species must update its relatives"
-
-    # sparse phylo-local attention: shape, self is the nearest neighbor, gradient flows, output tracks dense
+    # sparse phylo-local attention: shape, self is nearest neighbor, gradient flows
     ksparse = SpeciesGraph(N, d, D, n_heads=4, n_layers=2, top_k=12)
     hs = ksparse()
     assert hs.shape == (N, d) and ksparse.neighbor_idx.shape == (N, 12)
     assert (ksparse.neighbor_dist[:, 0] < 1e-4).all(), "each species' nearest neighbor is itself (distance 0)"
     ksparse().pow(2).sum().backward(); assert ksparse.free.grad is not None
-
-    _test_tree()
-    _test_real_tree()
+    _test_tree(); _test_real_tree()
     print(f"phylogenomic.py: all unit tests passed (within-clade attn {within:.3f} > across {across:.3f}; "
           f"sparse top-k OK; tree message passing OK)")
 
 
 def _synthetic_tree():
-    """A small tree for testing: 8 tips in 4 sibling pairs, grouped into 2 clades, joined at a root.
-
-    Compact ids: leaves 0..7; pair parents 8..11; clade nodes 12,13; root 14. Congeners are same-pair leaves
-    (0&1, 2&3, ...); same-clade leaves are 0..3 and 4..7. Branch lengths grow with depth (tip 0.5, pair 1.0,
-    clade 2.0), so the branch-gate should route information most strongly between congeners.
-    """
+    """Test tree: 8 tips in 4 sibling pairs, grouped into 2 clades, joined at a root. Compact ids: leaves 0..7; pair
+    parents 8..11; clade nodes 12,13; root 14. Congeners = same-pair leaves; same-clade = 0..3 and 4..7. Branch lengths
+    grow with depth (tip 0.5, pair 1.0, clade 2.0), so the gate routes information most strongly between congeners."""
     return dict(
         n_nodes=15, n_species=8, root=14,
         up_child=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
@@ -574,29 +476,22 @@ def _test_tree():
     torch.manual_seed(0)
     tree = _synthetic_tree(); N, d = 8, 16
     graph = SpeciesGraph(N, d, operator="tree", tree=tree, n_layers=2)
-
-    # no per-observation input: the refinement cannot leak a query's own hidden identity into its own prediction
-    import inspect
+    import inspect                                            # no per-query input -> a query can't leak into its own prediction
     assert list(inspect.signature(graph.forward).parameters) == [], "species graph must take no per-query input"
-
     h = graph()
     assert h.shape == (N, d), "refined tips are returned in species order"
-    h2 = graph()
-    assert torch.allclose(h, h2), "refinement is deterministic (no per-forward randomness)"
-
-    # discrimination: tips stay distinct and congeners remain separable (no collapse onto a shared/ancestral mean)
+    assert torch.allclose(h, graph()), "refinement is deterministic (no per-forward randomness)"
+    # discrimination: tips distinct, congeners separable (no collapse onto a shared/ancestral mean)
     assert ((h - h.mean(0)).norm(dim=-1) > 1e-3).all(), "species must not collapse"
     assert (h[0] - h[1]).norm() > 1e-3, "congeners must stay separable"
-
-    # extended backprop: a loss on ONE tip's refined state reaches its relatives' free embeddings, its congener most
+    # extended backprop: a loss on ONE tip reaches its relatives' free embeddings, its congener most
     graph.zero_grad(set_to_none=True)
     graph()[0].pow(2).sum().backward()
     g = graph.free.grad.abs().sum(dim=1)
     assert g[1:].any(), "an observation of one species must update its relatives through the tree"
     assert g[1] > 0, "the congener (sibling tip) must receive gradient"
-
-    # mechanism: with the message MLPs made linear, information routing follows the real topology + branch gate --
-    # tip 0 is more sensitive to its congener (tip 1) than to the far clade (tips 4..7).
+    # mechanism: with the message MLPs linear, routing follows real topology + branch gate --
+    # tip 0 more sensitive to its congener (tip 1) than to the far clade (tips 4..7).
     class _Avg(nn.Module):
         def forward(self, cat):
             a, b = cat.chunk(2, dim=-1); return 0.5 * (a + b)
@@ -613,41 +508,37 @@ def _test_tree():
 
 
 def _test_real_tree():
-    """Build the buffers from the real California tree and confirm the pruned tree preserves the reference
-    patristic distances exactly (topology + branch lengths are faithful), or skip if the tree is absent."""
+    """Build buffers from the real California tree and confirm the pruned tree preserves the reference patristic
+    distances exactly (topology + branch lengths faithful), or skip if the tree is absent."""
     import csv
     from pathlib import Path
     cache = Path("/home/photon/ecological/phylo_deepearth/data/cache")
     nwk = cache / "ca_subtree.dated.nwk"
     if not nwk.exists():
-        print("phylogenomic.py: real tree absent; skipping patristic check")
-        return
+        print("phylogenomic.py: real tree absent; skipping patristic check"); return
     rows = list(csv.DictReader(open(cache / "derived/species_index.csv")))
     gi = np.load(cache / "gbif_vocab.npz", allow_pickle=True)["global_idx"]
     tips = [rows[g]["tip_label"] for g in gi]
     b = build_tree_buffers(str(nwk), tips)
-    # reconstruct patristic distances on the compact tree and compare to the reference matrix
+    # reconstruct patristic distances on the compact tree, compare to the reference matrix
     n = b["n_nodes"]; cparent = np.full(n, -1); cblen = np.zeros(n)
     for c, p, bl in zip(b["down_child"], b["down_parent"], b["down_blen"]):
         cparent[c] = p; cblen[c] = bl * b["branch_scale"]              # undo the unit-mean scaling
-    depth = np.zeros(n, int)
-    changed = True
-    while changed:                                                    # compute depth by repeated relaxation
+    depth = np.zeros(n, int); changed = True
+    while changed:                                                    # depth by repeated relaxation
         changed = False
         for c in range(n):
             if cparent[c] >= 0 and depth[c] != depth[cparent[c]] + 1:
                 depth[c] = depth[cparent[c]] + 1; changed = True
     rootdist = np.zeros(n)
     for c in np.argsort(depth):
-        if cparent[c] >= 0:
-            rootdist[c] = rootdist[cparent[c]] + cblen[c]
+        if cparent[c] >= 0: rootdist[c] = rootdist[cparent[c]] + cblen[c]
 
     def lca(a, bb):
         while depth[a] > depth[bb]: a = cparent[a]
         while depth[bb] > depth[a]: bb = cparent[bb]
         while a != bb: a = cparent[a]; bb = cparent[bb]
         return a
-
     Dref = np.load(cache / "derived/patristic_ref.npy")
     rng = np.random.default_rng(0); errs = []
     for _ in range(500):
