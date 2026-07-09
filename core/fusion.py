@@ -88,8 +88,6 @@ class DeepEarth(nn.Module):
         manifolds: Optional[Dict[str, int]] = None,
         capacity: int = 16,
         reference_latitude_deg: float = 0.0,
-        scale_mixing: bool = False,
-        token_encoding: str = "additive",
         species_variable: Optional[str] = None,
         species_embedding: Optional[torch.Tensor] = None,
         species_layers: int = 2,
@@ -98,10 +96,6 @@ class DeepEarth(nn.Module):
         species_flex: bool = False,
         species_operator: str = "ou-attention",
         species_tree: Optional[dict] = None,
-        diffusion: bool = False,
-        experience: bool = False,
-        inductive: bool = False,
-        species_text: Optional[torch.Tensor] = None,
         compile_processor: bool = False,
     ) -> None:
         super().__init__()

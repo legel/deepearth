@@ -74,13 +74,8 @@ def train_and_evaluate(config, device):
     model = DeepEarth(variables, d_model=m.get("d_model", 256), n_latents=m.get("n_latents", 24),
                       n_layers=m.get("n_layers", 4), capacity=m.get("capacity", 16),
                       relative_window=tuple(m.get("relative_window", (8000., 8000., 300., 130.))), **rel_extra,
-                      manifolds=manifolds, scale_mixing=m.get("scale_mixing", False),
-                      token_encoding=m.get("token_encoding", "additive"), diffusion=m.get("diffusion", False),
-                      experience=m.get("experience", False), inductive=m.get("inductive", False),
-                      species_text=source.species_text, compile_processor=m.get("compile") == "processor",
+                      manifolds=manifolds, compile_processor=m.get("compile") == "processor",
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
-    if m.get("experience", False):
-        model.set_memory(*source.memory())
     if m.get("compile", False) or config["training"].get("precision") == "bf16":
         from hashencoder.hashgrid import HashEncoder      # route the hash through its compile/autocast-safe op
         HashEncoder.use_custom_op = True
