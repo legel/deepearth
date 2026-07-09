@@ -5,7 +5,7 @@ DeepEarth is a [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_l
 
 ![DeepEarth v.0.01 preview of architecture](https://github.com/legel/deepearth/blob/main/docs/deepearth_main_figure.png)
 
-DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen above). It uses a novel space-time positional encoder, [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
+DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen above). It uses a novel space-time positional encoder, [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/spacetime/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
 
 ![Earth4D space-time encoder](https://github.com/legel/deepearth/blob/main/docs/earth4d_spacetime_encoder.png) 
 
@@ -18,10 +18,10 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
   **Poster at World Modeling Workshop.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) will present DeepEarth at the [2026 World Modeling Workshop](https://world-model-mila.github.io/). See [_poster_](https://github.com/legel/deepearth/blob/main/docs/science/world_modeling_workshop_2026/poster/DeepEarth_2026_World_Modeling_Workshop_Poster.pdf).
 
 - _January 14, 2026_  
-  **New geospatial coordinate system.** A refined (_x_, _y_, _z_, _t_) = (_latitude_, _longitude_, _elevation_, _time_) coordinate system in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) improved a state-of-the-art forecasting benchmark by 4%. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
+  **New geospatial coordinate system.** A refined (_x_, _y_, _z_, _t_) = (_latitude_, _longitude_, _elevation_, _time_) coordinate system in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/spacetime) improved a state-of-the-art forecasting benchmark by 4%. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
 
 - _December 22, 2025_  
-  **10x faster.** Following state-of-the-art [Earth4D](https://github.com/legel/deepearth/blob/main/encoders/xyzt/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [_commit_](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3). 
+  **10x faster.** Following state-of-the-art [Earth4D](https://github.com/legel/deepearth/blob/main/encoders/spacetime/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [_commit_](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3). 
 
 - _December 19, 2025_  
   **Supercomputing award.** US DOE [National Energy Research Scientific Computing Center](https://www.nersc.gov) has awarded a DeepEarth team with supercomputing access in 2026 through [BER](https://science.osti.gov/ber).
@@ -30,10 +30,10 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
   **Peer-reviewed presentation in top venue.** Accepted to the [2026 World Modeling Workshop](https://world-model-mila.github.io/) at the [Mila Quebec AI Institute](https://mila.quebec/en), alongside keynote talks by [Yoshua Bengio](https://yoshuabengio.org/) and [Yann LeCun](http://yann.lecun.com/). See [_paper_](https://github.com/legel/deepearth/blob/main/docs/DeepEarth.pdf). 
   
 - _November 17, 2025_  
-  **99% parameter reduction, 4× speedup.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt) with [learned hash probing](https://arxiv.org/abs/2312.17241) tested on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6) demonstrates spectacular accuracy with 5M parameters. 
+  **99% parameter reduction, 4× speedup.** [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/spacetime) with [learned hash probing](https://arxiv.org/abs/2312.17241) tested on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6) demonstrates spectacular accuracy with 5M parameters. 
 
 - _November 16, 2025_  
-  **23% error reduction in space-time encoder.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/xyzt), achieving state-of-the-art R² on an ecological forecasting benchmark. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
+  **23% error reduction in space-time encoder.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](https://github.com/legel/deepearth/tree/main/encoders/spacetime), achieving state-of-the-art R² on an ecological forecasting benchmark. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
 
 - _October 29, 2025_  
   **Predicting risk of fires.**  [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather), [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based), and [Lance Legel](https://www.linkedin.com/in/legel/) presented on simulating [live fuel moisture content](https://www.nature.com/articles/s41597-024-03159-6) through NSF's [Institute for Geospatial Understanding](http://i-guide.io/). See [_event_](https://i-guide.io/i-guide-vco/geospatial-simulation-of-fire-ecology-with-deepearth/).

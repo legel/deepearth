@@ -2,7 +2,7 @@
 
 We are directing DeepEarth toward **per-species fire risk evaluation** — modeling not just where and when fires will occur, but how each plant species contributes to ignition risk, fuel behaviour, and ember production based on its physiology and condition.
 
-Preliminary result (live fuel moisture content prediction): [`encoders/xyzt/benchmarks/lfmc`](../../encoders/xyzt/benchmarks/lfmc).
+Preliminary result (live fuel moisture content prediction): [`encoders/spacetime/benchmarks/lfmc`](../../encoders/spacetime/benchmarks/lfmc).
 
 **Earth4D + species embeddings** currently lead the Globe-LFMC 2.0 benchmark (Yebra et al. 2024) on the Allen Institute for AI split, achieving **R² 0.78 / MAE 11.7 pp / RMSE 18.7 pp** for live fuel moisture across 180+ plant species and the continental US — surpassing AI2's pre-trained Vision Transformer foundation model (R² 0.72) without satellite imagery, weather data, or topography. The species are learned as randomly-initialized embeddings — no prior knowledge — and the (_x_, _y_, _z_, _t_) signal alone carries enough structure for state-of-the-art generalization.
 

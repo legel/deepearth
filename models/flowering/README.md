@@ -14,7 +14,7 @@ The companion pipeline that produces this dataset (data collection → DINOv3 in
 
 A DeepEarth flowering model that ingests:
 
-- **Earth4D positional encoding** (latitude, longitude, elevation, time) — proven state-of-the-art on the LFMC benchmark with no other inputs (see [`fire_ecology`](../fire_ecology/) and [`encoders/xyzt/benchmarks/lfmc`](../../encoders/xyzt/benchmarks/lfmc)).
+- **Earth4D positional encoding** (latitude, longitude, elevation, time) — proven state-of-the-art on the LFMC benchmark with no other inputs (see [`fire_ecology`](../fire_ecology/) and [`encoders/spacetime/benchmarks/lfmc`](../../encoders/spacetime/benchmarks/lfmc)).
 - **DINOv3 spatial features** of the CFP dataset — frozen, reusable.
 - **Species embeddings** — learned per CA-native taxon.
 - **PhenoVision flower-presence label** — supervision signal.

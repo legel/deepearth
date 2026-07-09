@@ -1,0 +1,274 @@
+"""Train a DeepEarth model from a config file.
+
+The config names the model, points to a data source, lists the variables, and sets the model size and training
+budget. A data adapter (see ``data.py``) supplies the variable widths from the source. Evaluation reports, for
+each variable the model reconstructs, its transfer to held-out regions when conditioned only on the variables the
+config marks as widely available.
+
+Usage:  python train.py configs/deepcal.yaml [--device cuda] [--steps N]
+"""
+from __future__ import annotations
+import argparse, time
+from pathlib import Path
+import numpy as np
+import torch
+import torch.nn.functional as F
+import yaml
+
+from deepearth.core import data as data_module
+from deepearth.core.fusion import DeepEarth, Variable
+
+
+def build_variables(spec, dims):
+    """Turn the config's variable entries into :class:`Variable`s, filling widths from the data adapter."""
+    variables = []
+    for v in spec:
+        if v.get("expand") == "trait_classes":
+            for name, classes in dims["trait_classes"].items():
+                variables.append(Variable(name, "categorical", num_classes=classes,
+                                          reconstruct=v.get("reconstruct", True)))
+            continue
+        kind = v["kind"]
+        variables.append(Variable(
+            v["name"], kind,
+            dim=dims.get(v["name"], 0) if kind == "continuous" else 0,
+            num_classes=dims["identity_classes"] if v.get("classes") == "identity" else v.get("num_classes", 0),
+            reconstruct=v.get("reconstruct", True), neighbor=v.get("neighbor", False)))
+    return variables
+
+
+def train_and_evaluate(config, device):
+    d = config["data"]
+    # Prepared-dataset cache: the glob + KD-tree neighbor build (~2.7 min) runs once and is reused by every run with
+    # the same data config, so experiments spin up in ~1s. Keyed by the data settings that change the assembled set.
+    import hashlib, json
+    keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km")}
+    tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
+    prepared = str(Path(__file__).resolve().parents[1] / "data" / "deepcal" / f"prepared_{tag}.pt")
+    source = data_module.build(d["adapter"], cache_dir=d["cache_dir"], n_neighbors=d.get("n_neighbors", 24),
+                               device=device, holdout=d.get("holdout", "spatial"), subset=d.get("subset"),
+                               time_axis=d.get("time_axis", False), meta_path=d.get("meta_path"),
+                               time_km=d.get("time_km", 50.0), prepared=prepared)
+    dims = source.variable_dims()
+    variables = build_variables(config["variables"], dims)
+    m = config["model"]
+    manifolds = {name: dims[dim_key] for name, dim_key in m.get("manifolds", {}).items()}
+    sg = m.get("species_graph")
+    species = dict(species_variable=sg["variable"], species_embedding=source.phylo,
+                   species_layers=sg.get("layers", 2), species_heads=sg.get("heads", 4),
+                   species_top_k=sg.get("top_k"), species_flex=sg.get("flex", False),
+                   species_operator=sg.get("operator", "ou-attention"),
+                   species_tree=source.tree if sg.get("operator") == "tree" else None) if sg else {}
+    if m.get("species_conditioned_decode") and species:
+        # route the refined species state into the species-linked heads (traits + phylo composition)
+        _vnames = {v.name for v in variables}
+        species["species_conditioned"] = list(dims["trait_classes"]) + (["phylo"] if "phylo" in _vnames else [])
+    rel_extra = {}
+    if "relative_finest" in m:
+        rel_extra["relative_finest"] = tuple(m["relative_finest"])
+    if "relative_log2_hashmap_size" in m:
+        rel_extra["relative_log2_hashmap_size"] = m["relative_log2_hashmap_size"]
+    if "n_heads" in m:
+        rel_extra["n_heads"] = m["n_heads"]
+    model = DeepEarth(variables, d_model=m.get("d_model", 256), n_latents=m.get("n_latents", 24),
+                      n_layers=m.get("n_layers", 4), capacity=m.get("capacity", 16),
+                      relative_window=tuple(m.get("relative_window", (8000., 8000., 300., 130.))), **rel_extra,
+                      manifolds=manifolds, scale_mixing=m.get("scale_mixing", False),
+                      token_encoding=m.get("token_encoding", "additive"), diffusion=m.get("diffusion", False),
+                      experience=m.get("experience", False), inductive=m.get("inductive", False),
+                      species_text=source.species_text, compile_processor=m.get("compile") == "processor",
+                      reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
+    if m.get("experience", False):
+        model.set_memory(*source.memory())
+    if m.get("compile", False) or config["training"].get("precision") == "bf16":
+        from hashencoder.hashgrid import HashEncoder      # route the hash through its compile/autocast-safe op
+        HashEncoder.use_custom_op = True
+    print(f"{config['name']}: {source.n} observations, {sum(p.numel() for p in model.parameters())/1e6:.1f}M parameters, "
+          f"train {len(source.train)} / held-out regions {len(source.test)}", flush=True)
+
+    t = config["training"]
+    lr0, wd0 = t.get("lr", 3e-4), t.get("weight_decay", 3e-4)
+    # The learnable frequency params (per-axis scale/center and per-level resolution) get gradients ~100x larger and
+    # noisier than the rest (floor non-differentiability at coarse levels). Give them their own lower LR and their own
+    # gradient clip, so they neither over-drive nor -- via a shared clip_grad_norm -- starve the rest of the model.
+    freq_keys = ("freq_log_scale", "freq_center", "per_level_scale")
+    freq_lr = t.get("freq_lr", lr0 * 0.3)   # swept: 9e-5 (0.3x) beat 3e-5 (0.1x)
+    freq_params = [p for n, p in model.named_parameters() if any(k in n for k in freq_keys)]
+    freq_ids = {id(p) for p in freq_params}
+    sparse_hash = m.get("sparse_hash", False)
+    if sparse_hash:
+        model.enable_sparse_hash(source.coords, lr=lr0, weight_decay=wd0)
+        freq_ids |= {id(p) for p in model.absolute_hash_params()}
+    rest_params = [p for p in model.parameters() if id(p) not in freq_ids]
+    opt = torch.optim.AdamW([{"params": rest_params, "lr": lr0},
+                             {"params": freq_params, "lr": freq_lr}], weight_decay=wd0, fused=True)
+    steps = t["steps"]; batch = t.get("batch", 512)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
+    bf16 = t.get("precision", "fp32") == "bf16"
+    hide_prob = t.get("hide_prob", 0.35)
+    # Grad clipping over all 1.09B params (99% of them hash-grid entries) is a large per-step reduction. The hash
+    # gradients are well-behaved; clip only the non-hash params, which is where instability actually comes from.
+    clip_params = [p for n, p in model.named_parameters()
+                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid"))]
+    hash_encoders = [mod for mod in model.modules() if hasattr(mod, "clamp_per_level_scale")]
+    def clamp_res():                                     # keep learnable per-level resolutions in the safe (scale>0) region
+        for he in hash_encoders:
+            he.clamp_per_level_scale()
+    # Full-step compile + CUDA graphs (the validated ~2.4x lever): compile context + masked_loss into one graph, with
+    # the random reveal mask computed eagerly so the capture stays deterministic. `compile: processor` keeps the
+    # narrower Processor-only compile; anything else falsey stays eager.
+    # Compile modes: "graph"/"full" -> reduce-overhead (CUDA graphs, biggest win, but its private memory pool aliases
+    # live buffers on large actively-used models -> step-1 NaN, so reserve it for models that fit); "compiled"/True ->
+    # default mode (fusion without CUDA graphs, stable at any size). `processor` keeps the narrow Processor compile.
+    _cm = m.get("compile")
+    compile_full = _cm in (True, "full", "graph", "compiled")
+    cuda_graphs = _cm in ("full", "graph")
+    tc_mode = "reduce-overhead" if cuda_graphs else "default"
+    # bf16 covers the Processor and decoders (matmul-bound); the Earth4D hash stays fp32 (its coordinates must land in
+    # [-0.9, 0.9] and bf16 rounding near that edge reads out of bounds), so context() is fp32 and only masked_loss casts.
+    if sparse_hash and compile_full:
+        def _sparse_step(values, observed, present, flat, coords, nbr, mani, nbrv):
+            ctx = model.context_from_flat(flat, coords, nbr, mani, nbrv)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
+                return model.masked_loss(values, observed, present, ctx)
+        sparse_step_fn = torch.compile(_sparse_step, mode=tc_mode)
+    elif compile_full:
+        def _step(values, observed, present, coords, nbr, mani, nbrv):
+            ctx = model.context(coords, nbr, mani, nbrv)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
+                return model.masked_loss(values, observed, present, ctx)
+        step_fn = torch.compile(_step, mode=tc_mode)
+
+    eval_ckpt = config.get("_eval_ckpt")
+    if eval_ckpt:                                        # score an existing checkpoint: load weights, skip training
+        sd = torch.load(eval_ckpt, map_location=device)
+        model.load_state_dict(sd)
+        print(f"loaded checkpoint {eval_ckpt} for eval-only scoring", flush=True)
+        steps = 0
+    model.train(); t0 = time.time()
+    # Optional wall-clock training budget (seconds), measured from step 10 so startup/compile is excluded. Lets an
+    # autoresearch experiment run "up to N minutes" and compares architectures at equal time -- rewarding efficiency
+    # (science.md rule 4), not just raw step count. Absent -> train the full ``steps`` (the SoTA reproduction path).
+    time_budget = t.get("time_budget_s")
+    t_budget_start = None
+    for step in range(steps):
+        if step == 10:
+            t_budget_start = time.time()
+        if time_budget is not None and t_budget_start is not None and (time.time() - t_budget_start) >= time_budget:
+            print(f"  [time budget {time_budget}s reached at step {step}]", flush=True); break
+        idx = source.train_index[torch.randint(0, len(source.train_index), (batch,), device=device)]
+        values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
+        if sparse_hash:
+            flat = model.absolute_encoder.forward_precomputed(idx).detach().requires_grad_(True)
+            if compile_full:
+                if cuda_graphs:
+                    torch.compiler.cudagraph_mark_step_begin()
+                present = {n: (torch.rand(batch, device=device) > hide_prob) & observed[n] for n in model.names}
+                loss = sparse_step_fn(values, observed, present, flat, coords, nbr_coords,
+                                      manifold_coords, nbr_values)
+                if cuda_graphs:
+                    loss = loss.clone()
+            else:
+                ctx = model.context_from_flat(flat, coords, nbr_coords, manifold_coords, nbr_values)
+                loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
+            if torch.isfinite(loss):
+                opt.zero_grad(); loss.backward()
+                model.sparse_hash_step(flat, idx)                        # sparse Adam on the absolute hash table
+                torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
+                if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
+                opt.step(); clamp_res()   # AdamW on everything else
+            model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
+            if step % 500 == 0:
+                print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
+            continue
+        if compile_full:
+            # In CUDA-graph mode, tell the tree a new iteration is starting and clone the loss, so the graph's static
+            # buffers are never read after they are recycled (else the eager backward sees corrupted grads).
+            if cuda_graphs:
+                torch.compiler.cudagraph_mark_step_begin()
+            present = {n: (torch.rand(batch, device=device) > hide_prob) & observed[n] for n in model.names}
+            loss = step_fn(values, observed, present, coords, nbr_coords, manifold_coords, nbr_values)
+            if cuda_graphs:
+                loss = loss.clone()
+        else:
+            ctx = model.context(coords, nbr_coords, manifold_coords, nbr_values)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
+                loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
+        if not torch.isfinite(loss):                    # backstop: never let one bad step poison the weights
+            opt.zero_grad(set_to_none=True); sched.step(); continue
+        opt.zero_grad(); loss.backward()
+        torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
+        if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
+        opt.step(); clamp_res(); sched.step()
+        if step % 500 == 0:
+            print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
+    print(f"trained {steps} steps in {time.time()-t0:.0f}s", flush=True)
+
+    given = config.get("condition_on", [])
+    targets = [v.name for v in variables if v.reconstruct and v.name not in given]
+    scores = evaluate(model, source, given, targets, device)
+    line = " | ".join(f"{k} {v:.3f}" for k, v in scores.items())
+    print(f"held-out regions (conditioning on {given}): {line}", flush=True)
+    # The frozen benchmark suite + harmonic-mean north star (the autoresearch objective).
+    from deepearth.core import benchmarks
+    raw = benchmarks.evaluate_benchmarks(model, source, device)
+    print(benchmarks.format_benchmarks(raw), flush=True)
+    ns = benchmarks.net_score(raw)
+    peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if device.startswith("cuda") else 0.0
+    print(f"net_score:        {ns:.6f}", flush=True)          # Karpathy-parseable north star
+    print(f"peak_vram_mb:     {peak_vram_mb:.1f}", flush=True)
+    scores["net_score"] = ns
+    if config.get("mxm", True):
+        from deepearth.core import mxm
+        print(mxm.format_matrix(mxm.reconstruction_matrix(model, source, source.test, device)), flush=True)
+    if model.diffusion_heads:
+        from deepearth.core import probabilistic
+        ps = probabilistic.probabilistic_scores(model, source, source.test, device)
+        print("probabilistic (diffusion): " + " | ".join(
+            f"{t} CRPS {s['crps']:.3f} spread/skill {s['spread_skill']:.2f} rank-flat {s['rank_flatness']:.2f}"
+            for t, s in ps.items()), flush=True)
+    return model, scores
+
+
+@torch.no_grad()
+def evaluate(model, source, given, targets, device):
+    """For each target variable, transfer on held-out regions: accuracy (categorical) or cosine (continuous)."""
+    model.eval()
+    correct = {t: 0.0 for t in targets}; total = 0
+    kinds = {v.name: v.kind for v in model.variables}
+    for c0 in range(0, len(source.test), 4096):
+        idx = torch.tensor(source.test[c0:c0 + 4096], device=device)
+        values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
+        ctx = model.context(coords, nbr_coords, manifold_coords, nbr_values)
+        preds = model.infer(values, given, targets, ctx)
+        for t in targets:
+            if kinds[t] == "categorical":
+                correct[t] += (preds[t].argmax(-1) == values[t]).float().sum().item()
+            else:
+                correct[t] += F.cosine_similarity(preds[t], values[t], dim=-1).sum().item()
+        total += len(idx)
+    return {t: correct[t] / total for t in targets}
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Train a DeepEarth model from a config file.")
+    default_config = str(Path(__file__).with_name("deepcal.yaml"))   # core/train.py defaults to core/deepcal.yaml
+    ap.add_argument("config", nargs="?", default=default_config)
+    ap.add_argument("--device", default="cuda"); ap.add_argument("--steps", type=int, default=None)
+    ap.add_argument("--cache_dir", default=None)
+    ap.add_argument("--eval_ckpt", default=None, help="score an existing checkpoint (skip training)")
+    a = ap.parse_args()
+    config = yaml.safe_load(open(a.config))
+    if a.steps is not None:
+        config["training"]["steps"] = a.steps
+    if a.cache_dir is not None:
+        config["data"]["cache_dir"] = a.cache_dir
+    if a.eval_ckpt is not None:
+        config["_eval_ckpt"] = a.eval_ckpt
+    model, _ = train_and_evaluate(config, a.device)
+    if a.eval_ckpt is None:                              # don't overwrite the checkpoint we just scored
+        torch.save(model.state_dict(), Path(a.config).with_suffix(".pt"))
+
+
+if __name__ == "__main__":
+    main()

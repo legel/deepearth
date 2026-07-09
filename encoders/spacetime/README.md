@@ -34,7 +34,7 @@ Earth4D combines decomposed hash encoding with learned hash probing for state-of
 ```bash
 # Clone DeepEarth repository
 git clone https://github.com/legel/deepearth.git
-cd deepearth/encoders/xyzt
+cd deepearth/encoders/spacetime
 
 # Install dependencies
 bash install.sh
@@ -240,7 +240,7 @@ Earth4D enables research in:
 ## Project Structure
 
 ```
-encoders/xyzt/
+encoders/spacetime/
 ├── earth4d.py          # Main Earth4D encoder module
 ├── training.py         # Generic training infrastructure with Protocol classes
 ├── coordinates.py      # Coordinate transformation utilities
