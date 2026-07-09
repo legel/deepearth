@@ -1,9 +1,7 @@
-"""Train a DeepEarth model from a config file.
+"""Train a DeepEarth model from a config file (model, data source, variables, size, budget).
 
-The config names the model, points to a data source, lists the variables, and sets the model size and training
-budget. A data adapter (see ``data.py``) supplies the variable widths from the source. Evaluation reports, for
-each variable the model reconstructs, its transfer to held-out regions when conditioned only on the variables the
-config marks as widely available.
+A data adapter (``data.py``) supplies variable widths; evaluation reports each reconstructed variable's transfer
+to held-out regions when conditioned on the config's widely-available variables.
 
 Usage:  python train.py configs/deepcal.yaml [--device cuda] [--steps N]
 """
@@ -40,8 +38,7 @@ def build_variables(spec, dims):
 
 def train_and_evaluate(config, device):
     d = config["data"]
-    # Prepared-dataset cache: the glob + KD-tree neighbor build (~2.7 min) runs once and is reused by every run with
-    # the same data config, so experiments spin up in ~1s. Keyed by the data settings that change the assembled set.
+    # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reuse across runs; keyed by the data settings that change the assembled set.
     import hashlib, json
     keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km")}
     tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
@@ -84,9 +81,7 @@ def train_and_evaluate(config, device):
 
     t = config["training"]
     lr0, wd0 = t.get("lr", 3e-4), t.get("weight_decay", 3e-4)
-    # The learnable frequency params (per-axis scale/center and per-level resolution) get gradients ~100x larger and
-    # noisier than the rest (floor non-differentiability at coarse levels). Give them their own lower LR and their own
-    # gradient clip, so they neither over-drive nor -- via a shared clip_grad_norm -- starve the rest of the model.
+    # Learnable frequency params get much larger/noisier gradients than the rest, so give them their own lower LR and their own gradient clip.
     freq_keys = ("freq_log_scale", "freq_center", "per_level_scale")
     freq_lr = t.get("freq_lr", lr0 * 0.3)   # swept: 9e-5 (0.3x) beat 3e-5 (0.1x)
     freq_params = [p for n, p in model.named_parameters() if any(k in n for k in freq_keys)]
@@ -102,26 +97,20 @@ def train_and_evaluate(config, device):
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
     bf16 = t.get("precision", "fp32") == "bf16"
     hide_prob = t.get("hide_prob", 0.35)
-    # Grad clipping over all 1.09B params (99% of them hash-grid entries) is a large per-step reduction. The hash
-    # gradients are well-behaved; clip only the non-hash params, which is where instability actually comes from.
+    # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
                    if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid"))]
     hash_encoders = [mod for mod in model.modules() if hasattr(mod, "clamp_per_level_scale")]
     def clamp_res():                                     # keep learnable per-level resolutions in the safe (scale>0) region
         for he in hash_encoders:
             he.clamp_per_level_scale()
-    # Full-step compile + CUDA graphs (the validated ~2.4x lever): compile context + masked_loss into one graph, with
-    # the random reveal mask computed eagerly so the capture stays deterministic. `compile: processor` keeps the
-    # narrower Processor-only compile; anything else falsey stays eager.
-    # Compile modes: "graph"/"full" -> reduce-overhead (CUDA graphs, biggest win, but its private memory pool aliases
-    # live buffers on large actively-used models -> step-1 NaN, so reserve it for models that fit); "compiled"/True ->
-    # default mode (fusion without CUDA graphs, stable at any size). `processor` keeps the narrow Processor compile.
+    # Full-step compile (~2.4x): fuse context + masked_loss into one graph, random reveal mask computed eagerly so capture stays deterministic.
+    # Modes: "graph"/"full" -> reduce-overhead (CUDA graphs, biggest win but its pool can alias live buffers on large models); "compiled"/True -> default fusion (stable at any size); "processor" -> narrow Processor-only compile.
     _cm = m.get("compile")
     compile_full = _cm in (True, "full", "graph", "compiled")
     cuda_graphs = _cm in ("full", "graph")
     tc_mode = "reduce-overhead" if cuda_graphs else "default"
-    # bf16 covers the Processor and decoders (matmul-bound); the Earth4D hash stays fp32 (its coordinates must land in
-    # [-0.9, 0.9] and bf16 rounding near that edge reads out of bounds), so context() is fp32 and only masked_loss casts.
+    # bf16 covers the Processor and decoders; the Earth4D hash stays fp32 (bf16 rounding near the [-0.9,0.9] coord edge reads OOB), so context() is fp32 and only masked_loss casts.
     if sparse_hash and compile_full:
         def _sparse_step(values, observed, present, flat, coords, nbr, mani, nbrv):
             ctx = model.context_from_flat(flat, coords, nbr, mani, nbrv)
@@ -142,9 +131,7 @@ def train_and_evaluate(config, device):
         print(f"loaded checkpoint {eval_ckpt} for eval-only scoring", flush=True)
         steps = 0
     model.train(); t0 = time.time()
-    # Optional wall-clock training budget (seconds), measured from step 10 so startup/compile is excluded. Lets an
-    # autoresearch experiment run "up to N minutes" and compares architectures at equal time -- rewarding efficiency
-    # (science.md rule 4), not just raw step count. Absent -> train the full ``steps`` (the SoTA reproduction path).
+    # Optional wall-clock training budget (s), measured from step 10 (excludes startup/compile), so architectures compare at equal time. Absent -> train the full ``steps``.
     time_budget = t.get("time_budget_s")
     t_budget_start = None
     for step in range(steps):
@@ -178,8 +165,7 @@ def train_and_evaluate(config, device):
                 print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
             continue
         if compile_full:
-            # In CUDA-graph mode, tell the tree a new iteration is starting and clone the loss, so the graph's static
-            # buffers are never read after they are recycled (else the eager backward sees corrupted grads).
+            # CUDA-graph mode: mark the new iteration and clone the loss so the graph's recycled static buffers are never read afterward.
             if cuda_graphs:
                 torch.compiler.cudagraph_mark_step_begin()
             present = {n: (torch.rand(batch, device=device) > hide_prob) & observed[n] for n in model.names}
@@ -215,14 +201,8 @@ def train_and_evaluate(config, device):
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}", flush=True)
     scores["net_score"] = ns
     if config.get("mxm", True):
-        from deepearth.core import mxm
+        from deepearth.autoresearch import mxm
         print(mxm.format_matrix(mxm.reconstruction_matrix(model, source, source.test, device)), flush=True)
-    if model.diffusion_heads:
-        from deepearth.core import probabilistic
-        ps = probabilistic.probabilistic_scores(model, source, source.test, device)
-        print("probabilistic (diffusion): " + " | ".join(
-            f"{t} CRPS {s['crps']:.3f} spread/skill {s['spread_skill']:.2f} rank-flat {s['rank_flatness']:.2f}"
-            for t, s in ps.items()), flush=True)
     return model, scores
 
 

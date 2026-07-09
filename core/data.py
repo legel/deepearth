@@ -1,8 +1,7 @@
-"""Data adapters: load observations from a source into the arrays a training run needs.
+"""Data adapters: load a source into the arrays a run needs, behind a uniform interface.
 
-An adapter reads a specific data source and exposes a uniform interface: per-observation variable values, a mask
-of which variables are present, coordinates, a spatial hold-out split, and a nearest-neighbor index. Register a
-new source by adding an adapter and listing its name in a config.
+Each adapter exposes per-observation variable values, a presence mask, coordinates, a hold-out split, and a
+nearest-neighbor index. Register a new source by adding an adapter and naming it in a config.
 """
 from __future__ import annotations
 import csv, glob
@@ -38,8 +37,7 @@ class California:
 
     _traits = ["plant_type", "growth_rate", "seasonality", "sun", "water", "soil_drainage", "ease_of_care", "form"]
 
-    # attributes that fully define the assembled dataset (so a prepared cache can restore it without the ~2.7 min
-    # glob + KD-tree neighbor build). Tensors are saved on CPU and moved to ``device`` on load.
+    # attributes that fully define the assembled dataset, so a prepared cache restores it without the glob + KD-tree build (tensors saved on CPU, moved to ``device`` on load)
     _PREPARED_KEYS = ("n", "n_classes", "reference_latitude_deg", "n_neighbors", "holdout", "time_axis", "_time_km",
                       "dims", "trait_classes", "group_names", "binomial", "_tip_labels", "train", "test",
                       "_train_bool", "time_span_days", "time_cut",
@@ -53,9 +51,7 @@ class California:
             self._load_prepared(prepared, device); return
         cache = Path(cache_dir); dev = self.device = device; self.n_neighbors = n_neighbors
         self.reference_latitude_deg = 37.0
-        # Observation time (event date). When off, the time coordinate is a constant 0 (space-only, the historical
-        # default). When on, each observation's date is normalized to [0, 1] over the dataset's time span and placed
-        # in coords[:, 3], activating the Earth4D temporal axis (absolute) and the neighbor time-offset (relative).
+        # Observation time: off -> coord[:,3] is a constant 0 (space-only); on -> date normalized to [0,1] over the span, activating the Earth4D temporal axis and neighbor time-offset.
         self.time_axis = time_axis
         self._time_km = float(time_km)                     # normalized-time -> km weight for the neighbor KD-tree
         self._cache = cache
@@ -98,22 +94,17 @@ class California:
         self.coords = torch.tensor(np.stack([lat, lon, elev, tnorm], 1), device=dev)
         self.dims = {"vision_dino": dino.shape[1], "vision_bio": bio.shape[1], "phylo": phylo.shape[1]}
 
-        # Optional subset (a fast-benchmark lever): keep only observations inside a bounding box or belonging to a
-        # set of families, applied BEFORE the split + neighbor index so both build on the reduced set. Per-observation
-        # arrays are reindexed to the kept rows; per-species arrays (phylo, traits, species_text, class_group) are
-        # indexed through ``cls`` and so remain full-length and correct.
+        # Optional subset (bbox and/or families), applied BEFORE the split + neighbor index. Per-observation arrays are reindexed; per-species arrays stay full-length (indexed through ``cls``).
         if subset:
             gid, cls, lat, lon, elev = self._apply_subset(subset, gid, cls, lat, lon, elev, dev)
         self.gbifID = gid                                  # per-observation GBIF id (post-subset order), for I/O bundles
         self.binomial = vocab["binomial"]                  # species-local index -> binomial name (e.g. "Quercus agrifolia")
 
-        # hold-out split. "spatial" hides whole 0.5 degree cells (transfer to unseen places); "phylo" hides whole
-        # families (transfer to unseen clades). Whichever is chosen, its members never appear in training.
+        # hold-out split: "spatial" hides whole 0.5deg cells (unseen places); "phylo" hides whole families (unseen clades). Held-out members never appear in training.
         self.holdout = holdout
         rng = np.random.default_rng(0)
         if holdout == "temporal":
-            # forecasting split: the LATEST fraction of observations (by event time) is held out, so the test set
-            # lies strictly in the future of every training observation. Requires time_axis=True.
+            # forecasting split: the latest fraction (by event time) is held out, so test lies strictly in the future of every train obs. Requires time_axis=True.
             if not self.time_axis:
                 raise ValueError("holdout='temporal' requires time_axis=True")
             tnorm = self.coords[:, 3].cpu().numpy()
@@ -140,8 +131,7 @@ class California:
             self._save_prepared(prepared)
 
     def _save_prepared(self, path: str) -> None:
-        """Pickle the fully-assembled dataset (tensors on CPU) so a later run restores it in ~1s instead of rebuilding
-        the glob + KD-tree neighbor index. Includes the extra modalities and the parsed tree buffers."""
+        """Pickle the assembled dataset (tensors on CPU, plus extra modalities and tree buffers) for ~1s reload."""
         blob = {}
         for k in self._PREPARED_KEYS:
             v = getattr(self, k, None)
@@ -176,16 +166,11 @@ class California:
         return str(cands[0])
 
     def _load_event_time(self, gid):
-        """Per-observation event time normalized to [0, 1] over the dataset span, aligned to ``gid``.
+        """Per-observation event time min-max normalized to [0,1] over the dataset span, aligned to ``gid``.
 
-        Reads ``eventDate`` (falling back to year/month/day) from the observations metadata parquet, keyed by
-        gbifID. Times are converted to days-since-epoch, then min-max normalized so the earliest observation is 0
-        and the latest is 1 — the units the Earth4D absolute temporal axis expects (it maps [0,1] -> [-1,1]).
-        Observations with no parseable date take the dataset's median time (a neutral value). ``self.time_span_days``
-        records the physical span so a relative time window can be set in the same normalized units
-        (1.0 == the whole span; e.g. 1 day == 1/span)."""
-        # Prefer a lightweight precomputed sidecar (gbifID -> days-since-epoch), so machines without a parquet
-        # engine still get the time axis. Fall back to reading the parquet with pandas.
+        Reads ``eventDate`` (falling back to year/month/day) keyed by gbifID; unparseable dates take the median.
+        ``self.time_span_days`` records the physical span so a relative time window uses the same normalized units."""
+        # Prefer a precomputed sidecar (gbifID -> days-since-epoch) so parquet-less machines still get the time axis; else read the parquet with pandas.
         sidecar = Path(self._cache) / "gbif_eventtime.npz"
         if sidecar.exists():
             z = np.load(sidecar)
@@ -219,11 +204,8 @@ class California:
         return np.clip(tnorm, 0.0, 1.0).astype(np.float32)
 
     def _load_tree(self, cache):
-        """Parse the dated Newick tree and align it to the model's species, for tree-structured message passing.
-
-        Returns the buffer dict from :func:`phylo_tree.build_tree_buffers` (leaves in model-species order), or
-        ``None`` if the tree file is absent. The buffers are static topology; the species-graph operator registers
-        them as tensors. Independent of the observation subset/split (the tree is over the full species set)."""
+        """Parse the dated Newick tree aligned to the model's species (leaves in species order) for message passing;
+        returns :func:`build_tree_buffers`' static-topology dict, or ``None`` if absent. Independent of subset/split."""
         nwk = cache / "ca_subtree.dated.nwk"
         if not nwk.exists():
             return None
@@ -231,10 +213,9 @@ class California:
         return build_tree_buffers(str(nwk), self._tip_labels)
 
     def _apply_subset(self, subset, gid, cls, lat, lon, elev, dev):
-        """Restrict to a bounding box (``{"bbox": [lat0, lat1, lon0, lon1]}``) and/or a set of families
-        (``{"families": [...]}``, matched through ``class_group``/``group_names``). Reindexes every per-observation
-        array (numpy locals + the ``self.*`` tensors, plus any already-loaded ``self.extra`` modalities) to the kept
-        rows and resets ``self.n``; returns the reindexed numpy locals the split + modality loader still consume."""
+        """Restrict to a bbox (``{"bbox": [lat0,lat1,lon0,lon1]}``) and/or families (``{"families": [...]}``),
+        reindexing every per-observation array (numpy locals, ``self.*`` tensors, ``self.extra``) and resetting
+        ``self.n``; returns the reindexed numpy locals the split + modality loader still consume."""
         keep = np.ones(len(gid), bool)
         if subset.get("bbox") is not None:
             lat0, lat1, lon0, lon1 = subset["bbox"]
@@ -258,9 +239,8 @@ class California:
         return gid, cls, lat, lon, elev
 
     def _add_modality(self, name, ids, rows, gid, dev, zscore=False, normalize=False, valid=None):
-        """Align a feature matrix (keyed by its own gbifID ``ids``) to the observation order and store it with a
-        presence mask. ``zscore`` standardizes per channel (for physical series); ``normalize`` unit-scales each
-        row (for embedding vectors); ``valid`` is an optional per-source-row mask of which rows carry real data."""
+        """Align a feature matrix (keyed by its own gbifID ``ids``) to observation order and store it with a presence
+        mask. ``zscore`` standardizes per channel; ``normalize`` unit-scales each row; ``valid`` marks real-data rows."""
         rows = np.nan_to_num(rows.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         if valid is None:
             valid = np.ones(len(ids), bool)
@@ -299,17 +279,14 @@ class California:
 
     def _frame(self, idx):
         lat = self.lat.cpu().numpy()[idx]; lon = self.lon.cpu().numpy()[idx]; elev = self.elev.cpu().numpy()[idx]
-        # Neighbor selection is spatial by default; with the time axis on, a modest ``time_km`` weight makes it
-        # spatio-temporal (space still dominates, but recency breaks ties) so neighbors carry real time offsets.
+        # Neighbor selection is spatial by default; with the time axis on, a modest ``time_km`` weight makes it spatio-temporal (space dominates, recency breaks ties).
         t = self.coords[:, 3].cpu().numpy()[idx] * self._time_km if self.time_axis else np.zeros(len(idx), np.float32)
         return np.stack([lat * 111.0, lon * 111.0 * np.cos(np.radians(self.reference_latitude_deg)), elev / 50.0,
                          t], 1)
 
     def _build_neighbors(self):
         tree = cKDTree(self._frame(self.train))
-        # Exclude self by GLOBAL index, not KDTree column 0: with duplicate coordinates a train obs's own row can land
-        # past column 0, leaking its own identity/features into its context. Query a few extra, push any self entry to
-        # the end (stable sort on the self-mask), then keep the first n_neighbors.
+        # Exclude self by GLOBAL index (duplicate coords can push self past column 0, leaking its own features): query a few extra, stable-sort self to the end, keep the first n_neighbors.
         _, a = tree.query(self._frame(self.train), k=self.n_neighbors + 4); cand = self.train[a]
         is_self = cand == self.train[:, None]
         cand = np.take_along_axis(cand, np.argsort(is_self, axis=1, kind="stable"), axis=1)
