@@ -1,6 +1,6 @@
 # autoresearch
 
-Autonomous, hill-climbing research on the DeepCal model. You edit the model, train for a fixed budget, score, keep
+Autonomous, hill-climbing research on the DeepEarth model. You edit the model, train for a fixed budget, score, keep
 the change if the score improved, and repeat — indefinitely.
 
 **Objective:** maximize the single **`net_score`** printed by `evaluate.py` — the unweighted mean of the frozen
@@ -13,9 +13,7 @@ architecture, encoders, fusion, operators, optimizer/schedule, and hyperparamete
 **What you must NOT touch (fixed harness / ground truth):** `prepare.py` (data + kernel setup) and `evaluate.py`
 (the benchmark suite and scoring). Never edit scoring to inflate a result; improve the model.
 
-**Rules of the science:** every change must respect `science.md` — including that **all data is always included**
-(rule 18) and that the codebase stays **minimal in files and tokens** (rule 19). Consult it for the architecture
-constraints; do not re-derive the ecology here.
+**Rules of the science:** every change must respect `science.md`.
 
 ## The loop
 

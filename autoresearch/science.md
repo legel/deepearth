@@ -1,36 +1,23 @@
-# DeepEarth — Science
+# Scientific Principles of DeepEarth
 
-DeepEarth is a **self-supervised multi-modal deep learning architecture designed for ecological simulation and
-optimization**.
+DeepEarth is a **self-supervised multi-modal deep learning architecture for ecological simulation and optimization**.
 
-The latest model (targeting **v1** maturity) features two innovative methods of encoding, processing, and decoding
-key data modalities:
+The model features two innovations in learning representations:
 
-- **I. Earth4D SpaceTime GNN** — learnable (*x*, *y*, *z*, *t*) positional encodings that are fused with all
-  observed data.
-- **II. Phylogenomic Species GNN** — learnable per-species encodings, topologically based on evolution's tree of
-  life.
+- **I. Earth4D Space-Time GNN** — learnable global positional encodings for real world observations.
+- **II. Phylogenomic Species GNN** — learnable biological encodings, based on evolutionary tree of life.
 
-The model is designed to become a **causal forecaster of high-value ecological metrics**, e.g. simulate plant
-growth and flowering.
+The model is a **causal forecaster**, e.g. predictor of plant growth and flowering.
 
-Beyond the innovations above, DeepEarth is being developed based upon the following key foundations:
+DeepEarth is based on the following foundations:
 
-- **I. Pre-trained Vision Encoders: [DINOv3][dinov3], [CLAY v1.5][clay]** — deep embeddings of iNaturalist, NAIP
-  aerial, and Sentinel-2 imagery.
-- **II. Graph Neural Networks: [GraphCast][graphcast] + [GenCast][gencast]** — causal spatio-temporal simulation
-  methods from Google DeepMind.
-- **III. Multi-Modal Joint Embedding: [JEPA][jepa] + [PerceiverIO][perceiverio]** — inductive learning of joint
-  probability distributions across all data.
+- **I. Vision Encoders: [DINOv3][dinov3], [CLAY v1.5][clay]** — embedding iNaturalist, NAIP, Sentinel-2 imagery.
+- **II. Graph Neural Networks: [GraphCast][graphcast], [GenCast][gencast]** — causal spatio-temporal simulators.
+- **III. Multi-Modal Fusion: [JEPA][jepa], [PerceiverIO][perceiverio]** — joint probability distribution embedding.
 
-A core principle of DeepEarth is that the model **learns through masked autoencoding**. We see great promise in
-following **JEPA** by masking and reconstructing *embeddings*. For example, one core benchmark of DeepEarth is the
-capacity to **"imagine" DINOv3 vision embeddings**, given a context window that describes an environment.
+DeepEarth **learns through masked autoencoding**, including by masking and reconstructing *embeddings*. 
 
-The exact architectural specifications, computational design, machine learning techniques, etc. are **flexible**, as
-long as certain constraints are met.
-
-## Rules and core principles
+## Rules and guidelines for future development
 
 1. **Earth4D must learn the spatio-temporal distributions of all data**, through a causal auto-regressive model
    trained to forecast future states from past states.
@@ -62,14 +49,13 @@ long as certain constraints are met.
 14. **Each token *t* must contain** Earth4D space-time positional encoding (if it exists), phylogenomic encoding (if
     it exists), plus modality-specific encoding (e.g. DINOv3 vision embedding of an iNaturalist photo), and
     data-modality type encoding (e.g. low-dimensional `nn.Embedding` learnable by data-modality type, implicitly
-    communicating "DINOv3 embedding of iNaturalist photo"), whereas in this example, the token *t*'s Earth4D
-    encoding would be revealing "at GPS coordinate (lat, lon), elevation X.X m, timestamp M/D/YY HH:MM:SS", and the
-    token's phylogenomic encoding would be revealing "observation of Species X, which is similar to Species Y, Z, ...
+    communicating "DINOv3 embedding of iNaturalist photo"). In this example, the token *t*'s Earth4D
+    encoding would be revealing "at GPS coordinate (lat, lon), elevation X.X m, timestamp M/D/YY HH:MM:SS", and 
+    phylogenomic encoding would be revealing "observation of Species X, which is similar to Species Y, Z, ...
     in dimensions A, B, ...".
-15. Similar to or exactly like **PerceiverIO**, DeepEarth must be capable of simply masking large parts of its
-    tokens, as a method for querying that token. The model must be capable of considering all tokens in the context
-    window, attending to all information in the context window. It must also have **"long-term memory"** it can
-    access.
+15. Similar to **PerceiverIO**, DeepEarth must be capable of simply masking large parts of its tokens, as a method 
+    for querying that token. The model must be capable of considering all tokens in the context window, attending 
+    to all information in the context window. It must also have **"long-term memory"** it can access. 
 16. Mathematically and statistically, DeepEarth must retain a learning representation that is capable of
     **simultaneously modeling the joint distributions of all of these variables**, and how these precisely overlap,
     project, covary, and operate with more or less dependence. Generative multi-modal models must be inspired by
