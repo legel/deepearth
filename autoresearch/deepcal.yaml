@@ -11,6 +11,7 @@ model:
   n_latents: 24
   n_layers: 4
   capacity: 16                       # space-time encoder resolution (hash levels)
+  rounds: 2                          # science.md rule 22: iterative joint decoding (K refinement rounds w/ write-back), a multi-modal diffusion vs one-shot. write_back/learned_mask default on for rounds>1.
   sparse_hash: true                  # sparse-Adam + precompute for the absolute encoder: bit-identical training, ~12% faster (0.758 vs 0.747). Costs ~+2GB VRAM (precompute cache) — set false to train the absolute hash with the dense optimizer if VRAM-bound.
   relative_window: [8000, 8000, 300, 130]   # neighbor-offset half-window: north_m, east_m, up_m, days
   manifolds:                          # vector subspaces treated like space and time
