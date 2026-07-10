@@ -18,6 +18,9 @@ model:
   relative_window: [8000, 8000, 300, 130]   # neighbor-offset half-window: north_m, east_m, up_m, days
   manifolds:                          # vector subspaces treated like space and time
     biological: phylo                 # the biological subspace uses the evolutionary-position vector's width
+  loss_weights:                       # science.md rule 18: up-weight reconstruction of variables tied to non-maxed benchmarks (vision_dino->A6/loo_vision, phylo->A5); maxed benchmarks have margin.
+    vision_dino: 2.0
+    phylo: 2.0
   species_graph:                      # phylogenomic species GNN (science.md rules 7-12): refine per-species state so an obs of species A updates its relatives B,C,...; identity is read from the refined table
     variable: identity
     operator: ou-attention            # distance-biased attention over the E1 phylo-distance matrix (2141 species, dense)

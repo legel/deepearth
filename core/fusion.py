@@ -134,8 +134,10 @@ class DeepEarth(nn.Module):
         feedback_detach: bool = False,
         flex_attention: bool = False,
         decoder_hidden: Optional[int] = None,
+        loss_weights: Optional[Dict[str, float]] = None,
     ) -> None:
         super().__init__()
+        self.loss_weights = loss_weights or {}
         self.variables = list(variables)
         self.names = [v.name for v in self.variables]
         self.d_model = d_model
@@ -542,7 +544,8 @@ class DeepEarth(nn.Module):
                 err = self.diffusion_heads[v.name].loss(values[v.name], self._pooled(z, v.name), reduce=False)
             else:
                 err = self._reconstruction_error(v.name, self.decode(z, v.name), values[v.name])
-            loss = loss + (err * w).sum() / w.sum().clamp_min(1.0)
+            # Per-variable loss weight (science.md rule 18): focus reconstruction where benchmarks have headroom.
+            loss = loss + self.loss_weights.get(v.name, 1.0) * (err * w).sum() / w.sum().clamp_min(1.0)
             n_terms += 1
         return loss / max(n_terms, 1)
 
