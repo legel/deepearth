@@ -133,6 +133,7 @@ class DeepEarth(nn.Module):
         learned_mask: Optional[bool] = None,
         feedback_detach: bool = False,
         flex_attention: bool = False,
+        decoder_hidden: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.variables = list(variables)
@@ -141,17 +142,22 @@ class DeepEarth(nn.Module):
 
         self.encoders = nn.ModuleDict()
         self.decoders = nn.ModuleDict()
+        # Interface decoder factory (science.md rule 23: rich interface decoders reading from the latent field).
+        # decoder_hidden=None -> a single Linear (lean); set -> a 1-hidden-layer MLP for richer reconstruction.
+        def _dec(out_dim):
+            return (nn.Sequential(nn.Linear(d_model, decoder_hidden), nn.GELU(), nn.Linear(decoder_hidden, out_dim))
+                    if decoder_hidden else nn.Linear(d_model, out_dim))
         for v in self.variables:
             if v.kind == "continuous":
                 self.encoders[v.name] = nn.Linear(v.dim, d_model)
                 if v.reconstruct:
-                    self.decoders[v.name] = nn.Linear(d_model, v.dim)
+                    self.decoders[v.name] = _dec(v.dim)
             elif v.kind == "categorical":
                 if v.name == species_variable and species_embedding is not None:
                     continue          # species tokens and logits use the refined species graph, not these dead heads
                 self.encoders[v.name] = nn.Embedding(v.num_classes, d_model)
                 if v.reconstruct:
-                    self.decoders[v.name] = nn.Linear(d_model, v.num_classes)
+                    self.decoders[v.name] = _dec(v.num_classes)
             else:
                 raise ValueError(f"unknown variable kind {v.kind!r} for {v.name!r}")
         self.type_emb = nn.Parameter(torch.randn(len(self.variables), d_model) * 0.02)
