@@ -135,9 +135,13 @@ class DeepEarth(nn.Module):
         flex_attention: bool = False,
         decoder_hidden: Optional[int] = None,
         loss_weights: Optional[Dict[str, float]] = None,
+        contrastive_weight: float = 0.0,
+        contrastive_vars: Optional[Sequence[str]] = None,
     ) -> None:
         super().__init__()
         self.loss_weights = loss_weights or {}
+        self.contrastive_weight = contrastive_weight
+        self.contrastive_vars = set(contrastive_vars or ())
         self.variables = list(variables)
         self.names = [v.name for v in self.variables]
         self.d_model = d_model
@@ -543,7 +547,15 @@ class DeepEarth(nn.Module):
             if v.name in self.diffusion_heads:
                 err = self.diffusion_heads[v.name].loss(values[v.name], self._pooled(z, v.name), reduce=False)
             else:
-                err = self._reconstruction_error(v.name, self.decode(z, v.name), values[v.name])
+                pred = self.decode(z, v.name)
+                err = self._reconstruction_error(v.name, pred, values[v.name])
+                # Cross-modal contrastive (JEPA / rule 16): the predicted continuous embedding must retrieve its own
+                # target against the batch (InfoNCE) -- a global signal point-wise cosine cannot give.
+                if self.contrastive_weight > 0.0 and v.name in self.contrastive_vars and v.kind == "continuous":
+                    pn = F.normalize(pred.float(), dim=-1); tn = F.normalize(values[v.name].float(), dim=-1)
+                    logits = pn @ tn.t() / 0.07
+                    loss = loss + self.contrastive_weight * F.cross_entropy(
+                        logits, torch.arange(logits.shape[0], device=logits.device))
             # Per-variable loss weight (science.md rule 18): focus reconstruction where benchmarks have headroom.
             loss = loss + self.loss_weights.get(v.name, 1.0) * (err * w).sum() / w.sum().clamp_min(1.0)
             n_terms += 1
