@@ -137,11 +137,12 @@ def train_and_evaluate(config, device):
     # Optional wall-clock training budget (s), measured from step 10 (excludes startup/compile), so architectures compare at equal time. Absent -> train the full ``steps``.
     time_budget = t.get("time_budget_s")
     t_budget_start = None
+    steps_done = steps                                   # actual steps run (the budget usually stops us well short of `steps`)
     for step in range(steps):
         if step == 10:
             t_budget_start = time.time()
         if time_budget is not None and t_budget_start is not None and (time.time() - t_budget_start) >= time_budget:
-            print(f"  [time budget {time_budget}s reached at step {step}]", flush=True); break
+            print(f"  [time budget {time_budget}s reached at step {step}]", flush=True); steps_done = step; break
         idx = source.train_index[torch.randint(0, len(source.train_index), (batch,), device=device)]
         values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
         if sparse_hash:
@@ -191,7 +192,7 @@ def train_and_evaluate(config, device):
         opt.step(); clamp_res(); sched.step()
         if step % 500 == 0:
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
-    print(f"trained {steps} steps in {time.time()-t0:.0f}s", flush=True)
+    print(f"trained {steps_done} steps in {time.time()-t0:.0f}s", flush=True)
 
     given = config.get("condition_on", [])
     targets = [v.name for v in variables if v.reconstruct and v.name not in given]
@@ -203,6 +204,8 @@ def train_and_evaluate(config, device):
     print(ev.format_benchmarks(raw), flush=True)
     ns = ev.net_score(raw)
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if device.startswith("cuda") else 0.0
+    if config.get("_tag"):
+        print(f"tag:              {config['_tag']}", flush=True)   # parseable run label (matches --tag), so run.log self-identifies
     print(f"net_score:        {ns:.6f}", flush=True)          # parseable north star
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}", flush=True)
     scores["net_score"] = ns
@@ -244,10 +247,16 @@ def main():
         config["training"]["steps"] = a.steps
     if a.cache_dir is not None:
         config["data"]["cache_dir"] = a.cache_dir
+    # Portability: a relative cache_dir is resolved against the repo root (where prepare.py downloads the cache), so a fresh clone on any device works without editing absolute paths.
+    _cd = config["data"].get("cache_dir")
+    if _cd and not os.path.isabs(_cd):
+        config["data"]["cache_dir"] = str(Path(__file__).resolve().parents[1] / _cd)
     if a.eval_ckpt is not None:
         config["_eval_ckpt"] = a.eval_ckpt
     if a.time_budget is not None:
         config["training"]["time_budget_s"] = a.time_budget
+    if a.tag is not None:
+        config["_tag"] = a.tag
     model, _ = train_and_evaluate(config, a.device)
     if a.save and a.eval_ckpt is None:
         torch.save(model.state_dict(), Path(a.config).with_suffix(".pt"))

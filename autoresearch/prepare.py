@@ -1,7 +1,9 @@
 """One-time setup for DeepCal autoresearch. Idempotent: safe to run repeatedly.
 
-    python -m deepearth.core.prepare              # uses core/deepcal.yaml
-    python -m deepearth.core.prepare --config core/deepcal.yaml
+    python -m deepearth.autoresearch.prepare                              # uses autoresearch/deepcal.yaml
+    python -m deepearth.autoresearch.prepare --config autoresearch/deepcal.yaml
+
+Run from the repo's PARENT directory (the one containing ``deepearth/``) so the ``deepearth`` package imports.
 
 It ensures, in order:
   1. DATA   -- the fully pre-processed DeepCal cache (embeddings, tokens, tree, splits) is present under
@@ -136,6 +138,11 @@ def ensure_test_io(prepared: str, device: str) -> None:
 
 
 def main():
+    # Line-buffer stdout so progress is visible in real time even under `> prepare.log 2>&1` (block buffering otherwise hides every step until exit — the run looks hung during the ~2-3 min cache build).
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
     ap = argparse.ArgumentParser(description="One-time DeepCal setup (data, kernel, prepared cache, test I/O).")
     ap.add_argument("--config", default=str(Path(__file__).with_name("deepcal.yaml")))
     ap.add_argument("--device", default="cuda")
@@ -143,7 +150,11 @@ def main():
     config = yaml.safe_load(open(a.config))
     print(f"=== DeepCal prepare ({config.get('name', 'DeepCal')}) ===")
     ensure_kernel()
-    data_dir = resolve_data_dir(config["data"].get("cache_dir"))
+    # Portability: resolve a relative cache_dir against the repo root, so a from-scratch download lands in-repo on any device.
+    cache_dir_cfg = config["data"].get("cache_dir")
+    if cache_dir_cfg and not os.path.isabs(cache_dir_cfg):
+        cache_dir_cfg = str(REPO / cache_dir_cfg)
+    data_dir = resolve_data_dir(cache_dir_cfg)
     prepared = ensure_prepared(config, data_dir, a.device)
     ensure_test_io(prepared, a.device)
     print("=== prepare complete: ready for `python -m deepearth.autoresearch.train` and the autoresearch loop ===")
