@@ -13,8 +13,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("hash_encode_forward_precomputed", &hash_encode_forward_precomputed, "Forward with precomputed indices (CUDA)");
     m.def("hash_encode_backward_precomputed", &hash_encode_backward_precomputed, "Backward with precomputed indices (CUDA)");
 
-    // Optimized kernels for small batch training
-    m.def("hash_encode_backward_sgd_fused", &hash_encode_backward_sgd_fused, "Fused backward + SGD update (CUDA)");
-    m.def("hash_encode_forward_precomputed_multibatch", &hash_encode_forward_precomputed_multibatch, "Forward for multiple batches in single kernel (CUDA)");
+    // Sparse Adam update (touched embeddings only)
     m.def("hash_encode_adam_sparse_update", &hash_encode_adam_sparse_update, "Sparse Adam update for touched embeddings only (CUDA)");
 }

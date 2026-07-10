@@ -30,13 +30,12 @@ nvcc_flags = [
 ]
 
 # Define the extension
-# Split files: hashencoder.cu (core), precompute.cu (fixed coord optimization)
+# Single synthesized CUDA file: hashencoder.cu holds both the standard and precomputed kernels
 ext_modules = [
     CUDAExtension(
         name='hashencoder_cuda',
         sources=[
             os.path.join(src_dir, 'hashencoder.cu'),
-            os.path.join(src_dir, 'precompute.cu'),
             os.path.join(src_dir, 'bindings.cpp'),
         ],
         extra_compile_args={

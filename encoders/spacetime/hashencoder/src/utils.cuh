@@ -32,8 +32,7 @@
 // ATOMIC ADD FOR HALF PRECISION
 // =============================================================================
 
-// requires CUDA >= 10 and ARCH >= 70
-// this is very slow compared to float or __half2, do not use!
+// half atomicAdd (CUDA>=10, ARCH>=70; slow vs float/__half2)
 static inline __device__ at::Half atomicAdd(at::Half *address, at::Half val) {
     return atomicAdd(reinterpret_cast<__half*>(address), val);
 }
@@ -134,7 +133,50 @@ __device__ uint64_t get_grid_index(const uint32_t pos_grid[D]) {
     return index;
 }
 
-// Learned hash probing version of get_grid_index
+// Shared row resolver: maps a stored/computed (h1,h2) pair to the embedding row (idx*C+ch). h2==0xFFFFFFFF is the
+// direct-index sentinel (h1 already reduced mod hashmap_size); otherwise probe with the learned codebook. Used by
+// BOTH get_grid_index_learned (standard path) and the precomputed forward so the two paths cannot drift.
+__device__ inline uint32_t resolve_index(
+    const uint32_t h1, const uint32_t h2, const int* probe_indices,
+    const uint32_t level, const uint32_t N_p, const uint32_t N_c,
+    const uint32_t hashmap_size, const uint32_t ch, const uint32_t C
+) {
+    if (h2 == 0xFFFFFFFFu) return h1 * C + ch;                       // direct index (fits in hashmap)
+    if (probe_indices != nullptr && N_c > 0) {                      // learned probing
+        uint32_t h2_mod = h2 % N_c;
+        uint32_t probe = (uint32_t)probe_indices[(uint64_t)level * N_c + h2_mod];
+        uint64_t index = (uint64_t)N_p * h1 + probe;
+        return (uint32_t)((index % hashmap_size) * C + ch);
+    }
+    return (uint32_t)(((uint64_t)h1 % hashmap_size) * C + ch);      // plain hashing (no probing)
+}
+
+// Compute the stored discrete hashes (h1,h2) for a cell corner: direct index + sentinel when the grid fits, otherwise
+// the twin fast-hashes. This is the SAME convention the precompute buffers use, so the standard and precomputed paths
+// share one hashing rule. h2 is raw (resolve_index applies % N_c).
+template <uint32_t D>
+__device__ inline void compute_hashes(
+    const uint32_t pos_grid[D], const uint32_t* resolution, const uint32_t hashmap_size,
+    const uint32_t N_f, uint32_t& h1, uint32_t& h2
+) {
+    uint64_t stride = 1;
+    uint64_t index = 0;
+    #pragma unroll
+    for (uint32_t d = 0; d < D; d++) {
+        index += (uint64_t)pos_grid[d] * stride;
+        stride *= resolution[d];
+    }
+    if (stride > hashmap_size) {
+        h1 = (uint32_t)(fast_hash<D>(pos_grid) % N_f);
+        h2 = (uint32_t)fast_hash2<D>(pos_grid);      // raw; resolve_index applies % N_c
+    } else {
+        h1 = (uint32_t)(index % hashmap_size);
+        h2 = 0xFFFFFFFFu;                            // direct sentinel
+    }
+}
+
+// Learned hash probing version of get_grid_index. Computes (h1,h2) then defers to resolve_index so both the standard
+// and precomputed forward share one row-resolution rule.
 template <uint32_t D, uint32_t C>
 __device__ uint32_t get_grid_index_learned(
     const uint32_t ch,
@@ -147,27 +189,9 @@ __device__ uint32_t get_grid_index_learned(
     const uint32_t pos_grid[D],
     const int* probe_indices  // Shape: (L, N_c)
 ) {
-    uint64_t stride = 1;
-    uint64_t index = 0;
-
-    // Try direct indexing first (no hashing needed)
-    #pragma unroll
-    for (uint32_t d = 0; d < D; d++) {
-        index += (uint64_t)pos_grid[d] * stride;
-        stride *= resolution[d];
-    }
-
-    // Use learned hash probing if grid doesn't fit
-    if (stride > hashmap_size) {
-        uint64_t h1 = fast_hash<D>(pos_grid) % N_f;
-        uint64_t h2 = fast_hash2<D>(pos_grid) % N_c;
-        uint64_t probe_idx = (uint64_t)level * N_c + h2;
-        int probe_raw = probe_indices[probe_idx];
-        uint32_t probe = (uint32_t)probe_raw;
-        index = (uint64_t)N_p * h1 + probe;
-    }
-
-    return (uint32_t)((index % hashmap_size) * C + ch);
+    uint32_t h1, h2;
+    compute_hashes<D>(pos_grid, resolution, hashmap_size, N_f, h1, h2);
+    return resolve_index(h1, h2, probe_indices, level, N_p, N_c, hashmap_size, ch, C);
 }
 
 // =============================================================================

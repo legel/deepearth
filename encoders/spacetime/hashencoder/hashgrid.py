@@ -240,19 +240,23 @@ _hash_encode_cuda.register_autograd(_hash_encode_cuda_backward, setup_context=_h
 
 class _hash_encode_precomputed(Function):
     """
-    Hash encoding using precomputed indices and weights.
+    Non-compromising precomputed hash encoding.
 
-    For fixed coordinate sets, this avoids recomputing hash indices and
-    interpolation weights every forward pass. Only embedding lookups change.
-
-    With learned probing, uses soft gradients (matching standard backward) to enable
-    gradient flow to index_logits.
+    The discrete structure (per-corner hashes h1/h2 and the integer base cell pos_grid) is cached; the continuous
+    interpolation terms (weights, pos_deriv, dy_dx) are RECOMPUTED fresh from the CURRENT per_level_scale every forward
+    pass. This makes the precomputed forward+backward bit-identical to the standard path at the current resolution, so
+    all three learnable groups train: embeddings (sparse scatter), index_logits (soft probing gradient) and
+    per_level_scale (resolution) -- the last via the same Python formula as the standard backward, from the freshly
+    recomputed dy_dx.
     """
     @staticmethod
     @custom_fwd(cast_inputs=torch.half, device_type='cuda')
-    def forward(ctx, embeddings, offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits, B, D, C, L, N_p, N_c):
+    def forward(ctx, inputs, embeddings, offsets, per_level_scale, base_resolution, precomp_h1, precomp_h2, precomp_pos_grid, probe_indices, index_logits, B, D, C, L, N_f, N_p, N_c):
+        inputs = inputs.contiguous()
         embeddings = embeddings.contiguous()
         offsets = offsets.contiguous()
+        per_level_scale = per_level_scale.reshape(L, D).contiguous()      # [L, D] log2 resolutions
+        base_resolution = base_resolution.contiguous()
 
         if probe_indices is not None:
             probe_indices = probe_indices.contiguous()
@@ -264,50 +268,74 @@ class _hash_encode_precomputed(Function):
         else:
             index_logits = torch.empty(0, dtype=torch.float32, device=embeddings.device)
 
+        calc_grad_inputs = bool(ctx.needs_input_grad[3])                  # dy_dx needed to learn per_level_scale
+        n_corners = 1 << D
         outputs = torch.empty(L, B, C, device=embeddings.device, dtype=embeddings.dtype)
+        weights = torch.empty(B, L, n_corners, device=embeddings.device, dtype=torch.float32)   # recomputed fresh
+        h1_used = torch.empty(B, L, n_corners, device=embeddings.device, dtype=torch.int32)      # hashes actually used
+        h2_used = torch.empty(B, L, n_corners, device=embeddings.device, dtype=torch.int32)
+        if calc_grad_inputs:
+            dy_dx = torch.empty(B, L * D * C, device=embeddings.device, dtype=embeddings.dtype)
+        else:
+            dy_dx = torch.empty(1, device=embeddings.device, dtype=embeddings.dtype)
 
         _backend.hash_encode_forward_precomputed(
-            embeddings, offsets,
-            precomp_h1, precomp_h2, precomp_weights,
-            probe_indices, outputs,
-            B, D, C, L, N_p, N_c
+            inputs, embeddings, offsets,
+            precomp_h1, precomp_h2, precomp_pos_grid,
+            per_level_scale, base_resolution, probe_indices,
+            outputs, h1_used, h2_used, weights, dy_dx, calc_grad_inputs,
+            B, D, C, L, N_f, N_p, N_c
         )
 
         outputs = outputs.permute(1, 0, 2).reshape(B, L * C)
 
-        ctx.save_for_backward(offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits)
+        ctx.save_for_backward(inputs, offsets, per_level_scale, base_resolution, h1_used, h2_used, weights, dy_dx, probe_indices, index_logits)
         ctx.dims = [B, D, C, L]
         ctx.probing_params = [N_p, N_c]
         ctx.embeddings_shape = embeddings.shape
+        ctx.calc_grad_inputs = calc_grad_inputs
 
         return outputs
 
     @staticmethod
     @custom_bwd(device_type='cuda')
     def backward(ctx, grad):
-        offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits = ctx.saved_tensors
+        inputs, offsets, per_level_scale, base_resolution, h1_used, h2_used, weights, dy_dx, probe_indices, index_logits = ctx.saved_tensors
         B, D, C, L = ctx.dims
         N_p, N_c = ctx.probing_params
 
         grad = grad.view(B, L, C).permute(1, 0, 2).contiguous()
         grad_embeddings = torch.zeros(ctx.embeddings_shape, device=grad.device, dtype=grad.dtype)
 
-        # Allocate grad_index_logits if we have index_logits (for soft gradient mode)
+        # grad_index_logits (soft probing gradient) if we have index_logits
         if index_logits.numel() > 0:
             grad_index_logits = torch.zeros_like(index_logits, dtype=torch.float32)
         else:
             grad_index_logits = torch.empty(0, dtype=torch.float32, device=grad.device)
 
+        # Embedding + index_logits gradients: precomputed backward with the FRESH weights and the hashes this forward
+        # actually resolved (current cell), so scatter targets match the forward gather even after a cell crossing.
         _backend.hash_encode_backward_precomputed(
             grad, offsets,
-            precomp_h1, precomp_h2, precomp_weights,
+            h1_used, h2_used, weights,
             probe_indices, index_logits, grad_index_logits, grad_embeddings,
             B, D, C, L, N_p, N_c
         )
 
-        # Return gradients for: embeddings, offsets, h1, h2, weights, probe_indices, index_logits, B, D, C, L, N_p, N_c
+        # per_level_scale gradient: same formula as the standard backward, from the freshly recomputed dy_dx.
+        # scale_l[d] = exp2(pls[l,d])*base[d]-1 ; d(out)/d(pls) = ln2*(scale+1)/scale * (dy_dx contracted with grad) * input
+        grad_pls = None
+        if ctx.needs_input_grad[3] and ctx.calc_grad_inputs:
+            gb = grad.permute(1, 0, 2)                                   # [B, L, C]
+            dd = dy_dx.view(B, L, D, C)
+            contrib = (torch.einsum('blc,bldc->bld', gb.float(), dd.float()) * inputs.float().unsqueeze(1)).sum(0)  # [L,D]
+            scale = torch.exp2(per_level_scale.view(L, D).float()) * base_resolution.view(1, D).float() - 1.0
+            grad_pls = (0.6931471805599453 * (scale + 1.0) / scale.clamp_min(1e-6) * contrib).to(per_level_scale.dtype)
+
         grad_index_logits_return = grad_index_logits if index_logits.numel() > 0 else None
-        return grad_embeddings, None, None, None, None, None, grad_index_logits_return, None, None, None, None, None, None
+        # Grads align to: inputs, embeddings, offsets, per_level_scale, base_resolution, precomp_h1, precomp_h2,
+        #                 precomp_pos_grid, probe_indices, index_logits, B, D, C, L, N_f, N_p, N_c
+        return None, grad_embeddings, None, grad_pls, None, None, None, None, None, grad_index_logits_return, None, None, None, None, None, None, None
 
 
 hash_encode_precomputed = _hash_encode_precomputed.apply
@@ -399,6 +427,8 @@ class HashEncoder(nn.Module):
         self._precomp_h2 = None
         self._precomp_weights = None
         self._precomp_pos_deriv = None
+        self._precomp_pos_grid = None
+        self._precomp_inputs = None
         self._precomp_B = 0
 
         # Sparse Adam state (initialized when init_sparse_adam() is called)
@@ -450,16 +480,20 @@ class HashEncoder(nn.Module):
         C = self.level_dim
         n_corners = 2 ** D
         
-        # Allocate precomputation buffers
+        # Allocate precomputation buffers. h1/h2 + pos_grid are the CACHED DISCRETE structure (valid until a coordinate
+        # crosses a cell boundary). weights/pos_deriv are recomputed fresh at forward time, but the buffers are kept
+        # because the sparse-training kernels (multibatch/sgd_fused/adam) still read the precompute-time weights.
         self._precomp_h1 = torch.zeros(B, L, n_corners, dtype=torch.int32, device=inputs.device)
         self._precomp_h2 = torch.zeros(B, L, n_corners, dtype=torch.int32, device=inputs.device)
         self._precomp_weights = torch.zeros(B, L, n_corners, dtype=torch.float32, device=inputs.device)
         self._precomp_pos_deriv = torch.zeros(B, L, D, dtype=torch.float32, device=inputs.device)
-        
+        self._precomp_pos_grid = torch.zeros(B, L, D, dtype=torch.int32, device=inputs.device)
+        self._precomp_inputs = inputs                          # normalized coords, needed to recompute continuous terms
+
         # Run CUDA precomputation kernel
         _backend.hash_encode_precompute(
             inputs, self.offsets,
-            self._precomp_h1, self._precomp_h2, self._precomp_weights, self._precomp_pos_deriv,
+            self._precomp_h1, self._precomp_h2, self._precomp_weights, self._precomp_pos_deriv, self._precomp_pos_grid,
             B, D, C, L,
             self.per_level_scale, self.base_resolution,
             self.N_f, self.N_p
@@ -497,9 +531,11 @@ class HashEncoder(nn.Module):
         self._precomp_h2 = None
         self._precomp_weights = None
         self._precomp_pos_deriv = None
+        self._precomp_pos_grid = None
+        self._precomp_inputs = None
         self._precomp_B = 0
 
-    def forward_precomputed(self, batch_indices=None):
+    def forward_precomputed(self, batch_indices=None, return_dydx=False):
         """
         Forward pass using precomputed indices and weights.
 
@@ -508,9 +544,13 @@ class HashEncoder(nn.Module):
         Args:
             batch_indices: Optional tensor of indices into the precomputed coordinates.
                           If None, uses all precomputed coordinates.
+            return_dydx: If True, additionally return the per-level input-derivative buffer ``dy_dx`` [B, L*D*C] and the
+                          normalized ``inputs`` [B, D] this forward used, both DETACHED. The sparse path forms the
+                          per_level_scale gradient from these (dy_dx contracted with the captured leaf grad) without
+                          materializing the dense embedding gradient.
 
         Returns:
-            [..., num_levels * level_dim] encoded features
+            [..., num_levels * level_dim] encoded features, or (features, dy_dx, inputs) when ``return_dydx``.
         """
         if not self._precomputed:
             raise RuntimeError("Must call precompute() before forward_precomputed()")
@@ -520,111 +560,55 @@ class HashEncoder(nn.Module):
             self.update_probe_indices()
 
         if batch_indices is not None:
-            # Select subset of precomputed values
-            h1 = self._precomp_h1[batch_indices]
-            h2 = self._precomp_h2[batch_indices]
-            weights = self._precomp_weights[batch_indices]
+            # Select subset of cached discrete structure + coords
+            h1 = self._precomp_h1[batch_indices].contiguous()
+            h2 = self._precomp_h2[batch_indices].contiguous()
+            pos_grid = self._precomp_pos_grid[batch_indices].contiguous()
+            inputs = self._precomp_inputs[batch_indices].contiguous()
             B = batch_indices.shape[0]
         else:
             h1 = self._precomp_h1
             h2 = self._precomp_h2
-            weights = self._precomp_weights
+            pos_grid = self._precomp_pos_grid
+            inputs = self._precomp_inputs
             B = self._precomp_B
 
         probe_indices = self.probe_indices if self.enable_learned_probing else None
         index_logits = self.index_logits if self.enable_learned_probing else None
+        N_f = self.N_f if self.enable_learned_probing else self.max_params
+        N_p = self.N_p if self.enable_learned_probing else 1
+        N_c = self.N_c if self.enable_learned_probing else 0
 
-        outputs = hash_encode_precomputed(
-            self.embeddings, self.offsets,
-            h1, h2, weights,
-            probe_indices, index_logits,
-            B, self.input_dim, self.level_dim, self.num_levels,
-            self.N_p if self.enable_learned_probing else 1,
-            self.N_c if self.enable_learned_probing else 0
-        )
+        if not return_dydx:
+            outputs = hash_encode_precomputed(
+                inputs, self.embeddings, self.offsets, self.per_level_scale, self.base_resolution,
+                h1, h2, pos_grid,
+                probe_indices, index_logits,
+                B, self.input_dim, self.level_dim, self.num_levels,
+                N_f, N_p, N_c
+            )
+            return outputs
 
-        return outputs
-
-    def forward_precomputed_multibatch(self, sample_indices):
-        """
-        Forward pass for multiple mini-batches in a single kernel launch.
-
-        Uses sample_indices to gather from precomputed buffers, enabling
-        processing of multiple batches without separate kernel launches.
-
-        Args:
-            sample_indices: [N_total] tensor of indices into precomputed buffers
-
-        Returns:
-            [N_total, num_levels * level_dim] encoded features
-        """
-        if not self._precomputed:
-            raise RuntimeError("Must call precompute() before forward_precomputed_multibatch()")
-
-        sample_indices = sample_indices.contiguous().to(torch.int32)
-        N_total = sample_indices.shape[0]
-
-        if self.enable_learned_probing and self.training:
-            self.update_probe_indices()
-
-        probe_indices = self.probe_indices if self.enable_learned_probing else None
-        if probe_indices is None:
-            probe_indices = torch.empty(0, dtype=torch.int32, device=self.embeddings.device)
-
-        outputs = torch.empty(self.num_levels, N_total, self.level_dim,
-                              device=self.embeddings.device, dtype=self.embeddings.dtype)
-
-        _backend.hash_encode_forward_precomputed_multibatch(
-            self.embeddings, self.offsets,
-            self._precomp_h1, self._precomp_h2, self._precomp_weights,
-            probe_indices, sample_indices, outputs,
-            N_total, self.input_dim, self.level_dim, self.num_levels,
-            self.N_p if self.enable_learned_probing else 1,
-            self.N_c if self.enable_learned_probing else 0
-        )
-
-        return outputs.permute(1, 0, 2).reshape(N_total, self.output_dim)
-
-    def backward_sgd_fused(self, grad, batch_indices, lr):
-        """
-        Fused backward pass + SGD update for embeddings.
-
-        Eliminates gradient buffer and optimizer step overhead by directly
-        updating embeddings in the backward kernel. For small batch training
-        where optimizer overhead dominates.
-
-        Args:
-            grad: [B, num_levels * level_dim] output gradients
-            batch_indices: [B] indices into precomputed buffers
-            lr: learning rate (will be negated internally for descent)
-
-        Note: This bypasses autograd - use only for embeddings when doing
-        pure SGD optimization.
-        """
-        if not self._precomputed:
-            raise RuntimeError("Must call precompute() before backward_sgd_fused()")
-
-        B = batch_indices.shape[0]
-        grad = grad.view(B, self.num_levels, self.level_dim).permute(1, 0, 2).contiguous()
-
-        h1 = self._precomp_h1[batch_indices].contiguous()
-        h2 = self._precomp_h2[batch_indices].contiguous()
-        weights = self._precomp_weights[batch_indices].contiguous()
-
-        probe_indices = self.probe_indices if self.enable_learned_probing else None
-        if probe_indices is None:
-            probe_indices = torch.empty(0, dtype=torch.int32, device=self.embeddings.device)
-
-        # Pass negative lr for gradient descent
-        _backend.hash_encode_backward_sgd_fused(
-            grad, self.offsets,
-            h1, h2, weights,
-            probe_indices, self.embeddings.data,
-            B, self.input_dim, self.level_dim, self.num_levels,
-            self.N_p if self.enable_learned_probing else 1,
-            self.N_c if self.enable_learned_probing else 0,
-            -lr  # Negative for descent: embedding += (-lr) * grad = embedding - lr * grad
-        )
+        # Detached forward that also emits dy_dx, so the sparse path can build the per_level_scale gradient. Runs the
+        # kernel directly (no autograd graph) because the sparse leaf is detached anyway.
+        D, C, L = self.input_dim, self.level_dim, self.num_levels
+        n_corners = 1 << D
+        pls = self.per_level_scale.reshape(L, D).contiguous()
+        with torch.no_grad():
+            probe = probe_indices.contiguous() if probe_indices is not None else torch.empty(0, dtype=torch.int32, device=inputs.device)
+            outputs = torch.empty(L, B, C, device=inputs.device, dtype=self.embeddings.dtype)
+            weights = torch.empty(B, L, n_corners, device=inputs.device, dtype=torch.float32)
+            h1_used = torch.empty(B, L, n_corners, device=inputs.device, dtype=torch.int32)
+            h2_used = torch.empty(B, L, n_corners, device=inputs.device, dtype=torch.int32)
+            dy_dx = torch.empty(B, L * D * C, device=inputs.device, dtype=self.embeddings.dtype)
+            _backend.hash_encode_forward_precomputed(
+                inputs, self.embeddings.contiguous(), self.offsets,
+                h1, h2, pos_grid, pls, self.base_resolution, probe,
+                outputs, h1_used, h2_used, weights, dy_dx, True,
+                B, D, C, L, N_f, N_p, N_c
+            )
+            outputs = outputs.permute(1, 0, 2).reshape(B, L * C)
+        return outputs, dy_dx, inputs
 
     def init_sparse_adam(self, lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8, weight_decay=0.001):
         """
@@ -649,6 +633,9 @@ class HashEncoder(nn.Module):
         self._adam_exp_avg = torch.zeros(shape, dtype=torch.float32, device=device)
         self._adam_exp_avg_sq = torch.zeros(shape, dtype=torch.float32, device=device)
         self._adam_grad_buffer = torch.zeros(shape, dtype=torch.float32, device=device)
+        # Per-row global step of last touch (0 = never touched). Lets the sparse update lazily replay the momentum decay
+        # + geometric nudge that dense AdamW applied to this row during the steps it was skipped.
+        self._adam_last_step = torch.zeros(shape[0], dtype=torch.int32, device=device)
         self._adam_step = 0
 
         # Initialize index_logits gradient buffer if learned probing is enabled
@@ -751,6 +738,7 @@ class HashEncoder(nn.Module):
             self._adam_grad_buffer,
             self._adam_exp_avg,
             self._adam_exp_avg_sq,
+            self._adam_last_step,
             B, self.input_dim, self.level_dim, self.num_levels,
             self.N_p if self.enable_learned_probing else 1,
             self.N_c if self.enable_learned_probing else 0,
