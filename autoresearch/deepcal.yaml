@@ -43,3 +43,4 @@ training:
   hide_prob: 0.35
   lr: 0.0003
   weight_decay: 0.0003
+  precision: bf16                     # science.md rule 21: autocast the Processor + decoders to bf16 (Earth4D hash stays fp32) -> Ampere tensor cores ~2x -> more steps at the fixed 600s budget
