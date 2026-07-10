@@ -21,6 +21,8 @@ model:
   loss_weights:                       # science.md rule 18: up-weight reconstruction of variables tied to non-maxed benchmarks (vision_dino->A6/loo_vision, phylo->A5); maxed benchmarks have margin.
     vision_dino: 2.0
     phylo: 2.0
+  contrastive_weight: 0.05            # JEPA / rule 16: batch-InfoNCE auxiliary so predicted vision_dino retrieves its own target vs the batch (a global cross-modal signal cosine can't give). Targets A6/loo_vision.
+  contrastive_vars: [vision_dino]
   species_graph:                      # phylogenomic species GNN (science.md rules 7-12): refine per-species state so an obs of species A updates its relatives B,C,...; identity is read from the refined table
     variable: identity
     operator: ou-attention            # distance-biased attention over the E1 phylo-distance matrix (2141 species, dense)
