@@ -72,6 +72,9 @@ def train_and_evaluate(config, device):
                       n_layers=m.get("n_layers", 4), capacity=m.get("capacity", 16),
                       relative_window=tuple(m.get("relative_window", (8000., 8000., 300., 130.))), **rel_extra,
                       manifolds=manifolds, compile_processor=m.get("compile") == "processor",
+                      rounds=m.get("rounds", 1), write_back=m.get("write_back", True), revise=m.get("revise", False),
+                      round_loss=m.get("round_loss", "final"), learned_mask=m.get("learned_mask"),
+                      feedback_detach=m.get("feedback_detach", False), flex_attention=m.get("flex_attention", False),
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
     if m.get("compile", False) or config["training"].get("precision") == "bf16":
         from hashencoder.hashgrid import HashEncoder      # route the hash through its compile/autocast-safe op

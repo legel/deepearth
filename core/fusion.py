@@ -126,6 +126,13 @@ class DeepEarth(nn.Module):
         species_operator: str = "ou-attention",
         species_tree: Optional[dict] = None,
         compile_processor: bool = False,
+        rounds: int = 1,
+        write_back: bool = True,
+        revise: bool = False,
+        round_loss: str = "final",
+        learned_mask: Optional[bool] = None,
+        feedback_detach: bool = False,
+        flex_attention: bool = False,
     ) -> None:
         super().__init__()
         self.variables = list(variables)
@@ -202,8 +209,24 @@ class DeepEarth(nn.Module):
         self.q_norm = nn.LayerNorm(d_model); self.kv_norm = nn.LayerNorm(d_model)
         self.blocks = nn.ModuleList([nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model,
                                                                 batch_first=True, norm_first=True) for _ in range(n_layers)])
+
+        # Iterative joint-field denoising: refine the state tokens over K rounds (read -> latent self-attn -> write back
+        # each variable's belief through its interface decoder). rounds=1 with learned_mask off is the single-shot model.
+        self.rounds = rounds
+        self.write_back = write_back
+        self.revise = revise
+        self.round_loss = round_loss
+        self.learned_mask = (rounds > 1) if learned_mask is None else learned_mask
+        self.feedback_detach = feedback_detach
+        self.flex_attention = flex_attention
+        nv = len(self.variables)
+        self.mask_token = nn.Parameter(torch.randn(d_model) * 0.02)      # a masked slot's placeholder (vs the zero vector)
+        self.update_gate = nn.Parameter(torch.zeros(nv))                 # sigmoid=0.5: gain re-injecting a masked belief
+        self.revise_rate = nn.Parameter(torch.full((nv,), -3.0))        # sigmoid~0.05: how far an observed token revises
+        self.read_gate = nn.Parameter(torch.ones(d_model))              # per-dim gate on each round's latent read (identity at init)
+        self._round_stack = None
         if compile_processor:
-            self._process = torch.compile(self._process)
+            self._refine = torch.compile(self._refine)
 
     # ---------------------------------------------------------------- tokens
     def _variable_token(self, name: str, value: torch.Tensor) -> torch.Tensor:
@@ -320,29 +343,83 @@ class DeepEarth(nn.Module):
         self._abs_dydx = None; self._abs_inputs = None   # consumed; avoid stale reuse next step
 
     def encode(self, values: Dict[str, torch.Tensor], present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
-        """Fuse the present variable tokens and neighbor tokens into the latents. Every variable token carries the query position; tokens are scaled by the present-mask, then the latents read across them and attend among themselves."""
+        """Build the refinable per-variable state tokens (masked slots carry a placeholder) + the fixed context tokens,
+        then refine the latents against them over K rounds. Each variable token carries the query position."""
         if self.species_graph is not None:
             self._refined_species = self.species_graph()     # refine all species once per forward
-        B = len(next(iter(present.values())))
-        toks = []
-        for i, name in enumerate(self.names):
-            t = self.tok_norm(self._variable_token(name, values[name]) + self.type_emb[i]) + self.pos_norm(context["position"])
-            toks.append((t * present[name][:, None].to(t.dtype)).unsqueeze(1))
-        toks.append((context["position"] + self.position_token).unsqueeze(1))   # always present: survives full masking
-        toks.append(context["tokens"])
-        if context.get("cls_tokens") is not None:
-            toks.append(context["cls_tokens"])
-        if context.get("experience") is not None:
-            toks.append(context["experience"])
-        return self._process(torch.cat(toks, dim=1))
+        pos = context["position"]
+        pres = torch.stack([present[n] for n in self.names], dim=1)                          # [B,V] bool
+        val = torch.stack([self._variable_token(n, values[n]) for n in self.names], dim=1)   # [B,V,d] value embeddings
+        content = torch.where(pres[..., None], val, self.mask_token) if self.learned_mask else val
+        T = self.tok_norm(content + self.type_emb) + self.pos_norm(pos).unsqueeze(1)         # [B,V,d]
+        if not self.learned_mask:
+            T = T * pres[..., None].to(T.dtype)              # single-shot behavior: a masked slot is the zero vector
+        ctx = [(pos + self.position_token).unsqueeze(1), context["tokens"]]   # always-present position + neighbor tokens
+        if context.get("cls_tokens") is not None: ctx.append(context["cls_tokens"])
+        if context.get("experience") is not None: ctx.append(context["experience"])
+        return self._refine(T, torch.cat(ctx, dim=1), pres, val, pos)
 
-    def _process(self, x: torch.Tensor) -> torch.Tensor:
-        """Latent-attention Processor: the latents read the token set, then attend among themselves. Pure PyTorch, so it compiles cleanly while the Earth4D hash kernel stays eager."""
-        z = self.latents.unsqueeze(0).expand(x.shape[0], -1, -1)
-        z = z + self.read(self.q_norm(z), self.kv_norm(x), self.kv_norm(x))[0]
-        for blk in self.blocks:
-            z = blk(z)
+    def _refine(self, T: torch.Tensor, C: torch.Tensor, present: torch.Tensor, value_emb: torch.Tensor,
+                pos: torch.Tensor) -> torch.Tensor:
+        """K rounds of joint-field denoising: the latents read the state+context tokens then attend among themselves;
+        each round writes every variable's belief back into its state token, so masked variables are inducted jointly
+        and observed ones may be revised. rounds=1 (no write-back) is the single-shot Processor."""
+        z = self.latents.unsqueeze(0).expand(T.shape[0], -1, -1)
+        gate = self.read_gate.view(1, 1, -1)
+        stack = [] if self.round_loss == "all" else None
+        for k in range(self.rounds):
+            # The context C (neighbors, position) is fixed across rounds, so read it only in round 0; later rounds
+            # refine against the updated variable states T alone (~5x fewer keys), which the latents already carry C from.
+            kv = self.kv_norm(torch.cat([T, C], dim=1) if k == 0 else T)
+            z = z + gate * self.read(self.q_norm(z), kv, kv)[0]
+            for blk in self.blocks:
+                z = blk(z)
+            if stack is not None:
+                stack.append(z)
+            if self.write_back and k < self.rounds - 1:
+                T = self._interface_update(z, value_emb, present, pos)
+        if stack is not None:
+            self._round_stack = torch.stack(stack, 0)        # [K,B,n_lat,d] (K fixed -> graph-safe)
         return z
+
+    def _pooled_all(self, z: torch.Tensor) -> torch.Tensor:
+        """Vectorized per-variable attention-pooling: every variable reads the latents through its own query in one
+        batched op -> [B,V,d] (replaces the Python loop of tiny GEMMs)."""
+        scores = torch.einsum("bld,vd->blv", z, self.decode_query) / (self.d_model ** 0.5)   # [B,L,V]
+        w = torch.softmax(scores, dim=1)                                                      # over latents
+        return torch.einsum("blv,bld->bvd", w, z)                                             # [B,V,d]
+
+    def _reencode(self, name: str, pooled: torch.Tensor) -> torch.Tensor:
+        """A per-variable interface backbone: predict the variable from its latent belief, then re-embed the prediction
+        as a proper token (same space the encoders produce), so the write-back injects structure the read can use. For
+        the species variable this routes the inferred posterior through the phylo-refined table -> a phylogenetically-
+        conditioned prior; for categoricals, the class-mixture embedding; for continuous, decode->re-encode."""
+        if name == self.species_variable and self._refined_species is not None:
+            return torch.softmax(pooled @ self._refined_species.t(), dim=-1) @ self._refined_species
+        if name not in self.decoders:
+            return pooled
+        v = self.variables[self.names.index(name)]
+        if v.kind == "categorical":
+            return torch.softmax(self.decoders[name](pooled), dim=-1) @ self.encoders[name].weight
+        return self.encoders[name](self.decoders[name](pooled))
+
+    def _interface_update(self, z: torch.Tensor, value_emb: torch.Tensor, present: torch.Tensor,
+                          pos: torch.Tensor) -> torch.Tensor:
+        """Re-inject round-k beliefs as the next round's state tokens: each variable reads the latents through its own
+        query, is decoded+re-embedded into token space by its interface backbone, then masked slots carry the gated
+        belief while observed slots keep their value (optionally revised). Flows to the latents only through the
+        O(N*n_lat) read, so no O(N^2); each variable keeps its own query/decoder so marginals are not collapsed."""
+        P = self._pooled_all(z)                                                              # [B,V,d] vectorized pooling
+        E = torch.stack([self._reencode(n, P[:, i]) for i, n in enumerate(self.names)], dim=1)   # per-variable re-embed
+        g = torch.sigmoid(self.update_gate).view(1, -1, 1)
+        if self.revise:
+            r = torch.sigmoid(self.revise_rate).view(1, -1, 1)
+            obs = (1.0 - r) * value_emb + r * E
+        else:
+            obs = value_emb
+        content = torch.where(present[..., None], obs, g * E)
+        T = self.tok_norm(content + self.type_emb) + self.pos_norm(pos).unsqueeze(1)
+        return T.detach() if self.feedback_detach else T
 
     def _pooled(self, latents: torch.Tensor, name: str) -> torch.Tensor:
         """Attention-weighted pooling of the latents into one vector for reading variable ``name``."""
@@ -382,6 +459,18 @@ class DeepEarth(nn.Module):
                     present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
         """Reconstruction loss for a fixed reveal mask (no randomness), so it can be compiled/CUDA-graphed with the random masking left outside."""
         z = self.encode(values, present, context)
+        if self.round_loss == "all" and self._round_stack is not None:
+            zs = self._round_stack                           # [K,B,n_lat,d]: deep-supervise every round, same targets
+            loss = sum(self._decode_loss(zs[k], values, observed, present) for k in range(zs.shape[0])) / zs.shape[0]
+        else:
+            loss = self._decode_loss(z, values, observed, present)
+        if self.inductive is not None:                       # auxiliary: name embedding -> evolutionary position
+            loss = loss + 0.1 * self.inductive.loss(self._species_text, self._species_e1)
+        return loss
+
+    def _decode_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
+                     present: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Per-variable reconstruction error over the hidden-but-observed targets, decoded from latents ``z``."""
         loss, n_terms = z.new_zeros(()), 0
         for v in self.variables:
             if not v.reconstruct:
@@ -393,10 +482,7 @@ class DeepEarth(nn.Module):
                 err = self._reconstruction_error(v.name, self.decode(z, v.name), values[v.name])
             loss = loss + (err * w).sum() / w.sum().clamp_min(1.0)
             n_terms += 1
-        loss = loss / max(n_terms, 1)
-        if self.inductive is not None:                       # auxiliary: name embedding -> evolutionary position
-            loss = loss + 0.1 * self.inductive.loss(self._species_text, self._species_e1)
-        return loss
+        return loss / max(n_terms, 1)
 
     @torch.no_grad()
     def infer(self, values: Dict[str, torch.Tensor], given: Sequence[str], targets: Sequence[str],
