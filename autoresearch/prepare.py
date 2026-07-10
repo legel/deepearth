@@ -146,7 +146,7 @@ def main():
     data_dir = resolve_data_dir(config["data"].get("cache_dir"))
     prepared = ensure_prepared(config, data_dir, a.device)
     ensure_test_io(prepared, a.device)
-    print("=== prepare complete: ready for `python -m deepearth.core.train` and the autoresearch loop ===")
+    print("=== prepare complete: ready for `python -m deepearth.autoresearch.train` and the autoresearch loop ===")
 
 
 if __name__ == "__main__":

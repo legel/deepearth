@@ -26,6 +26,7 @@ void hash_encode_precompute(
     at::Tensor precomp_h2,          // [B, L, 2^D] output: h2 values for learned probing
     at::Tensor precomp_weights,     // [B, L, 2^D] output: interpolation weights
     at::Tensor precomp_pos_deriv,   // [B, L, D] output: position derivatives for backward
+    at::Tensor precomp_pos_grid,    // [B, L, D] output: integer base cell (cached discrete structure)
     const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L,
     const at::Tensor per_level_scale,
     const at::Tensor base_resolution,
@@ -34,14 +35,23 @@ void hash_encode_precompute(
 );
 
 void hash_encode_forward_precomputed(
+    const at::Tensor inputs,        // [B, D] normalized coords in [0,1]
     const at::Tensor embeddings,    // [total_embeddings, C]
     const at::Tensor offsets,       // [L+1]
-    const at::Tensor precomp_h1,    // [B, L, 2^D]
+    const at::Tensor precomp_h1,    // [B, L, 2^D] cached hashes
     const at::Tensor precomp_h2,    // [B, L, 2^D]
-    const at::Tensor precomp_weights,// [B, L, 2^D]
+    const at::Tensor precomp_pos_grid,// [B, L, D] cached integer base cell
+    const at::Tensor per_level_scale,
+    const at::Tensor base_resolution,
     const at::Tensor probe_indices, // [L, N_c] or empty
     at::Tensor outputs,             // [L, B, C] output
+    at::Tensor h1_out,              // [B, L, 2^D] hashes actually used (for backward)
+    at::Tensor h2_out,              // [B, L, 2^D]
+    at::Tensor weights_out,         // [B, L, 2^D] freshly recomputed weights (for backward)
+    at::Tensor dy_dx,               // [B, L*D*C] per-level input derivative (or dummy)
+    const bool calc_grad_inputs,
     const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L,
+    const uint32_t N_f,             // learned probing: hashmap_size / N_p
     const uint32_t N_p,             // probe range
     const uint32_t N_c              // codebook size
 );
@@ -62,38 +72,8 @@ void hash_encode_backward_precomputed(
 );
 
 // =============================================================================
-// OPTIMIZED KERNELS FOR SMALL BATCH TRAINING
+// SPARSE ADAM (touched embeddings only)
 // =============================================================================
-
-// Fused backward + SGD update - eliminates gradient buffer and optimizer kernel
-void hash_encode_backward_sgd_fused(
-    const at::Tensor grad,          // [L, B, C]
-    const at::Tensor offsets,       // [L+1]
-    const at::Tensor precomp_h1,    // [B, L, 2^D]
-    const at::Tensor precomp_h2,    // [B, L, 2^D]
-    const at::Tensor precomp_weights,// [B, L, 2^D]
-    const at::Tensor probe_indices, // [L, N_c] or empty
-    at::Tensor embeddings,          // [total_embeddings, C] MODIFIED IN PLACE
-    const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L,
-    const uint32_t N_p,
-    const uint32_t N_c,
-    const float lr                  // Learning rate (negative for descent)
-);
-
-// Multi-batch forward - process all samples in single kernel launch
-void hash_encode_forward_precomputed_multibatch(
-    const at::Tensor embeddings,    // [total_embeddings, C]
-    const at::Tensor offsets,       // [L+1]
-    const at::Tensor precomp_h1,    // [N_all, L, 2^D] precomputed for ALL samples
-    const at::Tensor precomp_h2,    // [N_all, L, 2^D]
-    const at::Tensor precomp_weights,// [N_all, L, 2^D]
-    const at::Tensor probe_indices, // [L, N_c] or empty
-    const at::Tensor sample_indices,// [N_total] indices into precomputed buffers
-    at::Tensor outputs,             // [L, N_total, C] output
-    const uint32_t N_total, const uint32_t D, const uint32_t C, const uint32_t L,
-    const uint32_t N_p,
-    const uint32_t N_c
-);
 
 // Sparse Adam update - only updates embeddings touched by this batch
 void hash_encode_adam_sparse_update(
@@ -105,6 +85,7 @@ void hash_encode_adam_sparse_update(
     at::Tensor grad_embeddings,     // [total_embeddings, C] MODIFIED (zeroed after)
     at::Tensor exp_avg,             // [total_embeddings, C] Adam first moment
     at::Tensor exp_avg_sq,          // [total_embeddings, C] Adam second moment
+    at::Tensor last_step,           // [total_embeddings] per-row last-touch step MODIFIED IN PLACE
     const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L,
     const uint32_t N_p, const uint32_t N_c,
     const float lr, const float beta1, const float beta2, const float eps,

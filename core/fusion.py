@@ -231,10 +231,9 @@ class DeepEarth(nn.Module):
             if manifold_positions:
                 manifold_positions = {n: p * keep.view(Bd, *([1] * (p.dim() - 1))).to(p.dtype)
                                       for n, p in manifold_positions.items()}
-        # Sparse-hash path: read the absolute encoder from precomputed indices as a detached leaf so its hash trains through sparse Adam; the leaf grad is captured for the sparse step.
+        # Sparse-hash path: read the absolute encoder from precomputed indices as a detached leaf so its hash trains through sparse Adam; the leaf grad is captured for the sparse step (plus dy_dx for the resolution gradient).
         if getattr(self, "_sparse_hash", False) and batch_indices is not None:
-            flat = self.absolute_encoder.forward_precomputed(batch_indices).detach().requires_grad_(True)
-            self._abs_leaf = (flat, batch_indices)
+            flat = self.read_absolute_leaf(batch_indices)
             position = self.absolute_proj(flat)
         else:
             position = self.absolute_proj(self.absolute_encoder(query_coords))
@@ -268,7 +267,20 @@ class DeepEarth(nn.Module):
         self._abs_odims = [en.num_levels * en.level_dim for en in self._abs_encs]
         self._abs_L = e.xyz_encoder.num_levels
         self._abs_F = e.features_per_level
+        self._abs_dydx = None            # per-sub-encoder dy_dx captured by read_absolute_leaf (for the resolution grad)
+        self._abs_inputs = None          # per-sub-encoder normalized inputs used
         self._sparse_hash = True
+
+    def read_absolute_leaf(self, batch_indices: torch.Tensor) -> torch.Tensor:
+        """Read the absolute encoder from precomputed indices as a detached leaf (requires_grad) and stash the per-
+        sub-encoder dy_dx + inputs so :meth:`sparse_hash_step` can form the per_level_scale (resolution) gradient. Keep
+        this out of any compiled region (it launches the eager hash kernel)."""
+        flat, dydx, inputs = self.absolute_encoder.forward_precomputed(batch_indices, return_dydx=True)
+        self._abs_dydx = dydx
+        self._abs_inputs = inputs
+        leaf = flat.detach().requires_grad_(True)
+        self._abs_leaf = (leaf, batch_indices)
+        return leaf
 
     def absolute_hash_params(self):
         """The absolute-encoder embeddings, optimized by sparse Adam and so excluded from the main optimizer."""
@@ -279,17 +291,33 @@ class DeepEarth(nn.Module):
             en.set_adam_lr(lr)
 
     def sparse_hash_step(self, flat: torch.Tensor = None, bidx: torch.Tensor = None) -> None:
-        """Apply the sparse Adam update to the absolute encoder from the leaf gradient; call after ``loss.backward()``. Pass the leaf (compiled path) or omit to use the one captured in :meth:`context`; the accumulation buffer is cleared first."""
+        """Apply the sparse Adam update to the absolute encoder from the leaf gradient; call after ``loss.backward()``. Pass the leaf (compiled path) or omit to use the one captured in :meth:`context`; the accumulation buffer is cleared first. Also forms the per_level_scale (resolution) gradient from the captured dy_dx and routes it to the main optimizer, so resolution trains through the precompute."""
         if flat is None:
             flat, bidx = self._abs_leaf
         g = flat.grad
         off = 0
-        for en, d in zip(self._abs_encs, self._abs_odims):
+        for i, (en, d) in enumerate(zip(self._abs_encs, self._abs_odims)):
             en._adam_grad_buffer.zero_()
-            en.accumulate_grad(g[:, off:off + d].contiguous(), bidx)
+            g_e = g[:, off:off + d].contiguous()
+            en.accumulate_grad(g_e, bidx)         # sparse embedding grad (touched entries only)
+            # per_level_scale (resolution) gradient, same formula as the standard backward, from the captured dy_dx.
+            if self._abs_dydx is not None and en.per_level_scale.requires_grad:
+                B = g_e.shape[0]; L = en.num_levels; D = en.input_dim; C = en.level_dim
+                gb = g_e.view(B, L, C)
+                dd = self._abs_dydx[i].view(B, L, D, C)
+                inp = self._abs_inputs[i]
+                contrib = (torch.einsum('blc,bldc->bld', gb.float(), dd.float()) * inp.float().unsqueeze(1)).sum(0)  # [L,D]
+                scale = torch.exp2(en.per_level_scale.view(L, D).float()) * en.base_resolution.view(1, D).float() - 1.0
+                grad_pls = (0.6931471805599453 * (scale + 1.0) / scale.clamp_min(1e-6) * contrib).to(en.per_level_scale.dtype)
+                if en.per_level_scale.grad is None:
+                    en.per_level_scale.grad = grad_pls
+                else:
+                    en.per_level_scale.grad.add_(grad_pls)
             off += d
         for en in self._abs_encs:
-            en.adam_step(bidx)
+            en.adam_step(bidx)                    # sparse Adam on the embeddings (touched entries only)
+            en.transfer_index_logits_grad()       # route learned-probing grad to the main optimizer
+        self._abs_dydx = None; self._abs_inputs = None   # consumed; avoid stale reuse next step
 
     def encode(self, values: Dict[str, torch.Tensor], present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
         """Fuse the present variable tokens and neighbor tokens into the latents. Every variable token carries the query position; tokens are scaled by the present-mask, then the latents read across them and attend among themselves."""

@@ -95,6 +95,35 @@ long as certain constraints are met.
 20. **Fixed experiment budget: 10 minutes.** Each autoresearch experiment trains for 10 minutes of wall-clock (startup
     and compilation excluded), then is scored by `evaluate.py`. Report benchmarks at that budget; compare experiments
     at equal time so improvements reflect real efficiency, not just more steps.
+21. **Speed is a first-class score lever.** Because the budget is fixed (rule 20), wall-clock throughput converts
+    directly into training steps and therefore into `net_score`: any acceleration of the algorithm that does not
+    change its per-step mathematics *must* score at least as high, and under the budget, strictly higher. Optimizing
+    throughput — CUDA kernels, sparse/fused updates, compilation, memory traffic, batch size — is therefore a prized
+    research path, not a mere engineering nicety, and sits alongside the standing speed mandates (rules 4, 12). The
+    discipline is that a speedup must be **non-compromising**: bit-identical to the champion per step (verified against
+    the exact model, e.g. `hashencoder/test_precompute_exact.py`), so the extra steps are pure upside and never a
+    silent approximation traded for pace. A faster champion that ties the slower one at fixed time is a red flag — it
+    means the claimed speedup is not real, or a hidden compromise is cancelling it.
+22. **Joint decoding is iterative, not one-shot — a multi-modal diffusion.** Reconstruct all variables *together* by
+    refining every state over K rounds: each round fuses all states through the shared latent bottleneck, the latents
+    self-attend (the joint model, rule 16), then every state re-reads the fused context *and* its own previous state and
+    updates. This is joint sampling toward the highest-likelihood configuration of all variables at once (Hinton/DBM;
+    diffusion-style fusion of many asynchronous patch-samples). Even observed ("ground-truth") states may be revised as
+    evidence accumulates. A **state** is `(Earth4D position · variable-type · value|mask)`; grouping states by variable,
+    by token, or by space-time patch are three views of one field.
+23. **Conserve the pluralism of variable distributions.** Never collapse a variable's own manifold into the shared
+    representation. Each variable keeps its own channel and its own decoder trained to reconstruct its own marginal;
+    cross-modal influence flows only through the **O(N·L) latent highway, never O(N²)**. Be rich in **interface
+    decoders** that read from and write to the latent field — that is where cross-modal learning happens. Testable
+    invariant: as coupling strengthens (K, write-back), per-variable *marginal* fidelity must hold while the *joint*
+    likelihood rises.
+24. **Model the dense 4D field — measure-everything-everywhere.** Every ecological quantity could in principle be
+    measured at every point in space-time (mostly it is "air with trace constituents at levels/directions, described by
+    embeddings"). DeepEarth models the whole 4D volume of a region: for every space-time patch it infers the most likely
+    embedding of every variable, pinning observed values and inducting the rest, **sampling between sparse observations
+    in space and time**. Tie physical-model resolution to matched-resolution deep sensor features (e.g. DINOv3 SAT493M
+    32×32 ↔ 300 m NAIP) so dense, always-available inputs inductively map to sparsely-observed targets (species, ground
+    vision, phenology, pollination). The goal: a dense, calibrated, forward-in-time field of all variables everywhere.
 
 ## References
 

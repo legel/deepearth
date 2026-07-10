@@ -502,15 +502,26 @@ class Earth4D(nn.Module):
         return {'total_bytes': total_bytes, 'total_mb': total_mb,
                 'bytes_per_coord': total_bytes / coords.shape[0], 'num_coords': coords.shape[0], 'encoders': stats}
 
-    def forward_precomputed(self, batch_indices: torch.Tensor) -> torch.Tensor:
-        """Forward using precomputed indices/weights (call precompute() first)."""
+    def forward_precomputed(self, batch_indices: torch.Tensor, return_dydx: bool = False):
+        """Forward using precomputed indices/weights (call precompute() first).
+
+        When ``return_dydx`` is True, also return per-sub-encoder ``dy_dx`` and the normalized ``inputs`` each used
+        (order xyz, xyt, yzt, xzt), so the sparse path can form each sub-encoder's per_level_scale gradient without
+        materializing dense embedding grads. Returns ``(features, [dy_dx...], [inputs...])`` in that case."""
         if not hasattr(self, '_precomputed') or not self._precomputed:
             raise RuntimeError("Must call precompute() before forward_precomputed()")
-        spatial_features = self.xyz_encoder.forward_precomputed(batch_indices)
-        spatiotemporal_features = torch.cat([self.xyt_encoder.forward_precomputed(batch_indices),
-                                             self.yzt_encoder.forward_precomputed(batch_indices),
-                                             self.xzt_encoder.forward_precomputed(batch_indices)], dim=-1)
-        return torch.cat([spatial_features, spatiotemporal_features], dim=-1)
+        encs = [self.xyz_encoder, self.xyt_encoder, self.yzt_encoder, self.xzt_encoder]
+        if not return_dydx:
+            spatial_features = self.xyz_encoder.forward_precomputed(batch_indices)
+            spatiotemporal_features = torch.cat([self.xyt_encoder.forward_precomputed(batch_indices),
+                                                 self.yzt_encoder.forward_precomputed(batch_indices),
+                                                 self.xzt_encoder.forward_precomputed(batch_indices)], dim=-1)
+            return torch.cat([spatial_features, spatiotemporal_features], dim=-1)
+        outs, dydx, inputs = [], [], []
+        for en in encs:
+            o, dd, inp = en.forward_precomputed(batch_indices, return_dydx=True)
+            outs.append(o); dydx.append(dd); inputs.append(inp)
+        return torch.cat(outs, dim=-1), dydx, inputs
 
     def clear_precomputed(self):
         """Clear precomputed buffers to free memory."""

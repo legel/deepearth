@@ -58,15 +58,17 @@ primary edit targets for improving the model.
 
 ### Size of the surface (rule 19)
 
-Currently **23 files, ~50k tokens** (tiktoken `cl100k`). Every condensing pass re-measures this and drives it down.
+Currently **22 files, ~71k tokens** (tiktoken `cl100k`). Every condensing pass re-measures this and drives it down.
 
 | group | files | tokens |
 |---|---|---|
-| model + config (edit targets) | 4 | 22.8k |
-| training regime (`train.py`) | 1 | 3.3k |
-| CUDA kernel (`hashencoder/`) | 7 | 18.6k |
-| docs | 4 | 4.6k |
-| package `__init__.py` | 7 | 0.5k |
+| model + config (edit targets) | 4 | 25.0k |
+| training regime (`train.py`) | 1 | 3.8k |
+| CUDA kernel (`hashencoder/`) | 7 | 37.2k |
+| docs | 4 | 5.0k |
+| package `__init__.py` | 6 | 0.4k |
+
+The CUDA group grew (18.6k → 37.2k) when the sparse-Adam + precompute subsystem — the champion default (`sparse_hash: true`, +12% throughput / +0.011 net) — was synthesized into the single `hashencoder.cu` and made non-compromising (bit-identical training, learnable resolution). A dead-code + parsimony pass trimmed it 43k → 37.2k; the remainder is functional kernel/dispatch code earning its tokens, not prose.
 
 The fixed harness (`prepare.py`, `evaluate.py`, `data.py` — ~10k tokens) is **excluded** by rule 19.
 

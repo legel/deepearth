@@ -142,7 +142,11 @@ def train_and_evaluate(config, device):
         idx = source.train_index[torch.randint(0, len(source.train_index), (batch,), device=device)]
         values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
         if sparse_hash:
-            flat = model.absolute_encoder.forward_precomputed(idx).detach().requires_grad_(True)
+            # Refresh the cached discrete cell every K steps so the fast-path hit rate tracks slow resolution drift
+            # (correctness holds regardless — the kernel recomputes on a cache miss). Kept outside the compiled step.
+            if step > 0 and step % 200 == 0:
+                model.absolute_encoder.precompute(source.coords)
+            flat = model.read_absolute_leaf(idx)   # detached leaf; also stashes dy_dx/inputs for the resolution grad
             if compile_full:
                 if cuda_graphs:
                     torch.compiler.cudagraph_mark_step_begin()
