@@ -11,7 +11,7 @@ model:
   n_latents: 24
   n_layers: 4
   capacity: 16                       # space-time encoder resolution (hash levels)
-  decoder_hidden: 512                # science.md rule 23: rich interface decoders (1-hidden-layer MLP heads instead of a single Linear) for better cross-modal reconstruction (A6/loo_vision/A5). At step-saturation the extra head params are trainable.
+  decoder_hidden: 1024               # sweeping up (512 gave +2.2%): the cross-modal recon benchmarks (A6/loo_vision/A5) still have headroom; more interface-decoder capacity may keep lifting them (rule 23). Watch for turnover.
   rounds: 2                          # science.md rule 22: iterative joint decoding (K refinement rounds w/ write-back), a multi-modal diffusion vs one-shot. write_back/learned_mask default on for rounds>1.
   compile: compiled                  # science.md rule 21: full-step torch.compile (~2.4x throughput, bit-identical math) -> more steps at the fixed 600s budget -> higher net_score. "compiled" = stable fusion, no CUDA graphs (avoids buffer aliasing on this 767M model).
   sparse_hash: true                  # sparse-Adam + precompute for the absolute encoder: bit-identical training, ~12% faster (0.758 vs 0.747). Costs ~+2GB VRAM (precompute cache) — set false to train the absolute hash with the dense optimizer if VRAM-bound.
