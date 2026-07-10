@@ -436,6 +436,62 @@ class DeepEarth(nn.Module):
             return self.diffusion_heads[name].sample(pooled)
         return self.decoders[name](pooled)
 
+    def decode_field(self, latents: torch.Tensor, query_pos: torch.Tensor,
+                     names: Optional[Sequence[str]] = None) -> Dict[str, torch.Tensor]:
+        """Dense-field decode (Senseiver-style): read EVERY variable at each of G dense query positions from the latents
+        that encode the sparse observations. ``query_pos`` [B,G,d] = ``absolute_proj(Earth4D(grid_coords))``. Each
+        (position, variable) query = the position + that variable's decode-query, cross-attends the latents (O(G*V*L),
+        linear in the grid via the bottleneck), then goes through the variable's head. Returns {name: [B,G,...]}. This
+        turns the model into a dense forecaster: encode observations -> query a whole space-time volume."""
+        names = list(names) if names is not None else [v.name for v in self.variables if v.reconstruct]
+        q = self.pos_norm(query_pos).unsqueeze(2) + self.decode_query.view(1, 1, -1, self.d_model)   # [B,G,V,d]
+        w = torch.softmax(torch.einsum("bgvd,bld->bgvl", q, latents) / (self.d_model ** 0.5), dim=-1)  # [B,G,V,L]
+        read = torch.einsum("bgvl,bld->bgvd", w, latents)                                             # [B,G,V,d]
+        out = {}
+        for name in names:
+            r = read[:, :, self.names.index(name)]                                                    # [B,G,d]
+            if name == self.species_variable and self._refined_species is not None:
+                out[name] = r @ self._refined_species.t()
+            elif name in self.decoders:
+                out[name] = self.decoders[name](r)
+        return out
+
+    def query_field(self, values, present, context, grid_coords: torch.Tensor,
+                    names: Optional[Sequence[str]] = None) -> Dict[str, torch.Tensor]:
+        """End-to-end dense field: encode the sparse observations into latents, then decode every variable across the
+        dense space-time grid ``grid_coords`` [B,G,4]. The single query the model trains on is the G=1 special case."""
+        z = self.encode(values, present, context)
+        query_pos = self.absolute_proj(self.absolute_encoder(grid_coords.reshape(-1, grid_coords.shape[-1])))
+        query_pos = query_pos.view(grid_coords.shape[0], grid_coords.shape[1], self.d_model)
+        return self.decode_field(z, query_pos, names)
+
+    @torch.no_grad()
+    def marginal_fidelity(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
+                          context: dict) -> Dict[str, Dict[str, float]]:
+        """Pluralism probe (science.md rule 23): hide ONLY each variable in turn and measure its own decode fidelity at
+        K=1 vs K=rounds. Pluralism is conserved iff a variable's marginal does not degrade as the joint coupling (K)
+        rises. Off the training path; a monitor, not a loss."""
+        was, r0 = self.training, self.rounds
+        self.eval()
+        out: Dict[str, Dict[str, float]] = {}
+        for v in self.variables:
+            if not v.reconstruct:
+                continue
+            present = {n: observed[n].clone() for n in self.names}
+            present[v.name] = torch.zeros_like(observed[v.name])           # hide only this variable
+            w = observed[v.name].float()
+            res = {}
+            for k in sorted({1, r0}):
+                self.rounds = k
+                pred = self.decode(self.encode(values, present, context), v.name)
+                fid = 1.0 - self._reconstruction_error(v.name, pred, values[v.name])   # cosine (cont) / 1-CE/logC (cat)
+                res[f"K{k}"] = float((fid * w).sum() / w.sum().clamp_min(1.0))
+            out[v.name] = res
+        self.rounds = r0
+        if was:
+            self.train()
+        return out
+
     # ---------------------------------------------------------------- training / inference
     def _reconstruction_error(self, name: str, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         v = self.variables[self.names.index(name)]
