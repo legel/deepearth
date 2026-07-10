@@ -155,6 +155,8 @@ def train_and_evaluate(config, device):
                 if cuda_graphs:
                     torch.compiler.cudagraph_mark_step_begin()
                 present = {n: (torch.rand(batch, device=device) > hide_prob) & observed[n] for n in model.names}
+                blank = torch.rand(batch, device=device) < 0.15   # match reconstruction_loss: 15% fully-blank queries train the position->variable pathway (else A1 species-from-geo collapses under compile)
+                for n in model.names: present[n] = present[n] & ~blank
                 loss = sparse_step_fn(values, observed, present, flat, coords, nbr_coords,
                                       manifold_coords, nbr_values)
                 if cuda_graphs:
@@ -177,6 +179,8 @@ def train_and_evaluate(config, device):
             if cuda_graphs:
                 torch.compiler.cudagraph_mark_step_begin()
             present = {n: (torch.rand(batch, device=device) > hide_prob) & observed[n] for n in model.names}
+            blank = torch.rand(batch, device=device) < 0.15   # match reconstruction_loss: 15% fully-blank queries train the position->variable pathway (else A1 species-from-geo collapses under compile)
+            for n in model.names: present[n] = present[n] & ~blank
             loss = step_fn(values, observed, present, coords, nbr_coords, manifold_coords, nbr_values)
             if cuda_graphs:
                 loss = loss.clone()
