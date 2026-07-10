@@ -9,19 +9,21 @@ except ImportError:
     import os
     import sys
     module_dir = os.path.dirname(os.path.abspath(__file__))
-    module_path = os.path.join(module_dir, 'hashencoder_cuda.so')
+    # Prebuilt .so may sit next to this file (setup.py build_ext --inplace) or in build/ (where the JIT load() caches it).
+    _prebuilt = next((p for p in (os.path.join(module_dir, 'hashencoder_cuda.so'),
+                                  os.path.join(module_dir, 'build', 'hashencoder_cuda.so'))
+                      if os.path.exists(p)), None)
 
-    if os.path.exists(module_path):
-        # Load the compiled module directly
+    if _prebuilt is not None:
+        # Load the compiled module directly (silent fast path once the kernel has been built once).
         import importlib.util
-        spec = importlib.util.spec_from_file_location("hashencoder_cuda", module_path)
+        spec = importlib.util.spec_from_file_location("hashencoder_cuda", _prebuilt)
         _backend = importlib.util.module_from_spec(spec)
         sys.modules["hashencoder_cuda"] = _backend
         spec.loader.exec_module(_backend)
     else:
-        # Last resort: JIT compilation (for development only)
-        print("Warning: hashencoder_cuda.so not found. Attempting JIT compilation...")
-        print("Build with: cd hashencoder && python3 setup.py build_ext --inplace")
+        # First-time build: JIT-compile the CUDA kernel (cached under build/, so this notice prints once).
+        print("[hashencoder] compiling CUDA kernel (first run; cached afterwards)...")
 
         from torch.utils.cpp_extension import load
         from pathlib import Path

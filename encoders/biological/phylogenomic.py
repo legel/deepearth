@@ -306,7 +306,7 @@ class TreeMessagePassing(nn.Module):
     state, branch lengths gating how much signal survives each split — is the principled way to share information across
     species, above all for rare/held-out clades. A GNN over the phylogeny is the direction for continued work; cf.
     GraphCast (Science 2023), GenCast (Nature 2025) — phylogeny as the mesh, ancestral state as the propagated field.
-    :class:`OrnsteinUhlenbeckAttention` is an efficient approximation, not the destination. See ``core/science.md``.
+    :class:`OrnsteinUhlenbeckAttention` is an efficient approximation, not the destination. See ``autoresearch/science.md``.
 
     Args: ``n_species`` (tips), ``d_model`` (width), ``tree`` (buffers from :func:`build_tree_buffers`), ``n_layers``
     (upward+downward sweeps, each a :class:`_TreeRound`; more sweeps propagate further), ``hidden`` (message-MLP width).
@@ -510,9 +510,10 @@ def _test_tree():
 def _test_real_tree():
     """Build buffers from the real California tree and confirm the pruned tree preserves the reference patristic
     distances exactly (topology + branch lengths faithful), or skip if the tree is absent."""
-    import csv
+    import csv, os
     from pathlib import Path
-    cache = Path("/home/photon/ecological/phylo_deepearth/data/cache")
+    # Portable: use the repo's downloaded cache (prepare.py places it here), overridable via DEEPCAL_DATA_DIR.
+    cache = Path(os.environ.get("DEEPCAL_DATA_DIR", Path(__file__).resolve().parents[2] / "data" / "deepcal"))
     nwk = cache / "ca_subtree.dated.nwk"
     if not nwk.exists():
         print("phylogenomic.py: real tree absent; skipping patristic check"); return

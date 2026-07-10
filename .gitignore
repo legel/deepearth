@@ -65,8 +65,10 @@ Thumbs.db
 .env
 .env.local
 # autoresearch working state (local only)
+# results.tsv = per-experiment scores; autoresearch.md defines it as untracked local state
 *.pt
 __pycache__/
+results.tsv
 
 # generated data + experiments (never committed)
 /data/

@@ -3,7 +3,7 @@ name: DeepCal
 
 data:
   adapter: california
-  cache_dir: /home/photon/ecological/phylo_deepearth/data/cache
+  cache_dir: data/deepcal          # relative to the repo root; `prepare.py` downloads + extracts the cache here. Absolute paths are honored as-is; a fresh device just runs prepare.py to populate it.
   n_neighbors: 24
 
 model:
