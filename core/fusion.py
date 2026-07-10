@@ -553,7 +553,7 @@ class DeepEarth(nn.Module):
                 # target against the batch (InfoNCE) -- a global signal point-wise cosine cannot give.
                 if self.contrastive_weight > 0.0 and v.name in self.contrastive_vars and v.kind == "continuous":
                     pn = F.normalize(pred.float(), dim=-1); tn = F.normalize(values[v.name].float(), dim=-1)
-                    logits = pn @ tn.t() / 0.07
+                    logits = pn @ tn.t() / 0.05    # temperature (sweeping 0.07->0.05: sharper, more discriminative retrieval)
                     loss = loss + self.contrastive_weight * F.cross_entropy(
                         logits, torch.arange(logits.shape[0], device=logits.device))
             # Per-variable loss weight (science.md rule 18): focus reconstruction where benchmarks have headroom.
