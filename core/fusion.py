@@ -204,8 +204,12 @@ class DeepEarth(nn.Module):
         self.absolute_encoder = Earth4D(verbose=False, spatial_levels=18, temporal_levels=18,
                                         spatial_log2_hashmap_size=20, temporal_log2_hashmap_size=20,
                                         freq_log_scale_init=-2.5)   # start coarse (~1 km finest); learned from there
-        self.absolute_proj = nn.Sequential(nn.Linear(self.absolute_encoder.output_dim, d_model), nn.GELU(),
-                                           nn.Linear(d_model, d_model))
+        # Project Earth4D's [xyz | xyt|yzt|xzt] as separate spatial/spatiotemporal channels; each variable learns a
+        # softmax prior over which it reads, so time-invariant modalities can shut time out while vision keeps it.
+        self.absolute_proj_s = nn.Sequential(nn.Linear(self.absolute_encoder.spatial_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
+        self.absolute_proj_t = nn.Sequential(nn.Linear(self.absolute_encoder.spatiotemporal_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
+        gate0 = torch.zeros(len(self.variables), 2); gate0[:, 0] = 2.0   # init ~0.88 spatial / 0.12 temporal
+        self.pos_channel_gate = nn.Parameter(gate0)
         # Smooth transferable geo prior (RFF): added to the memorizing hash position -> generalizes to held-out regions (A1).
         self.smooth_geo = SmoothGeoField(
             d_model, per_scale=smooth_geo_per_scale,
@@ -300,27 +304,33 @@ class DeepEarth(nn.Module):
         # Sparse-hash path: read the absolute encoder from precomputed indices as a detached leaf so its hash trains through sparse Adam; the leaf grad is captured for the sparse step (plus dy_dx for the resolution gradient).
         if getattr(self, "_sparse_hash", False) and batch_indices is not None:
             flat = self.read_absolute_leaf(batch_indices)
-            position = self.absolute_proj(flat)
         else:
-            position = self.absolute_proj(self.absolute_encoder(query_coords))
+            flat = self.absolute_encoder(query_coords)
+        pos_s, pos_t = self._project_position(flat)
         if self.smooth_geo is not None:
-            position = position + self.smooth_geo(query_coords)
+            pos_s = pos_s + self.smooth_geo(query_coords)     # a smooth transferable geo prior is spatial-only
         feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
                  for name, val in (neighbor_values or {}).items()}
         tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
-        return {"position": position, "tokens": tokens}
+        return {"position_s": pos_s, "position_t": pos_t, "position": pos_s + pos_t, "tokens": tokens}
 
     def context_from_flat(self, flat: torch.Tensor, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
                           manifold_positions: Optional[Dict[str, torch.Tensor]] = None,
                           neighbor_values: Optional[Dict[str, torch.Tensor]] = None) -> dict:
         """Same as :meth:`context` but the absolute encoding is supplied as an already-read leaf ``flat``, keeping the precompute+detach out of the compiled region."""
-        position = self.absolute_proj(flat)
+        pos_s, pos_t = self._project_position(flat)
         if self.smooth_geo is not None:
-            position = position + self.smooth_geo(query_coords)
+            pos_s = pos_s + self.smooth_geo(query_coords)
         feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
                  for name, val in (neighbor_values or {}).items()}
         tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
-        return {"position": position, "tokens": tokens}
+        return {"position_s": pos_s, "position_t": pos_t, "position": pos_s + pos_t, "tokens": tokens}
+
+    def _project_position(self, flat: torch.Tensor):
+        """Project Earth4D's [xyz | xyt|yzt|xzt] output into (spatial, spatiotemporal) d_model channels separately,
+        so downstream fusion can route time-invariant vs time-varying position per variable (see pos_channel_gate)."""
+        s = self.absolute_encoder.spatial_dim
+        return self.absolute_proj_s(flat[..., :s]), self.absolute_proj_t(flat[..., s:])
 
     def set_memory(self, key: torch.Tensor, features: Dict[str, torch.Tensor]) -> None:
         """Install the experience-replay memory bank (a key and per-anchor features), refreshed between epochs."""
@@ -394,17 +404,19 @@ class DeepEarth(nn.Module):
         then refine the latents against them over K rounds. Each variable token carries the query position."""
         if self.species_graph is not None:
             self._refined_species = self.species_graph()     # refine all species once per forward
-        pos = context["position"]
+        pos_s, pos_t = context["position_s"], context["position_t"]                          # [B,d] each
+        w = torch.softmax(self.pos_channel_gate, dim=-1)                                     # [V,2] per-variable prior
+        pos_v = w[:, 0].view(1, -1, 1) * pos_s.unsqueeze(1) + w[:, 1].view(1, -1, 1) * pos_t.unsqueeze(1)   # [B,V,d]
         pres = torch.stack([present[n] for n in self.names], dim=1)                          # [B,V] bool
         val = torch.stack([self._variable_token(n, values[n]) for n in self.names], dim=1)   # [B,V,d] value embeddings
         content = torch.where(pres[..., None], val, self.mask_token) if self.learned_mask else val
-        T = self.tok_norm(content + self.type_emb) + self.pos_norm(pos).unsqueeze(1)         # [B,V,d]
+        T = self.tok_norm(content + self.type_emb) + self.pos_norm(pos_v)                    # [B,V,d] per-variable position
         if not self.learned_mask:
             T = T * pres[..., None].to(T.dtype)              # single-shot behavior: a masked slot is the zero vector
-        ctx = [(pos + self.position_token).unsqueeze(1), context["tokens"]]   # always-present position + neighbor tokens
+        ctx = [(context["position"] + self.position_token).unsqueeze(1), context["tokens"]]  # always-present position (combined) + neighbor tokens
         if context.get("cls_tokens") is not None: ctx.append(context["cls_tokens"])
         if context.get("experience") is not None: ctx.append(context["experience"])
-        return self._refine(T, torch.cat(ctx, dim=1), pres, val, pos)
+        return self._refine(T, torch.cat(ctx, dim=1), pres, val, pos_v)
 
     def _refine(self, T: torch.Tensor, C: torch.Tensor, present: torch.Tensor, value_emb: torch.Tensor,
                 pos: torch.Tensor) -> torch.Tensor:
@@ -465,7 +477,7 @@ class DeepEarth(nn.Module):
         else:
             obs = value_emb
         content = torch.where(present[..., None], obs, g * E)
-        T = self.tok_norm(content + self.type_emb) + self.pos_norm(pos).unsqueeze(1)
+        T = self.tok_norm(content + self.type_emb) + self.pos_norm(pos)   # pos is per-variable [B,V,d]
         return T.detach() if self.feedback_detach else T
 
     def _pooled(self, latents: torch.Tensor, name: str) -> torch.Tensor:
@@ -508,8 +520,8 @@ class DeepEarth(nn.Module):
         """End-to-end dense field: encode the sparse observations into latents, then decode every variable across the
         dense space-time grid ``grid_coords`` [B,G,4]. The single query the model trains on is the G=1 special case."""
         z = self.encode(values, present, context)
-        query_pos = self.absolute_proj(self.absolute_encoder(grid_coords.reshape(-1, grid_coords.shape[-1])))
-        query_pos = query_pos.view(grid_coords.shape[0], grid_coords.shape[1], self.d_model)
+        pos_s, pos_t = self._project_position(self.absolute_encoder(grid_coords.reshape(-1, grid_coords.shape[-1])))
+        query_pos = (pos_s + pos_t).view(grid_coords.shape[0], grid_coords.shape[1], self.d_model)
         return self.decode_field(z, query_pos, names)
 
     @torch.no_grad()
