@@ -4,7 +4,8 @@ name: DeepCal
 data:
   adapter: california
   cache_dir: data/deepcal          # relative to the repo root; `prepare.py` downloads + extracts the cache here. Absolute paths are honored as-is; a fresh device just runs prepare.py to populate it.
-  n_neighbors: 16                    # down from 24: two findings favor fewer neighbors -- (1) step-limited (fewer neighbor tokens -> faster -> more steps at fixed budget), (2) community doesn't transfer under spatial holdout (commdrop showed over-reliance on non-transferable community hurts A1).
+  n_neighbors: 16
+  time_axis: true                    # LOOP: real observation time -> Earth4D xyt/yzt/xzt planes; validated net 0.2648->0.2964 (B18 climate 0.33->0.86), no spatial regression.                    # down from 24: two findings favor fewer neighbors -- (1) step-limited (fewer neighbor tokens -> faster -> more steps at fixed budget), (2) community doesn't transfer under spatial holdout (commdrop showed over-reliance on non-transferable community hurts A1).
 
 model:
   d_model: 256
