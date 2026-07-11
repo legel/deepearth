@@ -46,7 +46,7 @@ def load_index():
     for f in gj["features"]:
         p = f["properties"]; lon0 = f["geometry"]["coordinates"][0][0][0]
         # CA bbox prefilter on centroid-ish first ring vertex
-        geoms.append(shape(f["geometry"])); urls.append(p.get("chm_url", "")); years.append(int(p.get("year", 0)))
+        geoms.append(shape(f["geometry"])); urls.append(p.get("chm_url", "")); years.append(int(float(p.get("year", 0) or 0)))
     return geoms, np.array(urls, object), np.array(years)
 
 def process_tile(url, obs):
