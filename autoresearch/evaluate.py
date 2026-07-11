@@ -1,50 +1,27 @@
-"""The DeepCal benchmark suite and the harmonic-mean north star.
+"""The DeepCal benchmark suite (B1-B26) and the harmonic-mean north star.
 
-A trained :class:`~deepearth.core.fusion.DeepEarth` is scored on a frozen set of benchmarks, each a real question of
-the form "given the widely-available context, how well is a sparse target induced?" Every benchmark is normalized to
-``[0, 1]`` by ``(value - baseline) / (target - baseline)`` and the single **net score** is their harmonic mean
-(power mean, p = -1) -- so lifting the *weakest* benchmark helps most and no benchmark can be sacrificed for another.
+A trained :class:`~deepearth.core.fusion.DeepEarth` is scored on 26 benchmarks, each a real question of the form
+"given the widely-available context U (and sometimes a ground photo), how well is a sparse target induced?" Each
+benchmark's metric is ALREADY naturally in ``[0, 1]`` (top-k accuracy, family accuracy, macro-F1, cosine similarity
+of unit embeddings, recall@k, or calibration MRR), so the score IS the raw value -- there is NO baseline/target
+remap. A hand-set target below a metric's attainable maximum is an artificial ceiling that saturates a still-
+improving benchmark at 1.0; we reject that. The single **net score** is the harmonic mean (power mean p = -1) of the
+active benchmarks, so lifting the *weakest* helps most and none can be sacrificed for another.
 
-Benchmarks are computed on the held-out split (spatial blocks by default) so they measure transfer, not
-memorization. A benchmark whose inputs are not present in the model's configuration is reported as inactive and left
-out of the net score; enabling more modalities (climate, aerial, satellite, soil, time, flowering) activates more of
-them. The suite mirrors ``core/science.md`` / the 26-benchmark plan; the always-computable core is implemented here.
+Universal inputs ``U = {space-time position, climate, soil, clay, naip_rgb, naip_ir}`` (+ topo when wired) -- all
+obtainable at a point WITHOUT observing the organism. Benchmarks are computed on the held-out split (0.5-degree
+spatial blocks by default; ``holdout: temporal`` gives a strictly-future forecast split, ``holdout: phylo`` holds
+out whole families) so they measure transfer, not memorization. A benchmark whose required inputs or split are not
+present is reported as inactive (NaN) and left out of the net score.
 
-The scoring definitions are FIXED -- this is the ground-truth metric for autoresearch. Do not tune them to inflate a
-result; improve the model instead.
+The suite realizes ``science.md`` / the 26-benchmark plan (originally labelled A1-A16 + Q1-Q10; renumbered B1-B26).
+Scoring is the ground-truth metric for autoresearch: never tune a definition to inflate a result -- improve the model.
 """
 from __future__ import annotations
 from typing import Dict, List
 import numpy as np
 import torch
 import torch.nn.functional as F
-
-# Baseline (uninformed reference) and target (ambitious but defined) per benchmark. Net score normalizes each raw
-# value into [0, 1] as (value - baseline) / (target - baseline). Baselines are deliberately non-trivial so the score
-# reflects real induction beyond a naive predictor; targets are the level we are pushing toward.
-BASELINE = {
-    "A2_species_vision_top1": 0.02,   "A2_species_vision_top5": 0.05,
-    "A1_species_geo_top10":   0.05,
-    "A4_traits_vision_f1":    0.30,
-    "A5_phylo_vision_cos":    0.50,
-    "A6_imagine_vision_cos":  0.30,
-    "Q3_geo_gain_species":    0.00,
-    "Q8_phylo_to_family":     0.05,
-    "loo_traits_f1":          0.30,
-    "loo_vision_dino_cos":    0.30,
-}
-TARGET = {
-    "A2_species_vision_top1": 0.90,   "A2_species_vision_top5": 0.99,
-    "A1_species_geo_top10":   0.40,
-    "A4_traits_vision_f1":    0.90,
-    "A5_phylo_vision_cos":    0.95,
-    "A6_imagine_vision_cos":  0.90,
-    "Q3_geo_gain_species":    0.15,
-    "Q8_phylo_to_family":     0.90,
-    "loo_traits_f1":          0.90,
-    "loo_vision_dino_cos":    0.90,
-}
-
 
 def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, num_classes: int) -> float:
     """Macro-F1 over the observed rows: mean per-class F1 (unweighted), so rare classes count as much as common."""
@@ -64,106 +41,161 @@ def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, 
     return float(np.mean(f1s)) if f1s else float("nan")
 
 
+# The 26 benchmarks, in suite order. Each is (given-set -> target, metric). B1-B24 score on any held-out split;
+# B25 needs the temporal (forecast) split; B26 needs flowering labels. Realizes the recovered A1-A16 + Q1-Q10 plan.
+BENCHMARKS: List[str] = [
+    "B1_species_from_env_top10",        # A1  U -> species (SDM), top-10 accuracy
+    "B2_species_from_photo_top1",       # A2  U + ground photo -> species (FLAGSHIP), top-1
+    "B3_species_from_photo_top5",       # A2  U + ground photo -> species, top-5
+    "B4_species_from_photo_only_top1",  # Q2  photo-only -> species, top-1
+    "B5_species_from_spacetime_top10",  # Q7  bare space-time -> species, top-10
+    "B6_family_from_env",               # A5/Q5  U -> family (niche determinism), accuracy
+    "B7_family_from_phylo",             # Q8  phylo embedding -> family, accuracy
+    "B8_family_from_spacetime",         # Q7  bare space-time -> family, accuracy
+    "B9_phylo_from_photo_cos",          # A5  U + photo -> phylo/evolutionary vector, cosine
+    "B10_traits_from_photo_env_f1",     # A4  U + photo -> traits, macro-F1
+    "B11_traits_from_photo_f1",         # Q1  photo-only -> traits, macro-F1
+    "B12_traits_leave_one_out_f1",      # Q6  all-but-trait -> trait, macro-F1
+    "B13_imagine_vision_cos",           # A6  non-vision -> ground-vision (DINO), cosine
+    "B14_vision_leave_one_out_cos",     # Q6  all-but-vision -> ground-vision, cosine
+    "B15_vision_from_aerial_cos",       # Q9  aerial (NAIP) -> ground-vision, cosine
+    "B16_infer_clay_cos",               # A11 U-minus-clay -> clay (Sentinel-2), cosine
+    "B17_infer_soil_cos",               # A12 U-minus-soil -> soil (SSURGO), cosine
+    "B18_infer_climate_cos",            # Q6  U-minus-climate -> climate (Daymet), cosine
+    "B19_infer_aerial_cos",             # Q9  U-minus-naip -> aerial (NAIP), cosine
+    "B20_community_from_env_recall",    # A3  U -> local community set, recall@10
+    "B21_community_from_species_recall",# Q10 focal species -> co-occurring set, recall@10
+    "B22_companions_recall",            # A15 species + U -> companions, recall@10
+    "B23_species_calibration_mrr",      # A14 U -> species posterior, mean reciprocal rank
+    "B24_geo_information_gain",         # Q3  species gain from location = B2 - B1
+    "B25_forecast_climate_cos",         # A9  future climate (temporal holdout), cosine
+    "B26_flowering_auc",                # A7  U/imagined-vision -> flowering (needs labels), ROC-AUC
+]
+
+
 @torch.no_grad()
 def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, float]:
-    """Compute every active benchmark's raw value over the held-out split. Context is built once per batch and
-    reused across the different ``given`` sets, so the whole suite costs a handful of passes over the test set."""
+    """Score the 26-benchmark suite over the held-out split. Context is built once per batch and the encoder is run
+    once per distinct given-set (multiple targets decoded from a single encode), so the whole suite costs a bounded
+    number of passes over the test set. Benchmarks whose inputs/split are unavailable are simply omitted (inactive)."""
     model.eval()
     names = [v.name for v in model.variables]
-    kinds = {v.name: v.kind for v in model.variables}
     have = set(names)
     traits = [t for t in getattr(source, "trait_classes", {})]
     trait_nc = source.trait_classes if traits else {}
-    fam_of_species = source.class_group if hasattr(source, "class_group") else None   # family index per species class
+    fam = source.class_group if hasattr(source, "class_group") else None    # family index per species class
+    holdout = getattr(source, "holdout", "spatial")
 
     vision = [v for v in ("vision_dino", "vision_bio") if v in have]
-    # "U" -- universal inputs, obtainable anywhere without observing the organism (space-time is always present via
-    # the position token; environmental/remote-sensing modalities join it when configured). Growing U is the principled
-    # way to lift species-from-location (A1). Definition fixed; only available content changes as modalities enable.
-    universal = [v for v in ("climate", "soil", "naip_rgb", "naip_ir", "clay") if v in have]
-    # accumulators: [sum, count] for means; confusion pieces handled inline via stored preds
-    acc = {k: [0.0, 0.0] for k in ("A2_top1", "A2_top5", "A1_top10", "A5_cos", "A6_cos", "Q3_gain", "Q8_fam")}
-    # trait F1 needs full pred/target vectors; collect per trait
-    tr_pred = {t: [] for t in traits}; tr_true = {t: [] for t in traits}; tr_obs = {t: [] for t in traits}
-    tr_pred_loo = {t: [] for t in traits}
-    dino_loo = [0.0, 0.0]
+    U = [v for v in ("climate", "soil", "naip_rgb", "naip_ir", "clay", "topo") if v in have]   # universal (no organism obs)
+    naip = [v for v in ("naip_rgb", "naip_ir") if v in have]
+
+    acc: Dict[str, list] = {}                              # key -> [sum, count]
+    def add(key, s, n):
+        a = acc.setdefault(key, [0.0, 0.0]); a[0] += float(s); a[1] += n
+    # trait macro-F1 needs the full pred/target/observed vectors gathered per preset
+    trc = {lab: {t: ([], [], []) for t in traits} for lab in ("photo_env", "photo", "loo")}
+    RK = 10
+    community_cap = 6 * batch                              # recall@k is O(K*classes); cap to the first few batches for speed
+
+    def topk_hit(logits, target, k):
+        return (logits.topk(k, -1).indices == target[:, None]).any(-1).float().sum().item()
+    def fam_hit(logits, target):
+        return (fam[logits.argmax(-1)] == fam[target]).float().sum().item()
+    def cos_sum(pred, tgt):
+        return F.cosine_similarity(pred.float(), tgt.float(), dim=-1).sum().item()
+    def recall_sum(logits, target_set):                   # mean over rows of |topK ∩ set| / |set|
+        kmem = torch.zeros_like(logits, dtype=torch.bool).scatter_(1, logits.topk(RK, -1).indices, True)
+        inter = (kmem & target_set).sum(1).float()
+        denom = target_set.sum(1).float().clamp(min=1)
+        return (inter / denom).sum().item()
 
     for c0 in range(0, len(source.test), batch):
         idx = torch.tensor(source.test[c0:c0 + batch], device=device)
         values, observed, coords, nbr_coords, mani, nbrv = source.batch(idx)
         ctx = model.context(coords, nbr_coords, mani, nbrv)
-        B = len(idx)
-
+        B = len(idx); tid = values["identity"]
+        obs = [n for n in names if observed_any(observed, n)]
         def infer(given, targets):
             return model.infer(values, given, targets, ctx, observed)
 
-        # --- A2: U + ground photo -> species (the flagship) ---
+        # ---- species / family / phylo / traits from shared given-sets (one encode each) ----
+        if U:
+            L_U = infer(U, ["identity"])["identity"]
+            add("B1_species_from_env_top10", topk_hit(L_U, tid, 10), B)
+            if fam is not None:
+                add("B6_family_from_env", fam_hit(L_U, tid), B)
+                rank = (L_U.argsort(-1, descending=True) == tid[:, None]).float().argmax(-1)
+                add("B23_species_calibration_mrr", (1.0 / (rank.float() + 1)).sum().item(), B)   # A14 calibration
         if vision:
-            pr = infer(universal + vision, ["identity"])["identity"]
-            top5 = pr.topk(5, dim=-1).indices
-            correct1 = (pr.argmax(-1) == values["identity"])
-            acc["A2_top1"][0] += correct1.float().sum().item(); acc["A2_top1"][1] += B
-            acc["A2_top5"][0] += (top5 == values["identity"][:, None]).any(-1).float().sum().item(); acc["A2_top5"][1] += B
-            # Q8: family accuracy from the species prediction (does the guess land in the right clade?)
-            if fam_of_species is not None:
-                acc["Q8_fam"][0] += (fam_of_species[pr.argmax(-1)] == fam_of_species[values["identity"]]).float().sum().item()
-                acc["Q8_fam"][1] += B
-            # A5: U + photo -> evolutionary-position vector
+            tg = ["identity"] + (["phylo"] if "phylo" in have else []) + traits
+            P = infer(U + vision, tg)                     # U + photo, decode species/phylo/traits from one encode
+            add("B2_species_from_photo_top1", topk_hit(P["identity"], tid, 1), B)
+            add("B3_species_from_photo_top5", topk_hit(P["identity"], tid, 5), B)
             if "phylo" in have:
-                pc = infer(universal + vision, ["phylo"])["phylo"]
-                acc["A5_cos"][0] += F.cosine_similarity(pc, values["phylo"], dim=-1).sum().item(); acc["A5_cos"][1] += B
-            # A4: U + photo -> traits (collect for macro-F1)
-            if traits:
-                pt = infer(universal + vision, traits)
-                for t in traits:
-                    tr_pred[t].append(pt[t].argmax(-1).cpu()); tr_true[t].append(values[t].cpu()); tr_obs[t].append(observed[t].cpu())
-
-        # --- A1: U (position + geometry-only neighbors) -> species, no photo ---
-        pr0 = infer(universal, ["identity"])["identity"]
-        t10 = pr0.topk(10, dim=-1).indices
-        acc["A1_top10"][0] += (t10 == values["identity"][:, None]).any(-1).float().sum().item(); acc["A1_top10"][1] += B
-        # Q3: marginal value of location = (geo+vision top1) - (vision-only top1) is approximated by A2 - A1 at net time
-
-        # --- A6: imagine vision -- reconstruct DINOv3 from everything but vision ---
-        if "vision_dino" in have:
-            non_vision = [n for n in names if n not in ("vision_dino", "vision_bio") and observed_any(observed, n)]
-            pv = infer(non_vision, ["vision_dino"])["vision_dino"]
-            acc["A6_cos"][0] += F.cosine_similarity(pv, values["vision_dino"], dim=-1).sum().item(); acc["A6_cos"][1] += B
-            # leave-one-out DINO: predict vision_dino from ALL other observed variables
-            loo_given = [n for n in names if n != "vision_dino"]
-            pv2 = infer(loo_given, ["vision_dino"])["vision_dino"]
-            dino_loo[0] += F.cosine_similarity(pv2, values["vision_dino"], dim=-1).sum().item(); dino_loo[1] += B
-
-        # --- leave-one-out traits: predict each trait from ALL other observed variables ---
-        if traits:
+                add("B9_phylo_from_photo_cos", cos_sum(P["phylo"], values["phylo"]), B)
             for t in traits:
-                given = [n for n in names if n != t]
-                ptl = infer(given, [t])[t]
-                tr_pred_loo[t].append(ptl.argmax(-1).cpu())
+                a, b, o = trc["photo_env"][t]; a.append(P[t].argmax(-1).cpu()); b.append(values[t].cpu()); o.append(observed[t].cpu())
+            Pv = infer(vision, ["identity"] + traits)     # photo-only
+            add("B4_species_from_photo_only_top1", topk_hit(Pv["identity"], tid, 1), B)
+            for t in traits:
+                a, b, o = trc["photo"][t]; a.append(Pv[t].argmax(-1).cpu()); b.append(values[t].cpu()); o.append(observed[t].cpu())
+        L_blank = infer([], ["identity"])["identity"]     # bare space-time
+        add("B5_species_from_spacetime_top10", topk_hit(L_blank, tid, 10), B)
+        if fam is not None:
+            add("B8_family_from_spacetime", fam_hit(L_blank, tid), B)
+            if "phylo" in have:
+                add("B7_family_from_phylo", fam_hit(infer(["phylo"], ["identity"])["identity"], tid), B)
 
-    def reduce(a):
-        return a[0] / a[1] if a[1] > 0 else float("nan")
+        # ---- trait leave-one-out (each trait from all other observed variables) ----
+        for t in traits:
+            pl = infer([n for n in names if n != t], [t])[t]
+            a, b, o = trc["loo"][t]; a.append(pl.argmax(-1).cpu()); b.append(values[t].cpu()); o.append(observed[t].cpu())
 
+        # ---- ground-vision: imagine / leave-one-out / from aerial ----
+        if "vision_dino" in have:
+            nonvis = [n for n in obs if n not in ("vision_dino", "vision_bio")]
+            add("B13_imagine_vision_cos", cos_sum(infer(nonvis, ["vision_dino"])["vision_dino"], values["vision_dino"]), B)
+            add("B14_vision_leave_one_out_cos", cos_sum(infer([n for n in names if n != "vision_dino"], ["vision_dino"])["vision_dino"], values["vision_dino"]), B)
+            if naip:
+                add("B15_vision_from_aerial_cos", cos_sum(infer(naip, ["vision_dino"])["vision_dino"], values["vision_dino"]), B)
+
+        # ---- dense environmental field: reconstruct each modality from the rest of U (measure-everything) ----
+        for key, tv in (("B16_infer_clay_cos", "clay"), ("B17_infer_soil_cos", "soil"), ("B18_infer_climate_cos", "climate")):
+            if tv in have:
+                add(key, cos_sum(infer([n for n in U if n != tv], [tv])[tv], values[tv]), B)
+        if naip:
+            add("B19_infer_aerial_cos", cos_sum(infer([n for n in U if n not in naip], ["naip_rgb"])["naip_rgb"], values["naip_rgb"]), B)
+
+        # ---- community / companions (neighbor species are the eval TARGET only; never fed as input -> leak-safe) ----
+        if fam is not None and c0 < community_cap and hasattr(source, "neighbors"):
+            tset = torch.zeros(B, L_blank.shape[1], dtype=torch.bool, device=device)
+            tset.scatter_(1, source.cls[source.neighbors[idx]], True); tset.scatter_(1, tid[:, None], True)
+            if U:
+                add("B20_community_from_env_recall", recall_sum(infer(U, ["identity"])["identity"], tset), B)
+            add("B21_community_from_species_recall", recall_sum(infer(["identity"], ["identity"])["identity"], tset), B)
+            add("B22_companions_recall", recall_sum(infer(["identity"] + U, ["identity"])["identity"], tset), B)
+
+        # ---- forecasting (temporal holdout only): predict the held-out FUTURE environment ----
+        if holdout == "temporal" and "climate" in have:
+            add("B25_forecast_climate_cos", cos_sum(infer([n for n in U if n != "climate"], ["climate"])["climate"], values["climate"]), B)
+
+        # ---- B26 flowering (A7): activates once flowering labels are wired as a variable; inactive until then ----
+
+    # ---- reduce ----
     out: Dict[str, float] = {}
-    if vision:
-        out["A2_species_vision_top1"] = reduce(acc["A2_top1"])
-        out["A2_species_vision_top5"] = reduce(acc["A2_top5"])
-        if fam_of_species is not None:
-            out["Q8_phylo_to_family"] = reduce(acc["Q8_fam"])
-        if "phylo" in have:
-            out["A5_phylo_vision_cos"] = reduce(acc["A5_cos"])
-        if traits:
-            f1s = [_macro_f1(torch.cat(tr_pred[t]), torch.cat(tr_true[t]), torch.cat(tr_obs[t]), trait_nc[t]) for t in traits]
-            out["A4_traits_vision_f1"] = float(np.nanmean(f1s))
-    out["A1_species_geo_top10"] = reduce(acc["A1_top10"])
-    if vision and not np.isnan(out.get("A2_species_vision_top1", np.nan)):
-        out["Q3_geo_gain_species"] = max(0.0, out["A2_species_vision_top1"] - out["A1_species_geo_top10"])
-    if "vision_dino" in have:
-        out["A6_imagine_vision_cos"] = reduce(acc["A6_cos"])
-        out["loo_vision_dino_cos"] = reduce(dino_loo)
+    for k, (s, n) in acc.items():
+        if n > 0:
+            out[k] = s / n
     if traits:
-        f1s_loo = [_macro_f1(torch.cat(tr_pred_loo[t]), torch.cat(tr_true[t]), torch.cat(tr_obs[t]), trait_nc[t]) for t in traits]
-        out["loo_traits_f1"] = float(np.nanmean(f1s_loo))
+        for lab, key in (("photo_env", "B10_traits_from_photo_env_f1"),
+                         ("photo", "B11_traits_from_photo_f1"),
+                         ("loo", "B12_traits_leave_one_out_f1")):
+            if all(trc[lab][t][0] for t in traits):
+                f1s = [_macro_f1(torch.cat(trc[lab][t][0]), torch.cat(trc[lab][t][1]), torch.cat(trc[lab][t][2]), trait_nc[t]) for t in traits]
+                out[key] = float(np.nanmean(f1s))
+    if "B2_species_from_photo_top1" in out and "B1_species_from_env_top10" in out:
+        out["B24_geo_information_gain"] = max(0.0, out["B2_species_from_photo_top1"] - out["B1_species_from_env_top10"])
     return out
 
 
@@ -172,31 +204,45 @@ def observed_any(observed: Dict[str, torch.Tensor], name: str) -> bool:
     return name in observed and bool(observed[name].any())
 
 
-def net_score(raw: Dict[str, float]) -> float:
-    """Unweighted mean of the active benchmarks, each normalized to [0,1]."""
-    normed = normalized(raw)
-    vals = [v for v in normed.values() if not np.isnan(v)]
-    if not vals:
-        return 0.0
-    return float(sum(vals) / len(vals))
+_SCORE_FLOOR = 1e-3   # keeps the harmonic mean finite/comparable if a benchmark reads ~0 (a zero would otherwise nuke it to 0)
 
 
 def normalized(raw: Dict[str, float]) -> Dict[str, float]:
-    """Each raw benchmark -> (value - baseline) / (target - baseline), clipped to [0, 1]."""
-    out = {}
-    for k, v in raw.items():
-        if k in BASELINE and not (isinstance(v, float) and np.isnan(v)):
-            b, t = BASELINE[k], TARGET[k]
-            out[k] = float(np.clip((v - b) / (t - b + 1e-9), 0.0, 1.0))
-    return out
+    """Each benchmark's score in [0,1]. EVERY benchmark here is defined on a metric that is ALREADY naturally in
+    [0,1] -- top-k accuracy, family accuracy, macro-F1, cosine similarity of unit embeddings, recall@k, calibration
+    MRR -- so the score IS the raw value (clipped for safety). No baseline/target remap: a hand-set target below the
+    attainable maximum is an ARTIFICIAL ceiling that saturates a still-improving metric at 1.0, which we reject."""
+    return {k: float(np.clip(v, 0.0, 1.0)) for k, v in raw.items()
+            if not (isinstance(v, float) and np.isnan(v))}
+
+
+def net_score(raw: Dict[str, float]) -> float:
+    """North star = HARMONIC mean (power mean p=-1) of the active benchmark scores. Chosen over the arithmetic mean
+    so lifting the WEAKEST benchmark helps most and no benchmark can be sacrificed for another (matches the module
+    docstring's stated design; the old code silently used an arithmetic mean -- contradiction resolved here)."""
+    vals = [max(v, _SCORE_FLOOR) for v in normalized(raw).values()]
+    if not vals:
+        return 0.0
+    return float(len(vals) / sum(1.0 / v for v in vals))
+
+
+def arithmetic_net(raw: Dict[str, float]) -> float:
+    """Arithmetic mean of the active scores -- reported alongside the harmonic north star for legibility (it moves
+    when any benchmark improves, whereas the harmonic mean is dominated by the current weakest)."""
+    vals = list(normalized(raw).values())
+    return float(sum(vals) / len(vals)) if vals else 0.0
 
 
 def format_benchmarks(raw: Dict[str, float]) -> str:
-    """Render the raw benchmark values, their normalized [0,1] scores, and the net harmonic-mean north star."""
+    """Render every benchmark's [0,1] score (weakest first, so the binding constraint is on top), plus both the
+    harmonic-mean north star and the arithmetic mean over the active benchmarks."""
     normed = normalized(raw)
-    lines = ["benchmark                     raw     normalized"]
-    for k in sorted(raw):
-        n = normed.get(k, float("nan"))
-        lines.append(f"  {k:<26} {raw[k]:6.3f}   {n:6.3f}")
-    lines.append(f"NET SCORE (mean of {len(normed)} active): {net_score(raw):.4f}")
+    order = {b: i for i, b in enumerate(BENCHMARKS)}
+    lines = ["benchmark                             score"]
+    for k in sorted(raw, key=lambda k: normed.get(k, 1.0)):     # weakest-first: the harmonic mean's binding benchmarks lead
+        s = normed.get(k, float("nan"))
+        lines.append(f"  {k:<34} {s:6.3f}")
+    n_defined = len(BENCHMARKS)
+    lines.append(f"NET SCORE (harmonic mean of {len(normed)}/{n_defined} active): {net_score(raw):.4f}")
+    lines.append(f"  (arithmetic mean: {arithmetic_net(raw):.4f})")
     return "\n".join(lines)

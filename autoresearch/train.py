@@ -209,8 +209,11 @@ def train_and_evaluate(config, device):
     line = " | ".join(f"{k} {v:.3f}" for k, v in scores.items())
     print(f"held-out regions (conditioning on {given}): {line}", flush=True)
     from deepearth.autoresearch import evaluate as ev      # the frozen benchmark suite -> net-score north star
+    _t_eval = time.time()
     raw = ev.evaluate_benchmarks(model, source, device)
+    _eval_s = time.time() - _t_eval
     print(ev.format_benchmarks(raw), flush=True)
+    print(f"benchmark_suite_seconds: {_eval_s:.1f} ({len(source.test)} held-out rows, {len(ev.normalized(raw))} active)", flush=True)
     ns = ev.net_score(raw)
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if device.startswith("cuda") else 0.0
     if config.get("_tag"):
