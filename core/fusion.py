@@ -64,6 +64,29 @@ class ManifoldField(nn.Module):
         return self.encode(neighbor_positions)
 
 
+class SmoothGeoField(nn.Module):
+    """Random Fourier Features over (lat, lon, elev, time): a SMOOTH, continuous geo encoding that GENERALIZES to
+    held-out locations, unlike the memorizing hash grid whose fine cells are untrained at unseen points. A transferable
+    low-frequency spatial prior aimed at A1 (species-from-geography under spatial holdout). Complements, not replaces,
+    the absolute hash memory. (Rahimi & Recht RFF / Tancik Fourier-features; the SatCLIP idea of a generalizing geo prior.)
+    """
+
+    def __init__(self, d_model: int, per_scale: int = 32, sigmas: Sequence[float] = (1.0, 4.0, 16.0, 64.0)):
+        super().__init__()
+        # HIERARCHICAL sigma-bank (Hybrid-SDM / Fourier-features): each scale is a fixed Gaussian projection giving a
+        # shift-invariant RBF kernel at that bandwidth; low sigma = broad/transferable, high = fine. Multi-scale coverage
+        # coarse->fine without per-cell parameters, so it generalizes to held-out locations by construction.
+        B = torch.cat([torch.randn(4, per_scale) * s for s in sigmas], dim=1)   # [4, per_scale*n_scales]
+        self.register_buffer("B", B)
+        self.register_buffer("coord_scale", torch.tensor([1 / 90.0, 1 / 180.0, 1 / 3000.0, 1 / 60.0]))  # lat°, lon°, elev m, time
+        n_features = 2 * per_scale * len(sigmas)                               # cos+sin over every scale's directions
+        self.proj = nn.Sequential(nn.Linear(n_features, d_model), nn.GELU(), nn.Linear(d_model, d_model))
+
+    def forward(self, coords: torch.Tensor) -> torch.Tensor:
+        x = (coords * self.coord_scale) @ self.B * (2.0 * math.pi)             # [B, per_scale*n_scales]
+        return self.proj(torch.cat([torch.cos(x), torch.sin(x)], dim=-1))       # [B, d_model]
+
+
 class NeighborContext(nn.Module):
     """One token per (neighbor, subspace) = subspace encoding + neighbor feature projections + a subspace marker.
 
@@ -137,6 +160,7 @@ class DeepEarth(nn.Module):
         loss_weights: Optional[Dict[str, float]] = None,
         contrastive_weight: float = 0.0,
         contrastive_vars: Optional[Sequence[str]] = None,
+        smooth_geo: bool = False,
     ) -> None:
         super().__init__()
         self.loss_weights = loss_weights or {}
@@ -180,6 +204,8 @@ class DeepEarth(nn.Module):
                                         freq_log_scale_init=-2.5)   # start coarse (~1 km finest); learned from there
         self.absolute_proj = nn.Sequential(nn.Linear(self.absolute_encoder.output_dim, d_model), nn.GELU(),
                                            nn.Linear(d_model, d_model))
+        # Smooth transferable geo prior (RFF): added to the memorizing hash position -> generalizes to held-out regions (A1).
+        self.smooth_geo = SmoothGeoField(d_model) if smooth_geo else None
         # neighbor context over coordinate subspaces: space-time, plus any vector manifolds (e.g. biological)
         neighbor_dims = {v.name: (v.dim if v.kind == "continuous" else d_model)
                          for v in self.variables if v.neighbor}
@@ -272,6 +298,8 @@ class DeepEarth(nn.Module):
             position = self.absolute_proj(flat)
         else:
             position = self.absolute_proj(self.absolute_encoder(query_coords))
+        if self.smooth_geo is not None:
+            position = position + self.smooth_geo(query_coords)
         feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
                  for name, val in (neighbor_values or {}).items()}
         tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
@@ -282,6 +310,8 @@ class DeepEarth(nn.Module):
                           neighbor_values: Optional[Dict[str, torch.Tensor]] = None) -> dict:
         """Same as :meth:`context` but the absolute encoding is supplied as an already-read leaf ``flat``, keeping the precompute+detach out of the compiled region."""
         position = self.absolute_proj(flat)
+        if self.smooth_geo is not None:
+            position = position + self.smooth_geo(query_coords)
         feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
                  for name, val in (neighbor_values or {}).items()}
         tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
