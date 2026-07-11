@@ -78,6 +78,8 @@ def train_and_evaluate(config, device):
                       decoder_hidden=m.get("decoder_hidden"), loss_weights=m.get("loss_weights"),
                       contrastive_weight=m.get("contrastive_weight", 0.0), contrastive_vars=m.get("contrastive_vars"),
                       smooth_geo=m.get("smooth_geo", False),
+                      smooth_geo_sigmas=m.get("smooth_geo_sigmas"),
+                      smooth_geo_per_scale=m.get("smooth_geo_per_scale", 32),
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
     if m.get("compile", False) or config["training"].get("precision") == "bf16":
         from hashencoder.hashgrid import HashEncoder      # route the hash through its compile/autocast-safe op

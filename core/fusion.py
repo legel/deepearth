@@ -161,6 +161,8 @@ class DeepEarth(nn.Module):
         contrastive_weight: float = 0.0,
         contrastive_vars: Optional[Sequence[str]] = None,
         smooth_geo: bool = False,
+        smooth_geo_sigmas: Optional[Sequence[float]] = None,
+        smooth_geo_per_scale: int = 32,
     ) -> None:
         super().__init__()
         self.loss_weights = loss_weights or {}
@@ -205,7 +207,10 @@ class DeepEarth(nn.Module):
         self.absolute_proj = nn.Sequential(nn.Linear(self.absolute_encoder.output_dim, d_model), nn.GELU(),
                                            nn.Linear(d_model, d_model))
         # Smooth transferable geo prior (RFF): added to the memorizing hash position -> generalizes to held-out regions (A1).
-        self.smooth_geo = SmoothGeoField(d_model) if smooth_geo else None
+        self.smooth_geo = SmoothGeoField(
+            d_model, per_scale=smooth_geo_per_scale,
+            sigmas=tuple(smooth_geo_sigmas) if smooth_geo_sigmas else (1.0, 4.0, 16.0, 64.0),
+        ) if smooth_geo else None
         # neighbor context over coordinate subspaces: space-time, plus any vector manifolds (e.g. biological)
         neighbor_dims = {v.name: (v.dim if v.kind == "continuous" else d_model)
                          for v in self.variables if v.neighbor}

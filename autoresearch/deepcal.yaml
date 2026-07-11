@@ -23,7 +23,8 @@ model:
     phylo: 2.0
   contrastive_weight: 0.05            # JEPA / rule 16: batch-InfoNCE auxiliary so predicted vision_dino retrieves its own target vs the batch (a global cross-modal signal cosine can't give). Targets A6/loo_vision.
   contrastive_vars: [vision_dino]
-  smooth_geo: true                   # Hybrid-SDM (arXiv:2410.10937): a smooth sigma-bank RFF prior over (lat,lon,elev,time) ADDED to the memorizing hash position -> a transferable spatial basis that generalizes to held-out regions. Over 3 seeds each: raises A1 mean 0.348->0.402 AND cuts A1 variance ~5x (std 0.10->0.02); net mean 0.869->0.876.
+  smooth_geo: true
+  smooth_geo_sigmas: [0.25, 1.0, 4.0, 16.0, 64.0]   # +ultra-broad transferable scale on the winning RFF bank: over 3 seeds vs champion (same session) A1 mean 0.392->0.468 (std 0.045->0.008), net 0.873->0.882; non-overlapping distributions.                  # Hybrid-SDM (arXiv:2410.10937): a smooth sigma-bank RFF prior over (lat,lon,elev,time) ADDED to the memorizing hash position -> a transferable spatial basis that generalizes to held-out regions. Over 3 seeds each: raises A1 mean 0.348->0.402 AND cuts A1 variance ~5x (std 0.10->0.02); net mean 0.869->0.876.
   species_graph:                      # phylogenomic species GNN (science.md rules 7-12): refine per-species state so an obs of species A updates its relatives B,C,...; identity is read from the refined table
     variable: identity
     operator: ou-attention            # distance-biased attention over the E1 phylo-distance matrix (2141 species, dense)
