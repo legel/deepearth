@@ -3,9 +3,18 @@
 Autonomous research on DeepEarth: improve the model, train for a fixed budget, score the full benchmark suite, keep
 gains, repeat indefinitely. DeepCal is the first instance (California plant ecology).
 
-**Objective:** maximize the **mean of all benchmarks** (`net_score` in `evaluate.py`) — currently ~50 metrics (B1..),
-each natively in [0,1] (accuracy/F1/cosine/recall/AUC/skill/calibration). Report the harmonic mean (headline: no metric
-may be sacrificed — lift the weakest) AND the arithmetic mean. **No individual metric may regress** to raise the mean.
+**Objective:** maximize the **mean of all benchmarks** (`net_score` in `evaluate.py`) — currently ~54 metrics (B1..),
+each natively in [0,1] (accuracy/F1/cosine/recall/AUC/skill/calibration/KL). Report the harmonic mean (headline: no
+metric may be sacrificed — lift the weakest) AND the arithmetic mean. **No individual metric may regress** to raise it.
+
+**Conditional Bayesian queries (core capability):** DeepEarth must answer masked queries at any constraint level and
+return calibrated posteriors that tighten as evidence is added. Canonical case = plant-pollinator (B41,B51-B54): given
+a plant with everything masked → the marginal pollinator distribution across all spacetime; add geography → pollinators
+at that location across all time; add time → only pollinators present then (out-of-season migrants vanish); given plant
++ pollinator + location, query TIME → a (start,stop) interaction-phenology interval (mixture-of-Gaussians, multi-modal
+per year). Priors/posteriors must map to data. This rides the mask-anything `infer(given,targets)` PerceiverIO core;
+distribution heads (species/pollinator distributions, temporal-interval posteriors) are the refinements. Modifying
+core architecture (fusion, encoders, Perceiver core, heads, posteriors) to achieve this is fair game and expected.
 
 **Benchmark heads (paradigm, 2026-07-11):** a benchmark may have a small supervised **head** trained JOINTLY with the
 self-supervised masked-reconstruction objective on the TRAIN split. Head losses carry a **small total weight** so SSL
