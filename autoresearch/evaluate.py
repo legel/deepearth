@@ -194,6 +194,13 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             if all(trc[lab][t][0] for t in traits):
                 f1s = [_macro_f1(torch.cat(trc[lab][t][0]), torch.cat(trc[lab][t][1]), torch.cat(trc[lab][t][2]), trait_nc[t]) for t in traits]
                 out[key] = float(np.nanmean(f1s))
+        def _tf1(t):
+            c = trc["photo_env"][t]
+            return float(_macro_f1(torch.cat(c[0]), torch.cat(c[1]), torch.cat(c[2]), trait_nc[t])) if c[0] else float("nan")
+        if "seasonality" in traits: out["B30_seasonality_trait_f1"] = _tf1("seasonality")
+        if "water" in traits and "soil_drainage" in traits:
+            out["B38_water_soil_regime_f1"] = float(np.nanmean([_tf1("water"), _tf1("soil_drainage")]))
+        if "form" in traits: out["B49_form_trait_f1"] = _tf1("form")
     if "B2_species_from_photo_top1" in out and "B1_species_from_env_top10" in out:
         out["B24_geo_information_gain"] = max(0.0, out["B2_species_from_photo_top1"] - out["B1_species_from_env_top10"])
     return out
