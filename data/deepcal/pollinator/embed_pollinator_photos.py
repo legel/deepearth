@@ -19,7 +19,7 @@ def main():
     import open_clip
     dproc = AutoImageProcessor.from_pretrained("facebook/dinov2-large")
     dino = AutoModel.from_pretrained("facebook/dinov2-large").eval().to(DEV)
-    bio, _, bpre = open_clip.create_model_and_transforms("hf-hub:imageomics/bioclip")
+    bio, _, bpre = open_clip.create_model_and_transforms("hf-hub:imageomics/bioclip-2")
     bio = bio.eval().to(DEV)
     meta = load_meta()
     man = {}
