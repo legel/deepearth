@@ -17,8 +17,8 @@ def load_meta():
 def main():
     from transformers import AutoImageProcessor, AutoModel
     import open_clip
-    dproc = AutoImageProcessor.from_pretrained("facebook/dinov2-large")
-    dino = AutoModel.from_pretrained("facebook/dinov2-large").eval().to(DEV)
+    dproc = AutoImageProcessor.from_pretrained("facebook/dinov3-vitl16-pretrain-lvd1689m")
+    dino = AutoModel.from_pretrained("facebook/dinov3-vitl16-pretrain-lvd1689m").eval().to(DEV)
     bio, _, bpre = open_clip.create_model_and_transforms("hf-hub:imageomics/bioclip-2")
     bio = bio.eval().to(DEV)
     meta = load_meta()
