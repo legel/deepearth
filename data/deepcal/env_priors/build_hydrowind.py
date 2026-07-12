@@ -68,8 +68,8 @@ def hydrowind_rasters(dem, res):
             d=k*step; zv=map_coordinates(z,[rows+drow*d,cols+dcol*d],order=1,mode="nearest",prefilter=False)
             np.maximum(sx,np.degrees(np.arctan((zv-z)/d)),out=sx)
         return sx
-    sx_w=np.mean([sx1(dem,270.0+30.0*(k/4-0.5)) for k in range(5)],0)                # prevailing W sector
-    sx_mean=np.mean([sx1(dem,a) for a in (0,90,180,270)],0)                          # omnidirectional
+    sx_w=np.mean([sx1(dem,270.0+30.0*(k-1)/2,dmax=100.0,step=4.0) for k in range(3)],0)   # prevailing W (3 rays)
+    sx_mean=np.mean([sx1(dem,a,dmax=100.0,step=4.0) for a in (0,90,180,270)],0)           # omnidirectional
     tpi=zf-ndimage.uniform_filter(zf,101,mode="nearest")
     return dict(twi=twi, hand=hand, ln_sca=np.log(sca), sx_w=sx_w, sx_mean=sx_mean, tpi=tpi)
 
@@ -78,13 +78,13 @@ def process_cell(cell, obs):
     latc, lonc = (clat+0.5)*CELL, (clon+0.5)*CELL
     epsg=utm_epsg(lonc); tf=transformer(epsg); cx,cy=tf.transform(lonc,latc)
     if not (np.isfinite(cx) and np.isfinite(cy)): return None
-    n=2*PATCH_HALF; xmin,xmax=cx-PATCH_HALF,cx+PATCH_HALF; ymin,ymax=cy-PATCH_HALF,cy+PATCH_HALF
+    n=PATCH_HALF; xmin,xmax=cx-PATCH_HALF,cx+PATCH_HALF; ymin,ymax=cy-PATCH_HALF,cy+PATCH_HALF   # 2m px over 512m
     dem=fetch_dem(xmin,ymin,xmax,ymax,epsg,n)
     if dem is None or dem.shape!=(n,n): return None
     dem=np.where(np.isfinite(dem)&(dem>-1e4),dem,np.nan)
     if np.isnan(dem).mean()>0.5: return None
     dem=np.nan_to_num(dem,nan=np.nanmean(dem))
-    R=hydrowind_rasters(dem,1.0); out={}
+    R=hydrowind_rasters(dem,2.0); out={}
     for gid,la,lo in obs:
         x,y=tf.transform(lo,la); col=(x-xmin)/((xmax-xmin)/n); row=(ymax-y)/((ymax-ymin)/n)
         r=int(np.clip(round(row),0,n-1)); c=int(np.clip(round(col),0,n-1))
