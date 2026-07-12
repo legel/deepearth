@@ -10,7 +10,24 @@ from scipy import ndimage
 from scipy.ndimage import map_coordinates
 from skimage.morphology import reconstruction
 from pyproj import Transformer
+import numba
 warnings.filterwarnings("ignore")
+
+@numba.njit(cache=True)
+def _accumulate(order, recflat, acc):
+    for i in range(order.size):
+        idx = order[i]; rec = recflat[idx]
+        if rec != idx: acc[rec] += acc[idx]
+    return acc
+
+@numba.njit(cache=True)
+def _hand_prop(order_asc, recflat, stream, se):
+    for i in range(order_asc.size):
+        idx = order_asc[i]
+        if not stream[idx]:
+            rec = recflat[idx]
+            if rec != idx: se[idx] = se[rec]
+    return se
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage"
@@ -47,19 +64,12 @@ def hydrowind_rasters(dem, res):
         slope=(zf-zf[rr,cc])/dist[k]
         slope=np.where((r+dr<0)|(r+dr>=ny)|(c+dc<0)|(c+dc>=nx),-np.inf,slope)
         upd=slope>best; best=np.where(upd,slope,best); rr_=np.where(upd,rr,rr_); rc_=np.where(upd,cc,rc_)
-    recflat=(rr_*nx+rc_).ravel(); order=np.argsort(zf.ravel())[::-1]
-    acc=np.ones(zf.size)
-    for idx in order:
-        rec=recflat[idx]
-        if rec!=idx: acc[rec]+=acc[idx]
-    acc=acc.reshape(zf.shape)
+    recflat=(rr_*nx+rc_).ravel().astype(np.int64); order=np.argsort(zf.ravel())[::-1].astype(np.int64)
+    acc=_accumulate(order, recflat, np.ones(zf.size)).reshape(zf.shape)
     dzdy,dzdx=np.gradient(zf,res); tanb=np.maximum(np.tan(np.arctan(np.hypot(dzdx,dzdy))),0.001)
     sca=acc*res; twi=np.log(sca/tanb)
-    stream=(acc>2000).ravel(); zflat=zf.ravel(); se=zflat.copy()
-    for idx in np.argsort(zflat):
-        if not stream[idx]:
-            rec=recflat[idx]
-            if rec!=idx: se[idx]=se[rec]
+    stream=(acc.ravel()>2000); zflat=zf.ravel().copy()
+    se=_hand_prop(np.argsort(zflat).astype(np.int64), recflat, stream, zflat.copy())
     hand=np.clip(zf-se.reshape(zf.shape),0,None)
     def sx1(z, wf, dmax=100.0, step=2.0):
         rows,cols=np.mgrid[0:ny,0:nx].astype(np.float32)
