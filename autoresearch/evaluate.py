@@ -87,7 +87,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     holdout = getattr(source, "holdout", "spatial")
 
     vision = [v for v in ("vision_dino", "vision_bio") if v in have]
-    U = [v for v in ("climate", "soil", "naip_rgb", "naip_ir", "clay", "topo") if v in have]   # universal (no organism obs)
+    U = [v for v in ("climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm") if v in have]   # universal (no organism obs)
     naip = [v for v in ("naip_rgb", "naip_ir") if v in have]
 
     acc: Dict[str, list] = {}                              # key -> [sum, count]
@@ -97,6 +97,12 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     trc = {lab: {t: ([], [], []) for t in traits} for lab in ("photo_env", "photo", "loo")}
     RK = 10
     community_cap = 6 * batch                              # recall@k is O(K*classes); cap to the first few batches for speed
+
+    import os
+    sdist = None                                           # local species-distribution ground truth (KL benchmarks)
+    _dp = os.path.join(os.path.dirname(__file__), "..", "data", "deepcal", "gbif_species_dist.npz")
+    if os.path.exists(_dp) and hasattr(source, "gbifID"):
+        _z = np.load(_dp); sdist = {"m": {int(g): i for i, g in enumerate(_z["gbifID"])}, "z": _z}
 
     def topk_hit(logits, target, k):
         return (logits.topk(k, -1).indices == target[:, None]).any(-1).float().sum().item()
@@ -127,6 +133,19 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 add("B6_family_from_env", fam_hit(L_U, tid), B)
                 rank = (L_U.argsort(-1, descending=True) == tid[:, None]).float().argmax(-1)
                 add("B23_species_calibration_mrr", (1.0 / (rank.float() + 1)).sum().item(), B)   # A14 calibration
+                if sdist is not None:                     # species-distribution KL vs local community, 3 scales
+                    pm = torch.softmax(L_U, -1).detach().cpu().numpy(); gids = source.gbifID[idx.detach().cpu().numpy()]
+                    for sc, key in (("3km", "B39_species_dist_3km_kl"), ("300m", "B40_species_dist_300m_kl"), ("30m", "B29_species_dist_30m_kl")):
+                        ix, fq = sdist["z"]["idx_" + sc], sdist["z"]["frq_" + sc]; s_exp = 0.0; nk = 0
+                        for b, g in enumerate(gids):
+                            r = sdist["m"].get(int(g))
+                            if r is None: continue
+                            sp = ix[r]; msk = sp >= 0
+                            if msk.sum() < 2: continue
+                            p = fq[r][msk]; p = p / p.sum()
+                            q = pm[b, sp[msk]] + 1e-9; q = q / q.sum()
+                            s_exp += float(np.exp(-np.sum(p * np.log(p / q)))); nk += 1
+                        if nk: add(key, s_exp, nk)
         if vision:
             tg = ["identity"] + (["phylo"] if "phylo" in have else []) + traits
             P = infer(U + vision, tg)                     # U + photo, decode species/phylo/traits from one encode

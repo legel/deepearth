@@ -276,6 +276,14 @@ class California:
         if soil.exists():
             z = np.load(soil)
             self._add_modality("soil", z["gbifID"], z["soil"], gid, dev, zscore=True, valid=z["has_soil"])
+        topo = cache / "gbif_topo_tokens.npz"                                         # USGS 3DEP 1m microtopography (12)
+        if topo.exists():
+            z = np.load(topo)
+            self._add_modality("topo", z["gbifID"], z["topo"], gid, dev, zscore=True, valid=z["has_topo"])
+        chm = cache / "gbif_chm_tokens.npz"                                            # NAIP-CHM 0.6m canopy+structure (11)
+        if chm.exists():
+            z = np.load(chm)
+            self._add_modality("chm", z["gbifID"], z["chm"], gid, dev, zscore=True, valid=z["has_chm"])
 
     def _frame(self, idx):
         lat = self.lat.cpu().numpy()[idx]; lon = self.lon.cpu().numpy()[idx]; elev = self.elev.cpu().numpy()[idx]
