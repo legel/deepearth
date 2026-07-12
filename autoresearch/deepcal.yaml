@@ -43,6 +43,8 @@ variables:
   - {name: naip_rgb, kind: continuous}                       # NAIP aerial DINOv3-SAT493M (RGB)
   - {name: naip_ir,  kind: continuous}                       # NAIP aerial DINOv3-SAT493M (IR)
   - {name: clay,     kind: continuous}                       # Clay v1.5 / Sentinel-2 embedding
+  - {name: topo,     kind: continuous}                       # USGS 3DEP 1m microtopography (slope/aspect/TRI/VRM/HLI/TPI) — rule 18
+  - {name: chm,      kind: continuous}                       # NAIP-CHM 0.6m canopy height+structure (trees+buildings) — rule 18
 
 condition_on: [vision_dino, vision_bio]    # the widely-available inputs used at evaluation
 
