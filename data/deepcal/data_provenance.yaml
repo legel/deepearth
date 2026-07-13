@@ -58,7 +58,8 @@ modalities:
     config: {patch_m: 512, features: 12, TPI_radii_m: [8, 24, 72, 140]}
     builder: env_priors/build_topo.py
     output: {file: gbif_topo_tokens.npz, key: topo, shape: "[N,12]", dtype: float32, mask: has_topo}
-    reproducible: yes (deterministic given the DEM tile)
+    reproducible: YES — AUDITED (reused process_cell on cache obs): cos 1.0000 vs the shipped cache (4/5, 1 network
+                  no-result); deterministic given the 3DEP DEM tile. chm/hydro share this in-repo deterministic pattern.
 
   chm:
     source: NAIP-CHM canopy height (rangeland.ntsg.umt.edu index)
