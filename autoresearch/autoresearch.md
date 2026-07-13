@@ -3,9 +3,20 @@
 Autonomous research on DeepEarth: improve the model, train for a fixed budget, score the full benchmark suite, keep
 gains, repeat indefinitely. DeepCal is the first instance (California plant ecology).
 
-**Objective:** maximize the **mean of all benchmarks** (`net_score` in `evaluate.py`) — currently ~54 metrics (B1..),
-each natively in [0,1] (accuracy/F1/cosine/recall/AUC/skill/calibration/KL). Report the harmonic mean (headline: no
-metric may be sacrificed — lift the weakest) AND the arithmetic mean. **No individual metric may regress** to raise it.
+**Objective:** maximize the **harmonic mean of the CAPABILITY benchmarks** (`net_score` in `evaluate.py`) — the suite
+is B1..B60 and climbing, each natively in [0,1] (accuracy/F1/cosine/recall/AUC/skill/calibration). Report the harmonic
+mean (headline: no metric may be sacrificed — lift the weakest) AND the arithmetic mean. **No individual metric may
+regress** to raise it.
+
+**Scoring integrity (metrics are gaming-proof, audited 2026-07-13):** every benchmark's metric is chosen so a
+no-information baseline scores ~0 and there is no artificial ceiling. (a) Community/species-distribution benchmarks use
+a KL SKILL score `1 - KL(p‖q)/KL(p‖uniform)` (raw exp(-KL) had a 0.83-0.95 uniform floor — a broad guess won). (b)
+Reconstruction benchmarks use CENTERED (anomaly) cosine — the modality's train-mean is subtracted so a constant
+mean-prediction scores ~0 (raw cosine floors were 0.35-0.95 because embeddings share a mean direction). (c) The
+ablation-delta / information-gain benchmarks (`*_gain`: B24, B56-B60) are DERIVED differences that isolate a mechanism's
+contribution; they are reported as DIAGNOSTICS but EXCLUDED from the net (`is_diagnostic()`) — folding a small
+difference into a harmonic mean double-counts its constituents and pins the north star near 0. Characterize any new
+metric's floor on real data before trusting it.
 
 **Conditional Bayesian queries (core capability):** DeepEarth must answer masked queries at any constraint level and
 return calibrated posteriors that tighten as evidence is added. Canonical case = plant-pollinator (B41,B51-B54): given
