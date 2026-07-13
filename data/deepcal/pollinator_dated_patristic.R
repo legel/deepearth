@@ -17,7 +17,8 @@ clades <- list(
   bees        = "BEE_mat7_fulltree_tplo35_sf20lp.nwk",
   ants        = "ants_Nelsen2018.tre",
   butterflies = "butterflies_Kawahara2023.tre",
-  moths       = "sphingidae_Couch2026.tre")
+  moths       = "sphingidae_Couch2026.tre",
+  birds       = "hummingbirds_datelife_McGuire2014.nwk")   # datelife median chronogram (OpenTree store, McGuire2014); the raw hummingbirds.nwk had NO branch lengths
 
 vgen <- gen(vset)                                             # genus of each vocab species
 

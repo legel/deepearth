@@ -12,7 +12,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 COPHEN = Path("/home/photon/4tb/deepcal_data/trees/dated_cophen")
 DIST = HERE / "pollinator_distance.npy"
-CLADES = ["bees", "ants", "butterflies", "moths"]
+CLADES = ["bees", "ants", "butterflies", "moths", "birds"]
 
 
 def binom_to_index():

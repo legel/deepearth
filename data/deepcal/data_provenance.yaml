@@ -145,7 +145,9 @@ modalities:
                    — the same genus-level resolution the V.PhyloMaker plant tree uses; within-genus distance is the honest 0
                    floor, not an invented divergence): bees=Henriquez-Piskulich2024 BEE_mat7 treePL (1745: 1143 exact + 602
                    genus), ants=Nelsen2018 (66: 31+35), butterflies=Kawahara2023 (173: 16 exact + 157 genus — the SOTA global
-                   butterfly chronogram, Nature Ecol Evol), hawkmoths=Couch2026 Sphingidae (41: 20+21). Builders:
+                   butterfly chronogram, Nature Ecol Evol), hawkmoths=Couch2026 Sphingidae (41: 20+21), birds=datelife/McGuire2014
+                   dated hummingbird chronogram (9: the 8 CA Trochilidae plant-pollinators + 1 genus; the raw hummingbirds.nwk was
+                   topology-only so unusable). Total 2034. Builders:
                    pollinator_dated_patristic.R + pollinator_dated_distance.py (within-clade blocks overwritten, rescaled to keep
                    block mean). Topological backup: pollinator_distance_topo.npy."
     datelife: "datelife 0.6.9 installed + validated in the rphylo env (msa was an OPTIONAL Suggests, never needed for the
