@@ -150,12 +150,16 @@ def _nersc_dir():
     return _SF["d"]
 
 def nersc_put(local_path, remote_name):
-    """Upload one file into NERSC_DIR via SFAPI (returns True on success)."""
+    """Upload one file into NERSC_DIR via SFAPI. On the first failure (e.g. expired SFAPI secret) disable further
+    attempts so imagery is simply kept LOCAL (uploaded later once creds refresh) instead of retrying auth per scene."""
+    if _SF.get("disabled"):
+        return False
     try:
         b = io.BytesIO(local_path.read_bytes()); b.filename = remote_name
         _nersc_dir().upload(b); return True
     except Exception as e:
-        print(f"  NERSC upload fail {remote_name}: {e}", flush=True); return False
+        _SF["disabled"] = True
+        print(f"  NERSC upload DISABLED ({repr(e)[:100]}); imagery kept local for later upload", flush=True); return False
 
 
 def main():
