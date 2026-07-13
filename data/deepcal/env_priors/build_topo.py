@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage"
 CELL = 0.002                     # ~220 m dedup cells; fetch a fixed 512 m 1m patch centered on each (fast render)
 PATCH_HALF = 256                 # meters; 512x512 px @ 1m -> TPI up to ~140 m radius fits with margin
-WORKERS = 16
+WORKERS = 32
 CKPT = os.path.join(HERE, "topo_ckpt.pkl")
 _wgs = {}                        # per-utm-epsg transformer cache
 
