@@ -43,7 +43,8 @@ class California:
                       "_train_bool", "time_span_days", "time_cut",
                       "lat", "lon", "elev", "cls", "dino", "bio", "phylo", "traits", "coords", "class_group",
                       "species_text", "neighbors", "gbifID",
-                      "lfmc", "lfmc_valid", "flower", "flower_valid")   # per-species/per-obs benchmark labels persist across prepared reloads
+                      "lfmc", "lfmc_valid", "flower", "flower_valid",   # per-species/per-obs benchmark labels persist across prepared reloads
+                      "obs_month", "month_tnorm", "species_peak_month")   # B28 phenology-seasonality (per-obs month, per-month time anchor, per-species peak)
 
     def __init__(self, cache_dir: str, n_neighbors: int = 24, device: str = "cuda", holdout_fraction: float = 1 / 6,
                  holdout: str = "spatial", subset: dict | None = None, time_axis: bool = False,
@@ -138,6 +139,15 @@ class California:
             z = np.load(fw); fmap = {int(g): float(v) for g, v in zip(z["gbifID"], z["flower"])}
             fl = np.array([fmap.get(int(g), 0.0) for g in gid], np.float32); fv = np.array([int(g) in fmap for g in gid], np.float32)
             self.flower = torch.tensor(fl, device=dev); self.flower_valid = torch.tensor(fv, device=dev)
+            if hasattr(self, "obs_month"):                 # per-species peak flowering month (B28 ground truth): month with the highest observed flowering rate
+                clsn = self.cls.cpu().numpy(); mon = self.obs_month; fvb = fv > 0.5
+                peak = np.full(self.n_classes, -1, np.int64)
+                for c in np.unique(clsn[fvb]):
+                    mc = fvb & (clsn == c)
+                    if mc.sum() >= 8:
+                        rates = np.array([fl[mc & (mon == mm)].mean() if (mc & (mon == mm)).any() else -1.0 for mm in range(12)])
+                        if (rates >= 0).sum() >= 3: peak[c] = int(np.argmax(rates))
+                self.species_peak_month = torch.tensor(peak, device=dev)
         self.tree = self._load_tree(cache)                 # the dated phylogeny as message-passing buffers (or None)
         if prepared:                                       # persist the assembled dataset for instant reload
             self._save_prepared(prepared)
@@ -214,9 +224,13 @@ class California:
         self.time_span_days = float(tmax - tmin) if tmax > tmin else 1.0
         med = np.nanmedian(days)
         days[~valid] = med
-        tnorm = (days - tmin) / self.time_span_days
+        tnorm = np.clip((days - tmin) / self.time_span_days, 0.0, 1.0).astype(np.float32)
+        import pandas as pd
+        self.obs_month = pd.to_datetime(days, unit="D", origin="unix").month.to_numpy().astype(np.int64) - 1   # per-obs calendar month 0-11
+        self.month_tnorm = np.array([float(tnorm[self.obs_month == m].mean()) if (self.obs_month == m).any()   # data-driven normalized-time anchor per month
+                                     else (m + 0.5) / 12 for m in range(12)], np.float32)
         self._n_dated = int(valid.sum())
-        return np.clip(tnorm, 0.0, 1.0).astype(np.float32)
+        return tnorm
 
     def _load_tree(self, cache):
         """Parse the dated Newick tree aligned to the model's species (leaves in species order) for message passing;
