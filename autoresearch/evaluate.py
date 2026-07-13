@@ -131,6 +131,26 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         return (fam[logits.argmax(-1)] == fam[target]).float().sum().item()
     def cos_sum(pred, tgt):
         return F.cosine_similarity(pred.float(), tgt.float(), dim=-1).sum().item()
+    # Anomaly (mean-centered) cosine for reconstruction benchmarks. Raw cosine has a GAMEABLE floor: because a
+    # modality's embeddings share a positive mean direction (measured floors: soil 0.87, clay 0.84, topo/chm 0.93-0.95,
+    # hydro 0.69, vision 0.35), a constant mean prediction already scores near 1. Subtracting the modality's TRAIN mean
+    # measures only the observation-specific deviation, so a mean prediction scores ~0 and the metric has honest range.
+    _tr = source.train
+    def _train_mean(v):
+        if v in ("vision_dino", "vision_bio"):
+            X = (source.dino if v == "vision_dino" else source.bio)[_tr]
+        elif v == "phylo":
+            X = source.phylo[source.cls[_tr]]
+        elif v in getattr(source, "extra", {}):
+            vals, have, _ = source.extra[v]; m = have[_tr].bool(); X = vals[_tr][m]
+        else:
+            return None
+        return X.float().mean(0) if len(X) else None
+    CMU = {v: _train_mean(v) for v in ("vision_dino", "vision_bio", "phylo", "clay", "soil", "climate", "hydro", "naip_rgb")}
+    def ccos_sum(pred, tgt, v):                            # mean-centered cosine (anomaly cosine); falls back to raw if no mean
+        mu = CMU.get(v)
+        if mu is None: return cos_sum(pred, tgt)
+        return F.cosine_similarity(pred.float() - mu, tgt.float() - mu, dim=-1).sum().item()
     def recall_sum(logits, target_set):                   # mean over rows of |topK ∩ set| / |set|
         kmem = torch.zeros_like(logits, dtype=torch.bool).scatter_(1, logits.topk(RK, -1).indices, True)
         inter = (kmem & target_set).sum(1).float()
@@ -205,7 +225,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             add("B2_species_from_photo_top1", topk_hit(P["identity"], tid, 1), B)
             add("B3_species_from_photo_top5", topk_hit(P["identity"], tid, 5), B)
             if "phylo" in have:
-                add("B9_phylo_from_photo_cos", cos_sum(P["phylo"], values["phylo"]), B)
+                add("B9_phylo_from_photo_cos", ccos_sum(P["phylo"], values["phylo"], "phylo"), B)
             for t in traits:
                 a, b, o = trc["photo_env"][t]; a.append(P[t].argmax(-1).cpu()); b.append(values[t].cpu()); o.append(observed[t].cpu())
             Pv = infer(vision, ["identity"] + traits)     # photo-only
@@ -233,18 +253,18 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         # ---- ground-vision: imagine / leave-one-out / from aerial ----
         if "vision_dino" in have:
             nonvis = [n for n in obs if n not in ("vision_dino", "vision_bio")]
-            add("B13_imagine_vision_cos", cos_sum(infer(nonvis, ["vision_dino"])["vision_dino"], values["vision_dino"]), B)
-            add("B14_vision_leave_one_out_cos", cos_sum(infer([n for n in names if n != "vision_dino"], ["vision_dino"])["vision_dino"], values["vision_dino"]), B)
+            add("B13_imagine_vision_cos", ccos_sum(infer(nonvis, ["vision_dino"])["vision_dino"], values["vision_dino"], "vision_dino"), B)
+            add("B14_vision_leave_one_out_cos", ccos_sum(infer([n for n in names if n != "vision_dino"], ["vision_dino"])["vision_dino"], values["vision_dino"], "vision_dino"), B)
             if naip:
-                add("B15_vision_from_aerial_cos", cos_sum(infer(naip, ["vision_dino"])["vision_dino"], values["vision_dino"]), B)
+                add("B15_vision_from_aerial_cos", ccos_sum(infer(naip, ["vision_dino"])["vision_dino"], values["vision_dino"], "vision_dino"), B)
 
         # ---- dense environmental field: reconstruct each modality from the rest of U (measure-everything) ----
         for key, tv in (("B16_infer_clay_cos", "clay"), ("B17_infer_soil_cos", "soil"), ("B18_infer_climate_cos", "climate"),
                         ("B43_infer_hydro_cos", "hydro")):
             if tv in have:
-                add(key, cos_sum(infer([n for n in U if n != tv], [tv])[tv], values[tv]), B)
+                add(key, ccos_sum(infer([n for n in U if n != tv], [tv])[tv], values[tv], tv), B)
         if naip:
-            add("B19_infer_aerial_cos", cos_sum(infer([n for n in U if n not in naip], ["naip_rgb"])["naip_rgb"], values["naip_rgb"]), B)
+            add("B19_infer_aerial_cos", ccos_sum(infer([n for n in U if n not in naip], ["naip_rgb"])["naip_rgb"], values["naip_rgb"], "naip_rgb"), B)
 
         # ---- B28 flowering peak month (phenology seasonality): sweep the time coordinate over 12 months, condition on species, rank by predicted flowering ----
         if getattr(source, "species_peak_month", None) is not None and getattr(source, "time_axis", False) and c0 < community_cap:
@@ -305,9 +325,9 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
 
         # ---- forecasting (temporal holdout only): predict the held-out FUTURE environment ----
         if holdout == "temporal" and "climate" in have:
-            add("B25_forecast_climate_cos", cos_sum(infer([n for n in U if n != "climate"], ["climate"])["climate"], values["climate"]), B)
+            add("B25_forecast_climate_cos", ccos_sum(infer([n for n in U if n != "climate"], ["climate"])["climate"], values["climate"], "climate"), B)
             if "vision_dino" in have:                     # B31: forecast held-out-future ground vision (appearance/phenology) from the environment
-                add("B31_forecast_vision_cos", cos_sum(infer(U, ["vision_dino"])["vision_dino"], values["vision_dino"]), B)
+                add("B31_forecast_vision_cos", ccos_sum(infer(U, ["vision_dino"])["vision_dino"], values["vision_dino"], "vision_dino"), B)
 
         # ---- B26 flowering (A7): activates once flowering labels are wired as a variable; inactive until then ----
 
