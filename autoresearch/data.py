@@ -86,8 +86,10 @@ class California:
         self.elev = torch.tensor(elev, device=dev); self.cls = torch.tensor(cls, device=dev)
         self.dino = torch.tensor(dino, device=dev); self.bio = torch.tensor(bio, device=dev)
         self.phylo = torch.tensor(phylo, device=dev); self.traits = torch.tensor(traits, device=dev)
-        self.species_text = None                          # BioCLIP text embedding per species (inductive placement)
-        if (cache / "bioclip_text_emb.npy").exists():
+        self.species_text = None                          # frozen BioCLIP-2 text prior per species (rule 26 seed / inductive placement)
+        if (cache / "bioclip_taxon_text_emb.npy").exists():   # taxonomic-string embeddings, already in vocab order [n_classes, 768]
+            self.species_text = torch.tensor(np.load(cache / "bioclip_taxon_text_emb.npy").astype(np.float32), device=dev)
+        elif (cache / "bioclip_text_emb.npy").exists():
             te = _normalize(np.load(cache / "bioclip_text_emb.npy")[vocab["global_idx"]].astype(np.float32))
             self.species_text = torch.tensor(te, device=dev)
         tnorm = self._load_event_time(gid) if self.time_axis else np.zeros_like(lat)
@@ -126,6 +128,7 @@ class California:
         self._build_neighbors()
         self.extra = {}                                    # extra continuous modalities keyed by name
         self._load_modalities(cache, gid, dev)
+        self._load_pollinator(cache, dev)                  # per-species pollinator distribution (GloBI); enables B41/B51-B54
         self.tree = self._load_tree(cache)                 # the dated phylogeny as message-passing buffers (or None)
         if prepared:                                       # persist the assembled dataset for instant reload
             self._save_prepared(prepared)
@@ -137,6 +140,9 @@ class California:
             v = getattr(self, k, None)
             blob[k] = v.detach().cpu() if torch.is_tensor(v) else v
         blob["extra"] = {n: (t.cpu(), h.cpu(), d) for n, (t, h, d) in self.extra.items()}
+        for k in ("poll_idx", "poll_frq", "poll_valid", "n_pollinators"):               # pollinator distribution (restored generically on load)
+            if hasattr(self, k):
+                v = getattr(self, k); blob[k] = v.cpu() if torch.is_tensor(v) else v
         blob["tree"] = self.tree
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         torch.save(blob, path)
@@ -210,7 +216,11 @@ class California:
         if not nwk.exists():
             return None
         from deepearth.encoders.biological.phylogenomic import build_tree_buffers
-        return build_tree_buffers(str(nwk), self._tip_labels)
+        try:
+            return build_tree_buffers(str(nwk), self._tip_labels)
+        except KeyError as e:                              # inductively-placed species (rules 25/26) aren't in the dated tree
+            print(f"tree operator unavailable ({e}); ou-attention uses the E1 distance, unaffected", flush=True)
+            return None
 
     def _apply_subset(self, subset, gid, cls, lat, lon, elev, dev):
         """Restrict to a bbox (``{"bbox": [lat0,lat1,lon0,lon1]}``) and/or families (``{"families": [...]}``),
@@ -284,6 +294,39 @@ class California:
         if chm.exists():
             z = np.load(chm)
             self._add_modality("chm", z["gbifID"], z["chm"], gid, dev, zscore=True, valid=z["has_chm"])
+        hydro = cache / "gbif_hydro_tokens.npz"                                         # HydroSHEDS-style drainage + Winstral wind exposure (6)
+        if hydro.exists():
+            z = np.load(hydro)
+            self._add_modality("hydro", z["gbifID"], z["hydro"], gid, dev, zscore=True, valid=z["has_hydro"])
+
+    @staticmethod
+    def _norm_binom(s):                                                                 # genus+species, lowercased (matches build_pollinator.norm)
+        p = str(s).split(); return (p[0] + " " + p[1]).lower() if len(p) >= 2 else str(s).strip().lower()
+
+    def _load_pollinator(self, cache, dev, topk=40):
+        """Per-species-class marginal pollinator distribution (GloBI): class -> top-k pollinator vocab indices + freqs.
+        Bridges the model's species (self.binomial) to the pollinator file's plant_idx by normalized binomial."""
+        pf = cache / "gbif_pollinator_dist.npz"
+        if not pf.exists():
+            return
+        z = np.load(pf)
+        pidx, pfrq, npoll = z["marg_poll_idx"], z["marg_poll_frq"], z["marg_npoll"]
+        pt = cache / "pollinator_taxon_text_emb.npy"                         # BioCLIP-2.5 pollinator prior (rule 26/27)
+        self.pollinator_text = torch.tensor(np.load(pt).astype(np.float32), device=dev) if pt.exists() else None
+        self.n_pollinators = max(int(pidx.max()) + 1, self.pollinator_text.shape[0] if self.pollinator_text is not None else 0)
+        b2p = {}                                                                         # normalized binomial -> plant_idx (species_index.csv idx field)
+        for r in csv.DictReader(open(cache / "derived/species_index.csv")):
+            b2p[self._norm_binom(r["binomial"])] = int(r["idx"])
+        K = min(topk, pidx.shape[1])
+        ci = np.zeros((self.n_classes, K), np.int64); cf = np.zeros((self.n_classes, K), np.float32); cv = np.zeros(self.n_classes, bool)
+        for c in range(self.n_classes):
+            p = b2p.get(self._norm_binom(self.binomial[c]), -1)
+            if 0 <= p < len(npoll) and npoll[p] > 0:      # species added after the pollinator dist was built have no record
+                ci[c] = pidx[p, :K]; f = pfrq[p, :K].astype(np.float32); s = f.sum()
+                cf[c] = f / s if s > 0 else f; cv[c] = True
+        self.poll_idx = torch.tensor(ci, device=dev); self.poll_frq = torch.tensor(cf, device=dev)
+        self.poll_valid = torch.tensor(cv, device=dev)
+        print(f"pollinator loaded: {int(cv.sum())}/{self.n_classes} species have GloBI pollinators; vocab {self.n_pollinators}", flush=True)
 
     def _frame(self, idx):
         lat = self.lat.cpu().numpy()[idx]; lon = self.lon.cpu().numpy()[idx]; elev = self.elev.cpu().numpy()[idx]
@@ -331,6 +374,11 @@ class California:
             observed[t] = self.traits[self.cls[idx], k] > 0
         for name, (vals, have, _) in self.extra.items():
             values[name] = vals[idx]; observed[name] = have[idx]
+        if hasattr(self, "sdist_idx"):                                    # local species distribution (KL/community aux loss)
+            values["_sdist_idx"] = self.sdist_idx[idx]; values["_sdist_frq"] = self.sdist_frq[idx]
+        if hasattr(self, "poll_idx"):                                     # per-species pollinator distribution (GloBI aux loss)
+            c = self.cls[idx]; values["_poll_idx"] = self.poll_idx[c]; values["_poll_frq"] = self.poll_frq[c]
+            values["_poll_valid"] = self.poll_valid[c]
         manifold_positions = {"biological": self.phylo[self.cls[ci]]}   # neighbors' known positions only
         neighbor_values = {"identity": self.cls[ci], "vision_dino": self.dino[ci]}
         return values, observed, self.coords[idx], self.coords[ci], manifold_positions, neighbor_values

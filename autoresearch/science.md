@@ -110,6 +110,35 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     in space and time**. Tie physical-model resolution to matched-resolution deep sensor features (e.g. DINOv3 SAT493M
     32×32 ↔ 300 m NAIP) so dense, always-available inputs inductively map to sparsely-observed targets (species, ground
     vision, phenology, pollination). The goal: a dense, calibrated, forward-in-time field of all variables everywhere.
+25. **The phylogenomic embedding is itself a maskable, reconstructable variable.** A species' evolutionary position is
+    not a fixed lookup — it is a state in the MADE field (rule 17), so DeepEarth must be able to *mask* a species'
+    phylogenomic embedding and reconstruct it from context (its observations, environment, and phylogenetic neighbors).
+    This makes the tree soft: a species whose position is uncertain (a new or poorly-placed taxon) gets a posterior
+    embedding induced from evidence, and once placed it automatically propagates neighbor updates through the species
+    graph (rules 7–12). Training must randomly withhold the phylogenomic embedding for a fraction of species per batch
+    and reconstruct it, so the capability is learned, not assumed — the mechanism by which any species, in-tree or not,
+    acquires a phylogenomically-consistent representation.
+26. **Seed species embeddings from a frozen [BioCLIP 2][bioclip2] text prior, adapt only through a small learned probe.**
+    Do not initialize per-species embeddings randomly, and do not naively fine-tune a foundation embedding (unconstrained
+    fine-tuning provably distorts the pretrained geometry — [LP-FT][lpft]). Instead, freeze the BioCLIP 2 **text**
+    embedding of the flattened Linnaean string `"a photo of Kingdom Phylum Class Order Family Genus species."` (768-d,
+    the same space as our BioCLIP image tokens; its geometry already encodes taxonomic *and* ecological structure) and
+    learn a small feed-forward probe (MLP / attentive probe) that decodes it into the model's `d_model` phylogenomic
+    seed. The probe is backprop-tuned by the joint objective, so the model **discovers** phylogenomic structure inside
+    the BioCLIP space while preserving it. The seed is then refined by the species graph (rules 7–12). Two invariants:
+    (a) the frozen text encoder makes an **unseen** species embeddable by the identical text→probe path (zero-shot
+    placement, rule 25); (b) a species' seed is computed **once per unique species per batch** and shared across all its
+    tokens — never recomputed per observation.
+27. **Interactions carry phylogenetic signal — induce them bidirectionally across two trees.** Related plants share
+    pollinators and related pollinators visit related plants (phylogenetically structured bipartite networks): trait
+    conservation (rules 7–12, 25) shares evidence *within* a tree, interactions *across* two. Model a plant↔pollinator
+    interaction as a bilinear form between two separately phylo-refined representations — the plant's from the plant
+    species graph, the pollinator's from a second pollinator graph — each keeping its own distance so within-kingdom
+    resolution survives the deep plant–animal split. Each side reading through its own phylogeny makes one observed pair
+    (plant A, pollinator B) propagate both ways: the query-side plant graph associates B with A's relatives, the
+    output-side pollinator graph associates A with B's relatives, so the interaction head decodes against the *refined*
+    pollinator embeddings. The model predicts a species' partners from its relatives' partners; test it held-out by
+    hiding a focal species' interactions and recovering them through relatives, plus the graph ablation.
 
 ## References
 
@@ -130,6 +159,12 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
   <https://jmlr.org/papers/v15/srivastava14b.html>
 - **MADE** — Germain, Gregor, Murray & Larochelle, "MADE: Masked Autoencoder for Distribution Estimation," *ICML*
   (2015), PMLR 37:881–889. arXiv:1502.03509 — <https://arxiv.org/abs/1502.03509>
+- **BioCLIP** — Stevens et al., "BioCLIP: A Vision Foundation Model for the Tree of Life," *CVPR* (2024).
+  arXiv:2311.18803 — <https://arxiv.org/abs/2311.18803>
+- **BioCLIP 2** — Gu et al., "BioCLIP 2: A Foundation Model for the Tree of Life at Scale" (TreeOfLife-200M), *NeurIPS*
+  (2025). arXiv:2505.23883 — <https://arxiv.org/abs/2505.23883>
+- **LP-FT** — Kumar et al., "Fine-Tuning can Distort Pretrained Features and Underperform Out-of-Distribution," *ICLR*
+  (2022). arXiv:2202.10054 — <https://arxiv.org/abs/2202.10054>
 
 [dinov3]: https://arxiv.org/abs/2508.10104
 [clay]: https://github.com/Clay-foundation/model
@@ -139,3 +174,5 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
 [perceiverio]: https://arxiv.org/abs/2107.14795
 [dbm]: https://jmlr.org/papers/v15/srivastava14b.html
 [made]: https://arxiv.org/abs/1502.03509
+[bioclip2]: https://arxiv.org/abs/2505.23883
+[lpft]: https://arxiv.org/abs/2202.10054

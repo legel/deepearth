@@ -148,6 +148,7 @@ class DeepEarth(nn.Module):
         species_flex: bool = False,
         species_operator: str = "ou-attention",
         species_tree: Optional[dict] = None,
+        species_text: Optional[torch.Tensor] = None,
         compile_processor: bool = False,
         rounds: int = 1,
         write_back: bool = True,
@@ -163,6 +164,10 @@ class DeepEarth(nn.Module):
         smooth_geo: bool = False,
         smooth_geo_sigmas: Optional[Sequence[float]] = None,
         smooth_geo_per_scale: int = 32,
+        n_pollinators: int = 0,
+        pollinator_distance: Optional[torch.Tensor] = None,
+        pollinator_text: Optional[torch.Tensor] = None,
+        pollinator_top_k: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.loss_weights = loss_weights or {}
@@ -232,12 +237,12 @@ class DeepEarth(nn.Module):
             if species_operator == "tree":
                 assert species_tree is not None, "species_operator='tree' needs the parsed tree (source.tree)"
                 self.species_graph = SpeciesGraph(species_embedding.shape[0], d_model, operator="tree",
-                                                  tree=species_tree, n_layers=species_layers)
+                                                  tree=species_tree, n_layers=species_layers, species_text=species_text)
             else:
                 distance = SpeciesGraph.distance_from_embedding(species_embedding)
                 self.species_graph = SpeciesGraph(species_embedding.shape[0], d_model, distance,
                                                   n_heads=species_heads, n_layers=species_layers,
-                                                  top_k=species_top_k, flex=species_flex)
+                                                  top_k=species_top_k, flex=species_flex, species_text=species_text)
         else:
             self.species_graph = None
         self._refined_species = None
@@ -272,6 +277,23 @@ class DeepEarth(nn.Module):
         self.revise_rate = nn.Parameter(torch.full((nv,), -3.0))        # sigmoid~0.05: how far an observed token revises
         self.read_gate = nn.Parameter(torch.ones(d_model))              # per-dim gate on each round's latent read (identity at init)
         self._round_stack = None
+        # Community-distribution head (MADE joint-dist as a jointly-trained benchmark head): a SEPARATE readout trained
+        # on a DETACHED latent toward the LOCAL community distribution. Created LAST so it consumes no init RNG ahead of
+        # the backbone -> the shared model initializes bit-identically to the no-head champion (zero regression on
+        # B1-B19/B7 by construction), while supplying the community distribution for B20-22/B39/B40 at test.
+        self.comm_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)) \
+            if (species_variable is not None and species_embedding is not None) else None
+        # Pollinator-distribution head (plant->pollinator interaction, MADE joint-dist benchmark head): a detached readout
+        # from the species-pooled latent into a learned pollinator-vocab basis, trained toward the plant's local GloBI
+        # pollinator distribution. Created LAST (zero init-RNG shift) -> supplies B41/B51-B54 with no backbone regression.
+        self.poll_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)) if n_pollinators > 0 else None
+        self.poll_emb = nn.Parameter(torch.randn(n_pollinators, d_model) * 0.02) if n_pollinators > 0 else None
+        # Cross-tree interaction (rule 27): decode the plant->pollinator interaction against a SECOND, separately
+        # phylo-refined pollinator species graph (its own tree), so an observed interaction propagates to BOTH sides'
+        # relatives. Falls back to the free poll_emb table until the pollinator tree is wired.
+        self.pollinator_graph = SpeciesGraph(n_pollinators, d_model, pollinator_distance, top_k=pollinator_top_k,
+                                             species_text=pollinator_text) \
+            if (n_pollinators > 0 and pollinator_distance is not None) else None
         if compile_processor:
             self._refine = torch.compile(self._refine)
 
@@ -404,6 +426,8 @@ class DeepEarth(nn.Module):
         then refine the latents against them over K rounds. Each variable token carries the query position."""
         if self.species_graph is not None:
             self._refined_species = self.species_graph()     # refine all species once per forward
+        if getattr(self, "pollinator_graph", None) is not None:
+            self._refined_pollinators = self.pollinator_graph()   # refine all pollinators once per forward (rule 27 basis)
         pos_s, pos_t = context["position_s"], context["position_t"]                          # [B,d] each
         w = torch.softmax(self.pos_channel_gate, dim=-1)                                     # [V,2] per-variable prior
         pos_v = w[:, 0].view(1, -1, 1) * pos_s.unsqueeze(1) + w[:, 1].view(1, -1, 1) * pos_t.unsqueeze(1)   # [B,V,d]
@@ -581,6 +605,12 @@ class DeepEarth(nn.Module):
             loss = self._decode_loss(z, values, observed, present)
         if self.inductive is not None:                       # auxiliary: name embedding -> evolutionary position
             loss = loss + 0.1 * self.inductive.loss(self._species_text, self._species_e1)
+        # Rule 25: mask a fraction of species' seeds and reconstruct their refined embedding from phylogenetic relatives
+        # (self-distillation toward the full-info refinement) -> the model can place a species of uncertain tree position.
+        if self.training and getattr(self, "_phylo_mask_weight", 0.0) > 0 and self._refined_species is not None:
+            m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
+            if m.any():
+                loss = loss + self._phylo_mask_weight * F.mse_loss(self.species_graph(mask=m)[m], self._refined_species[m].detach())
         return loss
 
     def _decode_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
@@ -605,8 +635,37 @@ class DeepEarth(nn.Module):
                         logits, torch.arange(logits.shape[0], device=logits.device))
             # Per-variable loss weight (science.md rule 18): focus reconstruction where benchmarks have headroom.
             loss = loss + self.loss_weights.get(v.name, 1.0) * (err * w).sum() / w.sum().clamp_min(1.0)
+            # Distribution matching (MADE joint-dist) via the SEPARATE community head on a DETACHED latent: trains only
+            # comm_head toward the local community distribution, with zero gradient into the shared representation ->
+            # guaranteed no regression on identity/phylo/traits, while the head supplies B20-22/B39/B40 at test.
+            if getattr(self, "_sdist_weight", 0.0) > 0 and v.name == self.species_variable \
+                    and "_sdist_idx" in values and getattr(self, "comm_head", None) is not None:
+                comm = (self.comm_head(self._pooled(z, v.name).detach()) @ self._refined_species.detach().t()).float()
+                sidx = values["_sdist_idx"].clamp(0, comm.shape[1] - 1)   # -1 padding -> 0 (its freq is 0, harmless)
+                tgt = torch.zeros_like(comm).scatter_add_(1, sidx, values["_sdist_frq"].float())
+                kl = -(tgt * F.log_softmax(comm, -1)).sum(-1)            # soft cross-entropy toward the local distribution
+                loss = loss + self._sdist_weight * (kl * w).sum() / w.sum().clamp_min(1.0)
+            # Pollinator distribution matching via the SEPARATE detached poll_head toward the plant's GloBI pollinator
+            # distribution (zero gradient into the shared representation). Enables B41/B51-B54, no backbone regression.
+            if getattr(self, "_poll_weight", 0.0) > 0 and v.name == self.species_variable \
+                    and "_poll_idx" in values and getattr(self, "poll_head", None) is not None:
+                # detach the PLANT latent (protect the shared backbone) but NOT the pollinator basis: the interaction
+                # loss trains poll_head + the pollinator graph, so partners propagate to a pollinator's relatives (rule 27)
+                pl = (self.poll_head(self._pooled(z, v.name).detach()) @ self._pollinator_basis().t()).float()
+                pidx = values["_poll_idx"].clamp(0, pl.shape[1] - 1)
+                ptg = torch.zeros_like(pl).scatter_add_(1, pidx, values["_poll_frq"].float())
+                pv = values["_poll_valid"].float()                       # only plants with known pollinators contribute
+                pkl = -(ptg * F.log_softmax(pl, -1)).sum(-1) * pv
+                loss = loss + self._poll_weight * (pkl * w).sum() / (pv * w).sum().clamp_min(1.0)
             n_terms += 1
         return loss / max(n_terms, 1)
+
+    def _pollinator_basis(self) -> torch.Tensor:
+        """Pollinator output embeddings for the interaction head (rule 27): phylo-refined by the pollinator species
+        graph if wired (cached per forward), else the free table. The refined basis is what makes a predicted pollinator
+        lift its phylogenetic relatives, and training propagate to them."""
+        rp = getattr(self, "_refined_pollinators", None)
+        return rp if rp is not None else self.poll_emb
 
     @torch.no_grad()
     def infer(self, values: Dict[str, torch.Tensor], given: Sequence[str], targets: Sequence[str],
@@ -620,4 +679,13 @@ class DeepEarth(nn.Module):
             present[n] = observed[n] if (observed is not None and n in observed) \
                 else torch.ones(B, dtype=torch.bool, device=dev)
         z = self.encode(values, present, context)
-        return {t: self.decode(z, t) for t in targets}
+        out = {}
+        for t in targets:
+            if t == "community":                                                 # env-conditioned community distribution
+                out[t] = (self.comm_head(self._pooled(z, self.species_variable)) @ self._refined_species.t()) if getattr(self, "comm_head", None) is not None \
+                    else self.decode(z, self.species_variable)                   # fallback (no head): the identity posterior
+            elif t == "pollinator":                                              # plant -> pollinator interaction (rule 27)
+                out[t] = self.poll_head(self._pooled(z, self.species_variable)) @ self._pollinator_basis().t()
+            else:
+                out[t] = self.decode(z, t)
+        return out
