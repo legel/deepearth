@@ -79,6 +79,9 @@ BENCHMARKS: List[str] = [
     "B54_pollinator_dist_kl",           # predicted vs true pollinator frequency distribution, exp(-KL)
     "B55_pollinator_phylo_transfer_recall",  # rule 27: predict a plant's pollinators from its relatives' pollinators (cross-tree induction)
     "B56_family_phylo_graph_gain",      # ablation-delta: family-from-phylo accuracy gained from the species-graph refinement
+    "B57_flowering_phylo_graph_gain",   # ablation-delta (phenology family): flowering-AUC gained from the species-graph refinement
+    "B58_lfmc_phylo_graph_gain",        # ablation-delta (ecophysiology family): LFMC-correlation gained from the species-graph refinement
+    "B59_pollinator_phylo_graph_gain",  # ablation-delta (interactions family): pollinator-recall gained from the species-graph refinement
 ]
 
 
@@ -102,6 +105,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     acc: Dict[str, list] = {}                              # key -> [sum, count]
     lfmc_p, lfmc_t = [], []                                # B34: predicted vs true live fuel moisture over the eval set
     flower_p, flower_t = [], []                            # B26: predicted flowering probability vs true label over the eval set
+    lfmc_p_abl, flower_p_abl = [], []                      # B57/B58: the same predictions with the species graph ABLATED (phylo-graph-gain deltas)
     def add(key, s, n):
         a = acc.setdefault(key, [0.0, 0.0]); a[0] += float(s); a[1] += n
     # trait macro-F1 needs the full pred/target/observed vectors gathered per preset
@@ -145,6 +149,10 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 if fv.any():
                     pr = infer(U, ["flower"])["flower"][fv]; tr = source.flower[idx][fv]
                     flower_p.append(pr.detach().cpu()); flower_t.append(tr.detach().cpu())
+                    if getattr(model, "species_graph", None) is not None:   # B57: same prediction, species graph ablated
+                        model._ablate_species = True
+                        flower_p_abl.append(infer(U, ["flower"])["flower"][fv].detach().cpu())
+                        model._ablate_species = False
             if fam is not None:
                 add("B6_family_from_env", fam_hit(L_U, tid), B)
                 rank = (L_U.argsort(-1, descending=True) == tid[:, None]).float().argmax(-1)
@@ -154,6 +162,10 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                     if lv.any():
                         pr = infer(U, ["lfmc"])["lfmc"][lv]; tr = source.lfmc[tid][lv]
                         lfmc_p.append(pr.detach().cpu()); lfmc_t.append(tr.detach().cpu())
+                        if getattr(model, "species_graph", None) is not None:   # B58: same prediction, species graph ablated
+                            model._ablate_species = True
+                            lfmc_p_abl.append(infer(U, ["lfmc"])["lfmc"][lv].detach().cpu())
+                            model._ablate_species = False
                 if sdist is not None:                     # species-distribution KL vs local community, 3 scales
                     L_comm = infer(U, ["community"])["community"]   # dedicated community head (falls back to identity posterior if absent)
                     pm = torch.softmax(L_comm, -1).detach().cpu().numpy(); gids = source.gbifID[idx.detach().cpu().numpy()]
@@ -233,6 +245,10 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 Lp = infer(["identity"] + U, ["pollinator"])["pollinator"]           # plant identity + env -> pollinators
                 add("B41_pollinator_from_species_recall", recall_sum(Lp[vi], tset[vi]), nv)
                 add("B51_pollinator_from_env_recall", recall_sum(infer(U, ["pollinator"])["pollinator"][vi], tset[vi]), nv)
+                if getattr(model, "species_graph", None) is not None:   # B59: env->pollinator recall with the species graph ablated
+                    model._ablate_species = True
+                    add("_B51_ablated", recall_sum(infer(U, ["pollinator"])["pollinator"][vi], tset[vi]), nv)
+                    model._ablate_species = False
                 if vision:
                     add("B52_pollinator_from_photo_recall", recall_sum(infer(U + vision, ["pollinator"])["pollinator"][vi], tset[vi]), nv)
                 top_true = pidx[torch.arange(B, device=device), pfrq.argmax(1)]      # most-frequent pollinator per plant
@@ -262,19 +278,35 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     for k, (s, n) in acc.items():
         if n > 0:
             out[k] = s / n
-    if lfmc_p:                                                              # B34: Pearson corr of predicted vs true log-LFMC over the held-out set
-        p = torch.cat(lfmc_p).numpy(); t = torch.cat(lfmc_t).numpy()
+    def _lfmc_corr(pl, tl):                                                 # log-LFMC Pearson correlation over collected preds/targets
+        if not pl: return None
+        p = torch.cat(pl).numpy(); t = torch.cat(tl).numpy()
         if len(p) > 2 and np.std(p) > 1e-6 and np.std(t) > 1e-6:
-            out["B34_lfmc_from_env"] = float(max(0.0, np.corrcoef(np.log(np.clip(p, 1, None)), np.log(np.clip(t, 1, None)))[0, 1]))
-    if flower_p:                                                            # B26: ROC-AUC of predicted flowering vs the binary PhenoVision label
-        p = torch.cat(flower_p).numpy(); t = (torch.cat(flower_t).numpy() > 0.5)
+            return float(max(0.0, np.corrcoef(np.log(np.clip(p, 1, None)), np.log(np.clip(t, 1, None)))[0, 1]))
+        return None
+    def _auc(pl, tl):                                                       # rank-based ROC-AUC (Mann-Whitney) over collected preds/targets
+        if not pl: return None
+        p = torch.cat(pl).numpy(); t = (torch.cat(tl).numpy() > 0.5)
         npos = int(t.sum()); nneg = int((~t).sum())
-        if npos > 0 and nneg > 0:
-            r = np.argsort(np.argsort(p, kind="mergesort")).astype(np.float64) + 1.0   # ranks (ties→average not needed for AUC direction)
-            out["B26_flowering_auc"] = float((r[t].sum() - npos * (npos + 1) / 2) / (npos * nneg))
+        if npos == 0 or nneg == 0: return None
+        r = np.argsort(np.argsort(p, kind="mergesort")).astype(np.float64) + 1.0
+        return float((r[t].sum() - npos * (npos + 1) / 2) / (npos * nneg))
+    _lf = _lfmc_corr(lfmc_p, lfmc_t)                                        # B34 ecophysiology; B58 = species-graph contribution to it
+    if _lf is not None:
+        out["B34_lfmc_from_env"] = _lf
+        _lfa = _lfmc_corr(lfmc_p_abl, lfmc_t)
+        if _lfa is not None: out["B58_lfmc_phylo_graph_gain"] = max(0.0, _lf - _lfa)
+    _fa = _auc(flower_p, flower_t)                                          # B26 phenology; B57 = species-graph contribution to it
+    if _fa is not None:
+        out["B26_flowering_auc"] = _fa
+        _faa = _auc(flower_p_abl, flower_t)
+        if _faa is not None: out["B57_flowering_phylo_graph_gain"] = max(0.0, _fa - _faa)
     if "B7_family_from_phylo" in out and "_B7_ablated" in out:              # B56: phylogenomic-graph contribution (rule 27 ablation)
         out["B56_family_phylo_graph_gain"] = max(0.0, out["B7_family_from_phylo"] - out["_B7_ablated"])
     out.pop("_B7_ablated", None)
+    if "B51_pollinator_from_env_recall" in out and "_B51_ablated" in out:   # B59: species-graph contribution to interaction prediction
+        out["B59_pollinator_phylo_graph_gain"] = max(0.0, out["B51_pollinator_from_env_recall"] - out["_B51_ablated"])
+    out.pop("_B51_ablated", None)
     if traits:
         for lab, key in (("photo_env", "B10_traits_from_photo_env_f1"),
                          ("photo", "B11_traits_from_photo_f1"),
