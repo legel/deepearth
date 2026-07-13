@@ -60,6 +60,12 @@ def train_and_evaluate(config, device):
                    species_operator=sg.get("operator", "ou-attention"),
                    species_tree=source.tree if sg.get("operator") == "tree" else None,
                    species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None) if sg else {}
+    if sg and sg.get("operator", "ou-attention") != "tree":   # real DATED plant patristic (rules 7-12): replaces the embedding shadow for the ~65% tree-covered species
+        cdir0 = Path(d["cache_dir"]); cdir0 = cdir0 if cdir0.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
+        pld = cdir0 / "gbif_plant_dist.npz"
+        if pld.exists():
+            zz = np.load(pld); species["species_distance"] = (torch.tensor(zz["dated"], device=device), torch.tensor(zz["model_idx"], device=device))
+            print(f"plant dated distance: {len(zz['model_idx'])} species on real cophenetic (rest keep embedding shadow)", flush=True)
     if m.get("species_conditioned_decode") and species:
         # route the refined species state into the species-linked heads (traits + phylo composition)
         _vnames = {v.name for v in variables}
