@@ -71,6 +71,7 @@ BENCHMARKS: List[str] = [
     "B25_forecast_climate_cos",         # A9  future climate (temporal holdout), cosine
     "B26_flowering_auc",                # A7  U/imagined-vision -> flowering (needs labels), ROC-AUC
     "B27_flowering_fidelity",           # phenology self-consistency: flowering agreement between imagined vision (U) and real vision (U+photo)
+    "B28_flowering_peak_month_mrr",     # phenology seasonality: MRR of the true peak-flowering month from a 12-month time sweep
     "B34_lfmc_from_env",                # ecophysiology: predict a species' peak fire-season live fuel moisture
     "B41_pollinator_from_species_recall",  # plant identity + env -> local pollinator set (GloBI), recall@10
     "B43_infer_hydro_cos",              # U-minus-hydro -> drainage/wind (HydroSHEDS+Winstral), cosine
@@ -235,6 +236,19 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 add(key, cos_sum(infer([n for n in U if n != tv], [tv])[tv], values[tv]), B)
         if naip:
             add("B19_infer_aerial_cos", cos_sum(infer([n for n in U if n not in naip], ["naip_rgb"])["naip_rgb"], values["naip_rgb"]), B)
+
+        # ---- B28 flowering peak month (phenology seasonality): sweep the time coordinate over 12 months, condition on species, rank by predicted flowering ----
+        if getattr(source, "species_peak_month", None) is not None and getattr(source, "time_axis", False) and c0 < community_cap:
+            pk = source.species_peak_month[tid]; pv = pk >= 0
+            if pv.any():
+                mt = torch.as_tensor(source.month_tnorm, device=device)
+                def _with_time(t):
+                    c = coords.clone(); c[:, 3] = t; return c
+                P = torch.stack([model.infer(values, ["identity"], ["flower"],
+                                             model.context(_with_time(mt[mm]), nbr_coords, mani, nbrv), observed)["flower"]
+                                 for mm in range(12)], 1)                          # [B,12] predicted flowering per month
+                rank = (P.argsort(1, descending=True) == pk[:, None]).float().argmax(1)   # rank of the true peak month
+                add("B28_flowering_peak_month_mrr", (1.0 / (rank[pv].float() + 1)).sum().item(), int(pv.sum()))
 
         # ---- community / companions (neighbor species are the eval TARGET only; never fed as input -> leak-safe) ----
         if fam is not None and c0 < community_cap and hasattr(source, "neighbors"):
