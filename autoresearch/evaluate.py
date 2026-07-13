@@ -82,6 +82,7 @@ BENCHMARKS: List[str] = [
     "B57_flowering_phylo_graph_gain",   # ablation-delta (phenology family): flowering-AUC gained from the species-graph refinement
     "B58_lfmc_phylo_graph_gain",        # ablation-delta (ecophysiology family): LFMC-correlation gained from the species-graph refinement
     "B59_pollinator_phylo_graph_gain",  # ablation-delta (interactions family): pollinator-recall gained from the species-graph refinement
+    "B60_community_phylo_graph_gain",   # ablation-delta (niche/community family): env->community recall gained from the species-graph refinement
 ]
 
 
@@ -233,6 +234,10 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             tset.scatter_(1, source.cls[source.neighbors[idx]], True); tset.scatter_(1, tid[:, None], True)
             if U:
                 add("B20_community_from_env_recall", recall_sum(infer(U, ["community"])["community"], tset), B)
+                if getattr(model, "species_graph", None) is not None:   # B60: env->community recall with the species graph ablated
+                    model._ablate_species = True
+                    add("_B20_ablated", recall_sum(infer(U, ["community"])["community"], tset), B)
+                    model._ablate_species = False
             add("B21_community_from_species_recall", recall_sum(infer(["identity"], ["community"])["community"], tset), B)
             add("B22_companions_recall", recall_sum(infer(["identity"] + U, ["community"])["community"], tset), B)
 
@@ -307,6 +312,9 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     if "B51_pollinator_from_env_recall" in out and "_B51_ablated" in out:   # B59: species-graph contribution to interaction prediction
         out["B59_pollinator_phylo_graph_gain"] = max(0.0, out["B51_pollinator_from_env_recall"] - out["_B51_ablated"])
     out.pop("_B51_ablated", None)
+    if "B20_community_from_env_recall" in out and "_B20_ablated" in out:     # B60: species-graph contribution to community/niche prediction
+        out["B60_community_phylo_graph_gain"] = max(0.0, out["B20_community_from_env_recall"] - out["_B20_ablated"])
+    out.pop("_B20_ablated", None)
     if traits:
         for lab, key in (("photo_env", "B10_traits_from_photo_env_f1"),
                          ("photo", "B11_traits_from_photo_f1"),
