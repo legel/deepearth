@@ -65,7 +65,8 @@ modalities:
     source: NAIP-CHM canopy height (rangeland.ntsg.umt.edu index)
     builder: env_priors/build_chm.py
     output: {file: gbif_chm_tokens.npz, key: chm, shape: "[N,11]", dtype: float32, mask: has_chm}
-    reproducible: yes (deterministic given the CHM tile)
+    reproducible: YES — AUDITED (reused process_tile on cache obs): BYTE-EXACT vs the shipped cache (6/6 cos 1.0000,
+                  maxdiff 0); deterministic given the NAIP-CHM tile + obs coords. Only hydro remains to spot-audit (needs a free GPU).
 
   hydro:
     source: USGS 3DEP DEM -> drainage (TWI/HAND/SCA) + Winstral wind exposure (GPU physics)
