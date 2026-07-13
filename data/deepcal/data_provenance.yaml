@@ -77,18 +77,18 @@ modalities:
                   order, negligible on z-scored features). ALL in-repo deterministic builders (topo/chm/hydro) now verified.
 
   naip:
-    source: NAIP aerial RGB+NIR (Planetary Computer / ESRI ImageServer)
-    model: aerial_vision (DINOv3-SAT493M) ; config: {patch_px: 256}
-    builder: env_priors/build_naip.py
-    config: {pooling: "MEAN over patch tokens (NOT CLS)", bands: "rgb_pool=DINO(R,G,B); ir_pool=DINO(R,G,NIR)",
-             patch_px: 320, source: "Planetary Computer NAIP (newest, 2022 in CA)"}
-    output: {dir: gbif_naip_tokens, keys: [rgb_pool, ir_pool, naip_year, naip_scene], shape: "[N,1024]", dtype: float32,
-             naip_scene: "exact NAIP tile/item id per obs (e.g. ca_m_3311628_ne_11_060_20220416) — pinned provenance"}
-    reproducible: NO — AUDITED: reverse-engineered model + mean-patch pooling + band map + source (RGB cos 0.72, IR 0.50
-                  vs random 0.28 — model/recipe correct) but NOT the ~0.99 of an exact match; original config not fully
-                  recoverable. Like Clay: RECOMPUTE with this verified builder for a consistent, pinned pipeline.
-    provenance_gap: RESOLVED (2026-07-13) — build_naip now records naip_scene (the NAIP tile id per obs); validated via
-                  cell_patches (returns the exact tile id, non-empty). The queued recompute (GPU 1, after Clay) is scene-pinned.
+    source: "NAIP 2024 CA CNIR (USGS EROS M2M API) — 2024-EXCLUSIVE. Planetary Computer only serves 2022 for CA, so the
+             prior env_priors/build_naip.py (PC, reverse-engineered, RGB cos 0.72/IR 0.50) is SUPERSEDED. 2024 lives on M2M."
+    model: aerial_vision (DINOv3-SAT493M)
+    builder: env_priors/build_naip_m2m2024.py  (statewide tile catalog naip2024_tiles.json = 18,956 tiles)
+    config: {patch_m: 300, patch_px: 512, pooling: "MEAN over patch tokens (NOT CLS)",
+             bands: "rgb_pool=DINO(R,G,B); ir_pool=DINO(inferno(normalized NIR))",
+             batching: "each covering tile downloaded ONCE via M2M, window-read a 300m patch centered per obs (avg 37 obs/tile)"}
+    output: {dir: gbif_naip_tokens, keys: [gbifID, naip_year, naip_scene, rgb_pool, ir_pool], shape: "[N,1024]", dtype: float32,
+             naip_scene: "M2M entityId per obs (e.g. M_3311628_NE_11_060_20240503) — scene-pinned provenance",
+             imagery: "raw 300m patches -> NERSC /global/cfs/cdirs/m5239/deepearth/naip2024_imagery via Globus (GCP endpoint), deleted local"}
+    reproducible: YES — scene-pinned (M2M entityId + naip_year); deterministic given the versioned tile + DINOv3-SAT493M.
+    coverage: "215,299/215,356 (100%) of the tree-obs covered; obs_coords now the full 345,357 plant set -> 6,350 covering tiles."
 
   clay:
     source: Sentinel-2 L2A via Microsoft Planetary Computer STAC
