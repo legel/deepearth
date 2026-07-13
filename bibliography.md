@@ -10,13 +10,15 @@ the method. Cross-references to design rules live in `autoresearch/science.md`.
 ## 1. Phylogenies
 
 ### 1.1 Plants (the DeepCal species graph)
-- **[P1] [in use]** California seed-plant dated phylogeny — `ca_subtree.dated.nwk`, restricted to the 2,141 modeled
-  species; source of the `E1` evolutionary vectors and `patristic_ref.npy`. **Provenance to confirm/document:** the
-  in-repo artifact carries no citation; it is consistent with a pruning of a published dated seed-plant megatree —
-  most likely **Smith & Brown (2018)** "Constructing a broadly inclusive seed plant phylogeny," *Am. J. Bot.*
-  105(3):302–314, DOI [10.1002/ajb2.1019](https://doi.org/10.1002/ajb2.1019) (GBOTB/ALLMB), or **Jin & Qian (2019)**
-  "V.PhyloMaker," *Ecography* 42:1353–1359, DOI [10.1111/ecog.04434](https://doi.org/10.1111/ecog.04434). *Verify
-  before formal publication.*
+- **[P1] [in use]** California seed-plant dated phylogeny — `ca_subtree.dated.nwk` (3,486 tips; the 2,141 modeled
+  species are the trained subset); source of the `E1` evolutionary vectors and `patristic_ref.npy`. **Provenance
+  DETERMINED (high confidence, 2026-07-13):** built with **Jin & Qian (2019) "V.PhyloMaker,"** *Ecography*
+  42:1353–1359, DOI [10.1111/ecog.04434](https://doi.org/10.1111/ecog.04434), on the **Smith & Brown (2018)
+  GBOTB.extended** backbone, *Am. J. Bot.* 105(3):302–314, DOI [10.1002/ajb2.1019](https://doi.org/10.1002/ajb2.1019).
+  Evidence: a branch-length audit found **60% of TIP branches share their length with another tip** (top values recur
+  5×), the V.PhyloMaker binding signature — congeners are placed at equal genus-crown depth. A raw pruning of GBOTB
+  (molecular divergences from GenBank) would give near-unique tip lengths, so the artifact is a V.PhyloMaker build,
+  not a bare GBOTB subtree. Cite BOTH (V.PhyloMaker = assembly method; GBOTB = dated megatree/backbone).
 
 ### 1.2 Pollinators — dense species-level trees (grafted for resolution)
 - **[T1] [staged]** Bees — Henríquez-Piskulich, Hugall & Stuart-Fox (2024). "A supermatrix phylogeny of the world's

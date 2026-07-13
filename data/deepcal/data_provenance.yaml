@@ -123,7 +123,12 @@ modalities:
     reproducible: yes given the GloBI snapshot (record the exact GloBI release version at next pull)
     provenance_gap: pollinator vocab was ~2% plant/fungi-contaminated (GloBI side-parsing) -> Animalia mask
                     pollinator_animal_mask.npy excludes non-animals from the vocab/dist/graph/benchmarks (FIX)
-  phylogeny_plants:  {source: "ca_subtree.dated.nwk (2141 tips)", provenance_gap: "origin megatree UNCONFIRMED — likely Smith&Brown2018 GBOTB or Jin&Qian2019; verify"}
+  phylogeny_plants:
+    source: "ca_subtree.dated.nwk (3486 tips; 2141 modeled)"
+    origin: "DETERMINED 2026-07-13 (high confidence): Jin&Qian2019 V.PhyloMaker on the Smith&Brown2018 GBOTB.extended backbone.
+             Evidence: 60% of TIP branch lengths are shared with another tip = the V.PhyloMaker genus-crown binding signature
+             (a raw GBOTB molecular subtree would have near-unique tip lengths). See bibliography.md [P1]."
+    reproducible: "yes given the species list + V.PhyloMaker/GBOTB (the published method + backbone are the pinned provenance)"
   phylogeny_pollinators: {source: "OpenTree induced_subtree (6033 tips) + datelife dating + grafted dated clade trees", reproducible: yes (script + tree files versioned)}
 
 # ---------------------------------------------------------------------------------------------------------------
