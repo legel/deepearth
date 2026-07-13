@@ -462,9 +462,14 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
     lines = ["benchmark                             score"]
     for k in sorted(caps, key=lambda k: caps[k]):              # weakest-first: the harmonic mean's binding benchmarks lead
         lines.append(f"  {k:<34} {caps[k]:6.3f}")
-    n_defined = len([b for b in BENCHMARKS if not is_diagnostic(b)])
-    lines.append(f"NET SCORE (harmonic mean of {len(caps)}/{n_defined} active capabilities): {net_score(raw):.4f}")
+    defined_caps = [b for b in BENCHMARKS if not is_diagnostic(b)]
+    lines.append(f"NET SCORE (harmonic mean of {len(caps)}/{len(defined_caps)} active capabilities): {net_score(raw):.4f}")
     lines.append(f"  (arithmetic mean: {arithmetic_net(raw):.4f})")
+    inactive = [b for b in defined_caps if b not in caps]      # declared but not produced by THIS eval (e.g. B25/B31 need a temporal-holdout run) -- named, never silently dropped
+    if inactive:
+        lines.append(f"INACTIVE ({len(inactive)} declared capabilities not produced by this eval run):")
+        for b in inactive:
+            lines.append(f"  {b}")
     if diags:                                                  # mechanism diagnostics, reported but NOT in the net (see is_diagnostic)
         lines.append("diagnostics (ablation-delta / information-gain; excluded from net):")
         for k in sorted(diags, key=lambda k: -diags[k]):
