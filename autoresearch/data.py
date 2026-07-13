@@ -43,7 +43,7 @@ class California:
                       "_train_bool", "time_span_days", "time_cut",
                       "lat", "lon", "elev", "cls", "dino", "bio", "phylo", "traits", "coords", "class_group",
                       "species_text", "neighbors", "gbifID",
-                      "lfmc", "lfmc_valid", "flower", "flower_valid",   # per-species/per-obs benchmark labels persist across prepared reloads
+                      "lfmc", "lfmc_valid", "flower", "flower_valid", "myco", "myco_valid",   # per-species/per-obs benchmark labels persist across prepared reloads
                       "obs_month", "month_tnorm", "species_peak_month")   # B28 phenology-seasonality (per-obs month, per-month time anchor, per-species peak)
 
     def __init__(self, cache_dir: str, n_neighbors: int = 24, device: str = "cuda", holdout_fraction: float = 1 / 6,
@@ -134,6 +134,10 @@ class California:
         lf = cache / "gbif_lfmc.npz"                        # per-species peak fire-season live fuel moisture (B34 ecophysiology)
         if lf.exists():
             z = np.load(lf); self.lfmc = torch.tensor(z["lfmc"], device=dev); self.lfmc_valid = torch.tensor(z["has_lfmc"], device=dev)
+        mc = cache / "gbif_mycorrhiza.npz"                  # per-species plant-fungal symbiosis type (B42; FungalRoot genus-level)
+        if mc.exists():
+            z = np.load(mc, allow_pickle=True); self.myco = torch.tensor(z["myco"].astype(np.int64), device=dev)
+            self.myco_valid = torch.tensor(z["has_myco"], device=dev); self.myco_classes = list(z["classes"])
         fw = cache / "gbif_flower_all.npz"                  # per-observation flowering label (B26 phenology; PhenoVision/iNat)
         if fw.exists():
             z = np.load(fw); fmap = {int(g): float(v) for g, v in zip(z["gbifID"], z["flower"])}
@@ -408,6 +412,8 @@ class California:
             values["_poll_valid"] = self.poll_valid[c]
         if hasattr(self, "lfmc"):                                         # per-species live fuel moisture (B34 aux head)
             c = self.cls[idx]; values["_lfmc"] = self.lfmc[c]; values["_lfmc_valid"] = self.lfmc_valid[c]
+        if hasattr(self, "myco"):                                         # per-species mycorrhizal type (B42 symbiosis head)
+            c = self.cls[idx]; values["_myco"] = self.myco[c]; values["_myco_valid"] = self.myco_valid[c]
         if hasattr(self, "flower"):                                       # per-observation flowering label (B26 phenology head)
             values["_flower"] = self.flower[idx]; values["_flower_valid"] = self.flower_valid[idx]
         manifold_positions = {"biological": self.phylo[self.cls[ci]]}   # neighbors' known positions only

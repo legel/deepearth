@@ -298,6 +298,10 @@ class DeepEarth(nn.Module):
         # fire-season live fuel moisture from its phylo-refined representation. Created last (no init-RNG shift).
         self.lfmc_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
             if species_variable is not None else None
+        # Symbiosis head (B42, jointly-trained on a DETACHED pooled latent): predict a plant's mycorrhizal type
+        # (AM/EcM/ErM/OM/NM, FungalRoot) from its representation — does the niche predict the plant-fungal symbiosis?
+        self.myco_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5)) \
+            if species_variable is not None else None
         # Phenology head (B26, jointly-trained on a DETACHED pooled latent): predict whether an observation is flowering
         # from its (space-time-conditioned) representation. Per-observation label from PhenoVision. Created last.
         self.flower_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
@@ -674,6 +678,13 @@ class DeepEarth(nn.Module):
                 pred = self.lfmc_head(self._pooled(z, v.name).detach()).squeeze(-1).float()
                 tgt = torch.log(values["_lfmc"].clamp_min(1.0)); lv = values["_lfmc_valid"].float()
                 loss = loss + self._lfmc_weight * ((pred - tgt) ** 2 * lv).sum() / lv.sum().clamp_min(1.0)
+            # Symbiosis (B42): detached head predicts the mycorrhizal type (cross-entropy toward the FungalRoot label)
+            if getattr(self, "_myco_weight", 0.0) > 0 and v.name == self.species_variable \
+                    and "_myco" in values and getattr(self, "myco_head", None) is not None:
+                logit = self.myco_head(self._pooled(z, v.name).detach())
+                mv = values["_myco_valid"].float()
+                ce = F.cross_entropy(logit, values["_myco"].clamp_min(0), reduction="none")
+                loss = loss + self._myco_weight * (ce * mv).sum() / mv.sum().clamp_min(1.0)
             # Phenology (B26): detached head predicts flowering (BCE) toward the per-observation PhenoVision label
             if getattr(self, "_flower_weight", 0.0) > 0 and v.name == self.species_variable \
                     and "_flower" in values and getattr(self, "flower_head", None) is not None:
@@ -712,6 +723,8 @@ class DeepEarth(nn.Module):
                 out[t] = self.poll_head(self._pooled(z, self.species_variable)) @ self._pollinator_basis().t()
             elif t == "lfmc":                                                    # species -> live fuel moisture (B34)
                 out[t] = self.lfmc_head(self._pooled(z, self.species_variable)).squeeze(-1).exp()
+            elif t == "myco":                                                    # species -> mycorrhizal type logits (B42)
+                out[t] = self.myco_head(self._pooled(z, self.species_variable))
             elif t == "flower":                                                  # observation -> flowering probability (B26)
                 out[t] = torch.sigmoid(self.flower_head(self._pooled(z, self.species_variable)).squeeze(-1))
             else:

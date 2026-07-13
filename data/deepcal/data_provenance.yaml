@@ -116,6 +116,14 @@ modalities:
     benchmark: B26_flowering_auc (jointly-trained detached phenology head -> ROC-AUC on the held-out set)
     reproducible: yes given the PhenoVision probe outputs (per-obs labels keyed by gbifID)
 
+  mycorrhiza:
+    source: "FungalRoot (Soudzilovskaia et al. 2020, New Phytologist) — GBIF dataset 744edc21-8dd2-474e-8a0b-b8c3d56a3c2d,
+             direct DwCA https://orphans.gbif.org/EE/744edc21-...232.zip (no auth). Per-occurrence 'Mycorrhiza type'
+             measurement + occurrence genus; majority mycorrhizal type per plant genus -> mapped to the plant vocab."
+    builder: build_mycorrhiza.py
+    output: {file: gbif_mycorrhiza.npz, keys: [myco, has_myco, classes], classes: [AM, EcM, ErM, OM, NM], labeled_species: 2567}
+    benchmark: B42_mycorrhiza_from_env (jointly-trained detached symbiosis head -> macro-F1)
+    reproducible: yes — deterministic given the versioned FungalRoot DwCA (genus-majority mapping is exact)
   species_dist:   {source: GBIF local community, output: gbif_species_dist.npz, reproducible: yes}
   pollinator_interactions:
     source: GloBI interactions.tsv (CA plants, flower-visit interaction types); snapshot filtered 2026-07-11

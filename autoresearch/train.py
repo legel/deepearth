@@ -99,6 +99,7 @@ def train_and_evaluate(config, device):
     model._phylo_mask_weight = m.get("phylo_mask_weight", 0.0)   # rule 25: mask-and-reconstruct species embedding from relatives
     model._lfmc_weight = m.get("lfmc_weight", 0.0)               # B34 ecophysiology head (live fuel moisture)
     model._flower_weight = m.get("flower_weight", 0.0)           # B26 phenology head (flowering, per-obs BCE)
+    model._myco_weight = m.get("myco_weight", 0.0)               # B42 symbiosis head (mycorrhizal type, per-species CE)
     if model._sdist_weight > 0 and hasattr(source, "gbifID"):
         sdp = Path(d["cache_dir"]); sdp = (sdp if sdp.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]) / "gbif_species_dist.npz"
         if sdp.exists():
@@ -134,7 +135,7 @@ def train_and_evaluate(config, device):
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
-                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "lfmc_head", "flower_head"))]
+                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "lfmc_head", "flower_head", "myco_head"))]
     hash_encoders = [mod for mod in model.modules() if hasattr(mod, "clamp_per_level_scale")]
     def clamp_res():                                     # keep learnable per-level resolutions in the safe (scale>0) region
         for he in hash_encoders:
