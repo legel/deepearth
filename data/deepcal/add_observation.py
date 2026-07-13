@@ -24,7 +24,15 @@ FILTERS = dict(datasetKey=INAT_RG, country="US", stateProvince="California", yea
                hasCoordinate="true", mediaType="StillImage")   # the base-dataset download predicate (2025-locked)
 MAX_COORD_UNC = 10.0                                       # metres; high-GPS-precision only
 KINGDOM_KEY = {"Plantae": 6, "Animalia": 1, "Fungi": 5}    # GBIF backbone taxonKeys — occurrence/search filters by KEY, not name
-ENV_BUILDERS = ["env_priors/build_topo.py", "env_priors/build_chm.py", "env_priors/build_hydrowind_torch.py"]
+ENV_BUILDERS = [                                            # full co-occurring-modality fan-out (nothing omitted), keyed off obs_coords, each resumable
+    "env_priors/build_daymet.py",                           # climate (Daymet) — REST, CPU
+    "env_priors/build_soil.py",                             # soil (SSURGO) — REST, CPU
+    "env_priors/build_topo.py",                             # 3DEP microtopography
+    "env_priors/build_chm.py",                              # NAIP-CHM canopy structure
+    "env_priors/build_hydrowind_torch.py",                  # drainage + wind (GPU physics)
+    "env_priors/build_naip.py",                             # NAIP aerial DINOv3-SAT (GPU) — records naip_scene
+    "env_priors/build_clay.py",                             # Clay / Sentinel-2 (GPU) — records clay_scene
+]
 
 def _dev():
     import torch; return "cuda" if torch.cuda.is_available() else "cpu"
