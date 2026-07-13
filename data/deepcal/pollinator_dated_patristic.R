@@ -11,6 +11,7 @@ vocab <- read.csv("deepearth/data/deepcal/pollinator/pollinator_vocab.csv", head
 vset <- unique(tolower(gsub(" ", "_", vocab$V2[grepl("^[0-9]+$", vocab$V1)])))   # "genus_species"
 
 binom <- function(labs) sapply(strsplit(labs, "_"), function(x) paste(tolower(x[1]), tolower(x[2]), sep = "_"))
+gen   <- function(x) sub("_.*", "", x)                        # genus part of a "genus_species" string
 
 clades <- list(
   bees        = "BEE_mat7_fulltree_tplo35_sf20lp.nwk",
@@ -18,18 +19,33 @@ clades <- list(
   butterflies = "butterflies_Kawahara2023.tre",
   moths       = "sphingidae_Couch2026.tre")
 
+vgen <- gen(vset)                                             # genus of each vocab species
+
 for (nm in names(clades)) {
   f <- paste0(T, clades[[nm]])
   tr <- tryCatch(read.tree(f), error = function(e) read.nexus(f))
-  bn <- binom(tr$tip.label)
-  keep <- bn %in% vset & !duplicated(bn)                       # one tip per vocab-covered binomial
-  if (sum(keep) < 3) { cat(nm, ": <3 covered, skip\n"); next }
-  sub <- keep.tip(tr, tr$tip.label[keep])
-  sub$tip.label <- binom(sub$tip.label)                       # relabel tips to binomial
-  cph <- cophenetic(sub)                                       # DATED patristic (Myr)
-  write.csv(cph, paste0(OUT, nm, "_cophen.csv"))
-  offdiag <- cph[upper.tri(cph)]
-  cat(sprintf("%-12s covered=%d  mean_dated=%.1f Myr  min_congener=%.2f  max=%.1f\n",
-              nm, nrow(cph), mean(offdiag), min(offdiag), max(offdiag)))
+  tbin <- binom(tr$tip.label); tgen <- gen(tbin)             # per-tip binomial + genus
+  # HYBRID placement (matches the V.PhyloMaker plant tree): species-level distance where an exact tip exists,
+  # else the species is placed at its GENUS crown (genus-level dated position) — lifts coverage ~10x for
+  # groups whose chronogram samples ~1 species/genus (e.g. Kawahara2023 butterflies).
+  sp <- vset[vgen %in% tgen]                                  # every vocab species whose genus is in the tree
+  if (length(sp) < 3) { cat(nm, ": <3 covered, skip\n"); next }
+  gi <- gen(sp)
+  gcov <- unique(gi)                                          # one representative tip per covered genus, preferring an exact vocab tip
+  rep_tip <- sapply(gcov, function(g) { idx <- which(tgen == g); ex <- idx[tbin[idx] %in% vset]
+                                        tr$tip.label[if (length(ex)) ex[1] else idx[1]] })
+  gt <- keep.tip(tr, rep_tip); gt$tip.label <- gcov[match(gt$tip.label, rep_tip)]
+  Cg <- cophenetic(gt)                                        # genus-level dated patristic (Myr); Cg[g,g]=0
+  D  <- Cg[gi, gi]; dimnames(D) <- list(sp, sp)              # expand to species (congeners -> 0 unless refined below)
+  keep <- tbin %in% vset & !duplicated(tbin)                  # species-level exact tips
+  nex <- sum(keep)
+  if (nex >= 2) {                                             # overwrite exact-match block with true species-level distances
+    st <- keep.tip(tr, tr$tip.label[keep]); st$tip.label <- binom(st$tip.label)
+    Csp <- cophenetic(st); ex <- intersect(sp, rownames(Csp)); D[ex, ex] <- Csp[ex, ex]
+  }
+  write.csv(D, paste0(OUT, nm, "_cophen.csv"))
+  offdiag <- D[upper.tri(D)]
+  cat(sprintf("%-12s covered=%d (exact=%d, genus-placed=%d)  mean_dated=%.1f Myr  max=%.1f\n",
+              nm, nrow(D), nex, nrow(D) - nex, mean(offdiag), max(offdiag)))
 }
 cat("DATED_PATRISTIC_DONE\n")
