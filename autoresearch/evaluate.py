@@ -181,8 +181,12 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 if sdist is not None:                     # species-distribution KL vs local community, 3 scales
                     L_comm = infer(U, ["community"])["community"]   # dedicated community head (falls back to identity posterior if absent)
                     pm = torch.softmax(L_comm, -1).detach().cpu().numpy(); gids = source.gbifID[idx.detach().cpu().numpy()]
-                    for sc, key in (("3km", "B39_species_dist_3km_kl"), ("300m", "B40_species_dist_300m_kl"), ("30m", "B29_species_dist_30m_kl")):
-                        ix, fq = sdist["z"]["idx_" + sc], sdist["z"]["frq_" + sc]; s_exp = 0.0; nk = 0
+                    # KL SKILL SCORE vs the uniform-community reference: 1 - KL(p‖q)/KL(p‖uniform), clipped [0,1].
+                    # A proper score alone (exp(-KL)) has a high, gameable floor — a no-information UNIFORM prediction
+                    # scores 0.83-0.95 because local abundances are only mildly skewed. The skill score pins no-skill
+                    # (uniform) to 0 and perfect to 1, so broadness can't win and the metric has full dynamic range.
+                    for sc, key in (("3km", "B39_species_dist_3km_skill"), ("300m", "B40_species_dist_300m_skill"), ("30m", "B29_species_dist_30m_skill")):
+                        ix, fq = sdist["z"]["idx_" + sc], sdist["z"]["frq_" + sc]; s_sk = 0.0; nk = 0
                         for b, g in enumerate(gids):
                             r = sdist["m"].get(int(g))
                             if r is None: continue
@@ -190,8 +194,11 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                             if msk.sum() < 2: continue
                             p = fq[r][msk]; p = p / p.sum()
                             q = pm[b, sp[msk]] + 1e-9; q = q / q.sum()
-                            s_exp += float(np.exp(-np.sum(p * np.log(p / q)))); nk += 1
-                        if nk: add(key, s_exp, nk)
+                            kl_m = float(np.sum(p * np.log(p / q)))
+                            kl_u = float(np.log(msk.sum()) + np.sum(p * np.log(p + 1e-12)))   # KL(p‖uniform) = log k - H(p)
+                            if kl_u < 1e-6: continue                                          # p ~ uniform here: no discriminative signal
+                            s_sk += max(0.0, 1.0 - kl_m / kl_u); nk += 1
+                        if nk: add(key, s_sk, nk)
         if vision:
             tg = ["identity"] + (["phylo"] if "phylo" in have else []) + traits
             P = infer(U + vision, tg)                     # U + photo, decode species/phylo/traits from one encode
