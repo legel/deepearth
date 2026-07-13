@@ -348,10 +348,21 @@ class SpeciesGraph(nn.Module):
 
     def __init__(self, n_species: int, d_model: int, phylo_distance: torch.Tensor = None, n_heads: int = 4,
                  n_layers: int = 2, top_k: int = None, flex: bool = False, operator: str = "ou-attention",
-                 tree: dict = None):
+                 tree: dict = None, species_text: torch.Tensor = None):
         super().__init__()
         self.operator = operator
-        self.free = nn.Parameter(torch.randn(n_species, d_model) * 0.02)     # discriminative component
+        # Species seed (science.md rule 26): decode a FROZEN BioCLIP-2 text prior through a small learned probe, so the
+        # phylo/ecological geometry of the text space is preserved and the probe *discovers* structure in it; a zero-init
+        # per-species residual keeps congeners separable. No text -> a plain discriminative free table (legacy path).
+        if species_text is not None:
+            self.register_buffer("species_text", species_text)             # [N, text_dim], frozen (requires_grad False)
+            self.probe = nn.Sequential(nn.Linear(species_text.shape[1], d_model), nn.LayerNorm(d_model),
+                                       nn.GELU(), nn.Linear(d_model, d_model))
+            self.free = nn.Parameter(torch.zeros(n_species, d_model))        # residual on the BioCLIP prior (init 0)
+        else:
+            self.register_buffer("species_text", None); self.probe = None
+            self.free = nn.Parameter(torch.randn(n_species, d_model) * 0.02)  # discriminative component
+        self.mask_token = nn.Parameter(torch.randn(d_model) * 0.02)          # rule 25: hides a species' seed -> reconstruct from relatives
         if operator == "tree":
             assert tree is not None, "operator='tree' requires the parsed tree buffers"
             self.tree = TreeMessagePassing(n_species, d_model, tree, n_layers=n_layers)
@@ -395,15 +406,23 @@ class SpeciesGraph(nn.Module):
         d.fill_diagonal_(0.0)
         return d / (d.mean() + 1e-9)
 
-    def forward(self) -> torch.Tensor:
+    def _seed(self) -> torch.Tensor:
+        """Per-species base state (once per forward): probe(frozen BioCLIP-2 text) + residual, or the free table."""
+        return self.free if self.probe is None else self.probe(self.species_text) + self.free
+
+    def forward(self, mask: torch.Tensor = None) -> torch.Tensor:
         """Refine and return the species representations ``[n_species, d_model]``.
 
         No per-observation input: refinement depends only on the static species table and tree, so a query's own
-        hidden identity can never leak into its own prediction.
+        hidden identity can never leak into its own prediction. ``mask`` (bool ``[n_species]``, rule 25) hides those
+        species' seeds behind ``mask_token`` so the operator must reconstruct their embedding from phylogenetic relatives.
         """
+        h0 = self._seed()
+        if mask is not None:
+            h0 = torch.where(mask.unsqueeze(-1), self.mask_token, h0)
         if self.operator == "tree":                                        # message passing over the real tree
-            return self.tree(self.free)
-        h = self.free
+            return self.tree(h0)
+        h = h0
         if self.flex_mask is not None:                                     # clade-contiguous order -> banded attention
             h = h[self.order]
             for layer in self.layers: h = layer(h, flex_mask=self.flex_mask)

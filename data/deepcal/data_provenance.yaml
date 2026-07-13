@@ -1,0 +1,122 @@
+# DeepCal Data Provenance
+# Every data source, model, config, and filter used to build each modality — so any cache is reproducible and
+# verifiable. `reproducible` states whether re-running the builder yields the SAME values as the shipped cache.
+# `provenance_gap` flags what the ORIGINAL cache failed to record (the reason a re-run may not match bit-for-bit).
+# Formal citations with DOIs live in ../../bibliography.md; this file is the operational build record.
+
+dataset:
+  name: DeepCal
+  region: California, USA
+  temporal: 2025 (single calendar year)
+  observation_source:
+    provider: GBIF
+    dataset: iNaturalist Research-grade Observations
+    dataset_key: 50c9509d-22c7-4a22-a47d-8c48425ef4a7
+    download_predicate: {country: US, stateProvince: California, year: 2025,
+                         hasCoordinate: true, mediaType: StillImage, coordinateUncertaintyInMeters: "<=10"}
+    gbif_download_dois:            # RECORD each GBIF download DOI here at acquisition (the original two are unrecorded)
+      plants_original: UNRECORDED  # provenance gap: the base 207,431-obs download DOI was not saved
+      pollinators_2026: "0035626-260623161305970"   # 15 pollinator families, 38,457 records
+      plants_recovery_2026: "0035680-260623161305970"  # B-II dropped-species, 339,628 records
+
+models:
+  ground_vision:   {id: facebook/dinov3-vitl16-pretrain-lvd1689m, output: CLS, dim: 1024, hf_gated: true}
+  aerial_vision:   {id: facebook/dinov3-vitl16-pretrain-sat493m,  output: pooled, dim: 1024}
+  bioclip_image:   {id: hf-hub:imageomics/bioclip-2,  dim: 768}   # legacy image "bio" tokens
+  bioclip_text:    {id: hf-hub:imageomics/bioclip-2.5-vith14, dim: 1024}  # species-graph seed (rules 26/27)
+  clay:            {id: Clay v1.5 large, checkpoint: clay-v1.5.ckpt, dim: 1024}
+
+modalities:
+  vision_dino:
+    source: iNaturalist observation photo (GBIF media)
+    model: ground_vision ; embed: DINOv3-ViT-L/16 CLS, first photo per obs
+    builder: add_observation.py
+    output: {file: "gbif_tokens/*.npz", key: dino, shape: "[N,1024]", dtype: float32}
+    pooling: MEAN over ALL of an observation's photos (up to 6)   # AUDITED: model+preproc match cache exactly
+    reproducible: YES — single-photo obs reproduce at cos 0.99; the shipped cache mean-pools multi-photo obs, and the
+                  divergence correlated perfectly with photo count (1ph 0.99, 2ph 0.75, 5ph 0.32). FIXED add_observation
+                  (was first-photo-only) to mean-pool all photos. Plant vision cache is CORRECT/reproducible — kept.
+
+  climate:
+    source: Daymet V4 daily (ORNL single-pixel REST)
+    config: {vars: [dayl, prcp, srad, swe, tmax, tmin, vp], window_days: 180, end: eventDate}
+    builder: env_priors/build_daymet.py
+    output: {dir: gbif_daymet_tokens, key: daymet, shape: "[180,7]", dtype: float16, mask: ndays}
+    reproducible: yes — validated byte-exact incl. leap-year calendar; deterministic given (lat,lon,date)
+    provenance_gap: obs_coords.npz lacks eventDate → original per-obs windows need eventDate threaded in to reproduce exactly
+
+  soil:
+    source: SSURGO via USDA Soil Data Access (Tabular/post.rest)
+    config: {props: [ph1to1h2o_r, om_r, claytotal_r, sandtotal_r, silttotal_r, awc_r, ksat_r, cec7_r, dbthirdbar_r],
+             aggregation: "comppct_r-weighted mean of each component's surface (min hzdept_r) horizon"}
+    builder: env_priors/build_soil.py
+    output: {file: gbif_soil_tokens.npz, key: soil, shape: "[N,9]", dtype: float32, mask: has_soil}
+    reproducible: YES — VALIDATED 12/12 rows exact vs shipped cache
+
+  topo:
+    source: USGS 3DEP 1m DEM (nationalmap exportImage)
+    config: {patch_m: 512, features: 12, TPI_radii_m: [8, 24, 72, 140]}
+    builder: env_priors/build_topo.py
+    output: {file: gbif_topo_tokens.npz, key: topo, shape: "[N,12]", dtype: float32, mask: has_topo}
+    reproducible: yes (deterministic given the DEM tile)
+
+  chm:
+    source: NAIP-CHM canopy height (rangeland.ntsg.umt.edu index)
+    builder: env_priors/build_chm.py
+    output: {file: gbif_chm_tokens.npz, key: chm, shape: "[N,11]", dtype: float32, mask: has_chm}
+    reproducible: yes (deterministic given the CHM tile)
+
+  hydro:
+    source: USGS 3DEP DEM -> drainage (TWI/HAND/SCA) + Winstral wind exposure (GPU physics)
+    builder: env_priors/build_hydrowind_torch.py
+    output: {file: gbif_hydro_tokens.npz, key: hydro, shape: "[N,6]", dtype: float32, mask: has_hydro}
+    reproducible: yes (deterministic given the DEM tile)
+
+  naip:
+    source: NAIP aerial RGB+NIR (Planetary Computer / ESRI ImageServer)
+    model: aerial_vision (DINOv3-SAT493M) ; config: {patch_px: 256}
+    builder: env_priors/build_naip.py
+    config: {pooling: "MEAN over patch tokens (NOT CLS)", bands: "rgb_pool=DINO(R,G,B); ir_pool=DINO(R,G,NIR)",
+             patch_px: 320, source: "Planetary Computer NAIP (newest, 2022 in CA)"}
+    output: {dir: gbif_naip_tokens, keys: [rgb_pool, ir_pool], shape: "[N,1024]", dtype: float32, mask: naip_year}
+    reproducible: NO — AUDITED: reverse-engineered model + mean-patch pooling + band map + source (RGB cos 0.72, IR 0.50
+                  vs random 0.28 — model/recipe correct) but NOT the ~0.99 of an exact match; original config not fully
+                  recoverable. Like Clay: RECOMPUTE with this verified builder for a consistent, pinned pipeline.
+    provenance_gap: cache records naip_year only, not the NAIP tile id → builder must record naip_scene (TODO).
+
+  clay:
+    source: Sentinel-2 L2A via Microsoft Planetary Computer STAC
+    model: clay (Clay v1.5 large CLS token)
+    config: {bands: [blue, green, red, rededge1, rededge2, rededge3, nir, nir08, swir16, swir22],
+             patch_px: 224, gsd_m: 10, scene_selection: "least-cloudy 2025, eo:cloud_cover < 20",
+             normalization: "Clay metadata mean/std on raw DN", tokens: [time, latlon, waves, gsd]}
+    builder: env_priors/build_clay.py
+    output: {file: gbif_clay_tokens.npz, key: clay, shape: "[N,1024]", dtype: float16, mask: has_clay, year: clay_year}
+    reproducible: NO — our builder is self-consistent (cross-scene cosine 0.996, i.e. scene-robust + deterministic) but
+                  differs from the SHIPPED cache at cosine ~0.84. DIAGNOSED (clay_diagnose.py): scene selection is NOT
+                  the cause (0.996); this is a genuine PIPELINE difference vs the original (unknown normalization / band
+                  order / patch / Clay version / token). The original config was not recorded, so the shipped cache is
+                  IRREPRODUCIBLE. Decision: RECOMPUTE all Clay with this verified, scene-id-pinned builder for a single
+                  consistent pipeline (mixing 0.84-different pipelines across obs would give the model two Clay dists).
+    provenance_gap: CRITICAL — shipped cache records clay_year only (no scene id, no config); config unknowable.
+
+  flowering:
+    source: iNaturalist phenology / PhenoVision probe
+    output: {file: gbif_flower_all.npz}
+    reproducible: yes given labels
+
+  species_dist:   {source: GBIF local community, output: gbif_species_dist.npz, reproducible: yes}
+  pollinator_interactions: {source: GloBI (interactions.tsv, CA plants, flower-visit types),
+                            output: gbif_pollinator_dist.npz, reproducible: yes given the GloBI snapshot date (RECORD it)}
+  phylogeny_plants:  {source: "ca_subtree.dated.nwk (2141 tips)", provenance_gap: "origin megatree UNCONFIRMED — likely Smith&Brown2018 GBOTB or Jin&Qian2019; verify"}
+  phylogeny_pollinators: {source: "OpenTree induced_subtree (6033 tips) + datelife dating + grafted dated clade trees", reproducible: yes (script + tree files versioned)}
+
+# ---------------------------------------------------------------------------------------------------------------
+# REPRODUCIBILITY POLICY (added 2026-07-12 after the Clay 0.82 finding):
+# 1. Every builder MUST record the exact upstream source id per observation (Sentinel-2 scene id, NAIP tile id,
+#    SSURGO mukey, GBIF gbifID, GloBI snapshot date) so a re-run is pinned and verifiable — not just the year.
+# 2. Where the ORIGINAL cache lacks that provenance (clay, naip scene ids; plant tree origin; GBIF download DOI),
+#    it is IRREPRODUCIBLE as shipped. Policy per user: in the worst case, RECOMPUTE the modality end-to-end with the
+#    provenance-tracked builder so the whole dataset has verifiable, pinned provenance.
+# TODO: add `clay_scene` (S2 item id) to build_clay output; add `naip_scene` to build_naip; record GloBI snapshot date;
+#       backfill gbif download DOIs above; confirm the plant phylogeny origin.

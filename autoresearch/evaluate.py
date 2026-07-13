@@ -70,6 +70,13 @@ BENCHMARKS: List[str] = [
     "B24_geo_information_gain",         # Q3  species gain from location = B2 - B1
     "B25_forecast_climate_cos",         # A9  future climate (temporal holdout), cosine
     "B26_flowering_auc",                # A7  U/imagined-vision -> flowering (needs labels), ROC-AUC
+    "B41_pollinator_from_species_recall",  # plant identity + env -> local pollinator set (GloBI), recall@10
+    "B43_infer_hydro_cos",              # U-minus-hydro -> drainage/wind (HydroSHEDS+Winstral), cosine
+    "B51_pollinator_from_env_recall",   # env only -> pollinators (interaction from habitat), recall@10
+    "B52_pollinator_from_photo_recall", # env + ground photo -> pollinators, recall@10
+    "B53_pollinator_calibration_mrr",   # pollinator posterior calibration, mean reciprocal rank
+    "B54_pollinator_dist_kl",           # predicted vs true pollinator frequency distribution, exp(-KL)
+    "B55_pollinator_phylo_transfer_recall",  # rule 27: predict a plant's pollinators from its relatives' pollinators (cross-tree induction)
 ]
 
 
@@ -87,7 +94,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     holdout = getattr(source, "holdout", "spatial")
 
     vision = [v for v in ("vision_dino", "vision_bio") if v in have]
-    U = [v for v in ("climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm") if v in have]   # universal (no organism obs)
+    U = [v for v in ("climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro") if v in have]   # universal (no organism obs)
     naip = [v for v in ("naip_rgb", "naip_ir") if v in have]
 
     acc: Dict[str, list] = {}                              # key -> [sum, count]
@@ -134,7 +141,8 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 rank = (L_U.argsort(-1, descending=True) == tid[:, None]).float().argmax(-1)
                 add("B23_species_calibration_mrr", (1.0 / (rank.float() + 1)).sum().item(), B)   # A14 calibration
                 if sdist is not None:                     # species-distribution KL vs local community, 3 scales
-                    pm = torch.softmax(L_U, -1).detach().cpu().numpy(); gids = source.gbifID[idx.detach().cpu().numpy()]
+                    L_comm = infer(U, ["community"])["community"]   # dedicated community head (falls back to identity posterior if absent)
+                    pm = torch.softmax(L_comm, -1).detach().cpu().numpy(); gids = source.gbifID[idx.detach().cpu().numpy()]
                     for sc, key in (("3km", "B39_species_dist_3km_kl"), ("300m", "B40_species_dist_300m_kl"), ("30m", "B29_species_dist_30m_kl")):
                         ix, fq = sdist["z"]["idx_" + sc], sdist["z"]["frq_" + sc]; s_exp = 0.0; nk = 0
                         for b, g in enumerate(gids):
@@ -180,7 +188,8 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 add("B15_vision_from_aerial_cos", cos_sum(infer(naip, ["vision_dino"])["vision_dino"], values["vision_dino"]), B)
 
         # ---- dense environmental field: reconstruct each modality from the rest of U (measure-everything) ----
-        for key, tv in (("B16_infer_clay_cos", "clay"), ("B17_infer_soil_cos", "soil"), ("B18_infer_climate_cos", "climate")):
+        for key, tv in (("B16_infer_clay_cos", "clay"), ("B17_infer_soil_cos", "soil"), ("B18_infer_climate_cos", "climate"),
+                        ("B43_infer_hydro_cos", "hydro")):
             if tv in have:
                 add(key, cos_sum(infer([n for n in U if n != tv], [tv])[tv], values[tv]), B)
         if naip:
@@ -191,9 +200,36 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             tset = torch.zeros(B, L_blank.shape[1], dtype=torch.bool, device=device)
             tset.scatter_(1, source.cls[source.neighbors[idx]], True); tset.scatter_(1, tid[:, None], True)
             if U:
-                add("B20_community_from_env_recall", recall_sum(infer(U, ["identity"])["identity"], tset), B)
-            add("B21_community_from_species_recall", recall_sum(infer(["identity"], ["identity"])["identity"], tset), B)
-            add("B22_companions_recall", recall_sum(infer(["identity"] + U, ["identity"])["identity"], tset), B)
+                add("B20_community_from_env_recall", recall_sum(infer(U, ["community"])["community"], tset), B)
+            add("B21_community_from_species_recall", recall_sum(infer(["identity"], ["community"])["community"], tset), B)
+            add("B22_companions_recall", recall_sum(infer(["identity"] + U, ["community"])["community"], tset), B)
+
+        # ---- plant-pollinator interactions (GloBI): the pollinator distribution is the TARGET only (leak-safe) ----
+        if hasattr(source, "poll_idx") and c0 < community_cap:
+            c = source.cls[idx]; vi = source.poll_valid[c]; nv = int(vi.sum())
+            if nv:
+                pidx = source.poll_idx[c].clamp(0, source.n_pollinators - 1); pfrq = source.poll_frq[c]
+                tset = torch.zeros(B, source.n_pollinators, dtype=torch.bool, device=device).scatter_(1, pidx, pfrq > 0)
+                Lp = infer(["identity"] + U, ["pollinator"])["pollinator"]           # plant identity + env -> pollinators
+                add("B41_pollinator_from_species_recall", recall_sum(Lp[vi], tset[vi]), nv)
+                add("B51_pollinator_from_env_recall", recall_sum(infer(U, ["pollinator"])["pollinator"][vi], tset[vi]), nv)
+                if vision:
+                    add("B52_pollinator_from_photo_recall", recall_sum(infer(U + vision, ["pollinator"])["pollinator"][vi], tset[vi]), nv)
+                top_true = pidx[torch.arange(B, device=device), pfrq.argmax(1)]      # most-frequent pollinator per plant
+                rank = (Lp.argsort(-1, descending=True) == top_true[:, None]).float().argmax(-1)
+                add("B53_pollinator_calibration_mrr", (1.0 / (rank.float() + 1))[vi].sum().item(), nv)
+                q = torch.softmax(Lp, -1).gather(1, pidx); kl = torch.where(pfrq > 0, pfrq * (torch.log(pfrq + 1e-9) - torch.log(q + 1e-9)), torch.zeros_like(pfrq)).sum(1)
+                add("B54_pollinator_dist_kl", torch.exp(-kl)[vi].sum().item(), nv)   # exp(-KL) of true pollinator freq vs predicted
+                # B55 cross-tree phylogenomic interaction induction (rule 27): can the model predict a plant's pollinators
+                # from its RELATIVES' pollinators? Target = pollinators observed for the plant's phylogenetic neighbors.
+                if hasattr(source, "neighbors"):
+                    nc = source.cls[source.neighbors[idx]]                       # [B,K] neighbor plant classes
+                    npi = source.poll_idx[nc].reshape(B, -1).clamp(0, source.n_pollinators - 1)   # neighbors' pollinator ids
+                    nfq = (source.poll_frq[nc] > 0).reshape(B, -1)               # valid (freq>0) mask
+                    ntset = torch.zeros(B, source.n_pollinators, dtype=torch.bool, device=device).scatter_(1, npi, nfq)
+                    rv = vi & (ntset.sum(1) > 0)
+                    if int(rv.sum()):
+                        add("B55_pollinator_phylo_transfer_recall", recall_sum(Lp[rv], ntset[rv]), int(rv.sum()))
 
         # ---- forecasting (temporal holdout only): predict the held-out FUTURE environment ----
         if holdout == "temporal" and "climate" in have:
