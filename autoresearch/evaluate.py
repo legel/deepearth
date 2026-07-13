@@ -406,20 +406,30 @@ def normalized(raw: Dict[str, float]) -> Dict[str, float]:
             if not (isinstance(v, float) and np.isnan(v))}
 
 
+def is_diagnostic(k: str) -> bool:
+    """A DERIVED difference benchmark (ablation-delta / information-gain): B24_geo_information_gain = B2-B1,
+    B56-B60_*_phylo_graph_gain = capability WITH minus WITHOUT the species graph. These isolate a MECHANISM's
+    contribution and live on a compressed 0-0.3 scale. They are reported as diagnostics but EXCLUDED from the net:
+    folding a difference into the harmonic mean double-counts its own constituents and, being small (a good phylo
+    gain is ~0.05, an untrained one is 0.0), it dominates/nukes the harmonic mean -> the north star would be pinned
+    near 0 regardless of the model's actual capabilities."""
+    return k.endswith("_gain")
+
+
 def net_score(raw: Dict[str, float]) -> float:
-    """North star = HARMONIC mean (power mean p=-1) of the active benchmark scores. Chosen over the arithmetic mean
-    so lifting the WEAKEST benchmark helps most and no benchmark can be sacrificed for another (matches the module
-    docstring's stated design; the old code silently used an arithmetic mean -- contradiction resolved here)."""
-    vals = [max(v, _SCORE_FLOOR) for v in normalized(raw).values()]
+    """North star = HARMONIC mean (power mean p=-1) of the active CAPABILITY benchmarks (diagnostics excluded, see
+    is_diagnostic). Chosen over the arithmetic mean so lifting the WEAKEST benchmark helps most and no benchmark can
+    be sacrificed for another (matches the module docstring; the old code silently used an arithmetic mean)."""
+    vals = [max(v, _SCORE_FLOOR) for k, v in normalized(raw).items() if not is_diagnostic(k)]
     if not vals:
         return 0.0
     return float(len(vals) / sum(1.0 / v for v in vals))
 
 
 def arithmetic_net(raw: Dict[str, float]) -> float:
-    """Arithmetic mean of the active scores -- reported alongside the harmonic north star for legibility (it moves
-    when any benchmark improves, whereas the harmonic mean is dominated by the current weakest)."""
-    vals = list(normalized(raw).values())
+    """Arithmetic mean of the active CAPABILITY scores -- reported alongside the harmonic north star for legibility
+    (it moves when any benchmark improves, whereas the harmonic mean is dominated by the current weakest)."""
+    vals = [v for k, v in normalized(raw).items() if not is_diagnostic(k)]
     return float(sum(vals) / len(vals)) if vals else 0.0
 
 
@@ -427,12 +437,16 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
     """Render every benchmark's [0,1] score (weakest first, so the binding constraint is on top), plus both the
     harmonic-mean north star and the arithmetic mean over the active benchmarks."""
     normed = normalized(raw)
-    order = {b: i for i, b in enumerate(BENCHMARKS)}
+    caps = {k: v for k, v in normed.items() if not is_diagnostic(k)}
+    diags = {k: v for k, v in normed.items() if is_diagnostic(k)}
     lines = ["benchmark                             score"]
-    for k in sorted(raw, key=lambda k: normed.get(k, 1.0)):     # weakest-first: the harmonic mean's binding benchmarks lead
-        s = normed.get(k, float("nan"))
-        lines.append(f"  {k:<34} {s:6.3f}")
-    n_defined = len(BENCHMARKS)
-    lines.append(f"NET SCORE (harmonic mean of {len(normed)}/{n_defined} active): {net_score(raw):.4f}")
+    for k in sorted(caps, key=lambda k: caps[k]):              # weakest-first: the harmonic mean's binding benchmarks lead
+        lines.append(f"  {k:<34} {caps[k]:6.3f}")
+    n_defined = len([b for b in BENCHMARKS if not is_diagnostic(b)])
+    lines.append(f"NET SCORE (harmonic mean of {len(caps)}/{n_defined} active capabilities): {net_score(raw):.4f}")
     lines.append(f"  (arithmetic mean: {arithmetic_net(raw):.4f})")
+    if diags:                                                  # mechanism diagnostics, reported but NOT in the net (see is_diagnostic)
+        lines.append("diagnostics (ablation-delta / information-gain; excluded from net):")
+        for k in sorted(diags, key=lambda k: -diags[k]):
+            lines.append(f"  {k:<34} {diags[k]:6.3f}")
     return "\n".join(lines)
