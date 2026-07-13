@@ -95,7 +95,11 @@ modalities:
              patch_px: 224, gsd_m: 10, scene_selection: "least-cloudy 2025, eo:cloud_cover < 20",
              normalization: "Clay metadata mean/std on raw DN", tokens: [time, latlon, waves, gsd]}
     builder: env_priors/build_clay.py
-    output: {file: gbif_clay_tokens.npz, key: clay, shape: "[N,1024]", dtype: float16, mask: has_clay, year: clay_year}
+    output: {file: gbif_clay_tokens.npz, keys: [clay, clay_year, clay_scene, has_clay], shape: "[N,1024]", dtype: float16,
+             clay_scene: "exact Sentinel-2 L2A item id per obs (e.g. S2C_MSIL2A_20251230T191821_R056_T10TDL_...)"}
+    recompute_status: IN PROGRESS (~111K/207K as of 2026-07-13) — VERIFIED healthy mid-run: embeddings finite/1024-d/non-zero
+                  (0 all-zero rows, mean|emb| 0.054), and clay_scene populated at 100% coverage (2000/2000 sampled). On
+                  completion the Clay cache is SCENE-PINNED + reproducible (the provenance gap below is then closed).
     reproducible: NO — our builder is self-consistent (cross-scene cosine 0.996, i.e. scene-robust + deterministic) but
                   differs from the SHIPPED cache at cosine ~0.84. DIAGNOSED (clay_diagnose.py): scene selection is NOT
                   the cause (0.996); this is a genuine PIPELINE difference vs the original (unknown normalization / band
