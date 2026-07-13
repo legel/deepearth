@@ -147,9 +147,7 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     assumptions and no unvalidated Bayesian priors anywhere** in the model. Never assume scientific data follows a
     simplistic structure or is fully implied by a grossly simplified heuristic. For each domain: research the latest
     SOTA model, **download it, run it, validate it against real data**, and verify that every dataset, encoder, model,
-    and architecture is directly based upon the best published work of scientists. (Corollaries already in play: a
-    real **dated** phylogeny — congruified published chronograms — not a topological/text-shadow stand-in; multi-photo
-    mean-pooled DINOv3, not first-photo; recompute any modality we cannot reproduce; audited provenance per obs.)
+    and architecture is directly based upon the best published work of scientists.
 
 ## References
 
