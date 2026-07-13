@@ -70,6 +70,7 @@ BENCHMARKS: List[str] = [
     "B24_geo_information_gain",         # Q3  species gain from location = B2 - B1
     "B25_forecast_climate_cos",         # A9  future climate (temporal holdout), cosine
     "B26_flowering_auc",                # A7  U/imagined-vision -> flowering (needs labels), ROC-AUC
+    "B27_flowering_fidelity",           # phenology self-consistency: flowering agreement between imagined vision (U) and real vision (U+photo)
     "B34_lfmc_from_env",                # ecophysiology: predict a species' peak fire-season live fuel moisture
     "B41_pollinator_from_species_recall",  # plant identity + env -> local pollinator set (GloBI), recall@10
     "B43_infer_hydro_cos",              # U-minus-hydro -> drainage/wind (HydroSHEDS+Winstral), cosine
@@ -107,6 +108,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     lfmc_p, lfmc_t = [], []                                # B34: predicted vs true live fuel moisture over the eval set
     flower_p, flower_t = [], []                            # B26: predicted flowering probability vs true label over the eval set
     lfmc_p_abl, flower_p_abl = [], []                      # B57/B58: the same predictions with the species graph ABLATED (phylo-graph-gain deltas)
+    flower_fid = []                                        # B27: |flowering(env-only) - flowering(env+real photo)| — imagined-vs-real fidelity
     def add(key, s, n):
         a = acc.setdefault(key, [0.0, 0.0]); a[0] += float(s); a[1] += n
     # trait macro-F1 needs the full pred/target/observed vectors gathered per preset
@@ -148,12 +150,18 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             if hasattr(source, "flower"):                  # B26 phenology: predict flowering from env-conditioned U (per-obs)
                 fv = source.flower_valid[idx].bool()
                 if fv.any():
-                    pr = infer(U, ["flower"])["flower"][fv]; tr = source.flower[idx][fv]
+                    prb = infer(U, ["flower"])["flower"]        # env-only flowering probability (full batch, reused below)
+                    pr = prb[fv]; tr = source.flower[idx][fv]
                     flower_p.append(pr.detach().cpu()); flower_t.append(tr.detach().cpu())
                     if getattr(model, "species_graph", None) is not None:   # B57: same prediction, species graph ablated
                         model._ablate_species = True
                         flower_p_abl.append(infer(U, ["flower"])["flower"][fv].detach().cpu())
                         model._ablate_species = False
+                    if vision:                                  # B27 phenology fidelity: does imagined vision carry the same flowering signal as real vision?
+                        vm = fv & observed.get("vision_dino", torch.zeros(B, dtype=torch.bool, device=device))
+                        if vm.any():
+                            pvis = infer(U + vision, ["flower"])["flower"]   # flowering from U + REAL photo
+                            flower_fid.append((prb[vm] - pvis[vm]).abs().detach().cpu())
             if fam is not None:
                 add("B6_family_from_env", fam_hit(L_U, tid), B)
                 rank = (L_U.argsort(-1, descending=True) == tid[:, None]).float().argmax(-1)
@@ -306,6 +314,8 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         out["B26_flowering_auc"] = _fa
         _faa = _auc(flower_p_abl, flower_t)
         if _faa is not None: out["B57_flowering_phylo_graph_gain"] = max(0.0, _fa - _faa)
+    if flower_fid:                                                          # B27: 1 - mean|imagined-vision flowering - real-vision flowering|
+        out["B27_flowering_fidelity"] = float(1.0 - torch.cat(flower_fid).mean())
     if "B7_family_from_phylo" in out and "_B7_ablated" in out:              # B56: phylogenomic-graph contribution (rule 27 ablation)
         out["B56_family_phylo_graph_gain"] = max(0.0, out["B7_family_from_phylo"] - out["_B7_ablated"])
     out.pop("_B7_ablated", None)
