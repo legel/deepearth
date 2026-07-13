@@ -140,6 +140,16 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     output-side pollinator graph associates A with B's relatives, so the interaction head decodes against the *refined*
     pollinator embeddings. The model predicts a species' partners from its relatives' partners; test it held-out by
     hiding a focal species' interactions and recovering them through relatives, plus the graph ablation.
+28. **No fuzzy science — every component grounded in the state-of-the-art model of real data.** Crude statistical
+    approximations are not acceptable. Each part of the model must be either (a) closely fit to real data with enough
+    statistical expressiveness to *generatively simulate* it, or (b) a frozen embedding from a peer-reviewed,
+    scientifically published, SOTA domain **foundation model run on real data**. Accept **no unvalidated topological
+    assumptions and no unvalidated Bayesian priors anywhere** in the model. Never assume scientific data follows a
+    simplistic structure or is fully implied by a grossly simplified heuristic. For each domain: research the latest
+    SOTA model, **download it, run it, validate it against real data**, and verify that every dataset, encoder, model,
+    and architecture is directly based upon the best published work of scientists. (Corollaries already in play: a
+    real **dated** phylogeny — congruified published chronograms — not a topological/text-shadow stand-in; multi-photo
+    mean-pooled DINOv3, not first-photo; recompute any modality we cannot reproduce; audited provenance per obs.)
 
 ## References
 
