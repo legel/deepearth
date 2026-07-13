@@ -19,14 +19,18 @@ CLOUD_LT = 20               # % max scene cloud cover
 WORKERS = 12
 DIM = 1024                  # Clay v1.5 large encoder embedding dim (== existing cache D)
 CKPT = os.path.join(HERE, "clay_ckpt.pkl")
-STAC_API = os.environ.get("STAC_API", "https://planetarycomputer.microsoft.com/api/stac/v1")
-# Clay sentinel-2-l2a band order -> STAC asset keys (Planetary Computer). Element84 earth-search uses lowercase
-# names (blue,green,...,swir22); flip STAC_SIGN=0 + STAC_API to earth-search and swap this map if used.
+# DEFAULT to Element84 earth-search (AWS open sentinel-cogs): Planetary Computer aggressively rate-limits the STAC
+# API (429s -> best_item returns None -> obs silently dropped: measured 94% cell-fail when run alongside the NAIP
+# STAC pulls). earth-search is unthrottled and serves the SAME S2 L2A COGs from the public sentinel-cogs bucket over
+# https (no AWS creds). Override with STAC_API=<planetarycomputer url> STAC_SIGN=1 to use PC.
+STAC_API = os.environ.get("STAC_API", "https://earth-search.aws.element84.com/v1")
+# Clay sentinel-2-l2a band order. earth-search asset keys ARE the lowercase band names (blue,...,swir22); PC uses
+# B02.. -- fetch_patch tries ASSET[b] (PC) then falls back to the band name itself (earth-search), so both work.
 CLAY_BANDS = ["blue", "green", "red", "rededge1", "rededge2", "rededge3", "nir", "nir08", "swir16", "swir22"]
 ASSET = {"blue": "B02", "green": "B03", "red": "B04", "rededge1": "B05", "rededge2": "B06",
          "rededge3": "B07", "nir": "B08", "nir08": "B8A", "swir16": "B11", "swir22": "B12"}
 GDAL_ENV = dict(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR", CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.TIF",
-                GDAL_HTTP_MAX_RETRY="3", GDAL_HTTP_RETRY_DELAY="1", VSI_CACHE="TRUE")
+                GDAL_HTTP_MAX_RETRY="3", GDAL_HTTP_RETRY_DELAY="1", VSI_CACHE="TRUE", AWS_NO_SIGN_REQUEST="YES")
 
 
 def utm_epsg(lon, lat):
