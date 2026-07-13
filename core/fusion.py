@@ -148,6 +148,7 @@ class DeepEarth(nn.Module):
         species_flex: bool = False,
         species_operator: str = "ou-attention",
         species_tree: Optional[dict] = None,
+        species_distance: Optional[tuple] = None,   # (dated[m,m], model_idx[m]): real dated patristic for tree-covered species -> replaces the embedding shadow (ou-attention)
         species_text: Optional[torch.Tensor] = None,
         compile_processor: bool = False,
         rounds: int = 1,
@@ -239,7 +240,13 @@ class DeepEarth(nn.Module):
                 self.species_graph = SpeciesGraph(species_embedding.shape[0], d_model, operator="tree",
                                                   tree=species_tree, n_layers=species_layers, species_text=species_text)
             else:
-                distance = SpeciesGraph.distance_from_embedding(species_embedding)
+                distance = SpeciesGraph.distance_from_embedding(species_embedding)   # BioCLIP-embedding shadow (kept for inductively-placed species not on the dated tree)
+                if species_distance is not None:                                     # overwrite the tree-covered block with the REAL dated patristic (rules 7-12), rescaled to the shadow's scale
+                    dated, midx = species_distance
+                    blk = dated / (dated[~torch.eye(len(dated), dtype=torch.bool, device=dated.device)].mean() + 1e-9) \
+                                * distance[midx][:, midx][~torch.eye(len(midx), dtype=torch.bool, device=distance.device)].mean()
+                    blk = 0.5 * (blk + blk.t()); blk.fill_diagonal_(0.0)
+                    distance = distance.clone(); distance[midx.unsqueeze(1), midx.unsqueeze(0)] = blk
                 self.species_graph = SpeciesGraph(species_embedding.shape[0], d_model, distance,
                                                   n_heads=species_heads, n_layers=species_layers,
                                                   top_k=species_top_k, flex=species_flex, species_text=species_text)

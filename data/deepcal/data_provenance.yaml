@@ -29,7 +29,7 @@ models:
 modalities:
   vision_dino:
     source: iNaturalist observation photo (GBIF media)
-    model: ground_vision ; embed: DINOv3-ViT-L/16 CLS, first photo per obs
+    model: ground_vision ; embed: DINOv3-ViT-L/16 CLS, MEAN-pooled over ALL of an observation's photos
     builder: add_observation.py
     output: {file: "gbif_tokens/*.npz", key: dino, shape: "[N,1024]", dtype: float32}
     pooling: MEAN over ALL of an observation's photos (up to 6)   # AUDITED: model+preproc match cache exactly
@@ -137,6 +137,12 @@ modalities:
              Evidence: 60% of TIP branch lengths are shared with another tip = the V.PhyloMaker genus-crown binding signature
              (a raw GBOTB molecular subtree would have near-unique tip lengths). See bibliography.md [P1]."
     reproducible: "yes given the species list + V.PhyloMaker/GBOTB (the published method + backbone are the pinned provenance)"
+    species_graph_distance: "gbif_plant_dist.npz — REAL dated cophenetic (Myr) on ca_subtree.dated.nwk for the 2141/3280 model
+             species that are tree tips; the ou-attention plant graph blends this over the tree-covered block (rescaled to the
+             embedding-shadow scale) and keeps SpeciesGraph.distance_from_embedding only for the 1139 inductively-placed species
+             (rules 25/26) absent from the dated tree. FIXES the prior crude approximation where ou-attention used the BioCLIP
+             distance_from_embedding shadow for ALL species. Builders: plant_dated_patristic.R + plant_dated_distance.py.
+             Validated: congeners nearest by divergence time (Salvia radiation ~1 Myr, Quercus ~50 Myr, family-level structure)."
   phylogeny_pollinators:
     source: "pollinator_distance.npy [8111x8111] — DATED patristics from published chronograms where covered, OpenTree
              topological cophenetic + BioCLIP-2.5 text shadow elsewhere"
