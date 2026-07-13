@@ -82,11 +82,13 @@ modalities:
     builder: env_priors/build_naip.py
     config: {pooling: "MEAN over patch tokens (NOT CLS)", bands: "rgb_pool=DINO(R,G,B); ir_pool=DINO(R,G,NIR)",
              patch_px: 320, source: "Planetary Computer NAIP (newest, 2022 in CA)"}
-    output: {dir: gbif_naip_tokens, keys: [rgb_pool, ir_pool], shape: "[N,1024]", dtype: float32, mask: naip_year}
+    output: {dir: gbif_naip_tokens, keys: [rgb_pool, ir_pool, naip_year, naip_scene], shape: "[N,1024]", dtype: float32,
+             naip_scene: "exact NAIP tile/item id per obs (e.g. ca_m_3311628_ne_11_060_20220416) — pinned provenance"}
     reproducible: NO — AUDITED: reverse-engineered model + mean-patch pooling + band map + source (RGB cos 0.72, IR 0.50
                   vs random 0.28 — model/recipe correct) but NOT the ~0.99 of an exact match; original config not fully
                   recoverable. Like Clay: RECOMPUTE with this verified builder for a consistent, pinned pipeline.
-    provenance_gap: cache records naip_year only, not the NAIP tile id → builder must record naip_scene (TODO).
+    provenance_gap: RESOLVED (2026-07-13) — build_naip now records naip_scene (the NAIP tile id per obs); validated via
+                  cell_patches (returns the exact tile id, non-empty). The queued recompute (GPU 1, after Clay) is scene-pinned.
 
   clay:
     source: Sentinel-2 L2A via Microsoft Planetary Computer STAC
