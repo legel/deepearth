@@ -129,7 +129,17 @@ modalities:
              Evidence: 60% of TIP branch lengths are shared with another tip = the V.PhyloMaker genus-crown binding signature
              (a raw GBOTB molecular subtree would have near-unique tip lengths). See bibliography.md [P1]."
     reproducible: "yes given the species list + V.PhyloMaker/GBOTB (the published method + backbone are the pinned provenance)"
-  phylogeny_pollinators: {source: "OpenTree induced_subtree (6033 tips) + datelife dating + grafted dated clade trees", reproducible: yes (script + tree files versioned)}
+  phylogeny_pollinators:
+    source: "pollinator_distance.npy [8111x8111] — DATED patristics from published chronograms where covered, OpenTree
+             topological cophenetic + BioCLIP-2.5 text shadow elsewhere"
+    dated_clades: "1210 taxa on real divergence-time (Myr) distances via ape cophenetic on published dated trees:
+                   bees=Henriquez-Piskulich2024 BEE_mat7 treePL (1143), ants=Nelsen2018 (31), butterflies=Kawahara2023 (16),
+                   hawkmoths=Couch2026 Sphingidae (20). Builders: pollinator_dated_patristic.R + pollinator_dated_distance.py
+                   (within-clade blocks overwritten, rescaled to keep block mean). Topological backup: pollinator_distance_topo.npy."
+    in_progress: "FULL-coverage dating via datelife (rule 28: no topological/text-shadow stand-in). datelife needs Bioconductor
+                  msa; the rphylo env lacked a C compiler (now installed) — msa build in progress. Then datelife_use queries the
+                  published-chronogram DB (Jetz birds etc.) per taxon. Butterflies/birds under-covered by clade trees; datelife DB fills them."
+    reproducible: "yes given the versioned chronograms + scripts; the dated-clade blocks reproduce exactly (ape cophenetic is deterministic)"
 
 # ---------------------------------------------------------------------------------------------------------------
 # REPRODUCIBILITY POLICY (added 2026-07-12 after the Clay 0.82 finding):
