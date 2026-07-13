@@ -75,6 +75,7 @@ BENCHMARKS: List[str] = [
     "B27_flowering_fidelity",           # phenology self-consistency: flowering agreement between imagined vision (U) and real vision (U+photo)
     "B28_flowering_peak_month_mrr",     # phenology seasonality: MRR of the true peak-flowering month from a 12-month time sweep
     "B34_lfmc_from_env",                # ecophysiology: predict a species' peak fire-season live fuel moisture
+    "B42_mycorrhiza_from_env",          # biotic symbiosis: predict a plant's mycorrhizal type (FungalRoot AM/EcM/ErM/OM/NM) from env, macro-F1
     "B41_pollinator_from_species_recall",  # plant identity + env -> local pollinator set (GloBI), recall@10
     "B43_infer_hydro_cos",              # U-minus-hydro -> drainage/wind (HydroSHEDS+Winstral), cosine
     "B51_pollinator_from_env_recall",   # env only -> pollinators (interaction from habitat), recall@10
@@ -109,6 +110,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
 
     acc: Dict[str, list] = {}                              # key -> [sum, count]
     lfmc_p, lfmc_t = [], []                                # B34: predicted vs true live fuel moisture over the eval set
+    myco_p, myco_t = [], []                                # B42: predicted vs true mycorrhizal type (class) over the eval set
     flower_p, flower_t = [], []                            # B26: predicted flowering probability vs true label over the eval set
     lfmc_p_abl, flower_p_abl = [], []                      # B57/B58: the same predictions with the species graph ABLATED (phylo-graph-gain deltas)
     flower_fid = []                                        # B27: |flowering(env-only) - flowering(env+real photo)| — imagined-vs-real fidelity
@@ -194,6 +196,11 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                     if lv.any():
                         pr = infer(U, ["lfmc"])["lfmc"][lv]; tr = source.lfmc[tid][lv]
                         lfmc_p.append(pr.detach().cpu()); lfmc_t.append(tr.detach().cpu())
+                if hasattr(source, "myco"):                # B42 symbiosis: predict a plant's mycorrhizal type from env
+                    mv = source.myco_valid[tid].bool()
+                    if mv.any():
+                        mp = infer(U, ["myco"])["myco"].argmax(-1)[mv]; mt = source.myco[tid][mv]
+                        myco_p.append(mp.detach().cpu()); myco_t.append(mt.detach().cpu())
                         if getattr(model, "species_graph", None) is not None:   # B58: same prediction, species graph ablated
                             model._ablate_species = True
                             lfmc_p_abl.append(infer(U, ["lfmc"])["lfmc"][lv].detach().cpu())
@@ -349,6 +356,10 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         if npos == 0 or nneg == 0: return None
         r = np.argsort(np.argsort(p, kind="mergesort")).astype(np.float64) + 1.0
         return float((r[t].sum() - npos * (npos + 1) / 2) / (npos * nneg))
+    if myco_p:                                                             # B42 symbiosis: macro-F1 of predicted vs true mycorrhizal type (5 classes)
+        p = torch.cat(myco_p); t = torch.cat(myco_t)
+        f1 = _macro_f1(p, t, torch.ones_like(t, dtype=torch.bool), 5)
+        if not (isinstance(f1, float) and np.isnan(f1)): out["B42_mycorrhiza_from_env"] = f1
     _lf = _lfmc_corr(lfmc_p, lfmc_t)                                        # B34 ecophysiology; B58 = species-graph contribution to it
     if _lf is not None:
         out["B34_lfmc_from_env"] = _lf
