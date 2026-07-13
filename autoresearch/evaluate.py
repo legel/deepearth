@@ -88,6 +88,7 @@ BENCHMARKS: List[str] = [
     "B58_lfmc_phylo_graph_gain",        # ablation-delta (ecophysiology family): LFMC-correlation gained from the species-graph refinement
     "B59_pollinator_phylo_graph_gain",  # ablation-delta (interactions family): pollinator-recall gained from the species-graph refinement
     "B60_community_phylo_graph_gain",   # ablation-delta (niche/community family): env->community recall gained from the species-graph refinement
+    "B62_mycorrhiza_phylo_graph_gain",  # ablation-delta (symbiosis family): mycorrhiza macro-F1 gained from the species-graph refinement (symbiosis is phylo-conserved)
 ]
 
 
@@ -112,7 +113,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     lfmc_p, lfmc_t = [], []                                # B34: predicted vs true live fuel moisture over the eval set
     myco_p, myco_t = [], []                                # B42: predicted vs true mycorrhizal type (class) over the eval set
     flower_p, flower_t = [], []                            # B26: predicted flowering probability vs true label over the eval set
-    lfmc_p_abl, flower_p_abl = [], []                      # B57/B58: the same predictions with the species graph ABLATED (phylo-graph-gain deltas)
+    lfmc_p_abl, flower_p_abl, myco_p_abl = [], [], []      # B57/B58/B62: the same predictions with the species graph ABLATED (phylo-graph-gain deltas)
     flower_fid = []                                        # B27: |flowering(env-only) - flowering(env+real photo)| — imagined-vs-real fidelity
     def add(key, s, n):
         a = acc.setdefault(key, [0.0, 0.0]); a[0] += float(s); a[1] += n
@@ -196,14 +197,18 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                     if lv.any():
                         pr = infer(U, ["lfmc"])["lfmc"][lv]; tr = source.lfmc[tid][lv]
                         lfmc_p.append(pr.detach().cpu()); lfmc_t.append(tr.detach().cpu())
+                        if getattr(model, "species_graph", None) is not None:   # B58: same LFMC prediction, species graph ablated
+                            model._ablate_species = True
+                            lfmc_p_abl.append(infer(U, ["lfmc"])["lfmc"][lv].detach().cpu())
+                            model._ablate_species = False
                 if hasattr(source, "myco"):                # B42 symbiosis: predict a plant's mycorrhizal type from env
                     mv = source.myco_valid[tid].bool()
                     if mv.any():
                         mp = infer(U, ["myco"])["myco"].argmax(-1)[mv]; mt = source.myco[tid][mv]
                         myco_p.append(mp.detach().cpu()); myco_t.append(mt.detach().cpu())
-                        if getattr(model, "species_graph", None) is not None:   # B58: same prediction, species graph ablated
+                        if getattr(model, "species_graph", None) is not None:   # B62: same mycorrhiza prediction, species graph ablated
                             model._ablate_species = True
-                            lfmc_p_abl.append(infer(U, ["lfmc"])["lfmc"][lv].detach().cpu())
+                            myco_p_abl.append(infer(U, ["myco"])["myco"].argmax(-1)[mv].detach().cpu())
                             model._ablate_species = False
                 if sdist is not None:                     # species-distribution KL vs local community, 3 scales
                     L_comm = infer(U, ["community"])["community"]   # dedicated community head (falls back to identity posterior if absent)
@@ -359,7 +364,11 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     if myco_p:                                                             # B42 symbiosis: macro-F1 of predicted vs true mycorrhizal type (5 classes)
         p = torch.cat(myco_p); t = torch.cat(myco_t)
         f1 = _macro_f1(p, t, torch.ones_like(t, dtype=torch.bool), 5)
-        if not (isinstance(f1, float) and np.isnan(f1)): out["B42_mycorrhiza_from_env"] = f1
+        if not (isinstance(f1, float) and np.isnan(f1)):
+            out["B42_mycorrhiza_from_env"] = f1
+            if myco_p_abl:                                                  # B62 = species-graph contribution to symbiosis (phylo-conserved)
+                f1a = _macro_f1(torch.cat(myco_p_abl), t, torch.ones_like(t, dtype=torch.bool), 5)
+                if not (isinstance(f1a, float) and np.isnan(f1a)): out["B62_mycorrhiza_phylo_graph_gain"] = max(0.0, f1 - f1a)
     _lf = _lfmc_corr(lfmc_p, lfmc_t)                                        # B34 ecophysiology; B58 = species-graph contribution to it
     if _lf is not None:
         out["B34_lfmc_from_env"] = _lf
