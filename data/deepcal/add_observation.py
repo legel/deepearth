@@ -159,7 +159,7 @@ def _binomial_to_local(cache):
     return {str(b).split()[0].lower() + " " + " ".join(str(b).split()[1:2]).lower(): i
             for i, b in enumerate(v["binomial"])}
 
-def embed_vision(records, cache, dev, batch=64, workers=24, known_only=False):
+def embed_vision(records, cache, dev, outdir, batch=64, workers=24, known_only=False, shard_n=2000):
     """DINOv3-ViT-L/16 CLS (1024) per observation -> a new token shard. Images are downloaded in parallel (network-bound)
     and embedded in GPU batches (compute-bound) so the GPU stays busy. Known species get their vocab class index in
     ``species_local``; unknown species get -1 (add_species assigns their index later)."""
@@ -169,6 +169,17 @@ def embed_vision(records, cache, dev, batch=64, workers=24, known_only=False):
     dproc = AutoImageProcessor.from_pretrained("facebook/dinov3-vitl16-pretrain-lvd1689m")
     dino = AutoModel.from_pretrained("facebook/dinov3-vitl16-pretrain-lvd1689m").eval().to(dev)
     acc = {k: [] for k in ("gbifID", "species_local", "lat", "lon", "ord", "dino", "eventDate", "species")}
+    os.makedirs(os.path.join(cache, outdir), exist_ok=True)
+    written_ids, sidx = [], [0]
+    def flush():                                                      # persist a shard every shard_n obs -> crash-safe + resumable (dedup skips written gbifIDs)
+        if not acc["gbifID"]: return
+        shard = os.path.join(cache, outdir, f"add_{int(time.time())}_{sidx[0]}.npz")
+        np.savez_compressed(shard, **{k: np.array(v, object if k in ("eventDate", "species") else
+                                                  (np.float32 if k in ("lat", "lon", "dino", "bio") else np.int64))
+                                      for k, v in acc.items()})
+        written_ids.extend(acc["gbifID"]); sidx[0] += 1
+        print(f"  wrote {os.path.basename(shard)} (+{len(acc['gbifID'])}, total {len(written_ids)})", flush=True)
+        for k in acc: acc[k].clear()
     def fetch(rec):
         try: return rec, _open_image(rec)
         except Exception: return rec, []
@@ -195,8 +206,10 @@ def embed_vision(records, cache, dev, batch=64, workers=24, known_only=False):
             for k, v in (("gbifID", rec["gbifID"]), ("species_local", sl), ("lat", rec["lat"]), ("lon", rec["lon"]),
                          ("ord", 0), ("dino", emb), ("eventDate", rec["eventDate"]), ("species", rec["species"])):
                 acc[k].append(v)
-        print(f"  embedded {len(acc['gbifID'])}/{min(i + batch, len(records))}", flush=True)
-    return acc                                             # species_local filled in by add_species / vocab merge
+        print(f"  embedded {len(written_ids) + len(acc['gbifID'])}/{min(i + batch, len(records))}", flush=True)
+        if len(acc["gbifID"]) >= shard_n: flush()          # incremental persistence
+    flush()
+    return written_ids                                     # gbifIDs written to shards; species_local filled in by add_species / vocab merge
 
 # ------------------------------------------------------------------ coords + env
 def append_coords(cache, records):
@@ -222,6 +235,7 @@ def main():
     ap.add_argument("--taxon", default=None, help="comma-separated GBIF taxonKeys to restrict to (e.g. pollinator clades)")
     ap.add_argument("--limit", type=int, default=5000)
     ap.add_argument("--outdir", default="gbif_tokens", help="token-shard subdir (use a separate track for non-plant taxa)")
+    ap.add_argument("--shard_n", type=int, default=2000, help="write a token shard every N embedded obs (crash-safe/resumable)")
     ap.add_argument("--no-env", action="store_true", help="skip the env builders (vision embed + coords only)")
     ap.add_argument("--download", action="store_true", help="use the GBIF Download API (ALL qualifying, no cap) — the plant-build path")
     ap.add_argument("--gbif-key", default=None, help="resume an in-flight GBIF download key instead of resubmitting")
@@ -241,15 +255,11 @@ def main():
         return
     dev = _dev()
     print(f"embedding {len(new)} observations on {dev}...", flush=True)
-    acc = embed_vision(new, a.cache, dev, known_only=a.known_only)
-    os.makedirs(os.path.join(a.cache, a.outdir), exist_ok=True)
-    shard = os.path.join(a.cache, a.outdir, f"add_{int(time.time())}.npz")
-    np.savez_compressed(shard, **{k: np.array(v, object if k in ("eventDate", "species") else
-                                              (np.float32 if k in ("lat", "lon", "dino", "bio") else np.int64))
-                                  for k, v in acc.items()})
-    print(f"wrote {len(acc['gbifID'])} vision tokens -> {shard}", flush=True)
+    written = embed_vision(new, a.cache, dev, a.outdir, known_only=a.known_only, shard_n=a.shard_n)   # writes shards incrementally (crash-safe/resumable)
+    print(f"wrote {len(written)} vision tokens -> {a.outdir}/ (incremental shards)", flush=True)
     if not a.no_env:
-        append_coords(a.cache, [r for r in new if r["gbifID"] in set(acc["gbifID"])])
+        wset = set(written)
+        append_coords(a.cache, [r for r in new if r["gbifID"] in wset])
         run_env_builders(a.cache)
     # new species -> add_species (vocab + BioCLIP-2.5 seed + tree placement)
     new_species = sorted({r["species"] for r in new})
