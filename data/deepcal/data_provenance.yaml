@@ -72,7 +72,9 @@ modalities:
     source: USGS 3DEP DEM -> drainage (TWI/HAND/SCA) + Winstral wind exposure (GPU physics)
     builder: env_priors/build_hydrowind_torch.py
     output: {file: gbif_hydro_tokens.npz, key: hydro, shape: "[N,6]", dtype: float32, mask: has_hydro}
-    reproducible: yes (deterministic given the DEM tile)
+    reproducible: YES — AUDITED (reused process_batch on CPU over cache obs): cos 0.9998 vs the shipped cache (5/5,
+                  min 0.9993); deterministic given the 3DEP DEM (tiny deltas = iterative-solver + CPU-vs-GPU float
+                  order, negligible on z-scored features). ALL in-repo deterministic builders (topo/chm/hydro) now verified.
 
   naip:
     source: NAIP aerial RGB+NIR (Planetary Computer / ESRI ImageServer)
