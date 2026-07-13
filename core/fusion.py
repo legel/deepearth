@@ -294,6 +294,10 @@ class DeepEarth(nn.Module):
         self.pollinator_graph = SpeciesGraph(n_pollinators, d_model, pollinator_distance, top_k=pollinator_top_k,
                                              species_text=pollinator_text) \
             if (n_pollinators > 0 and pollinator_distance is not None) else None
+        # Ecophysiology head (B34, jointly-trained benchmark head on a DETACHED latent): predict a species' peak
+        # fire-season live fuel moisture from its phylo-refined representation. Created last (no init-RNG shift).
+        self.lfmc_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
+            if species_variable is not None else None
         if compile_processor:
             self._refine = torch.compile(self._refine)
 
@@ -425,7 +429,10 @@ class DeepEarth(nn.Module):
         """Build the refinable per-variable state tokens (masked slots carry a placeholder) + the fixed context tokens,
         then refine the latents against them over K rounds. Each variable token carries the query position."""
         if self.species_graph is not None:
-            self._refined_species = self.species_graph()     # refine all species once per forward
+            # ablation (rule 27 / benchmark families): _ablate_species -> use the UN-refined seed (graph off) so a
+            # benchmark scored with vs without refinement isolates the phylogenomic contribution.
+            self._refined_species = self.species_graph._seed() if getattr(self, "_ablate_species", False) \
+                else self.species_graph()                    # refine all species once per forward
         if getattr(self, "pollinator_graph", None) is not None:
             self._refined_pollinators = self.pollinator_graph()   # refine all pollinators once per forward (rule 27 basis)
         pos_s, pos_t = context["position_s"], context["position_t"]                          # [B,d] each
@@ -657,6 +664,12 @@ class DeepEarth(nn.Module):
                 pv = values["_poll_valid"].float()                       # only plants with known pollinators contribute
                 pkl = -(ptg * F.log_softmax(pl, -1)).sum(-1) * pv
                 loss = loss + self._poll_weight * (pkl * w).sum() / (pv * w).sum().clamp_min(1.0)
+            # Ecophysiology (B34): detached head predicts log live-fuel-moisture toward the species' value (protects backbone)
+            if getattr(self, "_lfmc_weight", 0.0) > 0 and v.name == self.species_variable \
+                    and "_lfmc" in values and getattr(self, "lfmc_head", None) is not None:
+                pred = self.lfmc_head(self._pooled(z, v.name).detach()).squeeze(-1).float()
+                tgt = torch.log(values["_lfmc"].clamp_min(1.0)); lv = values["_lfmc_valid"].float()
+                loss = loss + self._lfmc_weight * ((pred - tgt) ** 2 * lv).sum() / lv.sum().clamp_min(1.0)
             n_terms += 1
         return loss / max(n_terms, 1)
 
@@ -686,6 +699,8 @@ class DeepEarth(nn.Module):
                     else self.decode(z, self.species_variable)                   # fallback (no head): the identity posterior
             elif t == "pollinator":                                              # plant -> pollinator interaction (rule 27)
                 out[t] = self.poll_head(self._pooled(z, self.species_variable)) @ self._pollinator_basis().t()
+            elif t == "lfmc":                                                    # species -> live fuel moisture (B34)
+                out[t] = self.lfmc_head(self._pooled(z, self.species_variable)).squeeze(-1).exp()
             else:
                 out[t] = self.decode(z, t)
         return out

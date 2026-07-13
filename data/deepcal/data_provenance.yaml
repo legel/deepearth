@@ -106,8 +106,12 @@ modalities:
     reproducible: yes given labels
 
   species_dist:   {source: GBIF local community, output: gbif_species_dist.npz, reproducible: yes}
-  pollinator_interactions: {source: GloBI (interactions.tsv, CA plants, flower-visit types),
-                            output: gbif_pollinator_dist.npz, reproducible: yes given the GloBI snapshot date (RECORD it)}
+  pollinator_interactions:
+    source: GloBI interactions.tsv (CA plants, flower-visit interaction types); snapshot filtered 2026-07-11
+    output: gbif_pollinator_dist.npz
+    reproducible: yes given the GloBI snapshot (record the exact GloBI release version at next pull)
+    provenance_gap: pollinator vocab was ~2% plant/fungi-contaminated (GloBI side-parsing) -> Animalia mask
+                    pollinator_animal_mask.npy excludes non-animals from the vocab/dist/graph/benchmarks (FIX)
   phylogeny_plants:  {source: "ca_subtree.dated.nwk (2141 tips)", provenance_gap: "origin megatree UNCONFIRMED — likely Smith&Brown2018 GBOTB or Jin&Qian2019; verify"}
   phylogeny_pollinators: {source: "OpenTree induced_subtree (6033 tips) + datelife dating + grafted dated clade trees", reproducible: yes (script + tree files versioned)}
 

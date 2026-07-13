@@ -70,6 +70,7 @@ BENCHMARKS: List[str] = [
     "B24_geo_information_gain",         # Q3  species gain from location = B2 - B1
     "B25_forecast_climate_cos",         # A9  future climate (temporal holdout), cosine
     "B26_flowering_auc",                # A7  U/imagined-vision -> flowering (needs labels), ROC-AUC
+    "B34_lfmc_from_env",                # ecophysiology: predict a species' peak fire-season live fuel moisture
     "B41_pollinator_from_species_recall",  # plant identity + env -> local pollinator set (GloBI), recall@10
     "B43_infer_hydro_cos",              # U-minus-hydro -> drainage/wind (HydroSHEDS+Winstral), cosine
     "B51_pollinator_from_env_recall",   # env only -> pollinators (interaction from habitat), recall@10
@@ -77,6 +78,7 @@ BENCHMARKS: List[str] = [
     "B53_pollinator_calibration_mrr",   # pollinator posterior calibration, mean reciprocal rank
     "B54_pollinator_dist_kl",           # predicted vs true pollinator frequency distribution, exp(-KL)
     "B55_pollinator_phylo_transfer_recall",  # rule 27: predict a plant's pollinators from its relatives' pollinators (cross-tree induction)
+    "B56_family_phylo_graph_gain",      # ablation-delta: family-from-phylo accuracy gained from the species-graph refinement
 ]
 
 
@@ -98,6 +100,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     naip = [v for v in ("naip_rgb", "naip_ir") if v in have]
 
     acc: Dict[str, list] = {}                              # key -> [sum, count]
+    lfmc_p, lfmc_t = [], []                                # B34: predicted vs true live fuel moisture over the eval set
     def add(key, s, n):
         a = acc.setdefault(key, [0.0, 0.0]); a[0] += float(s); a[1] += n
     # trait macro-F1 needs the full pred/target/observed vectors gathered per preset
@@ -140,6 +143,11 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 add("B6_family_from_env", fam_hit(L_U, tid), B)
                 rank = (L_U.argsort(-1, descending=True) == tid[:, None]).float().argmax(-1)
                 add("B23_species_calibration_mrr", (1.0 / (rank.float() + 1)).sum().item(), B)   # A14 calibration
+                if hasattr(source, "lfmc"):                # B34 ecophysiology: predict species LFMC from environment
+                    lv = source.lfmc_valid[tid]
+                    if lv.any():
+                        pr = infer(U, ["lfmc"])["lfmc"][lv]; tr = source.lfmc[tid][lv]
+                        lfmc_p.append(pr.detach().cpu()); lfmc_t.append(tr.detach().cpu())
                 if sdist is not None:                     # species-distribution KL vs local community, 3 scales
                     L_comm = infer(U, ["community"])["community"]   # dedicated community head (falls back to identity posterior if absent)
                     pm = torch.softmax(L_comm, -1).detach().cpu().numpy(); gids = source.gbifID[idx.detach().cpu().numpy()]
@@ -173,6 +181,12 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             add("B8_family_from_spacetime", fam_hit(L_blank, tid), B)
             if "phylo" in have:
                 add("B7_family_from_phylo", fam_hit(infer(["phylo"], ["identity"])["identity"], tid), B)
+                # B56 ablation-delta (rule 27 / phylo families): family-from-phylo WITH minus WITHOUT the species graph
+                # refinement — isolates the phylogenomic contribution.
+                if getattr(model, "species_graph", None) is not None:
+                    model._ablate_species = True
+                    add("_B7_ablated", fam_hit(infer(["phylo"], ["identity"])["identity"], tid), B)
+                    model._ablate_species = False
 
         # ---- trait leave-one-out (each trait from all other observed variables) ----
         for t in traits:
@@ -242,6 +256,13 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     for k, (s, n) in acc.items():
         if n > 0:
             out[k] = s / n
+    if lfmc_p:                                                              # B34: Pearson corr of predicted vs true log-LFMC over the held-out set
+        p = torch.cat(lfmc_p).numpy(); t = torch.cat(lfmc_t).numpy()
+        if len(p) > 2 and np.std(p) > 1e-6 and np.std(t) > 1e-6:
+            out["B34_lfmc_from_env"] = float(max(0.0, np.corrcoef(np.log(np.clip(p, 1, None)), np.log(np.clip(t, 1, None)))[0, 1]))
+    if "B7_family_from_phylo" in out and "_B7_ablated" in out:              # B56: phylogenomic-graph contribution (rule 27 ablation)
+        out["B56_family_phylo_graph_gain"] = max(0.0, out["B7_family_from_phylo"] - out["_B7_ablated"])
+    out.pop("_B7_ablated", None)
     if traits:
         for lab, key in (("photo_env", "B10_traits_from_photo_env_f1"),
                          ("photo", "B11_traits_from_photo_f1"),
