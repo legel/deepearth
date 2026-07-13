@@ -9,8 +9,10 @@ For each new binomial:
     the E1 of the BioCLIP-2.5-nearest known species. The new species lands right next to its relatives in the OU space.
   * vocab / species_index / traits — extended so n_classes grows by one, consistent across every per-species array.
 
-The ou-attention model needs only E1 at runtime (distance_from_embedding), so no tree surgery is required; grafting into
-ca_subtree.dated.nwk / patristic_ref (for the `tree` operator) is a documented follow-on.
+A newly-added (out-of-tree) species needs only E1 at runtime: it takes the BioCLIP-embedding-shadow distance
+(distance_from_embedding), so no tree surgery is required. Tree-covered species instead use the REAL dated cophenetic in
+gbif_plant_dist.npz (blended by fusion.py); grafting a new species into ca_subtree.dated.nwk and rebuilding
+gbif_plant_dist.npz (via plant_dated_distance.py) so it too gets a dated position is a documented follow-on.
 
 Usage:
   python -m deepearth.data.deepcal.add_species --species "Clarkia williamsonii" --taxonomy "Plantae,Tracheophyta,Magnoliopsida,Myrtales,Onagraceae,Clarkia"
