@@ -101,6 +101,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
 
     acc: Dict[str, list] = {}                              # key -> [sum, count]
     lfmc_p, lfmc_t = [], []                                # B34: predicted vs true live fuel moisture over the eval set
+    flower_p, flower_t = [], []                            # B26: predicted flowering probability vs true label over the eval set
     def add(key, s, n):
         a = acc.setdefault(key, [0.0, 0.0]); a[0] += float(s); a[1] += n
     # trait macro-F1 needs the full pred/target/observed vectors gathered per preset
@@ -139,6 +140,11 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         if U:
             L_U = infer(U, ["identity"])["identity"]
             add("B1_species_from_env_top10", topk_hit(L_U, tid, 10), B)
+            if hasattr(source, "flower"):                  # B26 phenology: predict flowering from env-conditioned U (per-obs)
+                fv = source.flower_valid[idx].bool()
+                if fv.any():
+                    pr = infer(U, ["flower"])["flower"][fv]; tr = source.flower[idx][fv]
+                    flower_p.append(pr.detach().cpu()); flower_t.append(tr.detach().cpu())
             if fam is not None:
                 add("B6_family_from_env", fam_hit(L_U, tid), B)
                 rank = (L_U.argsort(-1, descending=True) == tid[:, None]).float().argmax(-1)
@@ -260,6 +266,12 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         p = torch.cat(lfmc_p).numpy(); t = torch.cat(lfmc_t).numpy()
         if len(p) > 2 and np.std(p) > 1e-6 and np.std(t) > 1e-6:
             out["B34_lfmc_from_env"] = float(max(0.0, np.corrcoef(np.log(np.clip(p, 1, None)), np.log(np.clip(t, 1, None)))[0, 1]))
+    if flower_p:                                                            # B26: ROC-AUC of predicted flowering vs the binary PhenoVision label
+        p = torch.cat(flower_p).numpy(); t = (torch.cat(flower_t).numpy() > 0.5)
+        npos = int(t.sum()); nneg = int((~t).sum())
+        if npos > 0 and nneg > 0:
+            r = np.argsort(np.argsort(p, kind="mergesort")).astype(np.float64) + 1.0   # ranks (ties→average not needed for AUC direction)
+            out["B26_flowering_auc"] = float((r[t].sum() - npos * (npos + 1) / 2) / (npos * nneg))
     if "B7_family_from_phylo" in out and "_B7_ablated" in out:              # B56: phylogenomic-graph contribution (rule 27 ablation)
         out["B56_family_phylo_graph_gain"] = max(0.0, out["B7_family_from_phylo"] - out["_B7_ablated"])
     out.pop("_B7_ablated", None)

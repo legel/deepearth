@@ -42,7 +42,8 @@ class California:
                       "dims", "trait_classes", "group_names", "binomial", "_tip_labels", "train", "test",
                       "_train_bool", "time_span_days", "time_cut",
                       "lat", "lon", "elev", "cls", "dino", "bio", "phylo", "traits", "coords", "class_group",
-                      "species_text", "neighbors", "gbifID")
+                      "species_text", "neighbors", "gbifID",
+                      "lfmc", "lfmc_valid", "flower", "flower_valid")   # per-species/per-obs benchmark labels persist across prepared reloads
 
     def __init__(self, cache_dir: str, n_neighbors: int = 24, device: str = "cuda", holdout_fraction: float = 1 / 6,
                  holdout: str = "spatial", subset: dict | None = None, time_axis: bool = False,
@@ -132,6 +133,11 @@ class California:
         lf = cache / "gbif_lfmc.npz"                        # per-species peak fire-season live fuel moisture (B34 ecophysiology)
         if lf.exists():
             z = np.load(lf); self.lfmc = torch.tensor(z["lfmc"], device=dev); self.lfmc_valid = torch.tensor(z["has_lfmc"], device=dev)
+        fw = cache / "gbif_flower_all.npz"                  # per-observation flowering label (B26 phenology; PhenoVision/iNat)
+        if fw.exists():
+            z = np.load(fw); fmap = {int(g): float(v) for g, v in zip(z["gbifID"], z["flower"])}
+            fl = np.array([fmap.get(int(g), 0.0) for g in gid], np.float32); fv = np.array([int(g) in fmap for g in gid], np.float32)
+            self.flower = torch.tensor(fl, device=dev); self.flower_valid = torch.tensor(fv, device=dev)
         self.tree = self._load_tree(cache)                 # the dated phylogeny as message-passing buffers (or None)
         if prepared:                                       # persist the assembled dataset for instant reload
             self._save_prepared(prepared)
@@ -388,6 +394,8 @@ class California:
             values["_poll_valid"] = self.poll_valid[c]
         if hasattr(self, "lfmc"):                                         # per-species live fuel moisture (B34 aux head)
             c = self.cls[idx]; values["_lfmc"] = self.lfmc[c]; values["_lfmc_valid"] = self.lfmc_valid[c]
+        if hasattr(self, "flower"):                                       # per-observation flowering label (B26 phenology head)
+            values["_flower"] = self.flower[idx]; values["_flower_valid"] = self.flower_valid[idx]
         manifold_positions = {"biological": self.phylo[self.cls[ci]]}   # neighbors' known positions only
         neighbor_values = {"identity": self.cls[ci], "vision_dino": self.dino[ci]}
         return values, observed, self.coords[idx], self.coords[ci], manifold_positions, neighbor_values
