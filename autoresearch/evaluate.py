@@ -1,6 +1,6 @@
-"""The DeepCal benchmark suite (B1-B26) and the harmonic-mean north star.
+"""The DeepCal benchmark suite (B1-B60+, climbing) and the harmonic-mean north star.
 
-A trained :class:`~deepearth.core.fusion.DeepEarth` is scored on 26 benchmarks, each a real question of the form
+A trained :class:`~deepearth.core.fusion.DeepEarth` is scored on the full benchmark suite, each a real question of the form
 "given the widely-available context U (and sometimes a ground photo), how well is a sparse target induced?" Each
 benchmark's metric is ALREADY naturally in ``[0, 1]`` (top-k accuracy, family accuracy, macro-F1, cosine similarity
 of unit embeddings, recall@k, or calibration MRR), so the score IS the raw value -- there is NO baseline/target
@@ -14,7 +14,8 @@ spatial blocks by default; ``holdout: temporal`` gives a strictly-future forecas
 out whole families) so they measure transfer, not memorization. A benchmark whose required inputs or split are not
 present is reported as inactive (NaN) and left out of the net score.
 
-The suite realizes ``science.md`` / the 26-benchmark plan (originally labelled A1-A16 + Q1-Q10; renumbered B1-B26).
+The suite realizes ``science.md`` (originally labelled A1-A16 + Q1-Q10; renumbered B1-B60+, still growing — three
+phylogenomic-ablation families, the pollinator suite, phenology seasonality/fidelity, and forecasting).
 Scoring is the ground-truth metric for autoresearch: never tune a definition to inflate a result -- improve the model.
 """
 from __future__ import annotations
@@ -69,6 +70,7 @@ BENCHMARKS: List[str] = [
     "B23_species_calibration_mrr",      # A14 U -> species posterior, mean reciprocal rank
     "B24_geo_information_gain",         # Q3  species gain from location = B2 - B1
     "B25_forecast_climate_cos",         # A9  future climate (temporal holdout), cosine
+    "B31_forecast_vision_cos",          # A10 future ground-vision / appearance (temporal holdout), cosine
     "B26_flowering_auc",                # A7  U/imagined-vision -> flowering (needs labels), ROC-AUC
     "B27_flowering_fidelity",           # phenology self-consistency: flowering agreement between imagined vision (U) and real vision (U+photo)
     "B28_flowering_peak_month_mrr",     # phenology seasonality: MRR of the true peak-flowering month from a 12-month time sweep
@@ -297,6 +299,8 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         # ---- forecasting (temporal holdout only): predict the held-out FUTURE environment ----
         if holdout == "temporal" and "climate" in have:
             add("B25_forecast_climate_cos", cos_sum(infer([n for n in U if n != "climate"], ["climate"])["climate"], values["climate"]), B)
+            if "vision_dino" in have:                     # B31: forecast held-out-future ground vision (appearance/phenology) from the environment
+                add("B31_forecast_vision_cos", cos_sum(infer(U, ["vision_dino"])["vision_dino"], values["vision_dino"]), B)
 
         # ---- B26 flowering (A7): activates once flowering labels are wired as a variable; inactive until then ----
 
