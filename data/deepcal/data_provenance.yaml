@@ -102,9 +102,10 @@ modalities:
     provenance_gap: CRITICAL — shipped cache records clay_year only (no scene id, no config); config unknowable.
 
   flowering:
-    source: iNaturalist phenology / PhenoVision probe
-    output: {file: gbif_flower_all.npz}
-    reproducible: yes given labels
+    source: iNaturalist phenology / PhenoVision probe (per-observation flowering probe over the observation photos)
+    output: {file: gbif_flower_all.npz, keys: [gbifID, p_flower, flower, source], labeled_obs: 35805, flower_positive_rate: 0.575}
+    benchmark: B26_flowering_auc (jointly-trained detached phenology head -> ROC-AUC on the held-out set)
+    reproducible: yes given the PhenoVision probe outputs (per-obs labels keyed by gbifID)
 
   species_dist:   {source: GBIF local community, output: gbif_species_dist.npz, reproducible: yes}
   pollinator_interactions:
