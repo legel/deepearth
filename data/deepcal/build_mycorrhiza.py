@@ -12,14 +12,21 @@ ZIP = Path("/home/photon/4tb/deepcal_data/fungalroot.zip")
 CLASSES = ["AM", "EcM", "ErM", "OM", "NM"]                       # arbuscular / ecto / ericoid / orchid / non-mycorrhizal
 
 
+# Explicit map over the 12 distinct FungalRoot "Mycorrhiza type" values — substring matching is unsafe
+# ("undetermined" contains "erm"). Dual types resolve to the more specialized/defining partner; genuinely
+# undetermined / non-vascular / "Other" are left UNLABELED (None) rather than guessed.
+_MYCO_MAP = {
+    "am": "AM",
+    "non-mycorrhizal": "NM",
+    "ecm, am undetermined": "EcM", "ecm, no am colonization": "EcM", "ecm,am": "EcM",
+    "erm": "ErM", "erm,ecm": "ErM", "erm,am": "ErM",
+    "om": "OM",
+    "other": None, "non-ectomycorrhizal (am undetermined)": None, "am-like (non-vascular plants)": None,
+}
+
+
 def canon(v):
-    v = v.lower()
-    if "erm" in v or "ericoid" in v: return "ErM"
-    if "ecm" in v or "ectomycorrh" in v and "non-ecto" not in v: return "EcM"
-    if v.startswith("om") or "orchid" in v: return "OM"
-    if "non-mycorrhizal" in v or v == "nm": return "NM"
-    if "am" in v: return "AM"
-    return None                                                  # Other/undetermined -> unlabeled
+    return _MYCO_MAP.get(v.strip().lower())
 
 
 def main():
