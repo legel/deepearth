@@ -73,15 +73,23 @@ def main():
                                  for b, tx in (new[k] for k in keys)]
     txt = bioclip25_text(strings)                        # BioCLIP-2.5 seed per new species
 
-    En = E1 / (np.linalg.norm(E1, axis=1, keepdims=True) + 1e-9)
+    # Per-genus inductive position for genera ABSENT from the existing vocab: place ALL the batch's congeners of a
+    # novel genus at ONE shared E1 (the BioCLIP-2.5-nearest known species to the genus's MEAN text seed), so congeners
+    # cluster (cos~1) instead of scattering to independent nearest species -- we have no within-genus resolution for a
+    # novel genus, so genus-level placement is the honest, principled seed (relatives near relatives).
+    from collections import defaultdict
+    gmembers = defaultdict(list)
+    for j, k in enumerate(keys):
+        bino, tx = new[k]; gmembers[tx[5] or bino.split()[0]].append(j)
+    novel_genus_e = {}
+    for genus, members in gmembers.items():
+        if not len(np.where(genus_of == genus)[0]):      # novel genus -> one shared position from the genus text centroid
+            novel_genus_e[genus] = E1[int((text @ (txt[members].mean(0))).argmax())]
     add_E1, add_text, add_rows = [], [], []
     for j, k in enumerate(keys):
         bino, tx = new[k]; genus = tx[5] or bino.split()[0]
         cong = np.where(genus_of == genus)[0]            # congeners already in the vocab -> mean E1 (best placement)
-        if len(cong):
-            e = E1[cong].mean(0)
-        else:                                            # else the BioCLIP-2.5-nearest known species lends its E1
-            e = E1[int((text @ txt[j]).argmax())]
+        e = E1[cong].mean(0) if len(cong) else novel_genus_e[genus]   # else the shared novel-genus inductive position
         add_E1.append(e); add_text.append(txt[j])
         add_rows.append({"idx": next_global + j, "tip_label": f"{bino.replace(' ', '_')}__{next_global + j}",
                          "binomial": bino, "genus": genus, "family": tx[4], "order": tx[3]})
