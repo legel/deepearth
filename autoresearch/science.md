@@ -118,13 +118,14 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     graph (rules 7–12). Training must randomly withhold the phylogenomic embedding for a fraction of species per batch
     and reconstruct it, so the capability is learned, not assumed — the mechanism by which any species, in-tree or not,
     acquires a phylogenomically-consistent representation.
-26. **Seed species embeddings from a frozen [BioCLIP 2][bioclip2] text prior, adapt only through a small learned probe.**
+26. **Seed species embeddings from a frozen [BioCLIP 2.5][bioclip2] text prior, adapt only through a small learned probe.**
     Do not initialize per-species embeddings randomly, and do not naively fine-tune a foundation embedding (unconstrained
-    fine-tuning provably distorts the pretrained geometry — [LP-FT][lpft]). Instead, freeze the BioCLIP 2 **text**
-    embedding of the flattened Linnaean string `"a photo of Kingdom Phylum Class Order Family Genus species."` (768-d,
-    the same space as our BioCLIP image tokens; its geometry already encodes taxonomic *and* ecological structure) and
-    learn a small feed-forward probe (MLP / attentive probe) that decodes it into the model's `d_model` phylogenomic
-    seed. The probe is backprop-tuned by the joint objective, so the model **discovers** phylogenomic structure inside
+    fine-tuning provably distorts the pretrained geometry — [LP-FT][lpft]). Instead, freeze the BioCLIP 2.5 **text**
+    embedding (`imageomics/bioclip-2.5-vith14`, ViT-H, **1024-d**) of the flattened Linnaean string; its geometry already
+    encodes taxonomic *and* ecological structure (validated: same-genus vs cross-genus cosine .649/.359, Δ.29 — sharper
+    than BioCLIP-2's .809/.593) and a small feed-forward probe (MLP / attentive probe) maps it into the model's `d_model`
+    phylogenomic seed. Because the probe handles the projection, the prior need not share the image-token space (our image
+    "bio" tokens remain BioCLIP-2 768-d — re-embedding them at 2.5 is an optional future upgrade). The probe is backprop-tuned by the joint objective, so the model **discovers** phylogenomic structure inside
     the BioCLIP space while preserving it. The seed is then refined by the species graph (rules 7–12). Two invariants:
     (a) the frozen text encoder makes an **unseen** species embeddable by the identical text→probe path (zero-shot
     placement, rule 25); (b) a species' seed is computed **once per unique species per batch** and shared across all its
@@ -161,8 +162,9 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
   (2015), PMLR 37:881–889. arXiv:1502.03509 — <https://arxiv.org/abs/1502.03509>
 - **BioCLIP** — Stevens et al., "BioCLIP: A Vision Foundation Model for the Tree of Life," *CVPR* (2024).
   arXiv:2311.18803 — <https://arxiv.org/abs/2311.18803>
-- **BioCLIP 2** — Gu et al., "BioCLIP 2: A Foundation Model for the Tree of Life at Scale" (TreeOfLife-200M), *NeurIPS*
-  (2025). arXiv:2505.23883 — <https://arxiv.org/abs/2505.23883>
+- **BioCLIP 2 / 2.5** — Gu et al., "BioCLIP 2: A Foundation Model for the Tree of Life at Scale" (TreeOfLife-200M),
+  *NeurIPS* (2025). arXiv:2505.23883 — <https://arxiv.org/abs/2505.23883>. Rule 26 uses the **2.5** ViT-H checkpoint
+  `imageomics/bioclip-2.5-vith14` (1024-d text), a later release on the same lineage.
 - **LP-FT** — Kumar et al., "Fine-Tuning can Distort Pretrained Features and Underperform Out-of-Distribution," *ICLR*
   (2022). arXiv:2202.10054 — <https://arxiv.org/abs/2202.10054>
 
