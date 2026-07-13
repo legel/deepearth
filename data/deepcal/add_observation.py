@@ -228,6 +228,27 @@ def append_coords(cache, records):
     lon = np.concatenate([z["lon"], np.array([r["lon"] for r in records], np.float32)])
     np.savez(p, gbifID=gid, lat=lat, lon=lon)
 
+def fanout_existing(cache, outdir, dry_run=False):
+    """Backfill env for obs embedded earlier with --no-env: read their coords from the --outdir token shards, append
+    the ones missing from obs_coords.npz, then run the full env fan-out. Idempotent (builders are resumable)."""
+    import glob
+    p = os.path.join(cache, "env_priors", "obs_coords.npz"); z = np.load(p)
+    have = set(int(g) for g in z["gbifID"]); ng, nlat, nlon = [], [], []
+    for f in sorted(glob.glob(os.path.join(cache, outdir, "*.npz"))):
+        d = np.load(f, allow_pickle=True)
+        for i in range(len(d["gbifID"])):
+            g = int(d["gbifID"][i])
+            if g not in have:
+                have.add(g); ng.append(g); nlat.append(float(d["lat"][i])); nlon.append(float(d["lon"][i]))
+    print(f"[env-only] {outdir}: {len(ng)} new coords to append -> obs_coords.npz ({len(have)} total after)", flush=True)
+    if dry_run:
+        print("[env-only] DRY-RUN: not appending, not running builders", flush=True); return
+    if ng:
+        np.savez(p, gbifID=np.concatenate([z["gbifID"], np.array(ng, z["gbifID"].dtype)]),
+                 lat=np.concatenate([z["lat"], np.array(nlat, np.float32)]),
+                 lon=np.concatenate([z["lon"], np.array(nlon, np.float32)]))
+    run_env_builders(cache)
+
 def run_env_builders(cache):
     """Every environmental builder is resumable and keyed by gbifID off obs_coords.npz, so it only processes the new
     rows and appends to its own token cache. Adding a modality = adding its builder to ENV_BUILDERS (no other change)."""
@@ -245,11 +266,14 @@ def main():
     ap.add_argument("--outdir", default="gbif_tokens", help="token-shard subdir (use a separate track for non-plant taxa)")
     ap.add_argument("--shard_n", type=int, default=2000, help="write a token shard every N embedded obs (crash-safe/resumable)")
     ap.add_argument("--no-env", action="store_true", help="skip the env builders (vision embed + coords only)")
+    ap.add_argument("--env-only", action="store_true", help="no fetch/embed: backfill coords from --outdir shards into obs_coords.npz, then run the full env fan-out (for obs embedded earlier with --no-env)")
     ap.add_argument("--download", action="store_true", help="use the GBIF Download API (ALL qualifying, no cap) — the plant-build path")
     ap.add_argument("--gbif-key", default=None, help="resume an in-flight GBIF download key instead of resubmitting")
     ap.add_argument("--known-only", action="store_true", help="embed only observations whose species is already in the vocab")
     ap.add_argument("--dry-run", action="store_true", help="fetch + dedup only; report counts, write nothing")
     a = ap.parse_args()
+    if a.env_only:                                          # backfill env on already-embedded (--no-env) obs, then stop
+        fanout_existing(a.cache, a.outdir, a.dry_run); return
     taxa = [int(t) for t in a.taxon.split(",")] if a.taxon else None
     if a.download or a.gbif_key:
         recs = fetch_gbif_download(a.kingdom, taxa, a.cache, resume_key=a.gbif_key)   # bulk: all qualifying records
