@@ -74,8 +74,12 @@ def train_and_evaluate(config, device):
     poll_kw = {}                                           # rule 27: pollinator species graph (bilinear cross-tree interaction)
     if m.get("poll_weight", 0.0) > 0 and getattr(source, "pollinator_text", None) is not None and m.get("pollinator_graph", True):
         from deepearth.encoders.biological.phylogenomic import SpeciesGraph
+        cdir = Path(d["cache_dir"]); cdir = cdir if cdir.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
+        pdp = cdir / "pollinator_distance.npy"             # real OpenTree patristic (tree-covered) + BioCLIP-2.5 text shadow (rest)
+        pdist = torch.tensor(np.load(pdp), device=device) if pdp.exists() \
+            else SpeciesGraph.distance_from_embedding(source.pollinator_text)   # fallback: pure text shadow
         poll_kw = dict(pollinator_text=source.pollinator_text, pollinator_top_k=m.get("pollinator_top_k", 64),
-                       pollinator_distance=SpeciesGraph.distance_from_embedding(source.pollinator_text))  # interim: BioCLIP-2.5 shadow; swap dated patristic when ready
+                       pollinator_distance=pdist)
     model = DeepEarth(variables, d_model=m.get("d_model", 256), n_latents=m.get("n_latents", 24),
                       n_layers=m.get("n_layers", 4), capacity=m.get("capacity", 16),
                       relative_window=tuple(m.get("relative_window", (8000., 8000., 300., 130.))), **rel_extra,
@@ -93,6 +97,7 @@ def train_and_evaluate(config, device):
     model._sdist_weight = m.get("sdist_weight", 0.0)        # distribution-matching aux loss (U->species toward local community)
     model._poll_weight = m.get("poll_weight", 0.0)          # plant->pollinator distribution aux loss (GloBI); enables B41/B51-B54
     model._phylo_mask_weight = m.get("phylo_mask_weight", 0.0)   # rule 25: mask-and-reconstruct species embedding from relatives
+    model._lfmc_weight = m.get("lfmc_weight", 0.0)               # B34 ecophysiology head (live fuel moisture)
     if model._sdist_weight > 0 and hasattr(source, "gbifID"):
         sdp = Path(d["cache_dir"]); sdp = (sdp if sdp.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]) / "gbif_species_dist.npz"
         if sdp.exists():
@@ -128,7 +133,7 @@ def train_and_evaluate(config, device):
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
-                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb"))]
+                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "lfmc_head"))]
     hash_encoders = [mod for mod in model.modules() if hasattr(mod, "clamp_per_level_scale")]
     def clamp_res():                                     # keep learnable per-level resolutions in the safe (scale>0) region
         for he in hash_encoders:

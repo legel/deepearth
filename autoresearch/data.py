@@ -129,6 +129,9 @@ class California:
         self.extra = {}                                    # extra continuous modalities keyed by name
         self._load_modalities(cache, gid, dev)
         self._load_pollinator(cache, dev)                  # per-species pollinator distribution (GloBI); enables B41/B51-B54
+        lf = cache / "gbif_lfmc.npz"                        # per-species peak fire-season live fuel moisture (B34 ecophysiology)
+        if lf.exists():
+            z = np.load(lf); self.lfmc = torch.tensor(z["lfmc"], device=dev); self.lfmc_valid = torch.tensor(z["has_lfmc"], device=dev)
         self.tree = self._load_tree(cache)                 # the dated phylogeny as message-passing buffers (or None)
         if prepared:                                       # persist the assembled dataset for instant reload
             self._save_prepared(prepared)
@@ -317,13 +320,17 @@ class California:
         b2p = {}                                                                         # normalized binomial -> plant_idx (species_index.csv idx field)
         for r in csv.DictReader(open(cache / "derived/species_index.csv")):
             b2p[self._norm_binom(r["binomial"])] = int(r["idx"])
+        am = cache / "pollinator_animal_mask.npy"                            # exclude ~2% plant/fungi contamination (Animalia only)
+        animal = np.load(am) if am.exists() else np.ones(int(pidx.max()) + 1, bool)
         K = min(topk, pidx.shape[1])
         ci = np.zeros((self.n_classes, K), np.int64); cf = np.zeros((self.n_classes, K), np.float32); cv = np.zeros(self.n_classes, bool)
         for c in range(self.n_classes):
             p = b2p.get(self._norm_binom(self.binomial[c]), -1)
             if 0 <= p < len(npoll) and npoll[p] > 0:      # species added after the pollinator dist was built have no record
-                ci[c] = pidx[p, :K]; f = pfrq[p, :K].astype(np.float32); s = f.sum()
-                cf[c] = f / s if s > 0 else f; cv[c] = True
+                idx = pidx[p, :K]; f = pfrq[p, :K].astype(np.float32)
+                f[~animal[idx.clip(0, len(animal) - 1)]] = 0.0               # drop non-animal "pollinators" from the target
+                s = f.sum()
+                if s > 0: ci[c] = idx; cf[c] = f / s; cv[c] = True
         self.poll_idx = torch.tensor(ci, device=dev); self.poll_frq = torch.tensor(cf, device=dev)
         self.poll_valid = torch.tensor(cv, device=dev)
         print(f"pollinator loaded: {int(cv.sum())}/{self.n_classes} species have GloBI pollinators; vocab {self.n_pollinators}", flush=True)
@@ -379,6 +386,8 @@ class California:
         if hasattr(self, "poll_idx"):                                     # per-species pollinator distribution (GloBI aux loss)
             c = self.cls[idx]; values["_poll_idx"] = self.poll_idx[c]; values["_poll_frq"] = self.poll_frq[c]
             values["_poll_valid"] = self.poll_valid[c]
+        if hasattr(self, "lfmc"):                                         # per-species live fuel moisture (B34 aux head)
+            c = self.cls[idx]; values["_lfmc"] = self.lfmc[c]; values["_lfmc_valid"] = self.lfmc_valid[c]
         manifold_positions = {"biological": self.phylo[self.cls[ci]]}   # neighbors' known positions only
         neighbor_values = {"identity": self.cls[ci], "vision_dino": self.dino[ci]}
         return values, observed, self.coords[idx], self.coords[ci], manifold_positions, neighbor_values
