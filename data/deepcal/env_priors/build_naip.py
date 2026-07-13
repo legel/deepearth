@@ -68,7 +68,7 @@ def _read_cell(cand, obs):
                 xs, ys = rio_transform("EPSG:4326", ds.crs, [lo], [la]); r, c = ds.index(xs[0], ys[0])
                 a = ds.read(window=Window(c - HALF, r - HALF, 2 * HALF, 2 * HALF), boundless=True, fill_value=0)
                 if a.shape == (4, 2 * HALF, 2 * HALF) and a.any():
-                    out[gid] = (a, best.datetime.year)
+                    out[gid] = (a, best.datetime.year, best.id)          # best.id = exact NAIP tile/item id (pinned provenance)
             except Exception:
                 pass
     finally:
@@ -179,16 +179,16 @@ def main():
     nshard = len(glob.glob(os.path.join(OUT, "chunk*.npz")))
     print(f"{len(gid)} obs, {len(done)} done, {len(todo)} cells to fetch, next shard chunk{nshard:04d} on {DEV}", flush=True)
 
-    buf = {"gbifID": [], "naip_year": [], "rgb_pool": [], "ir_pool": []}
-    pend_g, pend_y, pend_p = [], [], []
+    buf = {"gbifID": [], "naip_year": [], "naip_scene": [], "rgb_pool": [], "ir_pool": []}
+    pend_g, pend_y, pend_s, pend_p = [], [], [], []
     t0 = time.time(); n_ok = n_fail = 0
 
     def flush_embed():
         if not pend_p: return
         rr, ii = embed(pend_p)
-        buf["gbifID"] += pend_g; buf["naip_year"] += pend_y
+        buf["gbifID"] += pend_g; buf["naip_year"] += pend_y; buf["naip_scene"] += pend_s
         buf["rgb_pool"] += list(rr); buf["ir_pool"] += list(ii)
-        pend_g.clear(); pend_y.clear(); pend_p.clear()
+        pend_g.clear(); pend_y.clear(); pend_s.clear(); pend_p.clear()
 
     def write_shard():
         nonlocal nshard
@@ -197,6 +197,7 @@ def main():
             np.savez(os.path.join(OUT, f"chunk{nshard:04d}.npz"),
                      gbifID=np.array(buf["gbifID"][sl], np.int64),
                      naip_year=np.array(buf["naip_year"][sl], np.int16),
+                     naip_scene=np.array(buf["naip_scene"][sl], object),   # exact NAIP tile id per obs (pinned provenance)
                      rgb_pool=np.array(buf["rgb_pool"][sl], np.float32),
                      ir_pool=np.array(buf["ir_pool"][sl], np.float32))
             for k in buf: del buf[k][sl]
@@ -206,8 +207,8 @@ def main():
         futs = {ex.submit(cell_patches, cat, k, cells[k]): k for k in todo}
         for n, fut in enumerate(as_completed(futs)):
             k = futs[fut]; res = fut.result()
-            for gid_, (patch, yr) in res.items():
-                pend_g.append(gid_); pend_y.append(yr); pend_p.append(patch)
+            for gid_, (patch, yr, scene) in res.items():
+                pend_g.append(gid_); pend_y.append(yr); pend_s.append(scene); pend_p.append(patch)
             done.update(g for g, _, _ in cells[k]); n_ok += len(res); n_fail += len(cells[k]) - len(res)
             if len(pend_p) >= BATCH: flush_embed(); write_shard()
             if (n + 1) % 200 == 0:
