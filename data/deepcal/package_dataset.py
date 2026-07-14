@@ -18,7 +18,7 @@ ROOT = ["gbif_vocab.npz", "ca_subtree.dated.nwk", "data_provenance.yaml",
         "gbif_clay_tokens.npz",
         "gbif_species_dist.npz", "gbif_pollinator_dist.npz", "gbif_flower_all.npz", "gbif_lfmc.npz", "gbif_mycorrhiza.npz",
         "gbif_plant_dist.npz",
-        "bioclip_text_emb.npy", "bioclip_taxon_text_emb.npy",
+        "bioclip_taxon_text_emb.npy",                       # BioCLIP-2.5 taxon-string prior (the primary; supersedes the legacy BioCLIP-2 bioclip_text_emb.npy)
         "pollinator_taxon_text_emb.npy", "pollinator_distance.npy", "pollinator_animal_mask.npy"]
 # Globbed multi-shard modalities (ground vision, aerial, climate, pollinator obs) + the derived tables.
 DIRS = ["derived", "gbif_tokens", "gbif_daymet_tokens", "gbif_naip_tokens", "gbif_pollinator_obs"]
