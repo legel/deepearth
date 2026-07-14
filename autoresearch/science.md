@@ -172,6 +172,20 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     explicit regressions summary — no individual metric may regress. The helper diffs against the committed
     `autoresearch/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
 
+31. **Every benchmark-specific head is a DETACHED read-out; only the core self-supervised reconstruction trains
+    the shared weights.** The core (Earth4D + MADE masked-reconstruction of all modalities + the phylo graph) learns
+    ONE high-dimensional multi-modal representation. Each specialized benchmark head (community, pollinator, lfmc,
+    mycorrhiza, flowering, and every future head) is trained on the `.detach()`-ed pooled latent, so its gradient
+    never reaches the core -- no single benchmark can commandeer the representation. This keeps scoring fast (immediate
+    inference, no per-benchmark fine-tuning) AND guarantees the net measures the CORE's capacity: a change that lifts
+    the shared representation lifts all benchmarks together; one that games a single head cannot inflate the net.
+
+32. **Score AND optimize 100% of the benchmark suite -- nothing excluded.** Every benchmark exists to be measured and
+    driven up. The net score is the harmonic mean over ALL active benchmarks -- capabilities AND ablation-delta /
+    information-gain diagnostics. Metrics not naturally bounded or that can sit near 0 (the deltas) are renormalized
+    (logistic, evaluate._net_value) so inclusion NEVER exceeds 1.0, NEVER forms a below-0 well, and is always
+    monotonically beneficial to raise (repetitive signal is fine). A champion must carry the WHOLE suite, not a subset.
+
 ## References
 
 - **DINOv3** — Siméoni et al., "DINOv3," 2025. arXiv:2508.10104 — <https://arxiv.org/abs/2508.10104>
