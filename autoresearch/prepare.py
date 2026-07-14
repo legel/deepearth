@@ -16,7 +16,7 @@ It ensures, in order:
 Run this ONCE before launching the autoresearch loop. It is not modified by experiments (see ``autoresearch.md``).
 """
 from __future__ import annotations
-import argparse, os, subprocess, sys, time, zipfile
+import argparse, os, shutil, subprocess, sys, time, zipfile
 from pathlib import Path
 import urllib.request, urllib.error
 import yaml
@@ -72,6 +72,15 @@ def _download(url: str, dst: Path, retries: int = 20) -> None:
     and verify the final byte count before promoting to dst — never rename a short/partial file as complete
     (robust on flaky networks; a plain urlopen loop silently ships a truncated zip when the connection drops)."""
     tmp = dst.with_suffix(dst.suffix + ".tmp")
+    # Fast path: the NERSC portal throttles each HTTP connection (~70 KB/s), so a single stream crawls; aria2c's
+    # parallel range requests aggregate ~13x. Use it when present (resumable via -c), else fall back to the loop below.
+    if shutil.which("aria2c"):
+        rc = subprocess.run(["aria2c", "-x16", "-s16", "-k5M", "-c", "--file-allocation=none",
+                             "--retry-wait=5", "--max-tries=0", "--console-log-level=warn",
+                             "-d", str(tmp.parent), "-o", tmp.name, url]).returncode
+        if rc == 0 and tmp.exists():
+            tmp.rename(dst); return
+        print("[data] aria2c failed; falling back to single-stream resumable download", flush=True)
     for attempt in range(retries):
         pos = tmp.stat().st_size if tmp.exists() else 0
         req = urllib.request.Request(url, headers={"Range": f"bytes={pos}-"} if pos else {})
