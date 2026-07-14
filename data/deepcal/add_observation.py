@@ -16,6 +16,11 @@ Usage:
 Same 2025 / research-grade / <=10 m / has-image constraints as the base dataset (see deepcal-data-provenance)."""
 import os, io, sys, csv, json, argparse, subprocess, time
 import numpy as np
+# open_clip / model deps (via wandb) reference np.float_ etc., removed in numpy 2.0; restore aliases before import.
+for _a, _t in [("float_", np.float64), ("int_", np.int64), ("uint", np.uint64),
+               ("unicode_", np.str_), ("complex_", np.complex128), ("bool_", np.bool_)]:
+    if not hasattr(np, _a):
+        setattr(np, _a, _t)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PHOTOS = "/home/photon/4tb/deepearth_gbif/photos"          # 39 GB of already-downloaded iNat images, reused when present
