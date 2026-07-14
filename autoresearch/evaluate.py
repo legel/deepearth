@@ -148,7 +148,10 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             vals, have, _ = source.extra[v]; m = have[_tr].bool(); X = vals[_tr][m]
         else:
             return None
-        return X.float().mean(0) if len(X) else None
+        if not len(X): return None
+        acc = torch.zeros(X.shape[1], dtype=torch.float32, device=X.device)   # chunked sum: never materialize the full fp32 gather (OOM-safe on 24GB under temporal/phylo holdout)
+        for i in range(0, len(X), 50000): acc += X[i:i + 50000].float().sum(0)
+        return acc / len(X)
     CMU = {v: _train_mean(v) for v in ("vision_dino", "vision_bio", "phylo", "clay", "soil", "climate", "hydro", "naip_rgb")}
     def ccos_sum(pred, tgt, v):                            # mean-centered cosine (anomaly cosine); falls back to raw if no mean
         mu = CMU.get(v)
