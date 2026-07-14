@@ -285,6 +285,7 @@ def evaluate(model, source, given, targets, device):
         idx = torch.tensor(source.test[c0:c0 + 2048], device=device)
         values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
         ctx = model.context(coords, nbr_coords, manifold_coords, nbr_values)
+        if device.startswith("cuda"): torch.cuda.synchronize(device)   # the eager eval reads the async custom-kernel context; force it complete to avoid a cross-stream race (crashes only on the non-default cuda:1)
         preds = model.infer(values, given, targets, ctx)
         for t in targets:
             if kinds[t] == "categorical":
