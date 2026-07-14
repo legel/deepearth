@@ -139,6 +139,20 @@ modalities:
     reproducible: yes given the GloBI snapshot (record the exact GloBI release version at next pull)
     provenance_gap: pollinator vocab was ~2% plant/fungi-contaminated (GloBI side-parsing) -> Animalia mask
                     pollinator_animal_mask.npy excludes non-animals from the vocab/dist/graph/benchmarks (FIX)
+  pollinator_observations:
+    source: iNaturalist Research-grade (GBIF Download API), kingdom Animalia pollinator clades (bees/butterflies/moths/
+            flies/beetles/wasps + nectar birds), stateProvince California, year 2025, hasCoordinate, mediaType StillImage.
+    gbif_download: 0035626-260623161305970
+    count: 38029 observations (first-class pollinator taxa, GloBI interaction label mostly masked -> learn pollinator SDM +
+           what they visit via DINOv3)
+    output: gbif_pollinator_obs/*.npz {gbifID, species_local, lat, lon, ord, dino[1024], eventDate, species}
+    vision: DINOv3-ViT-L/16 (facebook/dinov3-vitl16-pretrain-lvd1689m) CLS, mean-pooled over ALL of an observation's photos
+    vocab_mapping: species_local -> the 8157-taxon pollinator vocab (map_pollinator_species.py = 98.9% direct; the 46 missing
+                   registered via add_pollinator_species.py inductive placement, vocab 8111->8157) -> 100% obs mapped
+    env_fanout: the co-occurring env modalities are UNIFIED gbifID-keyed caches covering plant+pollinator (obs_coords.npz
+                appended to 383,386) — pollinator coverage soil 96.4% / topo 98.7% / hydro 98.9% / daymet 100% / chm 100%;
+                naip+clay for the pollinator obs are pending (GPU, after the plant naip finishes)
+    reproducible: yes given the GBIF download DOI + the DINOv3 model+config; the env is coordinate-based (see topo/hydro/etc.)
   phylogeny_plants:
     source: "ca_subtree.dated.nwk (3486 tips; 2141 modeled)"
     origin: "DETERMINED 2026-07-13 (high confidence): Jin&Qian2019 V.PhyloMaker on the Smith&Brown2018 GBOTB.extended backbone.
