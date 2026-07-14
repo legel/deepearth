@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ZIP = Path("/home/photon/4tb/deepcal_data/fungalroot.zip")
+ZIP = Path(os.environ.get("FUNGALROOT_ZIP", "/home/photon/4tb/deepcal_data/fungalroot.zip"))
 CLASSES = ["AM", "EcM", "ErM", "OM", "NM"]                       # arbuscular / ecto / ericoid / orchid / non-mycorrhizal
 
 
