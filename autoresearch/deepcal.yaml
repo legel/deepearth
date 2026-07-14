@@ -31,6 +31,7 @@ model:
     operator: ou-attention            # distance-biased attention over the E1 phylo-distance matrix (2141 species, dense)
     layers: 2
     heads: 4
+    top_k: 128                        # sparse OU-attention over the 128 nearest phylo-neighbors — never O(n^2); the OU distance bias makes far species contribute ~0, so top-k is faithful (was implicitly dense, fine at 2141 species, O(n^2) at 4628+)
 
 variables:
   - {name: vision_dino, kind: continuous, neighbor: true}   # a ground-image representation, also read from neighbors
