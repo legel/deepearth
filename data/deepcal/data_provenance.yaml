@@ -166,8 +166,15 @@ modalities:
              distance_from_embedding shadow for ALL species. Builders: plant_dated_patristic.R + plant_dated_distance.py.
              Validated: congeners nearest by divergence time (Salvia radiation ~1 Myr, Quercus ~50 Myr, family-level structure)."
   phylogeny_pollinators:
-    source: "pollinator_distance.npy [8111x8111] — DATED patristics from published chronograms where covered, OpenTree
-             topological cophenetic + BioCLIP-2.5 text shadow elsewhere"
+    vocab: "pollinator_vocab_final.csv — 7373 REAL animal-pollinator taxa (down from a contaminated 8111). The original
+            GloBI-derived vocab carried plant/fungus/family-junk/unresolvable rows; cleaned via the committed pipeline
+            clean_pollinator_vocab.py -> gbif_resolve_pollinators.py -> merge_pollinator_vocab.py, remapped with
+            pollinator_vocab_final_map.json (old_idx->final_idx|null). The BioCLIP-2.5 pollinator text prior
+            (pollinator_taxon_text_emb.npy [7373,1024]) is rebuilt by build_pollinator_text.py and REPRODUCES the shipped
+            cache exactly (audited cosine 1.000000, 100% rows). Interactions remapped by remap_pollinator_interactions.py."
+    source: "pollinator_distance.npy [7373x7373] (cleaned vocab) — DATED patristics from published chronograms where
+             covered, OpenTree topological cophenetic + BioCLIP-2.5 text shadow elsewhere. Validated: symmetric, zero
+             diagonal, congeners nearest (Apis/Bombus/Halictus/Lasioglossum within-genus means 0.055-0.136)."
     dated_clades: "2025 taxa on real divergence-time (Myr) distances via ape cophenetic on published dated trees, HYBRID
                    placement (species-level where an exact chronogram tip exists, else the species is placed at its GENUS crown
                    — the same genus-level resolution the V.PhyloMaker plant tree uses; within-genus distance is the honest 0
