@@ -148,7 +148,8 @@ def train_and_evaluate(config, device):
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
-                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "lfmc_head", "flower_head", "myco_head"))]
+                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head"))]
+    poll_clip_params = [p for n, p in model.named_parameters() if "pollinator_graph" in n.lower()]
     hash_encoders = [mod for mod in model.modules() if hasattr(mod, "clamp_per_level_scale")]
     def clamp_res():                                     # keep learnable per-level resolutions in the safe (scale>0) region
         for he in hash_encoders:
@@ -215,6 +216,7 @@ def train_and_evaluate(config, device):
                 model.sparse_hash_step(flat, idx)                        # sparse Adam on the absolute hash table
                 torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
                 if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
+                if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
                 opt.step(); clamp_res()   # AdamW on everything else
             model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
             if step % 500 == 0:
@@ -239,6 +241,7 @@ def train_and_evaluate(config, device):
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
         if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
+        if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
         opt.step(); clamp_res(); sched.step()
         if step % 500 == 0:
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
