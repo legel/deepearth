@@ -26,6 +26,8 @@ model:
   contrastive_vars: [vision_dino]
   smooth_geo: true
   smooth_geo_sigmas: [0.25, 1.0, 4.0, 16.0, 64.0]   # +ultra-broad transferable scale on the winning RFF bank: over 3 seeds vs champion (same session) A1 mean 0.392->0.468 (std 0.045->0.008), net 0.873->0.882; non-overlapping distributions.                  # Hybrid-SDM (arXiv:2410.10937): a smooth sigma-bank RFF prior over (lat,lon,elev,time) ADDED to the memorizing hash position -> a transferable spatial basis that generalizes to held-out regions. Over 3 seeds each: raises A1 mean 0.348->0.402 AND cuts A1 variance ~5x (std 0.10->0.02); net mean 0.869->0.876.
+  poll_weight: 0.1                    # rule 27: enable the pollinator subsystem (B41/B51-B55) on the cleaned 7373 vocab. chm-fix (separate poll clip group) makes it Pareto-neutral on plant metrics. Reduce pollinator_top_k on <40GB GPUs.
+  pollinator_top_k: 64
   species_graph:                      # phylogenomic species GNN (science.md rules 7-12): refine per-species state so an obs of species A updates its relatives B,C,...; identity is read from the refined table
     variable: identity
     operator: latent-clade            # rule 29: exact O(N) tree-GP message passing (internal clade nodes) + out-of-tree clade cross-attention. H200 batch-512 validated: beats ou-attention on both means + ~45/50 benchmarks.
