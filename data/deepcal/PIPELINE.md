@@ -35,8 +35,9 @@ Committed, audited builders regenerate most modalities (cosine/byte-checked vs t
 env priors (`env_priors/build_*.py`), NAIP (`build_naip_m2m2024.py`), Clay (`build_clay.py`), mycorrhiza
 (`build_mycorrhiza.py`), species-dist (`build_species_dist.py`), dated phylogenies (`plant_dated_*`, `pollinator_dated_*`).
 
+Also `build_patristic_ref.py` regenerates `derived/patristic_ref.npy` (the 3487² tree cophenetic; audited max err 3e-5).
+
 **Open reproducibility gaps** (files ship in the zip but have no committed builder yet — TODO):
-- `derived/patristic_ref.npy` — the 3487² cophenetic of `ca_subtree.dated.nwk` (trivially regenerable; builder pending).
 - `bioclip_taxon_text_emb.npy` — BioCLIP-2.5 taxon-string prior (encode logic exists in `add_species.py`; needs a
   standalone full-vocab builder).
 - `gbif_lfmc.npz` — Live Fuel Moisture (B34, 37 species); reconciled via a one-off vocab remap — needs a committed
