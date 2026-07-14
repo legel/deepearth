@@ -37,10 +37,10 @@ def build_variables(spec, dims):
 
 
 def train_and_evaluate(config, device):
-    seed = config.get("training", {}).get("seed", 0)   # fixed seed -> matched-init A/B: backbone benchmarks bit-identical across runs, so a detached head's causal effect is isolated (no run-to-run noise masquerading as regression).
+    seed = config.get("training", {}).get("seed", 0)   # fixed seed -> matched-init A/B, so a detached head's causal effect is isolated
     torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
     d = config["data"]
-    # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reuse across runs; keyed by the data settings that change the assembled set.
+    # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reused across runs; keyed by the data settings that change the assembled set.
     import hashlib, json
     keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km")}
     tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
@@ -62,7 +62,7 @@ def train_and_evaluate(config, device):
                                 else (source.lca_tree if sg.get("operator") == "latent-clade" else None),
                    species_tip_row=source.lca_tip_row if sg.get("operator") == "latent-clade" else None,
                    species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None) if sg else {}
-    if sg and sg.get("operator", "ou-attention") != "tree":   # real DATED plant patristic (rules 7-12): replaces the embedding shadow for the ~65% tree-covered species
+    if sg and sg.get("operator", "ou-attention") != "tree":   # real dated plant patristic (rules 7-12): replaces the embedding shadow for tree-covered species
         cdir0 = Path(d["cache_dir"]); cdir0 = cdir0 if cdir0.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
         pld = cdir0 / "gbif_plant_dist.npz"
         if pld.exists():
@@ -127,7 +127,7 @@ def train_and_evaluate(config, device):
     lr0, wd0 = t.get("lr", 3e-4), t.get("weight_decay", 3e-4)
     # Learnable frequency params get much larger/noisier gradients than the rest, so give them their own lower LR and their own gradient clip.
     freq_keys = ("freq_log_scale", "freq_center", "per_level_scale")
-    freq_lr = t.get("freq_lr", lr0 * 0.3)   # swept: 9e-5 (0.3x) beat 3e-5 (0.1x)
+    freq_lr = t.get("freq_lr", lr0 * 0.3)
     freq_params = [p for n, p in model.named_parameters() if any(k in n for k in freq_keys)]
     freq_ids = {id(p) for p in freq_params}
     sparse_hash = m.get("sparse_hash", False)
@@ -136,7 +136,7 @@ def train_and_evaluate(config, device):
         freq_ids |= {id(p) for p in model.absolute_hash_params()}
     rest_params = [p for p in model.parameters() if id(p) not in freq_ids]
     groups = [{"params": rest_params, "lr": lr0}, {"params": freq_params, "lr": freq_lr}]
-    if t.get("adam8bit", False) or os.environ.get("DEEPCAL_ADAM8BIT"):    # 8-bit Adam (bitsandbytes): optimizer state 4->1 byte/moment, ~4.8GB saved on the 795M model; accuracy-matched (arXiv:2110.02861). For 24GB collaborator GPUs; the H200 champion keeps fused AdamW.
+    if t.get("adam8bit", False) or os.environ.get("DEEPCAL_ADAM8BIT"):    # 8-bit Adam (bitsandbytes): optimizer state 4->1 byte/moment, accuracy-matched (arXiv:2110.02861); for lower-VRAM GPUs
         from bitsandbytes.optim import AdamW8bit
         opt = AdamW8bit(groups, weight_decay=wd0)
         print("optimizer: 8-bit AdamW (bitsandbytes) — for 24GB-class GPUs", flush=True)
@@ -149,12 +149,15 @@ def train_and_evaluate(config, device):
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
                    if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head"))]
+    # The pollinator graph trains from the (detached-plant) interaction loss; clip it in its OWN group so its gradient
+    # magnitude does not inflate the global plant clip norm and shrink backbone updates (else enabling pollinators
+    # spuriously regresses plant heads — a clip-coupling artifact, not real competition).
     poll_clip_params = [p for n, p in model.named_parameters() if "pollinator_graph" in n.lower()]
     hash_encoders = [mod for mod in model.modules() if hasattr(mod, "clamp_per_level_scale")]
     def clamp_res():                                     # keep learnable per-level resolutions in the safe (scale>0) region
         for he in hash_encoders:
             he.clamp_per_level_scale()
-    # Full-step compile (~2.4x): fuse context + masked_loss into one graph, random reveal mask computed eagerly so capture stays deterministic.
+    # Full-step compile: fuse context + masked_loss into one graph; random reveal mask computed eagerly so capture stays deterministic.
     # Modes: "graph"/"full" -> reduce-overhead (CUDA graphs, biggest win but its pool can alias live buffers on large models); "compiled"/True -> default fusion (stable at any size); "processor" -> narrow Processor-only compile.
     _cm = m.get("compile")
     compile_full = _cm in (True, "full", "graph", "compiled")

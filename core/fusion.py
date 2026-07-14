@@ -65,17 +65,17 @@ class ManifoldField(nn.Module):
 
 
 class SmoothGeoField(nn.Module):
-    """Random Fourier Features over (lat, lon, elev, time): a SMOOTH, continuous geo encoding that GENERALIZES to
+    """Random Fourier Features over (lat, lon, elev, time): a smooth, continuous geo encoding that generalizes to
     held-out locations, unlike the memorizing hash grid whose fine cells are untrained at unseen points. A transferable
-    low-frequency spatial prior aimed at A1 (species-from-geography under spatial holdout). Complements, not replaces,
-    the absolute hash memory. (Rahimi & Recht RFF / Tancik Fourier-features; the SatCLIP idea of a generalizing geo prior.)
+    low-frequency spatial prior complementing, not replacing, the absolute hash memory.
+    (Rahimi & Recht RFF / Tancik Fourier-features; SatCLIP's generalizing geo prior.)
     """
 
     def __init__(self, d_model: int, per_scale: int = 32, sigmas: Sequence[float] = (1.0, 4.0, 16.0, 64.0)):
         super().__init__()
-        # HIERARCHICAL sigma-bank (Hybrid-SDM / Fourier-features): each scale is a fixed Gaussian projection giving a
-        # shift-invariant RBF kernel at that bandwidth; low sigma = broad/transferable, high = fine. Multi-scale coverage
-        # coarse->fine without per-cell parameters, so it generalizes to held-out locations by construction.
+        # Sigma-bank (Fourier-features): each scale is a fixed Gaussian projection giving a shift-invariant RBF kernel
+        # at that bandwidth (low sigma = broad/transferable, high = fine). Multi-scale coverage without per-cell
+        # parameters, so it generalizes to held-out locations by construction.
         B = torch.cat([torch.randn(4, per_scale) * s for s in sigmas], dim=1)   # [4, per_scale*n_scales]
         self.register_buffer("B", B)
         self.register_buffer("coord_scale", torch.tensor([1 / 90.0, 1 / 180.0, 1 / 3000.0, 1 / 60.0]))  # lat°, lon°, elev m, time
@@ -217,7 +217,7 @@ class DeepEarth(nn.Module):
         self.absolute_proj_t = nn.Sequential(nn.Linear(self.absolute_encoder.spatiotemporal_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
         gate0 = torch.zeros(len(self.variables), 2); gate0[:, 0] = 2.0   # init ~0.88 spatial / 0.12 temporal
         self.pos_channel_gate = nn.Parameter(gate0)
-        # Smooth transferable geo prior (RFF): added to the memorizing hash position -> generalizes to held-out regions (A1).
+        # Smooth transferable geo prior (RFF): added to the memorizing hash position -> generalizes to held-out regions.
         self.smooth_geo = SmoothGeoField(
             d_model, per_scale=smooth_geo_per_scale,
             sigmas=tuple(smooth_geo_sigmas) if smooth_geo_sigmas else (1.0, 4.0, 16.0, 64.0),
@@ -291,15 +291,14 @@ class DeepEarth(nn.Module):
         self.revise_rate = nn.Parameter(torch.full((nv,), -3.0))        # sigmoid~0.05: how far an observed token revises
         self.read_gate = nn.Parameter(torch.ones(d_model))              # per-dim gate on each round's latent read (identity at init)
         self._round_stack = None
-        # Community-distribution head (MADE joint-dist as a jointly-trained benchmark head): a SEPARATE readout trained
-        # on a DETACHED latent toward the LOCAL community distribution. Created LAST so it consumes no init RNG ahead of
-        # the backbone -> the shared model initializes bit-identically to the no-head champion (zero regression on
-        # B1-B19/B7 by construction), while supplying the community distribution for B20-22/B39/B40 at test.
+        # Community-distribution head (MADE joint-dist): a SEPARATE readout trained on a DETACHED latent toward the
+        # LOCAL community distribution, so no gradient reaches the shared backbone. Created LAST so it consumes no init
+        # RNG ahead of the backbone -> the shared model initializes bit-identically with or without this head.
         self.comm_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)) \
             if (species_variable is not None and species_embedding is not None) else None
-        # Pollinator-distribution head (plant->pollinator interaction, MADE joint-dist benchmark head): a detached readout
-        # from the species-pooled latent into a learned pollinator-vocab basis, trained toward the plant's local GloBI
-        # pollinator distribution. Created LAST (zero init-RNG shift) -> supplies B41/B51-B54 with no backbone regression.
+        # Pollinator-distribution head (plant->pollinator interaction, MADE joint-dist): a DETACHED readout from the
+        # species-pooled latent into a learned pollinator-vocab basis, trained toward the plant's local GloBI pollinator
+        # distribution. Created LAST so it consumes no init RNG ahead of the backbone.
         self.poll_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)) if n_pollinators > 0 else None
         self.poll_emb = nn.Parameter(torch.randn(n_pollinators, d_model) * 0.02) if n_pollinators > 0 else None
         # Cross-tree interaction (rule 27): decode the plant->pollinator interaction against a SECOND, separately
@@ -308,16 +307,16 @@ class DeepEarth(nn.Module):
         self.pollinator_graph = SpeciesGraph(n_pollinators, d_model, pollinator_distance, top_k=pollinator_top_k,
                                              species_text=pollinator_text) \
             if (n_pollinators > 0 and pollinator_distance is not None) else None
-        # Ecophysiology head (B34, jointly-trained benchmark head on a DETACHED latent): predict a species' peak
-        # fire-season live fuel moisture from its phylo-refined representation. Created last (no init-RNG shift).
+        # Ecophysiology head (B34) on a DETACHED latent: predict a species' peak fire-season live fuel moisture from its
+        # phylo-refined representation. Created last so it consumes no init RNG ahead of the backbone.
         self.lfmc_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
             if species_variable is not None else None
-        # Symbiosis head (B42, jointly-trained on a DETACHED pooled latent): predict a plant's mycorrhizal type
-        # (AM/EcM/ErM/OM/NM, FungalRoot) from its representation — does the niche predict the plant-fungal symbiosis?
+        # Symbiosis head (B42) on a DETACHED pooled latent: predict a plant's mycorrhizal type
+        # (AM/EcM/ErM/OM/NM, FungalRoot label) from its representation.
         self.myco_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5)) \
             if species_variable is not None else None
-        # Phenology head (B26, jointly-trained on a DETACHED pooled latent): predict whether an observation is flowering
-        # from its (space-time-conditioned) representation. Per-observation label from PhenoVision. Created last.
+        # Phenology head (B26) on a DETACHED pooled latent: predict whether an observation is flowering from its
+        # (space-time-conditioned) representation. Per-observation label from PhenoVision. Created last.
         self.flower_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
             if species_variable is not None else None
         if compile_processor:
@@ -610,7 +609,13 @@ class DeepEarth(nn.Module):
         if v.kind == "categorical":
             # Normalize by log(num_classes) so every categorical term shares the ~[0,1] scale of the continuous cosine terms (a wide identity head otherwise dominates the shared gradient).
             return F.cross_entropy(pred, target, reduction="none") / math.log(max(int(v.num_classes), 2))
-        return 1.0 - F.cosine_similarity(pred, target, dim=-1)
+        # ANOMALY (mean-centered) cosine — matches the eval metric. Raw cosine has a gameable floor for shared-mean
+        # embeddings: the decoder can satisfy it by predicting the MEAN direction and never learn the obs-specific
+        # signal. Centering removes that floor, forcing the obs-specific reconstruction. Mean is over OBSERVED rows
+        # (unobserved targets are 0 vectors).
+        obs = target.norm(dim=-1) > 1e-6
+        mu = (target[obs].mean(0, keepdim=True) if obs.any() else target.mean(0, keepdim=True)).detach()
+        return 1.0 - F.cosine_similarity(pred - mu, target - mu, dim=-1)
 
     def reconstruction_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
                             context: dict, hide_prob: float = 0.35) -> torch.Tensor:
@@ -659,14 +664,13 @@ class DeepEarth(nn.Module):
                 # target against the batch (InfoNCE) -- a global signal point-wise cosine cannot give.
                 if self.contrastive_weight > 0.0 and v.name in self.contrastive_vars and v.kind == "continuous":
                     pn = F.normalize(pred.float(), dim=-1); tn = F.normalize(values[v.name].float(), dim=-1)
-                    logits = pn @ tn.t() / 0.05    # temperature (sweeping 0.07->0.05: sharper, more discriminative retrieval)
+                    logits = pn @ tn.t() / 0.05    # InfoNCE temperature
                     loss = loss + self.contrastive_weight * F.cross_entropy(
                         logits, torch.arange(logits.shape[0], device=logits.device))
             # Per-variable loss weight (science.md rule 18): focus reconstruction where benchmarks have headroom.
             loss = loss + self.loss_weights.get(v.name, 1.0) * (err * w).sum() / w.sum().clamp_min(1.0)
             # Distribution matching (MADE joint-dist) via the SEPARATE community head on a DETACHED latent: trains only
-            # comm_head toward the local community distribution, with zero gradient into the shared representation ->
-            # guaranteed no regression on identity/phylo/traits, while the head supplies B20-22/B39/B40 at test.
+            # comm_head toward the local community distribution, with zero gradient into the shared representation.
             if getattr(self, "_sdist_weight", 0.0) > 0 and v.name == self.species_variable \
                     and "_sdist_idx" in values and getattr(self, "comm_head", None) is not None:
                 comm = (self.comm_head(self._pooled(z, v.name).detach()) @ self._refined_species.detach().t()).float()
@@ -675,7 +679,7 @@ class DeepEarth(nn.Module):
                 kl = -(tgt * F.log_softmax(comm, -1)).sum(-1)            # soft cross-entropy toward the local distribution
                 loss = loss + self._sdist_weight * (kl * w).sum() / w.sum().clamp_min(1.0)
             # Pollinator distribution matching via the SEPARATE detached poll_head toward the plant's GloBI pollinator
-            # distribution (zero gradient into the shared representation). Enables B41/B51-B54, no backbone regression.
+            # distribution (zero gradient into the shared representation).
             if getattr(self, "_poll_weight", 0.0) > 0 and v.name == self.species_variable \
                     and "_poll_idx" in values and getattr(self, "poll_head", None) is not None:
                 # detach the PLANT latent (protect the shared backbone) but NOT the pollinator basis: the interaction
