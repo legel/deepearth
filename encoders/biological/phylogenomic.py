@@ -276,25 +276,26 @@ class _TreeRound(nn.Module):
         nn.init.normal_(self.out.weight, std=0.02); nn.init.zeros_(self.out.bias)   # gentle at init: free dominates,
         self.norm = nn.LayerNorm(d_model)                                  # but relatives already inform each tip
 
-    def forward(self, x: torch.Tensor, tree: "TreeMessagePassing") -> torch.Tensor:
+    def forward(self, x: torch.Tensor, tree: "TreeMessagePassing", return_nodes: bool = False):
         n_sp, d = x.shape
         rate = F.softplus(self.theta)
-        up_gate = torch.exp(-rate * tree.up_blen).unsqueeze(-1)             # per-edge decay, computed once per sweep
-        down_gate = torch.exp(-rate * tree.down_blen).unsqueeze(-1)
-        H = self.unk.expand(tree.n_nodes, d).clone()
+        up_gate = torch.exp(-rate * tree.up_blen).unsqueeze(-1).to(x.dtype)  # per-edge decay (match x dtype: single-dtype scatter)
+        down_gate = torch.exp(-rate * tree.down_blen).unsqueeze(-1).to(x.dtype)
+        H = self.unk.to(x.dtype).expand(tree.n_nodes, d).clone()
         H = H.index_copy(0, tree.leaf_ids, x)                               # place species states at the tips
         # upward: children -> parents, one vectorized scatter per height level (children already finalized below)
-        for lo, hi, plo, phi in tree.up_slices:
-            msg = up_gate[lo:hi] * self.mup(H[tree.up_child[lo:hi]])
+        for lo, hi, plo, phi in tree.up_slices:                            # .to(H.dtype): Linears emit bf16 under autocast; scatter needs one dtype
+            msg = up_gate[lo:hi] * self.mup(H[tree.up_child[lo:hi]]).to(H.dtype)
             acc = torch.zeros_like(H).index_add(0, tree.up_parent[lo:hi], msg)
             par = tree.up_par[plo:phi]
-            H = H.index_copy(0, par, self.agg(acc[par]))
+            H = H.index_copy(0, par, self.agg(acc[par]).to(H.dtype))
         # downward: parents -> children, one scatter per depth level (parents already finalized above)
         for lo, hi in tree.down_slices:
             ci = tree.down_child[lo:hi]
-            dm = down_gate[lo:hi] * self.mdn(H[tree.down_parent[lo:hi]])
-            H = H.index_copy(0, ci, self.comb(torch.cat([H[ci], dm], dim=-1)))
-        return self.norm(x + self.out(H[:n_sp]))                            # residual keeps congeners separable
+            dm = down_gate[lo:hi] * self.mdn(H[tree.down_parent[lo:hi]]).to(H.dtype)
+            H = H.index_copy(0, ci, self.comb(torch.cat([H[ci], dm], dim=-1)).to(H.dtype))
+        tips = self.norm(x + self.out(H[:n_sp]))                            # residual keeps congeners separable
+        return (tips, H) if return_nodes else tips                          # H[n_sp:] = refined internal-clade states
 
 
 class TreeMessagePassing(nn.Module):
@@ -315,7 +316,7 @@ class TreeMessagePassing(nn.Module):
     def __init__(self, n_species: int, d_model: int, tree: dict, n_layers: int = 2, hidden: int = None):
         super().__init__()
         assert tree["n_species"] == n_species, "tree tips must match the model species"
-        self.n_nodes = int(tree["n_nodes"])
+        self.n_species = n_species; self.n_nodes = int(tree["n_nodes"])
         # static topology as buffers (move with the module; excluded from optimization)
         self.register_buffer("leaf_ids", torch.arange(n_species, dtype=torch.long))
         self.register_buffer("up_child", torch.as_tensor(tree["up_child"], dtype=torch.long))
@@ -332,9 +333,71 @@ class TreeMessagePassing(nn.Module):
         self.down_slices = [(dp[k], dp[k + 1]) for k in range(len(dp) - 1)]
         self.rounds = nn.ModuleList([_TreeRound(d_model, hidden or d_model) for _ in range(max(1, n_layers))])
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for r in self.rounds: x = r(x, self)
-        return x
+    def forward(self, x: torch.Tensor, return_clades: bool = False):
+        H = None                                                             # bf16-native: _TreeRound follows x's dtype (single-dtype scatter, autocast tensor cores)
+        for i, r in enumerate(self.rounds):
+            if return_clades and i == len(self.rounds) - 1:
+                x, H = r(x, self, return_nodes=True)
+            else:
+                x = r(x, self)
+        return (x, H[self.n_species:]) if return_clades else x               # clade = refined internal-node latents
+
+
+class LatentCladeAttention(nn.Module):
+    """Refine ALL species — in-tree and out-of-tree — through the phylogeny's internal clade nodes as shared latents
+    (science.md rule 28). This is Multi-head Latent Attention (DeepSeek-V2, arXiv:2405.04434) applied along the
+    *phylogenetic* axis instead of the head axis: the compressed latent shared by many "readers" is not one KV shared
+    across attention heads but one **ancestral-clade state shared across all its descendant species**, and the absorbed
+    up-projection that reconstructs each reader's key/value is the **branch-length Ornstein-Uhlenbeck contraction**
+    ``e^{-alpha*l}`` (Hansen 1997; the actualization of Karcher & Ane 2025). For a tree-structured Gaussian process the
+    internal nodes are the *exact* Markov blanket — conditioning on ancestral states renders the tips conditionally
+    independent (Jones & Moriarty 2013) — so they are exact inducing points, not a Nystrom approximation, and two-pass
+    (post-order + pre-order) message passing computes the exact OU-on-tree posterior in O(N) (Felsenstein 1973 pruning;
+    Ho & Ane 2014; Ji et al. 2020), strictly cheaper and more faithful than top-k cophenetic-distance attention.
+
+    In-tree tips run the exact two-pass message passing (:class:`TreeMessagePassing`), which also yields the refined
+    clade latents. Out-of-tree species carry no tree position; they **soft-attach** to those clade latents by multi-head
+    cross-attention keyed on the frozen BioCLIP-2.5 prior (the ISAB "distribute" step, Lee et al. 2019) — so a novel
+    species acquires a phylogenetically-consistent posterior position that propagates from its relatives (rules 25-27),
+    unifying the in-tree (``tree``) and out-of-tree (previously ``ou-attention`` shadow) paths in one operator.
+
+    Args: ``n_species`` (full vocab), ``d_model``; ``tree`` buffers (:func:`build_tree_buffers`, built over the in-tree
+    tips only); ``tip_row`` ``[n_tips]`` = the vocab row of each tree tip, in the tip order used to build ``tree``.
+    """
+
+    def __init__(self, n_species: int, d_model: int, tree: dict, tip_row, n_layers: int = 2, n_heads: int = 4):
+        super().__init__()
+        assert d_model % n_heads == 0
+        self.n_heads = n_heads; self.d_head = d_model // n_heads
+        tip_row = torch.as_tensor(tip_row, dtype=torch.long)
+        assert tree["n_species"] == len(tip_row), "tree tips must match tip_row"
+        self.register_buffer("tip_row", tip_row)
+        oot = torch.ones(n_species, dtype=torch.bool); oot[tip_row] = False
+        self.register_buffer("oot_row", torch.nonzero(oot, as_tuple=False).squeeze(1))
+        self.has_oot = bool(oot.any())
+        self.tree = TreeMessagePassing(len(tip_row), d_model, tree, n_layers=n_layers)
+        self.clade_norm = nn.LayerNorm(d_model)                     # bound the RAW internal-node states before use (they
+        #                                                            skip the tree's tip-only final norm, so they can grow unbounded over training -> inf/NaN)
+        if self.has_oot:                                            # out-of-tree soft-attach to clade latents (MLA read)
+            self.q = nn.Linear(d_model, d_model); self.k = nn.Linear(d_model, d_model)
+            self.v = nn.Linear(d_model, d_model); self.o = nn.Linear(d_model, d_model)
+            self.norm = nn.LayerNorm(d_model)
+            nn.init.zeros_(self.o.weight); nn.init.zeros_(self.o.bias)  # gentle at init: the BioCLIP seed dominates
+
+    def forward(self, h0: torch.Tensor) -> torch.Tensor:
+        """``h0`` = ``[n_species, d_model]`` full-vocab seed (already masked upstream per rule 25). Returns the refined
+        ``[n_species, d_model]``: in-tree rows from exact message passing, out-of-tree rows from clade cross-attention."""
+        tips, clades = self.tree(h0[self.tip_row], return_clades=True)      # [n_tips,d], [n_clades,d]; bf16-native
+        clades = self.clade_norm(clades)                                    # bound the raw internal-node states (stability)
+        out = h0.index_copy(0, self.tip_row, tips)                          # refined tips -> their vocab rows
+        if self.has_oot and clades.shape[0] > 0:
+            q = h0[self.oot_row]                                            # [M,d] out-of-tree seeds (queries)
+            M, C, H, dh = q.shape[0], clades.shape[0], self.n_heads, self.d_head
+            qh = self.q(q).view(M, H, dh); kh = self.k(clades).view(C, H, dh); vh = self.v(clades).view(C, H, dh)
+            a = torch.softmax(torch.einsum("mhd,chd->mhc", qh, kh) / math.sqrt(dh), dim=-1)   # [M,H,C]
+            att = torch.einsum("mhc,chd->mhd", a, vh).reshape(M, -1)        # attend to shared clade latents
+            out = out.index_copy(0, self.oot_row, self.norm(q + self.o(att)))
+        return out
 
 
 class SpeciesGraph(nn.Module):
@@ -348,7 +411,7 @@ class SpeciesGraph(nn.Module):
 
     def __init__(self, n_species: int, d_model: int, phylo_distance: torch.Tensor = None, n_heads: int = 4,
                  n_layers: int = 2, top_k: int = None, flex: bool = False, operator: str = "ou-attention",
-                 tree: dict = None, species_text: torch.Tensor = None):
+                 tree: dict = None, species_text: torch.Tensor = None, tip_row=None):
         super().__init__()
         self.operator = operator
         # Species seed (science.md rule 26): decode a FROZEN BioCLIP-2 text prior through a small learned probe, so the
@@ -363,13 +426,20 @@ class SpeciesGraph(nn.Module):
             self.register_buffer("species_text", None); self.probe = None
             self.free = nn.Parameter(torch.randn(n_species, d_model) * 0.02)  # discriminative component
         self.mask_token = nn.Parameter(torch.randn(d_model) * 0.02)          # rule 25: hides a species' seed -> reconstruct from relatives
-        if operator == "tree":
-            assert tree is not None, "operator='tree' requires the parsed tree buffers"
-            self.tree = TreeMessagePassing(n_species, d_model, tree, n_layers=n_layers)
+        if operator in ("tree", "latent-clade"):
+            assert tree is not None, f"operator='{operator}' requires the parsed tree buffers"
             self.layers = None
             for name in ("phylo_distance", "neighbor_idx", "neighbor_dist", "order", "inv_order"):
                 self.register_buffer(name, None)
-            self.flex_mask = None; return
+            self.flex_mask = None
+            if operator == "tree":
+                assert tree["n_species"] == n_species, "operator='tree' covers only the in-tree tips; use 'latent-clade'"
+                self.tree = TreeMessagePassing(n_species, d_model, tree, n_layers=n_layers); self.clade = None
+            else:                                                          # latent-clade: covers in-tree + out-of-tree
+                assert tip_row is not None, "operator='latent-clade' requires tip_row (vocab row of each tree tip)"
+                self.clade = LatentCladeAttention(n_species, d_model, tree, tip_row, n_layers=n_layers, n_heads=n_heads)
+                self.tree = None
+            return
         assert phylo_distance is not None, "operator='ou-attention' requires a phylo_distance matrix"
         self.tree = None
         self.layers = nn.ModuleList([OrnsteinUhlenbeckAttention(d_model, n_heads) for _ in range(n_layers)])
@@ -425,6 +495,8 @@ class SpeciesGraph(nn.Module):
             h0 = torch.where(mask.unsqueeze(-1), self.mask_token, h0)
         if self.operator == "tree":                                        # message passing over the real tree
             return self.tree(h0)
+        if self.operator == "latent-clade":                                # in-tree message passing + out-of-tree read
+            return self.clade(h0)
         h = h0
         if self.flex_mask is not None:                                     # clade-contiguous order -> banded attention
             h = h[self.order]

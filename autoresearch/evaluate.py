@@ -305,7 +305,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             add("B22_companions_recall", recall_sum(infer(["identity"] + U, ["community"])["community"], tset), B)
 
         # ---- plant-pollinator interactions (GloBI): the pollinator distribution is the TARGET only (leak-safe) ----
-        if hasattr(source, "poll_idx") and c0 < community_cap:
+        if hasattr(source, "poll_idx") and getattr(model, "poll_head", None) is not None and c0 < community_cap:
             c = source.cls[idx]; vi = source.poll_valid[c]; nv = int(vi.sum())
             if nv:
                 pidx = source.poll_idx[c].clamp(0, source.n_pollinators - 1); pfrq = source.poll_frq[c]
