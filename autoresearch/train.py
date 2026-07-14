@@ -113,7 +113,11 @@ def train_and_evaluate(config, device):
         if sdp.exists():
             zz = np.load(sdp); mrow = {int(g): i for i, g in enumerate(zz["gbifID"])}
             rows = np.array([mrow.get(int(g), -1) for g in source.gbifID]); ok = rows >= 0
-            idx3 = np.where(ok[:, None], zz["idx_3km"][rows.clip(0)], 0); frq3 = np.where(ok[:, None], zz["frq_3km"][rows.clip(0)], 0.0)
+            # multi-scale target (30m + 300m + 3km): the SDM benchmarks score all three scales, so supervise all three.
+            # scatter_add in the loss sums per-species, so concatenating the per-scale top-k is a combined target.
+            idxs = [np.where(ok[:, None], zz["idx_" + sc][rows.clip(0)], 0) for sc in ("30m", "300m", "3km")]
+            frqs = [np.where(ok[:, None], zz["frq_" + sc][rows.clip(0)], 0.0) for sc in ("30m", "300m", "3km")]
+            idx3 = np.concatenate(idxs, 1); frq3 = np.concatenate(frqs, 1) / len(idxs)   # /n_scales keeps the row sum ~1
             source.sdist_idx = torch.tensor(idx3, dtype=torch.long, device=device)
             source.sdist_frq = torch.tensor(frq3, dtype=torch.float32, device=device)
             print(f"sdist loaded: {int(ok.sum())}/{len(rows)} obs have local distribution", flush=True)
