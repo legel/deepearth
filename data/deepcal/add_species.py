@@ -20,6 +20,11 @@ Usage:
 """
 import os, csv, json, argparse
 import numpy as np
+# open_clip / model deps (via wandb) reference np.float_ etc., removed in numpy 2.0; restore aliases before import.
+for _a, _t in [("float_", np.float64), ("int_", np.int64), ("uint", np.uint64),
+               ("unicode_", np.str_), ("complex_", np.complex128), ("bool_", np.bool_)]:
+    if not hasattr(np, _a):
+        setattr(np, _a, _t)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
