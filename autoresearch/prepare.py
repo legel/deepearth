@@ -16,9 +16,9 @@ It ensures, in order:
 Run this ONCE before launching the autoresearch loop. It is not modified by experiments (see ``autoresearch.md``).
 """
 from __future__ import annotations
-import argparse, os, subprocess, sys, zipfile
+import argparse, os, subprocess, sys, time, zipfile
 from pathlib import Path
-import urllib.request
+import urllib.request, urllib.error
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]                       # .../deepearth
@@ -67,19 +67,45 @@ def download_data() -> None:
         dst.unlink()                                            # drop the zip after extraction
 
 
-def _download(url: str, dst: Path) -> None:
+def _download(url: str, dst: Path, retries: int = 20) -> None:
+    """Resumable download: HTTP Range-resume the .tmp partial after any drop, retry transient failures with backoff,
+    and verify the final byte count before promoting to dst — never rename a short/partial file as complete
+    (robust on flaky networks; a plain urlopen loop silently ships a truncated zip when the connection drops)."""
     tmp = dst.with_suffix(dst.suffix + ".tmp")
-    with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
-        total = int(r.headers.get("Content-Length", 0)); done = 0
-        while True:
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk); done += len(chunk)
-            if total:
-                print(f"\r  {done/1e6:.0f}/{total/1e6:.0f} MB", end="", flush=True)
-    print()
-    tmp.rename(dst)
+    for attempt in range(retries):
+        pos = tmp.stat().st_size if tmp.exists() else 0
+        req = urllib.request.Request(url, headers={"Range": f"bytes={pos}-"} if pos else {})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                if pos and r.status != 206:                       # server ignored the Range -> restart the file
+                    pos = 0
+                total = pos + int(r.headers.get("Content-Length", 0))
+                with open(tmp, "ab" if pos else "wb") as f:
+                    done = pos
+                    while True:
+                        chunk = r.read(1 << 20)
+                        if not chunk:
+                            break
+                        f.write(chunk); done += len(chunk)
+                        if total:
+                            print(f"\r  {done/1e6:.0f}/{total/1e6:.0f} MB", end="", flush=True)
+            print()
+            if total and tmp.stat().st_size < total:              # short read = connection dropped -> resume
+                raise IOError(f"incomplete {tmp.stat().st_size}/{total}")
+            tmp.rename(dst); return
+        except urllib.error.HTTPError as e:
+            if e.code == 416 and tmp.exists():                    # Range-not-satisfiable = already fully downloaded
+                tmp.rename(dst); return
+            _resume_wait(e, pos, attempt, retries)
+        except (urllib.error.URLError, TimeoutError, IOError, ConnectionError) as e:
+            _resume_wait(e, pos, attempt, retries)
+    raise SystemExit(f"[data] download failed after {retries} attempts — check the network or DEEPCAL_DATA_URL")
+
+
+def _resume_wait(err, pos, attempt, retries):
+    wait = min(2 * (attempt + 1), 30)
+    print(f"\n  [resume] {type(err).__name__} at {pos/1e6:.0f} MB — retry in {wait}s ({attempt+1}/{retries})", flush=True)
+    time.sleep(wait)
 
 
 def ensure_kernel() -> None:
