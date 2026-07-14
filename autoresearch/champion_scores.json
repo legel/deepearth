@@ -1,8 +1,7 @@
 {
-  "label": "activate community/niche family: multi-scale detached comm_head (sdist_weight)",
-  "config": "spatial holdout, 600s, RTX 3090; harmonic 0.016->0.087",
-  "harmonic": 0.0866163446664731,
-  "arithmetic": 0.4899807692307692,
+  "label": "sdist champion (spatial) + temporal-holdout forecast (B25/B31) merged",
+  "harmonic": 0.09966907222858865,
+  "arithmetic": 0.4876296296296296,
   "scores": {
     "B39_species_dist_3km_skill": 0.003,
     "B40_species_dist_300m_skill": 0.017,
@@ -55,6 +54,16 @@
     "B33_growth_rate_trait_f1": 0.939,
     "B36_ease_of_care_trait_f1": 0.944,
     "B3_species_from_photo_top5": 0.954,
-    "B12_traits_leave_one_out_f1": 0.974
+    "B12_traits_leave_one_out_f1": 0.974,
+    "B24_geo_information_gain": 0.607,
+    "B56_family_phylo_graph_gain": 0.114,
+    "B57_flowering_phylo_graph_gain": 0.001,
+    "B59_pollinator_phylo_graph_gain": 0.0,
+    "B61_trait_phylo_graph_gain": 0.0,
+    "B62_mycorrhiza_phylo_graph_gain": 0.0,
+    "B58_lfmc_phylo_graph_gain": 0.0,
+    "B60_community_phylo_graph_gain": 0.0,
+    "B25_forecast_climate_cos": 0.659,
+    "B31_forecast_vision_cos": 0.194
   }
 }

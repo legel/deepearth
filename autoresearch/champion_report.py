@@ -31,7 +31,9 @@ def parse_run(log_path: str) -> dict:
     """Extract {Bxx_name: score}, harmonic (net_score) and arithmetic mean from a train/eval run log."""
     txt = Path(log_path).read_text()
     scores = {}
-    for m in re.finditer(r"^\s*(B\d+_\w+)\s+(-?[0-9.]+)\s*$", txt, re.M):
+    # score may be followed by trailing text on the diagnostic lines, e.g. "B24_geo_information_gain 0.593 (net
+    # contrib 0.997)" -- match the score after the name, not requiring end-of-line, so B24/B56-B62 are captured.
+    for m in re.finditer(r"^\s*(B\d+_\w+)\s+(-?[0-9.]+)(?:\s|$)", txt, re.M):
         scores[m.group(1)] = float(m.group(2))                 # last occurrence wins (final eval)
     try:                                                       # RECOMPUTE the net from scores with the live logic, so
         from deepearth.autoresearch.evaluate import net_score, arithmetic_net   # every champion record is comparable
@@ -68,8 +70,11 @@ def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> s
     for i, name in enumerate(allb, 1):
         after = ns.get(name)
         before = os_.get(name)
-        if after is None:                                     # declared but not produced by this run (e.g. B25/B31 need a temporal-holdout run)
-            lines.append(f"{i:>2}. {name}: inactive (not produced by this run)")
+        if after is None:                                     # not produced by THIS run's holdout (e.g. B25/B31 forecast need a temporal run)
+            if before is not None:                            # carry the champion-record value (from its proper holdout) rather than blank it
+                lines.append(f"{i:>2}. {name}: {_f(before)} (carried; its holdout not re-run here)")
+            else:
+                lines.append(f"{i:>2}. {name}: inactive (needs its holdout: e.g. B25/B31 = temporal)")
         elif old is None:
             lines.append(f"{i:>2}. {name}: {_f(after)}")
         else:
