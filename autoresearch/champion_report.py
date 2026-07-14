@@ -21,6 +21,11 @@ from pathlib import Path
 
 RECORD = Path(__file__).with_name("champion_scores.json")   # the current champion (before for the next run)
 
+try:                                                        # canonical order so EVERY benchmark is listed (inactive ones marked, never silently missing)
+    from deepearth.autoresearch.evaluate import BENCHMARKS as _CANON
+except Exception:
+    _CANON = []
+
 
 def parse_run(log_path: str) -> dict:
     """Extract {Bxx_name: score}, harmonic (net_score) and arithmetic mean from a train/eval run log."""
@@ -28,11 +33,14 @@ def parse_run(log_path: str) -> dict:
     scores = {}
     for m in re.finditer(r"^\s*(B\d+_\w+)\s+(-?[0-9.]+)\s*$", txt, re.M):
         scores[m.group(1)] = float(m.group(2))                 # last occurrence wins (final eval)
-    h = re.search(r"net_score:\s+([0-9.]+)", txt)
-    a = re.search(r"arithmetic mean:\s+([0-9.]+)", txt)
-    return {"scores": scores,
-            "harmonic": float(h.group(1)) if h else None,
-            "arithmetic": float(a.group(1)) if a else None}
+    try:                                                       # RECOMPUTE the net from scores with the live logic, so
+        from deepearth.autoresearch.evaluate import net_score, arithmetic_net   # every champion record is comparable
+        return {"scores": scores, "harmonic": float(net_score(scores)), "arithmetic": float(arithmetic_net(scores))}
+    except Exception:                                          # fallback: parse whatever the log printed
+        h = re.search(r"net_score:\s+([0-9.]+)", txt)
+        a = re.search(r"arithmetic mean:\s+([0-9.]+)", txt)
+        return {"scores": scores, "harmonic": float(h.group(1)) if h else None,
+                "arithmetic": float(a.group(1)) if a else None}
 
 
 def _n(x):                                                     # benchmark sort key: B<number>
@@ -56,10 +64,13 @@ def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> s
     if config:
         lines += [config, ""]
     lines.append("All benchmarks (before -> after):" if old is not None else "All benchmarks (baseline):")
-    for i, name in enumerate(sorted(ns, key=_n), 1):
-        after = ns[name]
+    allb = sorted(set(_CANON) | set(ns) | set(os_), key=_n)   # EVERY declared benchmark + anything seen; none missing
+    for i, name in enumerate(allb, 1):
+        after = ns.get(name)
         before = os_.get(name)
-        if old is None:
+        if after is None:                                     # declared but not produced by this run (e.g. B25/B31 need a temporal-holdout run)
+            lines.append(f"{i:>2}. {name}: inactive (not produced by this run)")
+        elif old is None:
             lines.append(f"{i:>2}. {name}: {_f(after)}")
         else:
             d = f"{after - before:+.3f}" if before is not None else "  new  "

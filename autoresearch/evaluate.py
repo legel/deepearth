@@ -75,6 +75,12 @@ BENCHMARKS: List[str] = [
     "B26_flowering_auc",                # A7  U/imagined-vision -> flowering (needs labels), ROC-AUC
     "B27_flowering_fidelity",           # phenology self-consistency: flowering agreement between imagined vision (U) and real vision (U+photo)
     "B28_flowering_peak_month_mrr",     # phenology seasonality: MRR of the true peak-flowering month from a 12-month time sweep
+    "B29_species_dist_30m_skill",       # SDM: per-cell 30 m species-distribution skill = 1 - KL(true||pred)/KL(true||uniform)
+    "B30_seasonality_trait_f1",         # trait: seasonality macro-F1
+    "B38_water_soil_regime_f1",         # ecophysiology: water + soil-drainage regime macro-F1
+    "B39_species_dist_3km_skill",       # SDM: per-cell 3 km species-distribution skill
+    "B40_species_dist_300m_skill",      # SDM: per-cell 300 m species-distribution skill
+    "B49_form_trait_f1",                # trait: growth-form macro-F1
     "B34_lfmc_from_env",                # ecophysiology: predict a species' peak fire-season live fuel moisture
     "B42_mycorrhiza_from_env",          # biotic symbiosis: predict a plant's mycorrhizal type (FungalRoot AM/EcM/ErM/OM/NM) from env, macro-F1
     "B41_pollinator_from_species_recall",  # plant identity + env -> local pollinator set (GloBI), recall@10
@@ -451,7 +457,11 @@ def _net_value(k: str, v: float) -> float:
     logistic squash maps it to (0,1): it NEVER exceeds 1.0, NEVER forms a below-0 well, and is MONOTONICALLY beneficial
     to drive up -- optimizing the net therefore optimizes every benchmark, deltas included, even where signal repeats."""
     if is_diagnostic(k):
-        return 1.0 / (1.0 + math.exp(-v / _GAIN_SCALE))     # v>=0 -> [0.5,1); delta 0 (no gain) = neutral 0.5
+        # Affine map of the signed delta d in [-1,1] -> [0,1]: 0.5 = neutral (no gain / not computed), 1.0 only at a
+        # full +1 gain, 0.0 at a full -1 (graph hurts). Linear so it NEVER exceeds 1, NEVER forms a sub-0 well, is
+        # monotonically beneficial to raise, and — unlike a logistic — leaves FULL headroom (a 0.5 gain sits at 0.75,
+        # not 0.99, so there is real room to improve).
+        return 0.5 + 0.5 * float(np.clip(v, -1.0, 1.0))
     return max(v, _SCORE_FLOOR)
 
 

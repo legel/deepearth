@@ -1,8 +1,8 @@
 {
-  "label": "Baseline champion: pollinator-ON latent-clade LCA, spatial holdout",
-  "config": "config: autoresearch/deepcal.yaml (poll_weight 0.1, operator latent-clade, bioclip_init) | 3090 batch 256, bf16, 8000 steps",
-  "harmonic": 0.020421,
-  "arithmetic": 0.4461,
+  "label": "Baseline: pollinator-ON latent-clade, spatial",
+  "config": "deepcal.yaml | 3090 batch 256, 8000 steps",
+  "harmonic": 0.024618043023370034,
+  "arithmetic": 0.4461463414634147,
   "scores": {
     "B19_infer_aerial_cos": 0.0,
     "B20_community_from_env_recall": 0.004,
