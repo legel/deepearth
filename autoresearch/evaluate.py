@@ -190,6 +190,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         idx = torch.tensor(source.test[c0:c0 + batch], device=device)
         values, observed, coords, nbr_coords, mani, nbrv = source.batch(idx)
         ctx = model.context(coords, nbr_coords, mani, nbrv)
+        if str(device).startswith("cuda"): torch.cuda.synchronize(device)   # force the async custom-kernel context complete before the eager eval reads it (cross-stream race; crashes only on cuda:1)
         B = len(idx); tid = values["identity"]
         obs = [n for n in names if observed_any(observed, n)]
         def infer(given, targets):
