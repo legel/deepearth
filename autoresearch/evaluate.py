@@ -534,7 +534,8 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
     if inactive:
         lines.append(f"INACTIVE ({len(inactive)} declared capabilities not produced by this eval run):")
         for b in inactive:
-            lines.append(f"  {b}")
+            why = "needs holdout: temporal (strictly-future forecast split)" if "forecast" in b else "required inputs/labels absent for this run"
+            lines.append(f"  {b:<34} {why}")
     if diags:                                                  # ablation-delta / information-gain: raw here, logistic-renormalized INTO the net (_net_value)
         lines.append("ablation-delta / information-gain benchmarks (raw; logistic-renormalized into the net, never excluded):")
         for k in sorted(diags, key=lambda k: -diags[k]):
