@@ -20,6 +20,7 @@ Scoring is the ground-truth metric for autoresearch: never tune a definition to 
 """
 from __future__ import annotations
 from typing import Dict, List
+import math
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -439,11 +440,27 @@ def is_diagnostic(k: str) -> bool:
     return k.endswith("_gain")
 
 
+_GAIN_SCALE = 0.1   # logistic scale for ablation-delta ("_gain") benchmarks in the net (see _net_value)
+
+
+def _net_value(k: str, v: float) -> float:
+    """The safe [0,1) contribution of benchmark ``k`` (normalized score ``v``) to the harmonic net. 100% of the
+    benchmarks are included -- NOTHING is excluded (rule: every benchmark exists to be measured AND optimized). A
+    plain capability metric is already in [0,1] (floored at _SCORE_FLOOR so a genuine ~0 does not nuke the mean). An
+    ablation-delta ("_gain", e.g. B56 family-graph-gain, B24 geo-information-gain) is unbounded/ can sit near 0, so a
+    logistic squash maps it to (0,1): it NEVER exceeds 1.0, NEVER forms a below-0 well, and is MONOTONICALLY beneficial
+    to drive up -- optimizing the net therefore optimizes every benchmark, deltas included, even where signal repeats."""
+    if is_diagnostic(k):
+        return 1.0 / (1.0 + math.exp(-v / _GAIN_SCALE))     # v>=0 -> [0.5,1); delta 0 (no gain) = neutral 0.5
+    return max(v, _SCORE_FLOOR)
+
+
 def net_score(raw: Dict[str, float]) -> float:
-    """North star = HARMONIC mean (power mean p=-1) of the active CAPABILITY benchmarks (diagnostics excluded, see
-    is_diagnostic). Chosen over the arithmetic mean so lifting the WEAKEST benchmark helps most and no benchmark can
-    be sacrificed for another (matches the module docstring; the old code silently used an arithmetic mean)."""
-    vals = [max(v, _SCORE_FLOOR) for k, v in normalized(raw).items() if not is_diagnostic(k)]
+    """North star = HARMONIC mean (power mean p=-1) of ALL active benchmarks -- capabilities AND ablation-deltas
+    (deltas safely renormalized by _net_value so their inclusion can only help, never nuke). Harmonic so lifting the
+    WEAKEST benchmark helps most and none can be sacrificed for another; 100% inclusion so a champion must carry the
+    entire suite, not a favoured subset."""
+    vals = [_net_value(k, v) for k, v in normalized(raw).items()]
     if not vals:
         return 0.0
     return float(len(vals) / sum(1.0 / v for v in vals))
@@ -466,15 +483,15 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
     for k in sorted(caps, key=lambda k: caps[k]):              # weakest-first: the harmonic mean's binding benchmarks lead
         lines.append(f"  {k:<34} {caps[k]:6.3f}")
     defined_caps = [b for b in BENCHMARKS if not is_diagnostic(b)]
-    lines.append(f"NET SCORE (harmonic mean of {len(caps)}/{len(defined_caps)} active capabilities): {net_score(raw):.4f}")
+    lines.append(f"NET SCORE (harmonic mean of ALL {len(normed)}/{len(BENCHMARKS)} active benchmarks, 100% incl. renormalized deltas): {net_score(raw):.4f}")
     lines.append(f"  (arithmetic mean: {arithmetic_net(raw):.4f})")
     inactive = [b for b in defined_caps if b not in caps]      # declared but not produced by THIS eval (e.g. B25/B31 need a temporal-holdout run) -- named, never silently dropped
     if inactive:
         lines.append(f"INACTIVE ({len(inactive)} declared capabilities not produced by this eval run):")
         for b in inactive:
             lines.append(f"  {b}")
-    if diags:                                                  # mechanism diagnostics, reported but NOT in the net (see is_diagnostic)
-        lines.append("diagnostics (ablation-delta / information-gain; excluded from net):")
+    if diags:                                                  # ablation-delta / information-gain: raw here, logistic-renormalized INTO the net (_net_value)
+        lines.append("ablation-delta / information-gain benchmarks (raw; logistic-renormalized into the net, never excluded):")
         for k in sorted(diags, key=lambda k: -diags[k]):
-            lines.append(f"  {k:<34} {diags[k]:6.3f}")
+            lines.append(f"  {k:<34} {diags[k]:6.3f}  (net contrib {1.0 / (1.0 + math.exp(-diags[k] / _GAIN_SCALE)):.3f})")
     return "\n".join(lines)
