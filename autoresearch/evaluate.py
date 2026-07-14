@@ -1,22 +1,17 @@
-"""The DeepCal benchmark suite (B1-B60+, climbing) and the harmonic-mean north star.
+"""The DeepCal benchmark suite and the harmonic-mean north star.
 
-A trained :class:`~deepearth.core.fusion.DeepEarth` is scored on the full benchmark suite, each a real question of the form
-"given the widely-available context U (and sometimes a ground photo), how well is a sparse target induced?" Each
-benchmark's metric is ALREADY naturally in ``[0, 1]`` (top-k accuracy, family accuracy, macro-F1, cosine similarity
-of unit embeddings, recall@k, or calibration MRR), so the score IS the raw value -- there is NO baseline/target
-remap. A hand-set target below a metric's attainable maximum is an artificial ceiling that saturates a still-
-improving benchmark at 1.0; we reject that. The single **net score** is the harmonic mean (power mean p = -1) of the
-active benchmarks, so lifting the *weakest* helps most and none can be sacrificed for another.
+A trained :class:`~deepearth.core.fusion.DeepEarth` is scored on the full suite, each benchmark asking "given the
+widely-available context U (and sometimes a ground photo), how well is a sparse target induced?" Every metric is
+already in ``[0, 1]`` (top-k accuracy, macro-F1, unit-embedding cosine, recall@k, MRR), so the score IS the raw value:
+no baseline/target remap, because a hand-set target below a metric's attainable maximum is an artificial ceiling. The
+net score is the harmonic mean (power mean p = -1) of the active benchmarks, so lifting the weakest helps most and none
+can be traded for another.
 
-Universal inputs ``U = {space-time position, climate, soil, clay, naip_rgb, naip_ir}`` (+ topo when wired) -- all
-obtainable at a point WITHOUT observing the organism. Benchmarks are computed on the held-out split (0.5-degree
-spatial blocks by default; ``holdout: temporal`` gives a strictly-future forecast split, ``holdout: phylo`` holds
-out whole families) so they measure transfer, not memorization. A benchmark whose required inputs or split are not
-present is reported as inactive (NaN) and left out of the net score.
-
-The suite realizes ``science.md`` (originally labelled A1-A16 + Q1-Q10; renumbered B1-B60+, still growing — three
-phylogenomic-ablation families, the pollinator suite, phenology seasonality/fidelity, and forecasting).
-Scoring is the ground-truth metric for autoresearch: never tune a definition to inflate a result -- improve the model.
+``U`` is everything obtainable at a point without observing the organism (space-time position, climate, soil, clay,
+NAIP, topo, chm, hydro). Benchmarks are computed on the held-out split (spatial 0.5-degree blocks by default;
+``temporal`` a strictly-future forecast split; ``phylo`` whole held-out families) so they measure transfer, not
+memorization. A benchmark whose inputs or split are absent is reported inactive and left out of the net score. Never
+tune a definition to inflate a result -- improve the model.
 """
 from __future__ import annotations
 from typing import Dict, List
@@ -43,8 +38,9 @@ def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, 
     return float(np.mean(f1s)) if f1s else float("nan")
 
 
-# The 26 benchmarks, in suite order. Each is (given-set -> target, metric). B1-B24 score on any held-out split;
-# B25 needs the temporal (forecast) split; B26 needs flowering labels. Realizes the recovered A1-A16 + Q1-Q10 plan.
+# The 62-benchmark suite (B1-B62), in suite order. Each is (given-set -> target, metric); the tag names the science.md
+# capability (A/Q) it realizes. Benchmarks whose required inputs or holdout split are absent report inactive and drop
+# out of the net score. Metrics are already in [0,1] (top-k, accuracy, macro-F1, cosine, recall@k, MRR).
 BENCHMARKS: List[str] = [
     "B1_species_from_env_top10",        # A1  U -> species (SDM), top-10 accuracy
     "B2_species_from_photo_top1",       # A2  U + ground photo -> species (FLAGSHIP), top-1
@@ -81,11 +77,22 @@ BENCHMARKS: List[str] = [
     "B39_species_dist_3km_skill",       # SDM: per-cell 3 km species-distribution skill
     "B40_species_dist_300m_skill",      # SDM: per-cell 300 m species-distribution skill
     "B49_form_trait_f1",                # trait: growth-form macro-F1
+    "B37_imagine_vision_bio_cos",       # non-vision U -> BioCLIP-2 ground-vision embedding (2nd vision channel), anomaly cosine
+    "B45_vision_bio_leave_one_out_cos", # all-but-vision_bio -> BioCLIP-2 ground-vision embedding, anomaly cosine
+    "B32_plant_type_trait_f1",          # trait: plant-type (habit) macro-F1 -- U+photo -> trait
+    "B33_growth_rate_trait_f1",         # trait: growth-rate macro-F1 -- U+photo -> trait
+    "B35_sun_trait_f1",                 # trait: sun/light-requirement macro-F1 -- U+photo -> trait
+    "B36_ease_of_care_trait_f1",        # trait: ease-of-care (horticultural niche breadth) macro-F1 -- U+photo -> trait
     "B34_lfmc_from_env",                # ecophysiology: predict a species' peak fire-season live fuel moisture
     "B42_mycorrhiza_from_env",          # biotic symbiosis: predict a plant's mycorrhizal type (FungalRoot AM/EcM/ErM/OM/NM) from env, macro-F1
     "B41_pollinator_from_species_recall",  # plant identity + env -> local pollinator set (GloBI), recall@10
     "B43_infer_hydro_cos",              # U-minus-hydro -> drainage/wind (HydroSHEDS+Winstral), cosine
+    "B44_infer_topo_cos",               # U-minus-topo -> 3DEP 1m microtopography (slope/aspect/TRI/VRM/HLI/TPI), anomaly cosine
+    "B46_infer_chm_cos",                # U-minus-chm -> NAIP-CHM 0.6m canopy height+structure, anomaly cosine
+    "B47_infer_naip_ir_cos",            # U-minus-BOTH-aerial -> NAIP-IR aerial (DINOv3-SAT), anomaly cosine
+    "B50_pollinator_from_spacetime_recall",  # bare location -> pollinators (habitat -> pollinator via geography), recall@10
     "B51_pollinator_from_env_recall",   # env only -> pollinators (interaction from habitat), recall@10
+    "B48_pollinator_from_photo_only_recall", # ground photo only -> pollinators, recall@10
     "B52_pollinator_from_photo_recall", # env + ground photo -> pollinators, recall@10
     "B53_pollinator_calibration_mrr",   # pollinator posterior calibration, mean reciprocal rank
     "B54_pollinator_dist_kl",           # predicted vs true pollinator frequency distribution, exp(-KL)
@@ -95,6 +102,7 @@ BENCHMARKS: List[str] = [
     "B58_lfmc_phylo_graph_gain",        # ablation-delta (ecophysiology family): LFMC-correlation gained from the species-graph refinement
     "B59_pollinator_phylo_graph_gain",  # ablation-delta (interactions family): pollinator-recall gained from the species-graph refinement
     "B60_community_phylo_graph_gain",   # ablation-delta (niche/community family): env->community recall gained from the species-graph refinement
+    "B61_trait_phylo_graph_gain",       # ablation-delta (trait family): trait macro-F1 gained from the species-graph refinement (traits are phylo-conserved)
     "B62_mycorrhiza_phylo_graph_gain",  # ablation-delta (symbiosis family): mycorrhiza macro-F1 gained from the species-graph refinement (symbiosis is phylo-conserved)
 ]
 
@@ -126,6 +134,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         a = acc.setdefault(key, [0.0, 0.0]); a[0] += float(s); a[1] += n
     # trait macro-F1 needs the full pred/target/observed vectors gathered per preset
     trc = {lab: {t: ([], [], []) for t in traits} for lab in ("photo_env", "photo", "loo")}
+    trc_abl = {t: ([], [], []) for t in traits}   # B61: U+photo traits with the species graph ablated (rule 27 trait family)
     RK = 10
     community_cap = 6 * batch                              # recall@k is O(K*classes); cap to the first few batches for speed
 
@@ -141,25 +150,32 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         return (fam[logits.argmax(-1)] == fam[target]).float().sum().item()
     def cos_sum(pred, tgt):
         return F.cosine_similarity(pred.float(), tgt.float(), dim=-1).sum().item()
-    # Anomaly (mean-centered) cosine for reconstruction benchmarks. Raw cosine has a GAMEABLE floor: because a
-    # modality's embeddings share a positive mean direction (measured floors: soil 0.87, clay 0.84, topo/chm 0.93-0.95,
-    # hydro 0.69, vision 0.35), a constant mean prediction already scores near 1. Subtracting the modality's TRAIN mean
-    # measures only the observation-specific deviation, so a mean prediction scores ~0 and the metric has honest range.
+    # Anomaly (mean-centered) cosine for reconstruction benchmarks. Raw cosine has a gameable floor: a modality's
+    # embeddings share a positive mean direction, so a constant mean prediction already scores near 1. Subtracting the
+    # modality's TRAIN mean measures only the observation-specific deviation -- a mean prediction scores ~0, honest range.
+    torch.cuda.empty_cache()                                # release training-time cached memory before the eval gathers
     _tr = source.train
     def _train_mean(v):
+        # Chunk the GATHER, not just the sum: source.phylo[cls[_tr]] / vals[_tr] would materialize the full
+        # [n_train, dim] tensor first and OOM on 24GB after training; gathering per chunk keeps it bounded.
         if v in ("vision_dino", "vision_bio"):
-            X = (source.dino if v == "vision_dino" else source.bio)[_tr]
+            base, valid = (source.dino if v == "vision_dino" else source.bio), None
         elif v == "phylo":
-            X = source.phylo[source.cls[_tr]]
+            base, valid = None, None                        # gathered via source.phylo[source.cls[...]]
         elif v in getattr(source, "extra", {}):
-            vals, have, _ = source.extra[v]; m = have[_tr].bool(); X = vals[_tr][m]
+            base, valid, _ = source.extra[v]
         else:
             return None
-        if not len(X): return None
-        acc = torch.zeros(X.shape[1], dtype=torch.float32, device=X.device)   # chunked sum: never materialize the full fp32 gather (OOM-safe on 24GB under temporal/phylo holdout)
-        for i in range(0, len(X), 50000): acc += X[i:i + 50000].float().sum(0)
-        return acc / len(X)
-    CMU = {v: _train_mean(v) for v in ("vision_dino", "vision_bio", "phylo", "clay", "soil", "climate", "hydro", "naip_rgb")}
+        acc, n = None, 0
+        for i in range(0, len(_tr), 50000):
+            ix = _tr[i:i + 50000]
+            Xc = (source.phylo[source.cls[ix]] if v == "phylo" else base[ix]).float()
+            if valid is not None:
+                Xc = Xc[valid[ix].bool()]
+            if len(Xc):
+                s = Xc.sum(0); acc = s if acc is None else acc + s; n += len(Xc)
+        return acc / n if n else None
+    CMU = {v: _train_mean(v) for v in ("vision_dino", "vision_bio", "phylo", "clay", "soil", "climate", "hydro", "naip_rgb", "topo", "chm", "naip_ir")}
     def ccos_sum(pred, tgt, v):                            # mean-centered cosine (anomaly cosine); falls back to raw if no mean
         mu = CMU.get(v)
         if mu is None: return cos_sum(pred, tgt)
@@ -224,9 +240,8 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                     L_comm = infer(U, ["community"])["community"]   # dedicated community head (falls back to identity posterior if absent)
                     pm = torch.softmax(L_comm, -1).detach().cpu().numpy(); gids = source.gbifID[idx.detach().cpu().numpy()]
                     # KL SKILL SCORE vs the uniform-community reference: 1 - KL(p‖q)/KL(p‖uniform), clipped [0,1].
-                    # A proper score alone (exp(-KL)) has a high, gameable floor — a no-information UNIFORM prediction
-                    # scores 0.83-0.95 because local abundances are only mildly skewed. The skill score pins no-skill
-                    # (uniform) to 0 and perfect to 1, so broadness can't win and the metric has full dynamic range.
+                    # exp(-KL) alone has a high gameable floor (a uniform prediction scores well when abundances are only
+                    # mildly skewed); the skill score pins no-skill (uniform) to 0 and perfect to 1 for full dynamic range.
                     for sc, key in (("3km", "B39_species_dist_3km_skill"), ("300m", "B40_species_dist_300m_skill"), ("30m", "B29_species_dist_30m_skill")):
                         ix, fq = sdist["z"]["idx_" + sc], sdist["z"]["frq_" + sc]; s_sk = 0.0; nk = 0
                         for b, g in enumerate(gids):
@@ -250,6 +265,12 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 add("B9_phylo_from_photo_cos", ccos_sum(P["phylo"], values["phylo"], "phylo"), B)
             for t in traits:
                 a, b, o = trc["photo_env"][t]; a.append(P[t].argmax(-1).cpu()); b.append(values[t].cpu()); o.append(observed[t].cpu())
+            if traits and getattr(model, "species_graph", None) is not None:   # B61: same U+photo traits, species graph ablated
+                model._ablate_species = True
+                Pa = infer(U + vision, ["identity"] + traits)
+                model._ablate_species = False
+                for t in traits:
+                    a, b, o = trc_abl[t]; a.append(Pa[t].argmax(-1).cpu()); b.append(values[t].cpu()); o.append(observed[t].cpu())
             Pv = infer(vision, ["identity"] + traits)     # photo-only
             add("B4_species_from_photo_only_top1", topk_hit(Pv["identity"], tid, 1), B)
             for t in traits:
@@ -279,12 +300,18 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             add("B14_vision_leave_one_out_cos", ccos_sum(infer([n for n in names if n != "vision_dino"], ["vision_dino"])["vision_dino"], values["vision_dino"], "vision_dino"), B)
             if naip:
                 add("B15_vision_from_aerial_cos", ccos_sum(infer(naip, ["vision_dino"])["vision_dino"], values["vision_dino"], "vision_dino"), B)
+        if "vision_bio" in have:                               # B37/B45: the 2nd ground-vision channel (BioCLIP-2) — imagine from non-vision U, and leave-one-out (parallels B13/B14)
+            nonvis = [n for n in obs if n not in ("vision_dino", "vision_bio")]
+            add("B37_imagine_vision_bio_cos", ccos_sum(infer(nonvis, ["vision_bio"])["vision_bio"], values["vision_bio"], "vision_bio"), B)
+            add("B45_vision_bio_leave_one_out_cos", ccos_sum(infer([n for n in names if n != "vision_bio"], ["vision_bio"])["vision_bio"], values["vision_bio"], "vision_bio"), B)
 
         # ---- dense environmental field: reconstruct each modality from the rest of U (measure-everything) ----
         for key, tv in (("B16_infer_clay_cos", "clay"), ("B17_infer_soil_cos", "soil"), ("B18_infer_climate_cos", "climate"),
-                        ("B43_infer_hydro_cos", "hydro")):
+                        ("B43_infer_hydro_cos", "hydro"), ("B44_infer_topo_cos", "topo"), ("B46_infer_chm_cos", "chm")):
             if tv in have:
                 add(key, ccos_sum(infer([n for n in U if n != tv], [tv])[tv], values[tv], tv), B)
+        if "naip_ir" in have:                                  # B47: infer NAIP-IR from U minus BOTH aerial channels (like B19, so the correlated RGB tile can't leak it)
+            add("B47_infer_naip_ir_cos", ccos_sum(infer([n for n in U if n not in naip], ["naip_ir"])["naip_ir"], values["naip_ir"], "naip_ir"), B)
         if naip:
             add("B19_infer_aerial_cos", ccos_sum(infer([n for n in U if n not in naip], ["naip_rgb"])["naip_rgb"], values["naip_rgb"], "naip_rgb"), B)
 
@@ -323,12 +350,14 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 Lp = infer(["identity"] + U, ["pollinator"])["pollinator"]           # plant identity + env -> pollinators
                 add("B41_pollinator_from_species_recall", recall_sum(Lp[vi], tset[vi]), nv)
                 add("B51_pollinator_from_env_recall", recall_sum(infer(U, ["pollinator"])["pollinator"][vi], tset[vi]), nv)
+                add("B50_pollinator_from_spacetime_recall", recall_sum(infer([], ["pollinator"])["pollinator"][vi], tset[vi]), nv)   # pollinators from bare location (habitat -> pollinator via geography)
                 if getattr(model, "species_graph", None) is not None:   # B59: env->pollinator recall with the species graph ablated
                     model._ablate_species = True
                     add("_B51_ablated", recall_sum(infer(U, ["pollinator"])["pollinator"][vi], tset[vi]), nv)
                     model._ablate_species = False
                 if vision:
                     add("B52_pollinator_from_photo_recall", recall_sum(infer(U + vision, ["pollinator"])["pollinator"][vi], tset[vi]), nv)
+                    add("B48_pollinator_from_photo_only_recall", recall_sum(infer(vision, ["pollinator"])["pollinator"][vi], tset[vi]), nv)   # pollinators from the ground photo alone (no env)
                 top_true = pidx[torch.arange(B, device=device), pfrq.argmax(1)]      # most-frequent pollinator per plant
                 rank = (Lp.argsort(-1, descending=True) == top_true[:, None]).float().argmax(-1)
                 add("B53_pollinator_calibration_mrr", (1.0 / (rank.float() + 1))[vi].sum().item(), nv)
@@ -414,6 +443,12 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         if "water" in traits and "soil_drainage" in traits:
             out["B38_water_soil_regime_f1"] = float(np.nanmean([_tf1("water"), _tf1("soil_drainage")]))
         if "form" in traits: out["B49_form_trait_f1"] = _tf1("form")
+        for tname, key in (("plant_type", "B32_plant_type_trait_f1"), ("growth_rate", "B33_growth_rate_trait_f1"),
+                           ("sun", "B35_sun_trait_f1"), ("ease_of_care", "B36_ease_of_care_trait_f1")):   # per-trait F1 for the traits without their own benchmark (reuse the trait head)
+            if tname in traits: out[key] = _tf1(tname)
+        if "B10_traits_from_photo_env_f1" in out and all(trc_abl[t][0] for t in traits):   # B61: species-graph contribution to trait prediction (traits are phylo-conserved)
+            f1a = float(np.nanmean([_macro_f1(torch.cat(trc_abl[t][0]), torch.cat(trc_abl[t][1]), torch.cat(trc_abl[t][2]), trait_nc[t]) for t in traits]))
+            if not np.isnan(f1a): out["B61_trait_phylo_graph_gain"] = max(0.0, out["B10_traits_from_photo_env_f1"] - f1a)
     if "B2_species_from_photo_top1" in out and "B1_species_from_env_top10" in out:
         out["B24_geo_information_gain"] = max(0.0, out["B2_species_from_photo_top1"] - out["B1_species_from_env_top10"])
     return out

@@ -209,12 +209,12 @@ class OrnsteinUhlenbeckAttention(nn.Module):
         self.n_heads = n_heads; self.d_head = d_model // n_heads
         self.q = nn.Linear(d_model, d_model); self.k = nn.Linear(d_model, d_model)
         self.v = nn.Linear(d_model, d_model); self.o = nn.Linear(d_model, d_model)
-        # alpha_h = softplus(log_rate). Init ~2 (not 0): at rate 0.69 the phylo prior is near-inert (within/across ratio
-        # only ~1.3x over 2141 species); a stronger start concentrates attention on relatives from the start (learnable).
+        # alpha_h = softplus(log_rate). Init > 0 (not 0): at zero rate the phylo prior is near-inert; a stronger start
+        # concentrates attention on relatives from the start (learnable).
         self.log_rate = nn.Parameter(torch.full((n_heads,), 1.85))
         self.norm = nn.LayerNorm(d_model)
-        # FlexAttention path folds the OU rate into 3 extra q/k dims instead of a differentiable score_mod (15-24x slower:
-        # weak backward through a captured tensor). Factorization q+.k+ = q.k - r*(p_i - p_j)^2 is an RBF bias on ordinal
+        # FlexAttention path folds the OU rate into 3 extra q/k dims instead of a differentiable score_mod (slower: weak
+        # backward through a captured tensor). Factorization q+.k+ = q.k - r*(p_i - p_j)^2 is an RBF bias on ordinal
         # clade-order position; head padded to the next power of two for the kernel.
         self.flex_rate = nn.Parameter(torch.full((n_heads,), 0.1))
         aug = self.d_head + 3
@@ -305,9 +305,9 @@ class TreeMessagePassing(nn.Module):
     history, and by descent-with-modification that is what makes traits, phenology, and ecological function
     phylogenetically conserved. Propagating state along the real edges — internal nodes carrying reconstructed ancestral
     state, branch lengths gating how much signal survives each split — is the principled way to share information across
-    species, above all for rare/held-out clades. A GNN over the phylogeny is the direction for continued work; cf.
-    GraphCast (Science 2023), GenCast (Nature 2025) — phylogeny as the mesh, ancestral state as the propagated field.
-    :class:`OrnsteinUhlenbeckAttention` is an efficient approximation, not the destination. See ``autoresearch/science.md``.
+    species, above all for rare/held-out clades. A GNN over the phylogeny (cf. GraphCast, Science 2023; GenCast,
+    Nature 2025 — phylogeny as the mesh, ancestral state as the propagated field); :class:`OrnsteinUhlenbeckAttention`
+    is an efficient approximation. See ``autoresearch/science.md``.
 
     Args: ``n_species`` (tips), ``d_model`` (width), ``tree`` (buffers from :func:`build_tree_buffers`), ``n_layers``
     (upward+downward sweeps, each a :class:`_TreeRound`; more sweeps propagate further), ``hidden`` (message-MLP width).
@@ -359,7 +359,7 @@ class LatentCladeAttention(nn.Module):
     clade latents. Out-of-tree species carry no tree position; they **soft-attach** to those clade latents by multi-head
     cross-attention keyed on the frozen BioCLIP-2.5 prior (the ISAB "distribute" step, Lee et al. 2019) — so a novel
     species acquires a phylogenetically-consistent posterior position that propagates from its relatives (rules 25-27),
-    unifying the in-tree (``tree``) and out-of-tree (previously ``ou-attention`` shadow) paths in one operator.
+    unifying the in-tree (``tree``) and out-of-tree (the ``ou-attention`` shadow) paths in one operator.
 
     Args: ``n_species`` (full vocab), ``d_model``; ``tree`` buffers (:func:`build_tree_buffers`, built over the in-tree
     tips only); ``tip_row`` ``[n_tips]`` = the vocab row of each tree tip, in the tip order used to build ``tree``.
@@ -416,7 +416,7 @@ class SpeciesGraph(nn.Module):
         self.operator = operator
         # Species seed (science.md rule 26): decode a FROZEN BioCLIP-2 text prior through a small learned probe, so the
         # phylo/ecological geometry of the text space is preserved and the probe *discovers* structure in it; a zero-init
-        # per-species residual keeps congeners separable. No text -> a plain discriminative free table (legacy path).
+        # per-species residual keeps congeners separable. No text -> a plain discriminative free table.
         if species_text is not None:
             self.register_buffer("species_text", species_text)             # [N, text_dim], frozen (requires_grad False)
             self.probe = nn.Sequential(nn.Linear(species_text.shape[1], d_model), nn.LayerNorm(d_model),

@@ -339,8 +339,8 @@ class Earth4D(nn.Module):
         if not enable_absolute:
             self.xyz_encoder = self.xyt_encoder = self.yzt_encoder = self.xzt_encoder = None
 
-        # RELATIVE (translation-equivariant): encode the OFFSET between two observations, so a pattern learned at one
-        # place/time applies everywhere. Window fitted to the offset distribution; four 3D projections, per-axis res.
+        # Relative (translation-equivariant) channel: encode the OFFSET between two observations so a learned
+        # pattern transfers across absolute position/time. Window fits the offset distribution; four 3D projections.
         self.enable_relative = enable_relative
         if enable_relative:
             self._rel_projections = ((0, 1, 2), (0, 1, 3), (1, 2, 3), (0, 2, 3))    # axes: 0=N,1=E,2=elev,3=time
@@ -356,8 +356,8 @@ class Earth4D(nn.Module):
                 for axes in self._rel_projections)
             self.relative_output_dim = 4 * relative_levels * features_per_level
 
-        # learnable per-axis frequency (scale + center), tanh-bounded to [-0.9, 0.9]: picks each axis's effective
-        # resolution range. Axes are (N/x, E/y, elev/z, time); initialized to identity.
+        # Learnable per-axis frequency (scale + center) selecting each axis's effective resolution range;
+        # tanh-bounded to [-0.9, 0.9]. Axes are (N/x, E/y, elev/z, time); initialized to identity.
         self.freq_log_scale = nn.Parameter(torch.full((4,), float(freq_log_scale_init)))
         self.freq_center = nn.Parameter(torch.zeros(4))
 
