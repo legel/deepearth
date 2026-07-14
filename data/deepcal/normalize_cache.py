@@ -28,8 +28,8 @@ MODALITIES = {
     "clay":        ("gbif_clay_tokens.npz", "clay", "clay_year", "has_clay"),
     "elev":        ("gbif_elev.npz", "elev", "src", None),
     "soil":        ("gbif_soil_tokens.npz", "soil", None, "has_soil"),
-    "topo":        ("gbif_topo_tokens.npz", "topo", None, "has_topo"),
-    "hydro":       ("gbif_hydro_tokens.npz", "hydro", None, "has_hydro"),
+    "topo":        ("gbif_topo_tokens.npz", "topo", "topo_scene", "has_topo"),    # scene = 3DEP 1m tile filename
+    "hydro":       ("gbif_hydro_tokens.npz", "hydro", "hydro_scene", "has_hydro"),
     "chm":         ("gbif_chm_tokens.npz", "chm", None, "has_chm"),
 }
 
@@ -39,7 +39,10 @@ def _load_modality(cache, glob_rel, vkey, pkey, mkey):
     files = sorted(glob.glob(os.path.join(cache, glob_rel)))
     gids, vals, provs, valids = [], [], [], []
     for f in files:
-        z = np.load(f, allow_pickle=True)
+        try:
+            z = np.load(f, allow_pickle=True)
+        except Exception as e:                                          # skip a truncated/mid-build shard, don't crash
+            print(f"    skip unreadable {os.path.basename(f)}: {type(e).__name__}"); continue
         if vkey not in z:
             continue
         gids.append(z["gbifID"].astype(np.int64))
@@ -99,7 +102,7 @@ def main():
         gid, val, prov, valid = loaded
         gid, val = gid[valid], val[valid]                             # only real values get a row
         prov = prov[valid] if prov is not None else None
-        uniq, inv = _dedup(val)
+        uniq, inv, first = _dedup(val)                                # first[k] = index of the 1st obs mapping to unique row k
         rows = np.array([pos.get(int(g), -1) for g in gid])
         ok = rows >= 0
         col[rows[ok]] = inv[ok]
@@ -110,10 +113,8 @@ def main():
               f"{before/1e6:7.1f}MB -> {after/1e6:6.1f}MB  ({before/max(after,1):4.1f}x)")
         if not a.report:
             save = {"values": uniq.astype(np.float32)}
-            if prov is not None:
-                # one provenance id per unique row (first obs mapping to it)
-                pu = np.empty(len(uniq), object); pu[inv[ok] if False else inv] = prov if len(prov) == len(inv) else prov
-                save["provenance"] = np.array([prov[np.where(inv == k)[0][0]] for k in range(len(uniq))], object)
+            if prov is not None:                                      # one provenance id per unique row (its first obs)
+                save["provenance"] = prov[first]
             np.savez_compressed(os.path.join(out, f"{name}_values.npz"), **save)
 
     print(f"\nTOTAL value bytes: {total_before/1e9:.2f} GB -> {total_after/1e9:.2f} GB  "
