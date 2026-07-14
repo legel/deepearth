@@ -148,6 +148,22 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     simplistic structure or is fully implied by a grossly simplified heuristic. For each domain: research the latest
     SOTA model, **download it, run it, validate it against real data**, and verify that every dataset, encoder, model,
     and architecture is directly based upon the best published work of scientists.
+29. **Refine the species graph through the phylogeny's own internal nodes — the exact tree-GP factorization, not a
+    kernel approximation.** Trait evolution on a dated tree is an Ornstein-Uhlenbeck Gaussian process whose covariance
+    `Cov(i,j) = (σ²/2α)·e^{-α·d(i,j)}` decays with cophenetic distance (Hansen 1997; Jones & Moriarty 2013). A dense or
+    top-k cophenetic-distance attention encodes the right *kernel* but the wrong *operator* (a normalized kernel
+    smoother, not the inverse-covariance the GP posterior requires) over a needlessly dense `N×N` structure. The tree is
+    a Gaussian Markov random field: conditioning on ancestral states renders the tips conditionally independent, so the
+    **internal clade nodes are the *exact* Markov blanket / inducing set** — not a Nyström approximation — and two-pass
+    (post-order + pre-order) message passing computes the exact posterior in **O(N)** (Felsenstein 1973; Ho & Ané 2014;
+    Ji et al. 2020; Karcher & Ané 2025). This is Multi-head Latent Attention (DeepSeek-V2) applied along the
+    *phylogenetic* axis rather than the head axis: the shared low-rank latent is the **ancestral-clade state shared by
+    all its descendant species**, and the branch-length OU contraction `e^{-α·ℓ}` is the absorbed up-projection.
+    Species **not** in the tree carry no position; they must soft-attach to the refined clade latents by cross-attention
+    keyed on the frozen BioCLIP-2.5 prior (the ISAB "distribute" step; rules 25–26), so a novel species acquires a
+    phylogenetically-consistent posterior from its relatives — unifying the in-tree and out-of-tree paths in one
+    operator (`LatentCladeAttention`). The refinement operator must be this exact, `O(N)`, out-of-tree-complete
+    construction; a dense/top-k attention is an interim approximation to be replaced, never the champion.
 
 ## References
 

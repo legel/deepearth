@@ -172,6 +172,83 @@ the method. Cross-references to design rules live in `autoresearch/science.md`.
   [10.1038/s41586-024-08252-9](https://doi.org/10.1038/s41586-024-08252-9).
 - **[A8] [reference]** Multimodal Deep Boltzmann Machines — Srivastava & Salakhutdinov (2014). *JMLR* 15:2949–2980.
 
+### 4.1 Latent Clade Attention (LCA)
+Provenance for the tree-structured latent-attention operator. LCA places its inducing points at the tree's internal
+(clade) nodes and runs a two-pass (post-order up / pre-order down) message pass, so the latent bottleneck computes the
+**exact** Ornstein–Uhlenbeck-on-tree Gaussian-process posterior in *O(N)*. Two theory legs (phylogenetic GP/OU; the
+attention/inducing-point stack) meet at the identity "internal clade nodes = inducing points = Markov blanket of a tree
+GP." See also **[T29]** (Butler & King, OU-on-trees).
+
+**Phylogenetic Gaussian process / OU theory — what the operator computes.**
+- **[A9] [in use]** OU comparative model — Hansen (1997). "Stabilizing selection and the comparative analysis of
+  adaptation." *Evolution* 51:1341–1351. DOI
+  [10.1111/j.1558-5646.1997.tb01457.x](https://doi.org/10.1111/j.1558-5646.1997.tb01457.x). Stationary variance
+  σ²/2α; LCA's branch-length decay e^{−α·ℓ} **is** the OU actualization along each edge.
+- **[A10] [reference]** Independent contrasts / the comparative method — Felsenstein (1985). "Phylogenies and the
+  comparative method." *Am. Nat.* 125:1–15. DOI [10.1086/284325](https://doi.org/10.1086/284325). The
+  phylogenetic-pseudoreplication problem that the tree operator's V⁻¹ structure corrects.
+- **[A11] [in use]** Continuous-character pruning (O(N) post-order likelihood) — Felsenstein (1973).
+  "Maximum-likelihood estimation of evolutionary trees from continuous characters." *Am. J. Hum. Genet.* 25:471–492.
+  (Classic; no DOI — PMCID PMC1762641.) The post-order (up) sweep LCA implements.
+- **[A12] [in use]** Phylogenetic Gaussian-process regression — Jones & Moriarty (2013). "Evolutionary inference for
+  function-valued traits: Gaussian process regression on phylogenies." *J. R. Soc. Interface* 10:20120616. DOI
+  [10.1098/rsif.2012.0616](https://doi.org/10.1098/rsif.2012.0616). arXiv:[1004.4668](https://arxiv.org/abs/1004.4668).
+  OU kernel Σ_T = K·exp(−θ₂·d_T); "conditional on common ancestors, traits are independent" (the Markov blanket); "the
+  only Markovian Gaussian processes are OU." **The** key theoretical citation for LCA.
+- **[A13] [in use]** Linear-time trait evolution (the cost) — Ho & Ané (2014). "A linear-time algorithm for Gaussian and
+  non-Gaussian trait evolution models." *Syst. Biol.* 63(3):397–408. DOI
+  [10.1093/sysbio/syu005](https://doi.org/10.1093/sysbio/syu005). O(N) det(V) and quadratic forms uᵀV⁻¹w via the tree
+  "3-point structure," with no N×N matrix. **The** cost citation (phylolm) for LCA's O(N) claim.
+- **[A14] [in use]** O(N) gradient on trees — Ji, Zhang, Holbrook, … Suchard (2020). "Gradients do grow on trees: a
+  linear-time O(N)-dimensional gradient for statistical phylogenetics." *Mol. Biol. Evol.* 37(10):3047–3060. DOI
+  [10.1093/molbev/msaa130](https://doi.org/10.1093/molbev/msaa130).
+  arXiv:[1905.12146](https://arxiv.org/abs/1905.12146). The pre-order pass gives the O(N) gradient; LCA's pre-order
+  (down) sweep.
+- **[A15] [in use]** BM/OU as linear-Gaussian graphical models — Karcher, Ané et al. (2025). "Leveraging graphical model
+  techniques to study evolution on phylogenetic networks." *Phil. Trans. R. Soc. B* 380:20230310. DOI
+  [10.1098/rstb.2023.0310](https://doi.org/10.1098/rstb.2023.0310).
+  arXiv:[2405.09327](https://arxiv.org/abs/2405.09327). Pruning = belief propagation (exact on trees); ancestral nodes
+  as Markov blanket; the actualization Xᵥ│X_pa = N(e^{−ℓA}X_pa, V). Justifies the message-passing = exact-posterior claim.
+
+**Attention / inducing-point / latent bottleneck — how the operator is built.**
+- **[A16] [reference]** Base attention — Vaswani et al. (2017). "Attention Is All You Need." *NeurIPS*.
+  arXiv:[1706.03762](https://arxiv.org/abs/1706.03762). The scaled dot-product attention LCA specializes.
+- **[A17] [in use]** Inducing-point set attention — Lee, Lee, Kim, Kosiorek, Choi & Teh (2019). "Set Transformer: A
+  Framework for Attention-based Permutation-Invariant Neural Networks." *ICML*.
+  arXiv:[1810.00825](https://arxiv.org/abs/1810.00825). ISAB_m(X)=MAB(X,MAB(I,X)), inducing points from sparse-GP
+  theory, O(N·m). **The** inducing-point citation; LCA's inducing points are the tree's internal clade nodes.
+- **[A18] [reference]** Perceiver — Jaegle et al. (2021). "Perceiver: General Perception with Iterative Attention."
+  *ICML*. arXiv:[2103.03206](https://arxiv.org/abs/2103.03206). Cross-attend N inputs → L latents → decode; the
+  encode-process-decode latent bottleneck. (Perceiver IO, the decode side, is **[A2]**.)
+- **[A19] [in use]** Multi-head Latent Attention (MLA) — DeepSeek-AI (2024). "DeepSeek-V2: A Strong, Economical, and
+  Efficient Mixture-of-Experts Language Model." arXiv:[2405.04434](https://arxiv.org/abs/2405.04434). Low-rank joint KV
+  compression + absorption (W_UK folded into W_UQ). **The** MLA citation: the clade latent is the shared low-rank
+  latent, and the branch-length transform is the absorbed up-projection.
+- **[A20] [reference]** Low-rank / landmark attention — Xiong et al. (2021). "Nyströmformer: A Nyström-based Algorithm
+  for Approximating Self-Attention." arXiv:[2102.03902](https://arxiv.org/abs/2102.03902); Wang et al. (2020).
+  "Linformer: Self-Attention with Linear Complexity." arXiv:[2006.04768](https://arxiv.org/abs/2006.04768). The Nyström
+  view K ≈ K_Nm K_mm⁻¹ K_mN that the clade bottleneck instantiates with tree-placed landmarks.
+- **[A21] [reference]** Structured (placed) inducing points beat free-learned — Wu, Neiswanger, Zheng, Ravikumar &
+  Wilson (2021). "Scaling Gaussian Processes with Derivative Information Using Variational Inference" (HIP-GP).
+  arXiv:[2103.00393](https://arxiv.org/abs/2103.00393). Justifies placing inducing points at tree internal nodes rather
+  than free-learning them.
+
+**Inductive placement — out-of-tree species.**
+- **[A22] [reference]** Hyperbolic tree embedding — Nickel & Kiela (2017). "Poincaré Embeddings for Learning
+  Hierarchical Representations." *NeurIPS*. arXiv:[1705.08039](https://arxiv.org/abs/1705.08039). Reference for
+  out-of-tree attachment of species absent from the fixed phylogeny.
+- **[A23] [reference]** Phylogenetic placement — Berger, Krompass & Stamatakis (2011). "Performance, accuracy, and web
+  server for evolutionary placement of short sequence reads under maximum likelihood." *Syst. Biol.* 60(3):291–302. DOI
+  [10.1093/sysbio/syr010](https://doi.org/10.1093/sysbio/syr010); Matsen, Kodner & Armbrust (2010). "pplacer:
+  linear time maximum-likelihood and Bayesian phylogenetic placement of sequences onto a fixed reference tree." *BMC
+  Bioinformatics* 11:538. DOI [10.1186/1471-2105-11-538](https://doi.org/10.1186/1471-2105-11-538). Reference for
+  grafting out-of-tree species onto the LCA inducing-point set.
+
+**GNN message-passing analogy.**
+- **[A24] [reference]** Encode-process-decode mesh message passing as the architectural analogy for LCA's two-pass
+  message passing on the phylogeny (mesh = tree) — GraphCast (**[A6]**, Lam et al. 2023) and GenCast (**[A7]**, Price et
+  al. 2025).
+
 ---
 
 *Maintenance: when a dataset/model/tree is integrated, flip its tag to **[in use]** and record the exact acquisition
