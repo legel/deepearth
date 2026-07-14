@@ -58,7 +58,9 @@ def train_and_evaluate(config, device):
                    species_layers=sg.get("layers", 2), species_heads=sg.get("heads", 4),
                    species_top_k=sg.get("top_k"), species_flex=sg.get("flex", False),
                    species_operator=sg.get("operator", "ou-attention"),
-                   species_tree=source.tree if sg.get("operator") == "tree" else None,
+                   species_tree=source.tree if sg.get("operator") == "tree"
+                                else (source.lca_tree if sg.get("operator") == "latent-clade" else None),
+                   species_tip_row=source.lca_tip_row if sg.get("operator") == "latent-clade" else None,
                    species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None) if sg else {}
     if sg and sg.get("operator", "ou-attention") != "tree":   # real DATED plant patristic (rules 7-12): replaces the embedding shadow for the ~65% tree-covered species
         cdir0 = Path(d["cache_dir"]); cdir0 = cdir0 if cdir0.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
@@ -133,8 +135,13 @@ def train_and_evaluate(config, device):
         model.enable_sparse_hash(source.coords, lr=lr0, weight_decay=wd0)
         freq_ids |= {id(p) for p in model.absolute_hash_params()}
     rest_params = [p for p in model.parameters() if id(p) not in freq_ids]
-    opt = torch.optim.AdamW([{"params": rest_params, "lr": lr0},
-                             {"params": freq_params, "lr": freq_lr}], weight_decay=wd0, fused=True)
+    groups = [{"params": rest_params, "lr": lr0}, {"params": freq_params, "lr": freq_lr}]
+    if t.get("adam8bit", False) or os.environ.get("DEEPCAL_ADAM8BIT"):    # 8-bit Adam (bitsandbytes): optimizer state 4->1 byte/moment, ~4.8GB saved on the 795M model; accuracy-matched (arXiv:2110.02861). For 24GB collaborator GPUs; the H200 champion keeps fused AdamW.
+        from bitsandbytes.optim import AdamW8bit
+        opt = AdamW8bit(groups, weight_decay=wd0)
+        print("optimizer: 8-bit AdamW (bitsandbytes) — for 24GB-class GPUs", flush=True)
+    else:
+        opt = torch.optim.AdamW(groups, weight_decay=wd0, fused=True)
     steps = t["steps"]; batch = t.get("batch", 512)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
     bf16 = t.get("precision", "fp32") == "bf16"

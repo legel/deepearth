@@ -153,6 +153,7 @@ class California:
                         if (rates >= 0).sum() >= 3: peak[c] = int(np.argmax(rates))
                 self.species_peak_month = torch.tensor(peak, device=dev)
         self.tree = self._load_tree(cache)                 # the dated phylogeny as message-passing buffers (or None)
+        self.lca_tree, self.lca_tip_row = self._load_tree_lca(cache)   # in-tree-only buffers + tip_row for latent-clade
         if prepared:                                       # persist the assembled dataset for instant reload
             self._save_prepared(prepared)
 
@@ -167,6 +168,7 @@ class California:
             if hasattr(self, k):
                 v = getattr(self, k); blob[k] = v.cpu() if torch.is_tensor(v) else v
         blob["tree"] = self.tree
+        blob["lca_tree"] = self.lca_tree; blob["lca_tip_row"] = self.lca_tip_row
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         torch.save(blob, path)
 
@@ -175,11 +177,13 @@ class California:
         blob = torch.load(path, map_location="cpu", weights_only=False)
         self.device = device
         for k, v in blob.items():
-            if k in ("extra", "tree"):
+            if k in ("extra", "tree", "lca_tree", "lca_tip_row"):
                 continue
             setattr(self, k, v.to(device) if torch.is_tensor(v) else v)
         self.extra = {n: (t.to(device), h.to(device), d) for n, (t, h, d) in blob["extra"].items()}
         self.tree = blob["tree"]
+        self.lca_tree = blob.get("lca_tree")
+        self.lca_tip_row = blob["lca_tip_row"].to(device) if torch.is_tensor(blob.get("lca_tip_row")) else None
         self.train_index = torch.tensor(self.train, device=device)     # derived: train row indices as a device tensor
 
     @staticmethod
@@ -235,6 +239,22 @@ class California:
                                      else (m + 0.5) / 12 for m in range(12)], np.float32)
         self._n_dated = int(valid.sum())
         return tnorm
+
+    def _load_tree_lca(self, cache):
+        """Tree buffers over the IN-TREE tips only, plus ``tip_row`` (species-local vocab index of each tip, in the
+        same order as the tree's tips) — for ``operator='latent-clade'`` (rule 29). Out-of-tree species (synthetic
+        labels absent from the Newick) are filtered out here; the operator covers them by clade cross-attention."""
+        nwk = cache / "ca_subtree.dated.nwk"
+        if not nwk.exists():
+            return None, None
+        import re, torch as _t
+        from deepearth.encoders.biological.phylogenomic import build_tree_buffers
+        toks = set(re.findall(r"[^(),:;\s]+", open(nwk).read()))
+        pairs = [(i, tl) for i, tl in enumerate(self._tip_labels) if tl in toks]   # (species-local idx, tip_label)
+        if not pairs:
+            return None, None
+        tree = build_tree_buffers(str(nwk), [tl for _, tl in pairs])
+        return tree, _t.tensor([i for i, _ in pairs], dtype=_t.long)
 
     def _load_tree(self, cache):
         """Parse the dated Newick tree aligned to the model's species (leaves in species order) for message passing;
