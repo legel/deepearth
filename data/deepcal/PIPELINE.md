@@ -35,10 +35,12 @@ Committed, audited builders regenerate most modalities (cosine/byte-checked vs t
 env priors (`env_priors/build_*.py`), NAIP (`build_naip_m2m2024.py`), Clay (`build_clay.py`), mycorrhiza
 (`build_mycorrhiza.py`), species-dist (`build_species_dist.py`), dated phylogenies (`plant_dated_*`, `pollinator_dated_*`).
 
-Also `build_patristic_ref.py` regenerates `derived/patristic_ref.npy` (the 3487² tree cophenetic; audited max err 3e-5).
+Also: `build_patristic_ref.py` regenerates `derived/patristic_ref.npy` (3487² tree cophenetic; audited max err 3e-5).
+`build_lfmc.py` regenerates `gbif_lfmc.npz` from `fire/lfmc_data_conus.csv` (per-species median CA LFMC — a recompute
+that also fixed an unphysical shipped outlier, Artemisia californica 3581%→123%).
 
 **Open reproducibility gaps** (files ship in the zip but have no committed builder yet — TODO):
-- `bioclip_taxon_text_emb.npy` — BioCLIP-2.5 taxon-string prior (encode logic exists in `add_species.py`; needs a
-  standalone full-vocab builder).
+- `bioclip_taxon_text_emb.npy` — BioCLIP-2.5 taxon-string prior (encode logic in `add_species.py`; needs a standalone
+  full-vocab builder using `observations_meta.parquet` for K/P/C + species_index for O/F/G).
 - `gbif_lfmc.npz` — Live Fuel Moisture (B34, 37 species); reconciled via a one-off vocab remap — needs a committed
   builder from the `lfmc_data_conus.csv` source.
