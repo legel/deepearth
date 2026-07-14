@@ -16,7 +16,8 @@ Usage:
 Same 2025 / research-grade / <=10 m / has-image constraints as the base dataset (see deepcal-data-provenance)."""
 import os, io, sys, csv, json, argparse, subprocess, time
 import numpy as np
-# open_clip / model deps (via wandb) reference np.float_ etc., removed in numpy 2.0; restore aliases before import.
+
+# open_clip / model deps (via wandb) reference np.float_ etc., removed in numpy 2.0; restore the aliases before import.
 for _a, _t in [("float_", np.float64), ("int_", np.int64), ("uint", np.uint64),
                ("unicode_", np.str_), ("complex_", np.complex128), ("bool_", np.bool_)]:
     if not hasattr(np, _a):
@@ -178,10 +179,13 @@ def embed_vision(records, cache, dev, outdir, batch=64, workers=24, known_only=F
     ``species_local``; unknown species get -1 (add_species assigns their index later)."""
     import torch, concurrent.futures as cf
     from transformers import AutoImageProcessor, AutoModel
+    import open_clip
     b2l = _binomial_to_local(cache)
     dproc = AutoImageProcessor.from_pretrained("facebook/dinov3-vitl16-pretrain-lvd1689m")
     dino = AutoModel.from_pretrained("facebook/dinov3-vitl16-pretrain-lvd1689m").eval().to(dev)
-    acc = {k: [] for k in ("gbifID", "species_local", "lat", "lon", "ord", "dino", "eventDate", "species")}
+    bmodel, _, bpre = open_clip.create_model_and_transforms("hf-hub:imageomics/bioclip-2")   # BioCLIP-2 image tower (768); same recipe as embed_pollinator_photos so vision_bio stays consistent
+    bmodel = bmodel.eval().to(dev)
+    acc = {k: [] for k in ("gbifID", "species_local", "lat", "lon", "ord", "dino", "bio", "eventDate", "species")}
     os.makedirs(os.path.join(cache, outdir), exist_ok=True)
     written_ids, sidx = [], [0]
     def flush():                                                      # persist a shard every shard_n obs -> crash-safe + resumable (dedup skips written gbifIDs)
@@ -207,17 +211,20 @@ def embed_vision(records, cache, dev, outdir, batch=64, workers=24, known_only=F
             r = len(recs); recs.append(rec)
             for im in ims: flat.append(im); owner.append(r)           # ALL photos of the obs (mean-pooled below)
         if not flat: continue
-        de = []
-        with torch.no_grad():                                         # embed every photo (sub-batched)
+        de, be = [], []
+        with torch.no_grad():                                         # embed every photo (sub-batched) with BOTH towers
             for j in range(0, len(flat), 128):
                 px = dproc(images=flat[j:j + 128], return_tensors="pt")["pixel_values"].to(dev)
                 de.append(dino(px).last_hidden_state[:, 0].float().cpu().numpy())
-        de = np.concatenate(de); owner = np.array(owner)
+                bpx = torch.stack([bpre(im) for im in flat[j:j + 128]]).to(dev)
+                be.append(bmodel.encode_image(bpx).float().cpu().numpy())
+        de = np.concatenate(de); be = np.concatenate(be); owner = np.array(owner)
         for r, rec in enumerate(recs):
-            emb = de[owner == r].mean(0)                              # mean over this obs's photos (matches the original)
+            emb = de[owner == r].mean(0)                              # DINOv3 CLS, mean over this obs's photos (matches the original)
+            bemb = be[owner == r].mean(0)                             # BioCLIP-2 image, mean over photos (matches original + pollinator) -> vision_bio
             sl = b2l.get(" ".join(rec["species"].lower().split()[:2]), -1)
             for k, v in (("gbifID", rec["gbifID"]), ("species_local", sl), ("lat", rec["lat"]), ("lon", rec["lon"]),
-                         ("ord", 0), ("dino", emb), ("eventDate", rec["eventDate"]), ("species", rec["species"])):
+                         ("ord", 0), ("dino", emb), ("bio", bemb), ("eventDate", rec["eventDate"]), ("species", rec["species"])):
                 acc[k].append(v)
         print(f"  embedded {len(written_ids) + len(acc['gbifID'])}/{min(i + batch, len(records))}", flush=True)
         if len(acc["gbifID"]) >= shard_n: flush()          # incremental persistence
