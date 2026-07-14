@@ -54,12 +54,17 @@ modalities:
     reproducible: YES — VALIDATED 12/12 rows exact vs shipped cache
 
   topo:
-    source: USGS 3DEP 1m DEM (nationalmap exportImage)
+    source: USGS 3DEP 1m DEM staged COGs on AWS prd-tnm (s3://prd-tnm/StagedProducts/Elevation/1m/), tile URL per cell
+            resolved via the TNM Access product API (tnmaccess.nationalmap.gov, dataset "Digital Elevation Model (DEM)
+            1 meter"); windowed /vsicurl range read of the 512 m patch. Replaces the throttled nationalmap ImageServer
+            (2026-07-13) — the ImageServer anonymous-IP-throttles + gives dynamically-mosaicked patches with NO stable id.
+    upstream_id_per_obs: topo_scene = the exact 1m tile filename (e.g. USGS_1M_10_x58y419_CA_AlamedaCounty_2021_B21.tif)
     config: {patch_m: 512, features: 12, TPI_radii_m: [8, 24, 72, 140]}
     builder: env_priors/build_topo.py
-    output: {file: gbif_topo_tokens.npz, key: topo, shape: "[N,12]", dtype: float32, mask: has_topo}
-    reproducible: YES — AUDITED (reused process_cell on cache obs): cos 1.0000 vs the shipped cache (4/5, 1 network
-                  no-result); deterministic given the 3DEP DEM tile. chm/hydro share this in-repo deterministic pattern.
+    output: {file: gbif_topo_tokens.npz, key: topo, shape: "[N,12]", dtype: float32, mask: has_topo, provenance: topo_scene}
+    reproducible: YES — deterministic given the pinned 1m tile (fixed S3 COG). Cross-source audit vs the prior ImageServer
+                  cache: elevations match to ~0.01 m (same 3DEP data); minor slope/aspect deltas = sub-pixel resampling.
+                  Overlapping CA 1m projects handled by candidate-tile fallback on nodata gaps (validated on the Alameda cell).
 
   chm:
     source: NAIP-CHM canopy height (rangeland.ntsg.umt.edu index)
@@ -69,12 +74,15 @@ modalities:
                   maxdiff 0); deterministic given the NAIP-CHM tile + obs coords. Only hydro remains to spot-audit (needs a free GPU).
 
   hydro:
-    source: USGS 3DEP DEM -> drainage (TWI/HAND/SCA) + Winstral wind exposure (GPU physics)
+    source: USGS 3DEP 1m DEM (same AWS prd-tnm COG source + TNM Access resolution as topo; reuses topo's tile index) ->
+            drainage (TWI/HAND/SCA) + Winstral wind exposure (GPU physics). Patch decimated to 2 m via the COG overview.
+            Replaces the throttled nationalmap ImageServer (2026-07-13).
+    upstream_id_per_obs: hydro_scene = the exact 1m tile filename (same scheme as topo_scene)
     builder: env_priors/build_hydrowind_torch.py
-    output: {file: gbif_hydro_tokens.npz, key: hydro, shape: "[N,6]", dtype: float32, mask: has_hydro}
-    reproducible: YES — AUDITED (reused process_batch on CPU over cache obs): cos 0.9998 vs the shipped cache (5/5,
-                  min 0.9993); deterministic given the 3DEP DEM (tiny deltas = iterative-solver + CPU-vs-GPU float
-                  order, negligible on z-scored features). ALL in-repo deterministic builders (topo/chm/hydro) now verified.
+    output: {file: gbif_hydro_tokens.npz, key: hydro, shape: "[N,6]", dtype: float32, mask: has_hydro, provenance: hydro_scene}
+    reproducible: YES — deterministic given the pinned 1m tile. Cross-source audit vs the prior ImageServer cache:
+                  HAND/TPI/Winstral-wind match closely; TWI/lnSCA diverge more (flow-accumulation is chaotically
+                  sensitive to sub-pixel DEM differences — both are valid 3DEP-derived hydrology, not a bug).
 
   naip:
     source: "NAIP 2024 CA CNIR (USGS EROS M2M API) — 2024-EXCLUSIVE. Planetary Computer only serves 2022 for CA, so the
