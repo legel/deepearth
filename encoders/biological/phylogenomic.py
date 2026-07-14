@@ -407,8 +407,11 @@ class SpeciesGraph(nn.Module):
         return d / (d.mean() + 1e-9)
 
     def _seed(self) -> torch.Tensor:
-        """Per-species base state (once per forward): probe(frozen BioCLIP-2 text) + residual, or the free table."""
-        return self.free if self.probe is None else self.probe(self.species_text) + self.free
+        """Per-species base state (once per forward): probe(frozen BioCLIP-2 text) + residual, or the free table.
+        The no-probe branch returns `free + 0` (a plain tensor, grad still flows) rather than the raw Parameter, so
+        that caching it on the module (fusion `_refined_species = _seed()` under _ablate_species) never registers a
+        Parameter — otherwise the next non-ablated forward's plain-tensor assign raises a TypeError (eval-only path)."""
+        return self.free + 0.0 if self.probe is None else self.probe(self.species_text) + self.free
 
     def forward(self, mask: torch.Tensor = None) -> torch.Tensor:
         """Refine and return the species representations ``[n_species, d_model]``.
