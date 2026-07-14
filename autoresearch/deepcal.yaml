@@ -59,5 +59,5 @@ training:
   hide_prob: 0.50                    # up from 0.35: the benchmarks reveal only a small given set (heavy masking), so training with more hidden variables better matches the induction-heavy eval distribution (train/eval mask alignment).
   lr: 0.0005                         # re-checking the LR optimum at nn16 (lost at nn24, but nn16 does more steps -> may now favor a higher LR).
   weight_decay: 0.001                # up from 3e-4: at the longer 900s budget the extra regularization protects A1 (species-geo) from spatial overfit while A6/loo_vision capture the extra-step gains. Over 3 seeds vs plain-900s (equal budget): net 0.8821->0.8858 and vs the 600s champion 0.8815->0.8858 (non-overlapping).
-  time_budget_s: 900                 # explicit budget (was implicitly 600s via CLI): the vision-reconstruction benchmarks (A6, loo_vision, A2) keep improving past 4200 steps; ~6300 steps is the net optimum with the wd=0.001 A1 protection.
+  time_budget_s: 600                 # science.md rule 20: fixed 10-minute experiment budget (from step 10, excludes startup/compile)
   precision: bf16                     # science.md rule 21: autocast the Processor + decoders to bf16 (Earth4D hash stays fp32) -> Ampere tensor cores ~2x -> more steps at the fixed budget
