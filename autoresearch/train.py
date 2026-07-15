@@ -101,6 +101,8 @@ def train_and_evaluate(config, device):
                       smooth_geo_sigmas=m.get("smooth_geo_sigmas"),
                       smooth_geo_per_scale=m.get("smooth_geo_per_scale", 32),
                       n_pollinators=getattr(source, "n_pollinators", 0) if m.get("poll_weight", 0.0) > 0 else 0, **poll_kw,
+                      phylo_head_routing=m.get("phylo_head_routing", False),
+                      species_mos=m.get("species_mos", 1),
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
     model._sdist_weight = m.get("sdist_weight", 0.0)        # distribution-matching aux loss (U->species toward local community)
     model._poll_weight = m.get("poll_weight", 0.0)          # plant->pollinator distribution aux loss (GloBI); enables B41/B51-B54
