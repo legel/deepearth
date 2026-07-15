@@ -160,6 +160,7 @@ class DeepEarth(nn.Module):
         feedback_detach: bool = False,
         flex_attention: bool = False,
         decoder_hidden: Optional[int] = None,
+        mod_encoder: str = "linear",
         loss_weights: Optional[Dict[str, float]] = None,
         contrastive_weight: float = 0.0,
         contrastive_vars: Optional[Sequence[str]] = None,
@@ -186,9 +187,15 @@ class DeepEarth(nn.Module):
         def _dec(out_dim):
             return (nn.Sequential(nn.Linear(d_model, decoder_hidden), nn.GELU(), nn.Linear(decoder_hidden, out_dim))
                     if decoder_hidden else nn.Linear(d_model, out_dim))
+        def _enc(in_dim):   # [Ensue] mod_encoder toggle: deeper/normalized modality tokenizer (default = bare Linear)
+            if mod_encoder == "mlp2":
+                return nn.Sequential(nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
+            if mod_encoder == "mlp2ln":
+                return nn.Sequential(nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model), nn.LayerNorm(d_model))
+            return nn.Linear(in_dim, d_model)
         for v in self.variables:
             if v.kind == "continuous":
-                self.encoders[v.name] = nn.Linear(v.dim, d_model)
+                self.encoders[v.name] = _enc(v.dim)
                 if v.reconstruct:
                     self.decoders[v.name] = _dec(v.dim)
             elif v.kind == "categorical":
@@ -669,7 +676,9 @@ class DeepEarth(nn.Module):
             # guaranteed no regression on identity/phylo/traits, while the head supplies B20-22/B39/B40 at test.
             if getattr(self, "_sdist_weight", 0.0) > 0 and v.name == self.species_variable \
                     and "_sdist_idx" in values and getattr(self, "comm_head", None) is not None:
-                comm = (self.comm_head(self._pooled(z, v.name).detach()) @ self._refined_species.detach().t()).float()
+                _cp = self._pooled(z, v.name)                                   # [Ensue] comm_attached: let the community loss shape the backbone
+                _cp = _cp if getattr(self, "_comm_attached", False) else _cp.detach()
+                comm = (self.comm_head(_cp) @ self._refined_species.detach().t()).float()
                 sidx = values["_sdist_idx"].clamp(0, comm.shape[1] - 1)   # -1 padding -> 0 (its freq is 0, harmless)
                 tgt = torch.zeros_like(comm).scatter_add_(1, sidx, values["_sdist_frq"].float())
                 kl = -(tgt * F.log_softmax(comm, -1)).sum(-1)            # soft cross-entropy toward the local distribution

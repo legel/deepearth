@@ -28,6 +28,9 @@ def build_variables(spec, dims):
                                           reconstruct=v.get("reconstruct", True)))
             continue
         kind = v["kind"]
+        if kind == "continuous" and dims.get(v["name"], 0) == 0:   # [Ensue] channel absent in this cache -> skip so configs stay runnable on the standard data download (extract the channel to enable it)
+            print(f"[data] skipping variable {v['name']!r}: no data in cache (optional channel not extracted)")
+            continue
         variables.append(Variable(
             v["name"], kind,
             dim=dims.get(v["name"], 0) if kind == "continuous" else 0,
@@ -37,6 +40,7 @@ def build_variables(spec, dims):
 
 
 def train_and_evaluate(config, device):
+    torch.set_float32_matmul_precision("high")   # [Ensue] enable TF32 tensor cores for fp32 matmuls (~1.3-2x, Earth4D hash stays fp32) — free throughput
     seed = config.get("training", {}).get("seed", 0)   # fixed seed -> matched-init A/B: backbone benchmarks bit-identical across runs, so a detached head's causal effect is isolated (no run-to-run noise masquerading as regression).
     torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
     d = config["data"]
@@ -95,7 +99,7 @@ def train_and_evaluate(config, device):
                       rounds=m.get("rounds", 1), write_back=m.get("write_back", True), revise=m.get("revise", False),
                       round_loss=m.get("round_loss", "final"), learned_mask=m.get("learned_mask"),
                       feedback_detach=m.get("feedback_detach", False), flex_attention=m.get("flex_attention", False),
-                      decoder_hidden=m.get("decoder_hidden"), loss_weights=m.get("loss_weights"),
+                      decoder_hidden=m.get("decoder_hidden"), mod_encoder=m.get("mod_encoder", "linear"), loss_weights=m.get("loss_weights"),
                       contrastive_weight=m.get("contrastive_weight", 0.0), contrastive_vars=m.get("contrastive_vars"),
                       smooth_geo=m.get("smooth_geo", False),
                       smooth_geo_sigmas=m.get("smooth_geo_sigmas"),
@@ -103,6 +107,7 @@ def train_and_evaluate(config, device):
                       n_pollinators=getattr(source, "n_pollinators", 0) if m.get("poll_weight", 0.0) > 0 else 0, **poll_kw,
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
     model._sdist_weight = m.get("sdist_weight", 0.0)        # distribution-matching aux loss (U->species toward local community)
+    model._comm_attached = m.get("comm_attached", False)    # [Ensue] if True, community loss flows into the backbone (not just comm_head)
     model._poll_weight = m.get("poll_weight", 0.0)          # plant->pollinator distribution aux loss (GloBI); enables B41/B51-B54
     model._phylo_mask_weight = m.get("phylo_mask_weight", 0.0)   # rule 25: mask-and-reconstruct species embedding from relatives
     model._lfmc_weight = m.get("lfmc_weight", 0.0)               # B34 ecophysiology head (live fuel moisture)

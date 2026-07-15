@@ -345,6 +345,14 @@ class California:
         if hydro.exists():
             z = np.load(hydro)
             self._add_modality("hydro", z["gbifID"], z["hydro"], gid, dev, zscore=True, valid=z["has_hydro"])
+        worldclim = cache / "gbif_worldclim_tokens.npz"                                 # [Ensue] WorldClim v2.1 bioclim normals (19, 30-yr climatology) -- transferable climate niche for species-from-env
+        if worldclim.exists():
+            z = np.load(worldclim)
+            self._add_modality("worldclim", z["gbifID"], z["worldclim"], gid, dev, zscore=True, valid=z["has_worldclim"])
+        phenology = cache / "gbif_phenology_tokens.npz"                                 # [Ensue] NOAA-CDR VIIRS NDVI 12-month seasonal cycle -- vegetation greenup/senescence timing (orthogonal to static climate/soil)
+        if phenology.exists():
+            z = np.load(phenology)
+            self._add_modality("phenology", z["gbifID"], z["phenology"], gid, dev, zscore=True, valid=z["has_phenology"])
 
     @staticmethod
     def _norm_binom(s):                                                                 # genus+species, lowercased (matches build_pollinator.norm)
