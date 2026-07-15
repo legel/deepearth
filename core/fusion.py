@@ -170,8 +170,12 @@ class DeepEarth(nn.Module):
         pollinator_distance: Optional[torch.Tensor] = None,
         pollinator_text: Optional[torch.Tensor] = None,
         pollinator_top_k: Optional[int] = None,
+        phylo_head_routing: bool = False,
+        species_mos: int = 1,
     ) -> None:
         super().__init__()
+        self.phylo_head_routing = phylo_head_routing   # route the phylo-refined species embedding into the trait heads
+        self.species_mos = species_mos                 # Mixture-of-Softmaxes components on the CORE species decode (1 = single softmax)
         self.loss_weights = loss_weights or {}
         self.contrastive_weight = contrastive_weight
         self.contrastive_vars = set(contrastive_vars or ())
@@ -307,18 +311,33 @@ class DeepEarth(nn.Module):
         self.pollinator_graph = SpeciesGraph(n_pollinators, d_model, pollinator_distance, top_k=pollinator_top_k,
                                              species_text=pollinator_text) \
             if (n_pollinators > 0 and pollinator_distance is not None) else None
-        # Ecophysiology head (B34) on a DETACHED latent: predict a species' peak fire-season live fuel moisture from its
-        # phylo-refined representation. Created last so it consumes no init RNG ahead of the backbone.
-        self.lfmc_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
+        # Phylo-conserved trait heads (B34/B42/B26) on a DETACHED latent. With phylo_head_routing the head reads the
+        # pooled latent CONCATENATED with the expected phylo-refined species embedding, so the species graph's
+        # conserved signal (relatives' trait values) reaches the head -- and its graph-gain (B57/B58/B62) is real.
+        _hd = 2 * d_model if self.phylo_head_routing else d_model
+        # Ecophysiology (B34): predict a species' peak fire-season live fuel moisture from its phylo-refined representation.
+        self.lfmc_head = nn.Sequential(nn.Linear(_hd, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
             if species_variable is not None else None
-        # Symbiosis head (B42) on a DETACHED pooled latent: predict a plant's mycorrhizal type
-        # (AM/EcM/ErM/OM/NM, FungalRoot label) from its representation.
-        self.myco_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5)) \
+        # Symbiosis (B42): predict a plant's mycorrhizal type (AM/EcM/ErM/OM/NM, FungalRoot label).
+        self.myco_head = nn.Sequential(nn.Linear(_hd, d_model), nn.GELU(), nn.Linear(d_model, 5)) \
             if species_variable is not None else None
-        # Phenology head (B26) on a DETACHED pooled latent: predict whether an observation is flowering from its
-        # (space-time-conditioned) representation. Per-observation label from PhenoVision. Created last.
-        self.flower_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
+        # Phenology (B26): predict whether a (space-time-conditioned) observation is flowering (PhenoVision label).
+        self.flower_head = nn.Sequential(nn.Linear(_hd, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
             if species_variable is not None else None
+        # Mixture-of-Softmaxes on the CORE species decode (Yang+2018): K structure-preserving latent reads, each scoring
+        # all species, mixed per-observation -> a high-rank posterior P(species|env,loc) that a rank-d single softmax
+        # cannot express. Sharpens the species-from-env posterior (B1/B23) whose calibrated tail IS the community (B29/39/40).
+        # Created last (RNG after the backbone) so species_mos=1 initializes the shared model bit-identically.
+        if self.species_mos > 1 and species_variable is not None:
+            # IDENTITY init: proj=I, gate=0 (uniform mix), each query = the single species decode query + tiny symmetry-
+            # breaking noise -> at init the MoS EQUALS the single softmax, so it can only improve (never starts worse).
+            si = self.names.index(species_variable)
+            self.species_mos_query = nn.Parameter(self.decode_query[si].detach().clone().unsqueeze(0)
+                                                  .repeat(self.species_mos, 1) + 0.02 * torch.randn(self.species_mos, d_model))
+            self.species_mos_proj = nn.Linear(d_model, d_model)
+            nn.init.eye_(self.species_mos_proj.weight); nn.init.zeros_(self.species_mos_proj.bias)
+            self.species_mos_gate = nn.Linear(self.species_mos * d_model, self.species_mos)
+            nn.init.zeros_(self.species_mos_gate.weight); nn.init.zeros_(self.species_mos_gate.bias)
         if compile_processor:
             self._refine = torch.compile(self._refine)
 
@@ -538,11 +557,37 @@ class DeepEarth(nn.Module):
         w = torch.softmax((latents @ self.decode_query[i]) / (self.d_model ** 0.5), dim=-1)
         return torch.einsum("bl,bld->bd", w, latents)
 
+    def _head_in(self, z: torch.Tensor, name: str, detach: bool = False) -> torch.Tensor:
+        """Input to a phylo-conserved trait head. Baseline: the pooled latent. With phylo_head_routing: the pooled
+        latent concatenated with the expected phylo-refined species embedding (posterior over the refined species
+        table), so the graph's conserved signal reaches the head and the ablation (seed vs refined) moves the output."""
+        pooled = self._pooled(z, name)
+        if not self.phylo_head_routing or self._refined_species is None:
+            return pooled.detach() if detach else pooled
+        sp = self._reencode(self.species_variable, pooled)      # expected phylo-refined species embedding
+        return torch.cat([pooled.detach(), sp.detach()], -1) if detach else torch.cat([pooled, sp], -1)
+
+    def _species_logprob(self, latents: torch.Tensor) -> torch.Tensor:
+        """High-rank species posterior via Mixture-of-Softmaxes (Yang+2018, "Breaking the Softmax Bottleneck").
+        K learned queries each pool the latent SET differently (structure-preserving, not one pooled point), score all
+        species against the refined table, and a per-observation gate mixes their softmaxes: log sum_k pi_k softmax_k.
+        Returns LOG-probabilities [B, N] -- log_softmax(logp)=logp and softmax(logp)=p, so the CE loss and topk/softmax
+        eval consume it unchanged. A rank-d single softmax cannot express a fine multi-species assemblage; this can."""
+        z = latents
+        q = self.species_mos_query                                                      # [K, d]
+        w = torch.softmax(torch.einsum("bld,kd->blk", z, q) / (self.d_model ** 0.5), dim=1)   # [B, L, K] over latents
+        pooled = torch.einsum("blk,bld->bkd", w, z)                                      # [B, K, d] K structure reads
+        logits = torch.einsum("bkd,nd->bkn", self.species_mos_proj(pooled), self._refined_species)   # [B, K, N]
+        logpi = torch.log_softmax(self.species_mos_gate(pooled.reshape(pooled.shape[0], -1)), dim=-1) # [B, K]
+        return torch.logsumexp(logpi.unsqueeze(-1) + torch.log_softmax(logits, dim=-1), dim=1)        # [B, N] log-mix
+
     def decode(self, latents: torch.Tensor, name: str) -> torch.Tensor:
         """Read one variable back from the latents. The species variable reads against the refined species states; a diffusion variable is sampled from its head."""
-        pooled = self._pooled(latents, name)
         if name == self.species_variable and self._refined_species is not None:
-            return pooled @ self._refined_species.t()
+            if self.species_mos > 1:
+                return self._species_logprob(latents)                    # high-rank MoS posterior (log-probs)
+            return self._pooled(latents, name) @ self._refined_species.t()
+        pooled = self._pooled(latents, name)
         if name in self.diffusion_heads:
             return self.diffusion_heads[name].sample(pooled)
         return self.decoders[name](pooled)
@@ -693,20 +738,20 @@ class DeepEarth(nn.Module):
             # Ecophysiology (B34): detached head predicts log live-fuel-moisture toward the species' value (protects backbone)
             if getattr(self, "_lfmc_weight", 0.0) > 0 and v.name == self.species_variable \
                     and "_lfmc" in values and getattr(self, "lfmc_head", None) is not None:
-                pred = self.lfmc_head(self._pooled(z, v.name).detach()).squeeze(-1).float()
+                pred = self.lfmc_head(self._head_in(z, v.name, detach=True)).squeeze(-1).float()
                 tgt = torch.log(values["_lfmc"].clamp_min(1.0)); lv = values["_lfmc_valid"].float()
                 loss = loss + self._lfmc_weight * ((pred - tgt) ** 2 * lv).sum() / lv.sum().clamp_min(1.0)
             # Symbiosis (B42): detached head predicts the mycorrhizal type (cross-entropy toward the FungalRoot label)
             if getattr(self, "_myco_weight", 0.0) > 0 and v.name == self.species_variable \
                     and "_myco" in values and getattr(self, "myco_head", None) is not None:
-                logit = self.myco_head(self._pooled(z, v.name).detach())
+                logit = self.myco_head(self._head_in(z, v.name, detach=True))
                 mv = values["_myco_valid"].float()
                 ce = F.cross_entropy(logit, values["_myco"].clamp_min(0), reduction="none")
                 loss = loss + self._myco_weight * (ce * mv).sum() / mv.sum().clamp_min(1.0)
             # Phenology (B26): detached head predicts flowering (BCE) toward the per-observation PhenoVision label
             if getattr(self, "_flower_weight", 0.0) > 0 and v.name == self.species_variable \
                     and "_flower" in values and getattr(self, "flower_head", None) is not None:
-                logit = self.flower_head(self._pooled(z, v.name).detach()).squeeze(-1).float()
+                logit = self.flower_head(self._head_in(z, v.name, detach=True)).squeeze(-1).float()
                 fv = values["_flower_valid"].float()
                 bce = F.binary_cross_entropy_with_logits(logit, values["_flower"].float(), reduction="none")
                 loss = loss + self._flower_weight * (bce * fv).sum() / fv.sum().clamp_min(1.0)
@@ -740,11 +785,11 @@ class DeepEarth(nn.Module):
             elif t == "pollinator":                                              # plant -> pollinator interaction (rule 27)
                 out[t] = self.poll_head(self._pooled(z, self.species_variable)) @ self._pollinator_basis().t()
             elif t == "lfmc":                                                    # species -> live fuel moisture (B34)
-                out[t] = self.lfmc_head(self._pooled(z, self.species_variable)).squeeze(-1).exp()
+                out[t] = self.lfmc_head(self._head_in(z, self.species_variable)).squeeze(-1).exp()
             elif t == "myco":                                                    # species -> mycorrhizal type logits (B42)
-                out[t] = self.myco_head(self._pooled(z, self.species_variable))
+                out[t] = self.myco_head(self._head_in(z, self.species_variable))
             elif t == "flower":                                                  # observation -> flowering probability (B26)
-                out[t] = torch.sigmoid(self.flower_head(self._pooled(z, self.species_variable)).squeeze(-1))
+                out[t] = torch.sigmoid(self.flower_head(self._head_in(z, self.species_variable)).squeeze(-1))
             else:
                 out[t] = self.decode(z, t)
         return out
