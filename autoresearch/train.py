@@ -193,12 +193,19 @@ def train_and_evaluate(config, device):
     time_budget = t.get("time_budget_s")
     t_budget_start = None
     steps_done = steps                                   # actual steps run (the budget usually stops us well short of `steps`)
+    # [Ensue rule 18] weighted sampling: down-weight occurrence-only (vision-masked) obs so full-modality obs keep
+    # champion-level exposure while densify obs still add community/spatial coverage. densify_weight=1.0 -> uniform.
+    _dw = float(m.get("densify_weight", 1.0)); _sw = None
+    if _dw != 1.0 and hasattr(source, "has_vision"):
+        _sw = torch.where(source.has_vision[source.train_index], torch.tensor(1.0, device=device),
+                          torch.tensor(_dw, device=device))
     for step in range(steps):
         if step == 10:
             t_budget_start = time.time()
         if time_budget is not None and t_budget_start is not None and (time.time() - t_budget_start) >= time_budget:
             print(f"  [time budget {time_budget}s reached at step {step}]", flush=True); steps_done = step; break
-        idx = source.train_index[torch.randint(0, len(source.train_index), (batch,), device=device)]
+        idx = (source.train_index[torch.multinomial(_sw, batch, replacement=True)] if _sw is not None
+               else source.train_index[torch.randint(0, len(source.train_index), (batch,), device=device)])
         values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
         if sparse_hash:
             # Refresh the cached discrete cell every K steps so the fast-path hit rate tracks slow resolution drift

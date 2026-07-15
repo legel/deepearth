@@ -160,4 +160,5 @@ worktree, not the shared loop repo, so concurrent candidate runs are never conta
 | `block_norm` | `core/fusion.py` | `"ln"` | LatentBlock normalizer (only when block_ffn≠torch): `"ln"` (LayerNorm) / `"rms"` (RMSNorm) |
 | `read_depth` | `core/fusion.py` | `1` | fusion depth: re-read the context between latent blocks (`read_depth-1` extra cross-attentions); `1` = single up-front read (champion-identical) |
 | `poll_phylo_weight` | `core/fusion.py` | `0` | pollinator phylo self-distillation: predict a species' pollinators from phylo-relatives (masked seed) and distill toward full-info -> trains interaction transfer (B55) |
+| `densify_weight` | `autoresearch/train.py` | `1.0` | weighted batch sampling: occurrence-only (vision-masked) obs sampled at this weight vs 1.0 for full-modality, so densify data adds coverage without diluting vision (rule 18) |
 | _(add new tokenizer/embedding/encoding/attention toggles here as they are introduced)_ | | | |

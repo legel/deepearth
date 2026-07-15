@@ -50,6 +50,7 @@ model:
   flower_weight: 0.1
   myco_weight: 0.1
   phylo_mask_weight: 0.1
+  densify_weight: 0.3
 variables:
 - name: vision_dino
   kind: continuous
