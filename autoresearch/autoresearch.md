@@ -84,6 +84,37 @@ they lift induction. New datasets must be >= US-national in extent (DeepCal then
 
 ## Architecture search surface — go the whole nine yards (swarm addendum, permanent)
 
+### ARCHITECTURE-FIRST MANDATE (operator directive 2026-07-15 — this reorders the whole loop)
+The loop's PRIMARY job is to find the best **reasoning STRUCTURE**, via LARGE structural variation across every
+layer of the model stack — NOT hyperparameter tuning. Config-knob sweeps (`sdist_weight`, `capacity`,
+`contrastive_*`, `hide_prob`, `poll_weight`, head weights, data-channel on/off) are **diminishing-returns MANUAL
+work done AFTER an architecture is confirmed** — not the loop's main effort, and must not dominate the candidate
+queue. Knob-tweaking plateaued deepcal at ~0.5718 precisely because it never changed how the model reasons. Bias
+hard toward BIG structural bets over small deltas.
+
+**Vary each layer with genuinely-different implementations (not width/depth knobs):**
+1. **Tokenization** — bare Linear vs MLP vs patch/set/perceiver tokenizer; per-modality frequency features;
+   shared vs modality-specific.
+2. **Position / space-time encoding** — Earth4D hash vs RFF vs spherical-harmonic / SatCLIP / sinusoidal; how
+   absolute/relative/neighbor geometry is combined and gated.
+3. **The cross-attention READ (`self.read`)** — Perceiver latents←tokens: softmax MHA vs gated/linear variants;
+   iterative vs single; latent count/structure; routing.
+4. **The latent BLOCK internals (`self.blocks`)** — replace `nn.TransformerEncoderLayer` with configurable
+   attention (softmax / rotary / gated), FFN (MLP / SwiGLU / GeGLU), norm (LayerNorm / RMSNorm), norm placement;
+   or non-attention blocks (state-space / MoE).
+5. **Fusion topology & iterative refinement** — state/context/neighbor interaction; write-back / revise / rounds
+   / deep supervision; diffusion / recurrent / autoregressive decoders.
+6. **Decode** — attention-pooling vs cross-attention decode vs dense field; per-variable vs shared heads.
+7. **Scaling** — d_model / n_latents / n_layers / n_heads AS SCALING LAWS under the step budget, not one-off knobs.
+
+**Mechanism (how the loop searches architectures):** every architectural choice is a PLUGGABLE component selected
+by a `deepcal.yaml` key that DEFAULTS to current behaviour (pulling the code is a no-op until a config sets it).
+The candidate generators sweep these ARCHITECTURE keys as their TOP tier. A new architecture needing new code is
+(a) implemented default-safe, (b) validated in an ISOLATED git worktree that it REPRODUCES the champion (~0.5718)
+at its default config — proving the refactor caused no regression — THEN (c) merged to the shared loop and swept.
+Register every architecture key in the table below. Confirm a winning ARCHITECTURE first; only then hand its
+hyperparameters to a knob sweep.
+
 Do not settle for tuning mechanism knobs. Search the ENTIRE architecture — tokenizers, embeddings, encodings,
 fusion, operators, heads — to find the absolutely best model. The surface, grouped (config = a key in
 `deepcal.yaml` `model:`; code = edit `core/fusion.py` / `encoders/*`):
@@ -125,4 +156,6 @@ worktree, not the shared loop repo, so concurrent candidate runs are never conta
 |---|---|---|---|
 | `comm_attached` | `core/fusion.py` | `false` | let the community-head loss shape the backbone (un-detached) |
 | `mod_encoder` | `core/fusion.py` | `"linear"` | modality tokenizer for continuous vars: `"linear"` (bare Linear) / `"mlp2"` (2-layer MLP) / `"mlp2ln"` (+LayerNorm) |
-| _(add new tokenizer/embedding/encoding toggles here as they are introduced)_ | | | |
+| `block_ffn` | `core/fusion.py` | `"torch"` | latent self-attn block: `"torch"` (nn.TransformerEncoderLayer, champion-identical) / `"mlp"` / `"swiglu"` / `"geglu"` (configurable pre-norm LatentBlock) |
+| `block_norm` | `core/fusion.py` | `"ln"` | LatentBlock normalizer (only when block_ffn≠torch): `"ln"` (LayerNorm) / `"rms"` (RMSNorm) |
+| _(add new tokenizer/embedding/encoding/attention toggles here as they are introduced)_ | | | |

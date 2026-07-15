@@ -116,6 +116,54 @@ class NeighborContext(nn.Module):
         return torch.cat(tokens, dim=1)
 
 
+class RMSNorm(nn.Module):
+    """RMSNorm (Zhang & Sennrich 2019): scale-only, no mean-centering — a genuinely different normalizer than
+    LayerNorm, cheaper and with different gradient dynamics. An architecture lever, not a knob."""
+
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.g = nn.Parameter(torch.ones(d)); self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.g * x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+
+class GLUFFN(nn.Module):
+    """Gated-linear-unit FFN (SwiGLU / GeGLU, Shazeer 2020): a value branch multiplicatively gated by a learned
+    activation branch — a different information-routing structure than the MLP's single activation path."""
+
+    def __init__(self, d: int, hidden: int, act: str = "swish"):
+        super().__init__()
+        self.gate = nn.Linear(d, hidden); self.up = nn.Linear(d, hidden); self.down = nn.Linear(hidden, d)
+        self.act = F.silu if act == "swish" else F.gelu
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.down(self.act(self.gate(x)) * self.up(x))
+
+
+class LatentBlock(nn.Module):
+    """Configurable pre-norm latent self-attention block — the ARCHITECTURE-variant replacement for
+    ``nn.TransformerEncoderLayer``. norm in {ln, rms}; ffn in {mlp, swiglu, geglu}. The ``torch`` block stays the
+    loop default (champion reproduces byte-identically); this activates only when a config selects a variant."""
+
+    def __init__(self, d_model: int, n_heads: int, ffn: str = "mlp", norm: str = "ln", mult: int = 4):
+        super().__init__()
+        Norm = (lambda d: RMSNorm(d)) if norm == "rms" else (lambda d: nn.LayerNorm(d))
+        self.n1, self.n2 = Norm(d_model), Norm(d_model)
+        self.attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        h = mult * d_model
+        if ffn == "swiglu":
+            self.ffn = GLUFFN(d_model, h, "swish")
+        elif ffn == "geglu":
+            self.ffn = GLUFFN(d_model, h, "gelu")
+        else:
+            self.ffn = nn.Sequential(nn.Linear(d_model, h), nn.GELU(), nn.Linear(h, d_model))
+
+    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:   # drop-in for TransformerEncoderLayer(x)
+        a = self.n1(x); x = x + self.attn(a, a, a, need_weights=False)[0]
+        return x + self.ffn(self.n2(x))
+
+
 class DeepEarth(nn.Module):
     """Config-driven model of spatio-temporally covarying variables (see module docstring).
 
@@ -161,6 +209,8 @@ class DeepEarth(nn.Module):
         flex_attention: bool = False,
         decoder_hidden: Optional[int] = None,
         mod_encoder: str = "linear",
+        block_ffn: str = "torch",
+        block_norm: str = "ln",
         loss_weights: Optional[Dict[str, float]] = None,
         contrastive_weight: float = 0.0,
         contrastive_vars: Optional[Sequence[str]] = None,
@@ -280,8 +330,13 @@ class DeepEarth(nn.Module):
         self.latents = nn.Parameter(torch.randn(n_latents, d_model) * 0.02)
         self.read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.q_norm = nn.LayerNorm(d_model); self.kv_norm = nn.LayerNorm(d_model)
-        self.blocks = nn.ModuleList([nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model,
-                                                                batch_first=True, norm_first=True) for _ in range(n_layers)])
+        # Latent self-attention blocks. Default block_ffn="torch" = nn.TransformerEncoderLayer (champion-identical);
+        # an ARCHITECTURE variant swaps in the configurable pre-norm LatentBlock (ffn: mlp/swiglu/geglu, norm: ln/rms).
+        def _block():
+            if block_ffn == "torch":
+                return nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True)
+            return LatentBlock(d_model, n_heads, ffn=block_ffn, norm=block_norm)
+        self.blocks = nn.ModuleList([_block() for _ in range(n_layers)])
 
         # Iterative joint-field denoising: refine the state tokens over K rounds (read -> latent self-attn -> write back
         # each variable's belief through its interface decoder). rounds=1 with learned_mask off is the single-shot model.
