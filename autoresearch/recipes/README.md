@@ -10,6 +10,7 @@ channel.
 |---------|--------|--------|----------------|
 | phenology | `build_phenology.py` | NOAA-CDR VIIRS NDVI, 12-month seasonal cycle | `gbif_phenology_tokens.npz` |
 | rsveg | `extract_rsveg.py` | MODIS 13Q1 NDVI/EVI phenology (Planetary Computer STAC) | `gbif_rsveg_tokens.npz` |
+| worldclim | `extract_worldclim.py` | WorldClim v2.1, 19 bioclim normals (1970-2000, 10-arcmin) | `gbif_worldclim_tokens.npz` |
 
 Each recipe reads observation coords from `gbif_tokens/*.npz`, samples the raster at those points, imputes
 missing values with the train-median (so absence is not a location cue), and writes an `*_tokens.npz` with a
