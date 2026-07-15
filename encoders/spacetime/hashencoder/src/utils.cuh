@@ -13,6 +13,7 @@
 #include <cuda_runtime.h>
 
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <torch/torch.h>
 #include <torch/extension.h>
 
@@ -27,6 +28,12 @@
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be a contiguous tensor")
 #define CHECK_IS_INT(x) TORCH_CHECK(x.scalar_type() == at::ScalarType::Int, #x " must be an int tensor")
 #define CHECK_IS_FLOATING(x) TORCH_CHECK(x.scalar_type() == at::ScalarType::Float || x.scalar_type() == at::ScalarType::Half || x.scalar_type() == at::ScalarType::Double, #x " must be a floating tensor")
+
+// Pin every kernel launch in this entry point to the input tensor's device, independent of the ambient
+// cudaGetDevice(). Without it the <<<>>> launches target whatever device is current -> on a non-default device
+// (e.g. model on cuda:1 while the runtime device is 0) the kernel reads the wrong GPU's pointers -> illegal
+// memory access. No-op when the current device already matches (bit-identical on cuda:0).
+#define DEVICE_GUARD(x) const c10::cuda::OptionalCUDAGuard _device_guard(at::device_of(x))
 
 // =============================================================================
 // ATOMIC ADD FOR HALF PRECISION
