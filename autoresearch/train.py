@@ -111,6 +111,7 @@ def train_and_evaluate(config, device):
     model._sdist_weight = m.get("sdist_weight", 0.0)        # distribution-matching aux loss (U->species toward local community)
     model._comm_attached = m.get("comm_attached", False)    # [Ensue] if True, community loss flows into the backbone (not just comm_head)
     model._poll_weight = m.get("poll_weight", 0.0)          # plant->pollinator distribution aux loss (GloBI); enables B41/B51-B54
+    model._poll_phylo_weight = m.get("poll_phylo_weight", 0.0)   # pollinator phylo self-distillation: predict interactions from relatives -> B55 transfer (diagnostic-targeted)
     model._phylo_mask_weight = m.get("phylo_mask_weight", 0.0)   # rule 25: mask-and-reconstruct species embedding from relatives
     model._lfmc_weight = m.get("lfmc_weight", 0.0)               # B34 ecophysiology head (live fuel moisture)
     model._flower_weight = m.get("flower_weight", 0.0)           # B26 phenology head (flowering, per-obs BCE)

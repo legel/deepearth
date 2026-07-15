@@ -710,6 +710,18 @@ class DeepEarth(nn.Module):
             m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
             if m.any():
                 loss = loss + self._phylo_mask_weight * F.mse_loss(self.species_graph(mask=m)[m], self._refined_species[m].detach())
+        # Pollinator phylo self-distillation (mirrors rule 25 for INTERACTIONS): a species' pollinator distribution
+        # predicted from its PHYLO-RELATIVES (masked seed) must match its full-info prediction -> trains the model to
+        # transfer interactions across the phylogeny. Diagnostic (2026-07-15): plant-phylo oracle reaches recall 0.216
+        # but the model only 0.037 (B55) -> the signal is present and unexploited. Default weight 0 = champion-identical.
+        if self.training and getattr(self, "_poll_phylo_weight", 0.0) > 0 and self._refined_species is not None \
+                and getattr(self, "poll_head", None) is not None:
+            m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
+            if m.any():
+                basis = self._pollinator_basis().detach().t()                                        # [d, n_poll]
+                full = F.softmax((self.poll_head(self._refined_species[m].detach()) @ basis).float(), dim=-1)   # target
+                rel = F.log_softmax((self.poll_head(self.species_graph(mask=m)[m]) @ basis).float(), dim=-1)    # from relatives
+                loss = loss + self._poll_phylo_weight * F.kl_div(rel, full, reduction="batchmean")
         return loss
 
     def _decode_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
