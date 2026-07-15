@@ -104,6 +104,7 @@ BENCHMARKS: List[str] = [
     "B60_community_phylo_graph_gain",   # ablation-delta (niche/community family): env->community recall gained from the species-graph refinement
     "B61_trait_phylo_graph_gain",       # ablation-delta (trait family): trait macro-F1 gained from the species-graph refinement (traits are phylo-conserved)
     "B62_mycorrhiza_phylo_graph_gain",  # ablation-delta (symbiosis family): mycorrhiza macro-F1 gained from the species-graph refinement (symbiosis is phylo-conserved)
+    "B63_myco_from_species_f1",         # symbiosis imputation GIVEN the species identity (isolates phylo imputation from env->species inference); honest bar = BioCLIP-NN 0.584
 ]
 
 
@@ -126,7 +127,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
 
     acc: Dict[str, list] = {}                              # key -> [sum, count]
     lfmc_p, lfmc_t = [], []                                # B34: predicted vs true live fuel moisture over the eval set
-    myco_p, myco_t = [], []                                # B42: predicted vs true mycorrhizal type (class) over the eval set
+    myco_p, myco_t, myco_sp_p = [], [], []                 # B42 myco-from-env / B63 myco-from-species (isolates phylo imputation)
     flower_p, flower_t = [], []                            # B26: predicted flowering probability vs true label over the eval set
     lfmc_p_abl, flower_p_abl, myco_p_abl = [], [], []      # B57/B58/B62: the same predictions with the species graph ABLATED (phylo-graph-gain deltas)
     flower_fid = []                                        # B27: |flowering(env-only) - flowering(env+real photo)| — imagined-vs-real fidelity
@@ -233,6 +234,11 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                     if mv.any():
                         mp = infer(U, ["myco"])["myco"].argmax(-1)[mv]; mt = source.myco[tid][mv]
                         myco_p.append(mp.detach().cpu()); myco_t.append(mt.detach().cpu())
+                        if getattr(model, "species_myco_head", None) is not None:   # B63: tree-imputed myco from the refined embedding (LCA fine-tuning); else species-given infer
+                            msp = model.species_myco_head(model._refined_species[tid.clamp_min(0)]).argmax(-1)[mv]
+                        else:
+                            msp = infer(["identity"], ["myco"])["myco"].argmax(-1)[mv]
+                        myco_sp_p.append(msp.detach().cpu())
                         if getattr(model, "species_graph", None) is not None:   # B62: same mycorrhiza prediction, species graph ablated
                             model._ablate_species = True
                             myco_p_abl.append(infer(U, ["myco"])["myco"].argmax(-1)[mv].detach().cpu())
@@ -406,6 +412,8 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         f1 = _macro_f1(p, t, torch.ones_like(t, dtype=torch.bool), 5)
         if not (isinstance(f1, float) and np.isnan(f1)):
             out["B42_mycorrhiza_from_env"] = f1
+            if myco_sp_p:                                                  # B63: myco given the species identity -- pure phylo imputation (vs env->species inference); bar = BioCLIP-NN 0.584
+                out["B63_myco_from_species_f1"] = _macro_f1(torch.cat(myco_sp_p), t, torch.ones_like(t, dtype=torch.bool), 5)
             if myco_p_abl:                                                  # B62 = species-graph contribution to symbiosis (phylo-conserved)
                 f1a = _macro_f1(torch.cat(myco_p_abl), t, torch.ones_like(t, dtype=torch.bool), 5)
                 if not (isinstance(f1a, float) and np.isnan(f1a)): out["B62_mycorrhiza_phylo_graph_gain"] = max(0.0, f1 - f1a)
