@@ -211,6 +211,7 @@ class DeepEarth(nn.Module):
         mod_encoder: str = "linear",
         block_ffn: str = "torch",
         block_norm: str = "ln",
+        read_depth: int = 1,
         loss_weights: Optional[Dict[str, float]] = None,
         contrastive_weight: float = 0.0,
         contrastive_vars: Optional[Sequence[str]] = None,
@@ -337,6 +338,11 @@ class DeepEarth(nn.Module):
                 return nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True)
             return LatentBlock(d_model, n_heads, ffn=block_ffn, norm=block_norm)
         self.blocks = nn.ModuleList([_block() for _ in range(n_layers)])
+        # Fusion depth (architecture lever): re-read the fixed context between latent blocks instead of once up front,
+        # so the latents keep pulling from the neighbor/position context as they process. read_depth=1 (default) -> no
+        # extra reads -> champion-identical (empty ModuleList consumes no init RNG).
+        self.extra_reads = nn.ModuleList([nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+                                          for _ in range(max(0, read_depth - 1))])
 
         # Iterative joint-field denoising: refine the state tokens over K rounds (read -> latent self-attn -> write back
         # each variable's belief through its interface decoder). rounds=1 with learned_mask off is the single-shot model.
@@ -546,8 +552,10 @@ class DeepEarth(nn.Module):
             # refine against the updated variable states T alone (~5x fewer keys), which the latents already carry C from.
             kv = self.kv_norm(torch.cat([T, C], dim=1) if k == 0 else T)
             z = z + gate * self.read(self.q_norm(z), kv, kv)[0]
-            for blk in self.blocks:
+            for i, blk in enumerate(self.blocks):
                 z = blk(z)
+                if i < len(self.extra_reads):     # deeper fusion: re-read the context between blocks (read_depth>1)
+                    z = z + gate * self.extra_reads[i](self.q_norm(z), kv, kv)[0]
             if stack is not None:
                 stack.append(z)
             if self.write_back and k < self.rounds - 1:
