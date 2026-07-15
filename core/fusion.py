@@ -172,10 +172,12 @@ class DeepEarth(nn.Module):
         pollinator_top_k: Optional[int] = None,
         phylo_head_routing: bool = False,
         species_mos: int = 1,
+        species_trait_recon: bool = False,
     ) -> None:
         super().__init__()
         self.phylo_head_routing = phylo_head_routing   # route the phylo-refined species embedding into the trait heads
         self.species_mos = species_mos                 # Mixture-of-Softmaxes components on the CORE species decode (1 = single softmax)
+        self.species_trait_recon = species_trait_recon # LCA fine-tuning: reconstruct phylo-conserved traits FROM the refined species embedding (tree learns trait structure)
         self.loss_weights = loss_weights or {}
         self.contrastive_weight = contrastive_weight
         self.contrastive_vars = set(contrastive_vars or ())
@@ -338,6 +340,13 @@ class DeepEarth(nn.Module):
             nn.init.eye_(self.species_mos_proj.weight); nn.init.zeros_(self.species_mos_proj.bias)
             self.species_mos_gate = nn.Linear(self.species_mos * d_model, self.species_mos)
             nn.init.zeros_(self.species_mos_gate.weight); nn.init.zeros_(self.species_mos_gate.bias)
+        # LCA fine-tuning (rule 25 extended to traits): a head reconstructs a species' phylo-conserved trait FROM its
+        # refined embedding. Trained NON-detached (shapes the tree) with phylo masking, so a masked species' trait is
+        # imputed from relatives through the tree -- learned nearest-neighbor-on-the-dated-tree, which must beat raw NN.
+        # Per-species labels (_species_myco/_valid) are attached post-construction from the data source.
+        if self.species_trait_recon and species_variable is not None:
+            self.species_myco_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5))
+            self._species_myco = None; self._species_myco_valid = None; self._train_species = None
         if compile_processor:
             self._refine = torch.compile(self._refine)
 
@@ -690,6 +699,13 @@ class DeepEarth(nn.Module):
             m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
             if m.any():
                 loss = loss + self._phylo_mask_weight * F.mse_loss(self.species_graph(mask=m)[m], self._refined_species[m].detach())
+        # LCA fine-tuning: predict each masked species' mycorrhizal type from its RELATIVE-reconstructed embedding, so the
+        # tree learns trait phylogenetic structure and imputes it for held-out clades (must beat BioCLIP nearest-neighbor).
+        if self.training and getattr(self, "species_trait_recon", False) and getattr(self, "_species_myco", None) is not None:
+            v = self._species_myco_valid & self._train_species                  # train species with myco labels (no held-out leak)
+            if v.any():                                                          # DETACHED default (rule 31) reads the tree's phylo locality without reshaping it toward myco; trait_recon_detach=False + small weight tests gentle backprop (rule-31 tradeoff study).
+                emb = self._refined_species[v] if not getattr(self, "_trait_recon_detach", True) else self._refined_species[v].detach()
+                loss = loss + getattr(self, "_trait_recon_weight", 1.0) * F.cross_entropy(self.species_myco_head(emb), self._species_myco[v].clamp_min(0))
         return loss
 
     def _decode_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],

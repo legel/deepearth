@@ -172,13 +172,21 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     explicit regressions summary — no individual metric may regress. The helper diffs against the committed
     `autoresearch/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
 
-31. **Every benchmark-specific head is a DETACHED read-out; only the core self-supervised reconstruction trains
-    the shared weights.** The core (Earth4D + MADE masked-reconstruction of all modalities + the phylo graph) learns
-    ONE high-dimensional multi-modal representation. Each specialized benchmark head (community, pollinator, lfmc,
-    mycorrhiza, flowering, and every future head) is trained on the `.detach()`-ed pooled latent, so its gradient
-    never reaches the core -- no single benchmark can commandeer the representation. This keeps scoring fast (immediate
-    inference, no per-benchmark fine-tuning) AND guarantees the net measures the CORE's capacity: a change that lifts
-    the shared representation lifts all benchmarks together; one that games a single head cannot inflate the net.
+31. **Benchmark heads are DETACHED read-outs by default; the universal self-supervised reconstruction is inviolable.**
+    The core (Earth4D + MADE masked-reconstruction of all modalities + the phylo graph) learns ONE high-dimensional
+    multi-modal representation; its *dense, always-available* capabilities (species, family, vision, environment) are
+    NEVER traded against a niche supervised signal. Each benchmark head (community, pollinator, lfmc, mycorrhiza,
+    flowering, ...) trains on the `.detach()`-ed pooled latent by default, so no single benchmark commandeers the
+    representation, scoring stays fast (immediate inference), and the net measures the CORE's capacity. A head MAY
+    backpropagate into the shared representation ONLY under ALL of: (a) it writes to a dedicated **trait-subspace** --
+    extra bandwidth concatenated with, never overwriting, the universal channels (rule 23 applied to heads); (b) it is
+    one of **>=K jointly-trained heads** (a single niche head commandeers the axis; an aggregate of many can enrich a
+    general biological prior); (c) its gradient is **weighted by label reliability** (dense traits a real coefficient,
+    ~37-sample traits ~0, so the core never fits a small-sample fluke); (d) it **regresses no universal metric beyond
+    noise** -- the hard floor, enforced by the champion-report regression guard. Keep the coupling only when the
+    arithmetic mean over the *universal* benchmarks holds while the niche family rises; otherwise detach. (Motivating
+    result: one non-detached mycorrhiza head gained +0.014 on its own metric but cost -0.012 on the universal core ->
+    rejected; the detached head matched the nearest-neighbor bar at zero universal cost -> kept.)
 
 32. **Score AND optimize 100% of the benchmark suite -- nothing excluded.** Every benchmark exists to be measured and
     driven up. The net score is the harmonic mean over ALL active benchmarks -- capabilities AND ablation-delta /

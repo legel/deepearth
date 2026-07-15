@@ -103,6 +103,7 @@ def train_and_evaluate(config, device):
                       n_pollinators=getattr(source, "n_pollinators", 0) if m.get("poll_weight", 0.0) > 0 else 0, **poll_kw,
                       phylo_head_routing=m.get("phylo_head_routing", False),
                       species_mos=m.get("species_mos", 1),
+                      species_trait_recon=m.get("species_trait_recon", False),
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
     model._sdist_weight = m.get("sdist_weight", 0.0)        # distribution-matching aux loss (U->species toward local community)
     model._poll_weight = m.get("poll_weight", 0.0)          # plant->pollinator distribution aux loss (GloBI); enables B41/B51-B54
@@ -110,6 +111,13 @@ def train_and_evaluate(config, device):
     model._lfmc_weight = m.get("lfmc_weight", 0.0)               # B34 ecophysiology head (live fuel moisture)
     model._flower_weight = m.get("flower_weight", 0.0)           # B26 phenology head (flowering, per-obs BCE)
     model._myco_weight = m.get("myco_weight", 0.0)               # B42 symbiosis head (mycorrhizal type, per-species CE)
+    if getattr(model, "species_trait_recon", False) and hasattr(source, "myco"):   # LCA fine-tuning: per-species trait labels for the tree reconstruction
+        model._species_myco = source.myco.long(); model._species_myco_valid = source.myco_valid.bool()
+        ts = torch.zeros(source.n_classes, dtype=torch.bool, device=device)        # species present in TRAINING obs only --
+        ts[source.cls[source.train_index].unique()] = True                          # excludes held-out families under phylo holdout (no label leak)
+        model._train_species = ts
+        model._trait_recon_detach = m.get("trait_recon_detach", True)                # rule 31: detach by default; False = backprop into the tree (gentle-shaping study)
+        model._trait_recon_weight = m.get("trait_recon_weight", 1.0)
     if model._sdist_weight > 0 and hasattr(source, "gbifID"):
         sdp = Path(d["cache_dir"]); sdp = (sdp if sdp.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]) / "gbif_species_dist.npz"
         if sdp.exists():
@@ -255,6 +263,8 @@ def train_and_evaluate(config, device):
         if step % 500 == 0:
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
     print(f"trained {steps_done} steps in {time.time()-t0:.0f}s", flush=True)
+    del opt, sched                                            # free optimizer state (~model-sized) before the memory-heavy benchmark eval
+    import gc; gc.collect(); torch.cuda.empty_cache()
 
     given = config.get("condition_on", [])
     targets = [v.name for v in variables if v.reconstruct and v.name not in given]
@@ -263,7 +273,7 @@ def train_and_evaluate(config, device):
     print(f"held-out regions (conditioning on {given}): {line}", flush=True)
     from deepearth.autoresearch import evaluate as ev      # the frozen benchmark suite -> net-score north star
     _t_eval = time.time()
-    raw = ev.evaluate_benchmarks(model, source, device)
+    raw = ev.evaluate_benchmarks(model, source, device, batch=1280)
     _eval_s = time.time() - _t_eval
     print(ev.format_benchmarks(raw), flush=True)
     print(f"benchmark_suite_seconds: {_eval_s:.1f} ({len(source.test)} held-out rows, {len(ev.normalized(raw))} active)", flush=True)
