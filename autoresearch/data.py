@@ -87,6 +87,9 @@ class California:
         self.lat = torch.tensor(lat, device=dev); self.lon = torch.tensor(lon, device=dev)
         self.elev = torch.tensor(elev, device=dev); self.cls = torch.tensor(cls, device=dev)
         self.dino = torch.tensor(dino, device=dev); self.bio = torch.tensor(bio, device=dev)
+        # [Ensue rule 18] per-obs vision presence, DERIVED from the data (robust): occurrence-only densify obs carry
+        # zeroed vision embeddings -> masked so they contribute species+location evidence without poisoning vision.
+        self.has_vision = (self.dino.abs().sum(-1) > 1e-6)
         self.phylo = torch.tensor(phylo, device=dev); self.traits = torch.tensor(traits, device=dev)
         self.species_text = None                          # frozen BioCLIP-2 text prior per species (rule 26 seed / inductive placement)
         if (cache / "bioclip_taxon_text_emb.npy").exists():   # taxonomic-string embeddings, already in vocab order [n_classes, 768]
@@ -185,6 +188,7 @@ class California:
         self.lca_tree = blob.get("lca_tree")
         self.lca_tip_row = blob["lca_tip_row"].to(device) if torch.is_tensor(blob.get("lca_tip_row")) else None
         self.train_index = torch.tensor(self.train, device=device)     # derived: train row indices as a device tensor
+        self.has_vision = (self.dino.abs().sum(-1) > 1e-6)             # derived: occurrence-only obs (zeroed vision) are masked (rule 18)
 
     @staticmethod
     def _find_meta(cache: Path):
@@ -345,6 +349,14 @@ class California:
         if hydro.exists():
             z = np.load(hydro)
             self._add_modality("hydro", z["gbifID"], z["hydro"], gid, dev, zscore=True, valid=z["has_hydro"])
+        worldclim = cache / "gbif_worldclim_tokens.npz"                                 # [Ensue] WorldClim v2.1 bioclim normals (19, 30-yr climatology) -- transferable climate niche for species-from-env
+        if worldclim.exists():
+            z = np.load(worldclim)
+            self._add_modality("worldclim", z["gbifID"], z["worldclim"], gid, dev, zscore=True, valid=z["has_worldclim"])
+        phenology = cache / "gbif_phenology_tokens.npz"                                 # [Ensue] NOAA-CDR VIIRS NDVI 12-month seasonal cycle -- vegetation greenup/senescence timing (orthogonal to static climate/soil)
+        if phenology.exists():
+            z = np.load(phenology)
+            self._add_modality("phenology", z["gbifID"], z["phenology"], gid, dev, zscore=True, valid=z["has_phenology"])
 
     @staticmethod
     def _norm_binom(s):                                                                 # genus+species, lowercased (matches build_pollinator.norm)
@@ -420,6 +432,7 @@ class California:
         values = {"vision_dino": self.dino[idx], "vision_bio": self.bio[idx], "identity": self.cls[idx],
                   "phylo": self.phylo[self.cls[idx]]}
         observed = {n: torch.ones(len(idx), dtype=torch.bool, device=self.device) for n in values}
+        observed["vision_dino"] = self.has_vision[idx]; observed["vision_bio"] = self.has_vision[idx]   # mask absent vision (occurrence-only obs)
         for k, t in enumerate(self.trait_classes):
             values[t] = (self.traits[self.cls[idx], k] - 1).clamp(0)
             observed[t] = self.traits[self.cls[idx], k] > 0

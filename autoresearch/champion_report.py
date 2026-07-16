@@ -101,10 +101,17 @@ def main():
     old = json.loads(RECORD.read_text()) if RECORD.exists() else None
     print(format_commit(new, old, a.desc, a.config))
     if a.save:
+        import getpass, datetime
+        hist = (old or {}).get("history", [])
+        hist.append({"user": getpass.getuser(),
+                     "timestamp": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                     "label": a.desc, "config": a.config, "harmonic": new["harmonic"],
+                     "arithmetic": new["arithmetic"], "scores": new["scores"]})   # append every champion -> both users' records plot over time
         RECORD.write_text(json.dumps({"label": a.desc, "config": a.config, "harmonic": new["harmonic"],
-                                      "arithmetic": new["arithmetic"], "scores": new["scores"]}, indent=2))
+                                      "arithmetic": new["arithmetic"], "scores": new["scores"],
+                                      "history": hist}, indent=2))
         print(f"\n[champion_scores.json updated: {len(new['scores'])} benchmarks, "
-              f"harmonic {new['harmonic']}, arith {new['arithmetic']}]")
+              f"harmonic {new['harmonic']}, arith {new['arithmetic']}; history={len(hist)} records]")
 
 
 if __name__ == "__main__":
