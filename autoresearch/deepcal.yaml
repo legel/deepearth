@@ -1,68 +1,97 @@
-# DeepCal: DeepEarth over variables observed across California.
-name: DeepCal
-
+condition_on:
+- vision_dino
+- vision_bio
 data:
   adapter: california
-  cache_dir: data/deepcal          # relative to the repo root; `prepare.py` downloads + extracts the cache here. Absolute paths are honored as-is; a fresh device just runs prepare.py to populate it.
+  cache_dir: data/deepcal
   n_neighbors: 16
-  time_axis: true                    # LOOP: real observation time -> Earth4D xyt/yzt/xzt planes; validated net 0.2648->0.2964 (B18 climate 0.33->0.86), no spatial regression.                    # down from 24: two findings favor fewer neighbors -- (1) step-limited (fewer neighbor tokens -> faster -> more steps at fixed budget), (2) community doesn't transfer under spatial holdout (commdrop showed over-reliance on non-transferable community hurts A1).
-
+  time_axis: true
 model:
+  capacity: 20
+  compile: compiled
+  contrastive_vars:
+  - vision_dino
+  - naip_rgb
+  - naip_ir
+  - clay
+  contrastive_weight: 0.1
   d_model: 256
-  n_latents: 24
-  phylo_head_routing: true          # route the phylo-refined species embedding into the trait heads (species-specific signal reaches lfmc/myco/flower)
-  n_layers: 4
-  capacity: 16                       # space-time encoder resolution (hash levels)
-  decoder_hidden: 2048               # sweeping up (512->1024: +2.2%,+1.0%): finding the interface-decoder capacity ceiling (rule 23). Watch for turnover / VRAM.
-  rounds: 2                          # science.md rule 22: iterative joint decoding (K refinement rounds w/ write-back), a multi-modal diffusion vs one-shot. write_back/learned_mask default on for rounds>1.
-  compile: compiled                  # science.md rule 21: full-step torch.compile (~2.4x throughput, bit-identical math) -> more steps at the fixed 600s budget -> higher net_score. "compiled" = stable fusion, no CUDA graphs (avoids buffer aliasing on this 767M model).
-  sparse_hash: true                  # sparse-Adam + precompute for the absolute encoder: bit-identical training, ~12% faster (0.758 vs 0.747). Costs ~+2GB VRAM (precompute cache) — set false to train the absolute hash with the dense optimizer if VRAM-bound.
-  relative_window: [8000, 8000, 300, 130]   # neighbor-offset half-window: north_m, east_m, up_m, days
-  manifolds:                          # vector subspaces treated like space and time
-    biological: phylo                 # the biological subspace uses the evolutionary-position vector's width
-  loss_weights:                       # science.md rule 18: up-weight reconstruction of variables tied to non-maxed benchmarks (vision_dino->A6/loo_vision, phylo->A5); maxed benchmarks have margin.
-    vision_dino: 2.0
+  decoder_hidden: 2048
+  densify_weight: 0.3
+  flower_weight: 0.1
+  lfmc_weight: 0.1
+  loss_weights:
     phylo: 2.0
-  contrastive_weight: 0.05            # JEPA / rule 16: batch-InfoNCE auxiliary so predicted vision_dino retrieves its own target vs the batch (a global cross-modal signal cosine can't give). Targets A6/loo_vision.
-  contrastive_vars: [vision_dino]
-  smooth_geo: true
-  smooth_geo_sigmas: [0.25, 1.0, 4.0, 16.0, 64.0]   # +ultra-broad transferable scale on the winning RFF bank: over 3 seeds vs champion (same session) A1 mean 0.392->0.468 (std 0.045->0.008), net 0.873->0.882; non-overlapping distributions.                  # Hybrid-SDM (arXiv:2410.10937): a smooth sigma-bank RFF prior over (lat,lon,elev,time) ADDED to the memorizing hash position -> a transferable spatial basis that generalizes to held-out regions. Over 3 seeds each: raises A1 mean 0.348->0.402 AND cuts A1 variance ~5x (std 0.10->0.02); net mean 0.869->0.876.
-  poll_weight: 0.1                    # rule 27: enable the pollinator subsystem (B41/B51-B55) on the cleaned 7373 vocab. chm-fix (separate poll clip group) makes it Pareto-neutral on plant metrics. Reduce pollinator_top_k on <40GB GPUs.
+    vision_dino: 2.0
+  manifolds:
+    biological: phylo
+  myco_weight: 0.1
+  n_latents: 32
+  n_layers: 4
+  phylo_head_routing: true      # OUR validated feature (0.491->0.503); additive, his config lacked it
+  phylo_mask_weight: 0.1
+  poll_weight: 0.1
   pollinator_top_k: 64
-  lfmc_weight: 0.1                   # B34 ecophysiology head (jointly-trained, detached; rule 31)
-  flower_weight: 0.1                 # B26/B28 phenology head
-  myco_weight: 0.1                   # B42 symbiosis head
-  sdist_weight: 0.5                  # science.md rule 17: detached community-distribution head (comm_head), multi-scale target; brings B20-22 community + B29/39/40 SDM online, zero backbone gradient
-  species_graph:                      # phylogenomic species GNN (science.md rules 7-12): refine per-species state so an obs of species A updates its relatives B,C,...; identity is read from the refined table
-    variable: identity
-    operator: latent-clade            # rule 29: exact O(N) tree-GP message passing (internal clade nodes) + out-of-tree clade cross-attention. H200 batch-512 validated: beats ou-attention on both means + ~45/50 benchmarks.
+  relative_window:
+  - 8000
+  - 8000
+  - 300
+  - 130
+  rounds: 2
+  sdist_weight: 0.7
+  smooth_geo: true
+  smooth_geo_sigmas:
+  - 0.25
+  - 1.0
+  - 4.0
+  - 16.0
+  - 64.0
+  sparse_hash: true
+  species_graph:
     bioclip_init: true
-    layers: 2
     heads: 4
-    top_k: 128                        # sparse OU-attention over the 128 nearest phylo-neighbors — never O(n^2); the OU distance bias makes far species contribute ~0, so top-k is faithful (was implicitly dense, fine at 2141 species, O(n^2) at 4628+)
-
-variables:
-  - {name: vision_dino, kind: continuous, neighbor: true}   # a ground-image representation, also read from neighbors
-  - {name: vision_bio,  kind: continuous}                    # a second ground-image representation
-  - {name: identity,    kind: categorical, classes: identity, neighbor: true}
-  - {name: phylo,       kind: continuous}                    # an evolutionary-position vector
-  - {expand: trait_classes}                                  # one categorical per descriptor, widths from the data
-  - {name: climate,  kind: continuous}                       # Daymet 180-day x 7  (universal environmental input)
-  - {name: soil,     kind: continuous}                       # SSURGO soil properties
-  - {name: naip_rgb, kind: continuous}                       # NAIP aerial DINOv3-SAT493M (RGB)
-  - {name: naip_ir,  kind: continuous}                       # NAIP aerial DINOv3-SAT493M (IR)
-  - {name: clay,     kind: continuous}                       # Clay v1.5 / Sentinel-2 embedding
-  - {name: topo,     kind: continuous}                       # USGS 3DEP 1m microtopography (slope/aspect/TRI/VRM/HLI/TPI) — rule 18
-  - {name: chm,      kind: continuous}                       # NAIP-CHM 0.6m canopy height+structure (trees+buildings) — rule 18
-  - {name: hydro,    kind: continuous}                       # HydroSHEDS-style drainage (TWI/HAND/SCA) + Winstral wind exposure (6) — rule 18
-
-condition_on: [vision_dino, vision_bio]    # the widely-available inputs used at evaluation
-
+    layers: 2
+    operator: latent-clade
+    top_k: 128
+    variable: identity
+name: DeepCal
 training:
-  steps: 8000
-  batch: 512
-  hide_prob: 0.50                    # up from 0.35: the benchmarks reveal only a small given set (heavy masking), so training with more hidden variables better matches the induction-heavy eval distribution (train/eval mask alignment).
-  lr: 0.0005                         # re-checking the LR optimum at nn16 (lost at nn24, but nn16 does more steps -> may now favor a higher LR).
-  weight_decay: 0.001                # up from 3e-4: at the longer 900s budget the extra regularization protects A1 (species-geo) from spatial overfit while A6/loo_vision capture the extra-step gains. Over 3 seeds vs plain-900s (equal budget): net 0.8821->0.8858 and vs the 600s champion 0.8815->0.8858 (non-overlapping).
-  time_budget_s: 600                 # science.md rule 20: fixed 10-minute experiment budget (from step 10, excludes startup/compile)
-  precision: bf16                     # science.md rule 21: autocast the Processor + decoders to bf16 (Earth4D hash stays fp32) -> Ampere tensor cores ~2x -> more steps at the fixed budget
+  batch: 256              # 3090 VRAM: his 512 OOMs 24GB (same hardware limit as the 4000s budget)
+  hide_prob: 0.5
+  lr: 0.0005
+  precision: bf16
+  seed: 1337
+  steps: 16000
+  time_budget_s: 600      # rule 20 (our hardware); his 4000 won't fit our 3090 budget
+  weight_decay: 0.001
+variables:
+- kind: continuous
+  name: vision_dino
+  neighbor: true
+- kind: continuous
+  name: vision_bio
+- classes: identity
+  kind: categorical
+  name: identity
+  neighbor: true
+- kind: continuous
+  name: phylo
+- expand: trait_classes
+- kind: continuous
+  name: climate
+- kind: continuous
+  name: soil
+- kind: continuous
+  name: naip_rgb
+- kind: continuous
+  name: naip_ir
+- kind: continuous
+  name: clay
+- kind: continuous
+  name: topo
+- kind: continuous
+  name: chm
+- kind: continuous
+  name: hydro
+- kind: continuous
+  name: phenology

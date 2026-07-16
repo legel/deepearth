@@ -28,6 +28,9 @@ def build_variables(spec, dims):
                                           reconstruct=v.get("reconstruct", True)))
             continue
         kind = v["kind"]
+        if kind == "continuous" and dims.get(v["name"], 0) == 0:   # [Ensue] channel absent in this cache -> skip so configs stay runnable on the standard data download (extract the channel to enable it)
+            print(f"[data] skipping variable {v['name']!r}: no data in cache (optional channel not extracted)")
+            continue
         variables.append(Variable(
             v["name"], kind,
             dim=dims.get(v["name"], 0) if kind == "continuous" else 0,
@@ -37,7 +40,8 @@ def build_variables(spec, dims):
 
 
 def train_and_evaluate(config, device):
-    seed = config.get("training", {}).get("seed", 0)   # fixed seed -> matched-init A/B, so a detached head's causal effect is isolated
+    torch.set_float32_matmul_precision("high")   # [Ensue] enable TF32 tensor cores for fp32 matmuls (~1.3-2x, Earth4D hash stays fp32) — free throughput
+    seed = config.get("training", {}).get("seed", 0)   # fixed seed -> matched-init A/B: backbone benchmarks bit-identical across runs, so a detached head's causal effect is isolated (no run-to-run noise masquerading as regression).
     torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
     d = config["data"]
     # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reused across runs; keyed by the data settings that change the assembled set.
@@ -95,7 +99,9 @@ def train_and_evaluate(config, device):
                       rounds=m.get("rounds", 1), write_back=m.get("write_back", True), revise=m.get("revise", False),
                       round_loss=m.get("round_loss", "final"), learned_mask=m.get("learned_mask"),
                       feedback_detach=m.get("feedback_detach", False), flex_attention=m.get("flex_attention", False),
-                      decoder_hidden=m.get("decoder_hidden"), loss_weights=m.get("loss_weights"),
+                      decoder_hidden=m.get("decoder_hidden"), mod_encoder=m.get("mod_encoder", "linear"),
+                      block_ffn=m.get("block_ffn", "torch"), block_norm=m.get("block_norm", "ln"),
+                      read_depth=m.get("read_depth", 1), loss_weights=m.get("loss_weights"),
                       contrastive_weight=m.get("contrastive_weight", 0.0), contrastive_vars=m.get("contrastive_vars"),
                       smooth_geo=m.get("smooth_geo", False),
                       smooth_geo_sigmas=m.get("smooth_geo_sigmas"),
@@ -105,7 +111,9 @@ def train_and_evaluate(config, device):
                       species_trait_recon=m.get("species_trait_recon", False),
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
     model._sdist_weight = m.get("sdist_weight", 0.0)        # distribution-matching aux loss (U->species toward local community)
+    model._comm_attached = m.get("comm_attached", False)    # [Ensue] if True, community loss flows into the backbone (not just comm_head)
     model._poll_weight = m.get("poll_weight", 0.0)          # plant->pollinator distribution aux loss (GloBI); enables B41/B51-B54
+    model._poll_phylo_weight = m.get("poll_phylo_weight", 0.0)   # pollinator phylo self-distillation: predict interactions from relatives -> B55 transfer (diagnostic-targeted)
     model._phylo_mask_weight = m.get("phylo_mask_weight", 0.0)   # rule 25: mask-and-reconstruct species embedding from relatives
     model._lfmc_weight = m.get("lfmc_weight", 0.0)               # B34 ecophysiology head (live fuel moisture)
     model._flower_weight = m.get("flower_weight", 0.0)           # B26 phenology head (flowering, per-obs BCE)
@@ -201,12 +209,19 @@ def train_and_evaluate(config, device):
     time_budget = t.get("time_budget_s")
     t_budget_start = None
     steps_done = steps                                   # actual steps run (the budget usually stops us well short of `steps`)
+    # [Ensue rule 18] weighted sampling: down-weight occurrence-only (vision-masked) obs so full-modality obs keep
+    # champion-level exposure while densify obs still add community/spatial coverage. densify_weight=1.0 -> uniform.
+    _dw = float(m.get("densify_weight", 1.0)); _sw = None
+    if _dw != 1.0 and hasattr(source, "has_vision"):
+        _sw = torch.where(source.has_vision[source.train_index], torch.tensor(1.0, device=device),
+                          torch.tensor(_dw, device=device))
     for step in range(steps):
         if step == 10:
             t_budget_start = time.time()
         if time_budget is not None and t_budget_start is not None and (time.time() - t_budget_start) >= time_budget:
             print(f"  [time budget {time_budget}s reached at step {step}]", flush=True); steps_done = step; break
-        idx = source.train_index[torch.randint(0, len(source.train_index), (batch,), device=device)]
+        idx = (source.train_index[torch.multinomial(_sw, batch, replacement=True)] if _sw is not None
+               else source.train_index[torch.randint(0, len(source.train_index), (batch,), device=device)])
         values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
         if sparse_hash:
             # Refresh the cached discrete cell every K steps so the fast-path hit rate tracks slow resolution drift
@@ -262,8 +277,27 @@ def train_and_evaluate(config, device):
         if step % 500 == 0:
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
     print(f"trained {steps_done} steps in {time.time()-t0:.0f}s", flush=True)
-    del opt, sched                                            # free optimizer state (~model-sized) before the memory-heavy benchmark eval
-    import gc; gc.collect(); torch.cuda.empty_cache()
+
+    # [Ensue] Checkpoint the trained model BEFORE eval, always. On large datasets eval can OOM (the train-mean gather);
+    # without this the whole training run is wasted. Recover the score with: train.py <config> --eval_ckpt <this path>
+    # (loads weights, skips training). Kept next to the prepared cache so it survives on the box's data disk.
+    if not eval_ckpt:
+        _ck = str(Path(__file__).resolve().parents[1] / "data" / "deepcal" / f"ckpt_{config.get('_tag', 'run')}.pt")
+        try:
+            torch.save(model.state_dict(), _ck); print(f"saved pre-eval checkpoint: {_ck}", flush=True)
+        except Exception as _e:
+            print(f"pre-eval checkpoint save failed: {_e}", flush=True)
+
+    # [Ensue] Free training memory (optimizer state ~6GB + grads on the 795M model) before eval, so the eval
+    # train-mean gather fits on large datasets -> big-data runs eval one-shot instead of needing checkpoint recovery.
+    import gc
+    for _p in model.parameters():
+        _p.grad = None
+    try:
+        del opt, sched
+    except Exception:
+        pass
+    gc.collect(); torch.cuda.empty_cache()
 
     given = config.get("condition_on", [])
     targets = [v.name for v in variables if v.reconstruct and v.name not in given]

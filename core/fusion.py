@@ -116,6 +116,54 @@ class NeighborContext(nn.Module):
         return torch.cat(tokens, dim=1)
 
 
+class RMSNorm(nn.Module):
+    """RMSNorm (Zhang & Sennrich 2019): scale-only, no mean-centering — a genuinely different normalizer than
+    LayerNorm, cheaper and with different gradient dynamics. An architecture lever, not a knob."""
+
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.g = nn.Parameter(torch.ones(d)); self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.g * x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+
+class GLUFFN(nn.Module):
+    """Gated-linear-unit FFN (SwiGLU / GeGLU, Shazeer 2020): a value branch multiplicatively gated by a learned
+    activation branch — a different information-routing structure than the MLP's single activation path."""
+
+    def __init__(self, d: int, hidden: int, act: str = "swish"):
+        super().__init__()
+        self.gate = nn.Linear(d, hidden); self.up = nn.Linear(d, hidden); self.down = nn.Linear(hidden, d)
+        self.act = F.silu if act == "swish" else F.gelu
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.down(self.act(self.gate(x)) * self.up(x))
+
+
+class LatentBlock(nn.Module):
+    """Configurable pre-norm latent self-attention block — the ARCHITECTURE-variant replacement for
+    ``nn.TransformerEncoderLayer``. norm in {ln, rms}; ffn in {mlp, swiglu, geglu}. The ``torch`` block stays the
+    loop default (champion reproduces byte-identically); this activates only when a config selects a variant."""
+
+    def __init__(self, d_model: int, n_heads: int, ffn: str = "mlp", norm: str = "ln", mult: int = 4):
+        super().__init__()
+        Norm = (lambda d: RMSNorm(d)) if norm == "rms" else (lambda d: nn.LayerNorm(d))
+        self.n1, self.n2 = Norm(d_model), Norm(d_model)
+        self.attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        h = mult * d_model
+        if ffn == "swiglu":
+            self.ffn = GLUFFN(d_model, h, "swish")
+        elif ffn == "geglu":
+            self.ffn = GLUFFN(d_model, h, "gelu")
+        else:
+            self.ffn = nn.Sequential(nn.Linear(d_model, h), nn.GELU(), nn.Linear(h, d_model))
+
+    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:   # drop-in for TransformerEncoderLayer(x)
+        a = self.n1(x); x = x + self.attn(a, a, a, need_weights=False)[0]
+        return x + self.ffn(self.n2(x))
+
+
 class DeepEarth(nn.Module):
     """Config-driven model of spatio-temporally covarying variables (see module docstring).
 
@@ -160,6 +208,10 @@ class DeepEarth(nn.Module):
         feedback_detach: bool = False,
         flex_attention: bool = False,
         decoder_hidden: Optional[int] = None,
+        mod_encoder: str = "linear",
+        block_ffn: str = "torch",
+        block_norm: str = "ln",
+        read_depth: int = 1,
         loss_weights: Optional[Dict[str, float]] = None,
         contrastive_weight: float = 0.0,
         contrastive_vars: Optional[Sequence[str]] = None,
@@ -190,9 +242,15 @@ class DeepEarth(nn.Module):
         def _dec(out_dim):
             return (nn.Sequential(nn.Linear(d_model, decoder_hidden), nn.GELU(), nn.Linear(decoder_hidden, out_dim))
                     if decoder_hidden else nn.Linear(d_model, out_dim))
+        def _enc(in_dim):   # [Ensue] mod_encoder toggle: deeper/normalized modality tokenizer (default = bare Linear)
+            if mod_encoder == "mlp2":
+                return nn.Sequential(nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
+            if mod_encoder == "mlp2ln":
+                return nn.Sequential(nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model), nn.LayerNorm(d_model))
+            return nn.Linear(in_dim, d_model)
         for v in self.variables:
             if v.kind == "continuous":
-                self.encoders[v.name] = nn.Linear(v.dim, d_model)
+                self.encoders[v.name] = _enc(v.dim)
                 if v.reconstruct:
                     self.decoders[v.name] = _dec(v.dim)
             elif v.kind == "categorical":
@@ -277,8 +335,18 @@ class DeepEarth(nn.Module):
         self.latents = nn.Parameter(torch.randn(n_latents, d_model) * 0.02)
         self.read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.q_norm = nn.LayerNorm(d_model); self.kv_norm = nn.LayerNorm(d_model)
-        self.blocks = nn.ModuleList([nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model,
-                                                                batch_first=True, norm_first=True) for _ in range(n_layers)])
+        # Latent self-attention blocks. Default block_ffn="torch" = nn.TransformerEncoderLayer (champion-identical);
+        # an ARCHITECTURE variant swaps in the configurable pre-norm LatentBlock (ffn: mlp/swiglu/geglu, norm: ln/rms).
+        def _block():
+            if block_ffn == "torch":
+                return nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True)
+            return LatentBlock(d_model, n_heads, ffn=block_ffn, norm=block_norm)
+        self.blocks = nn.ModuleList([_block() for _ in range(n_layers)])
+        # Fusion depth (architecture lever): re-read the fixed context between latent blocks instead of once up front,
+        # so the latents keep pulling from the neighbor/position context as they process. read_depth=1 (default) -> no
+        # extra reads -> champion-identical (empty ModuleList consumes no init RNG).
+        self.extra_reads = nn.ModuleList([nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+                                          for _ in range(max(0, read_depth - 1))])
 
         # Iterative joint-field denoising: refine the state tokens over K rounds (read -> latent self-attn -> write back
         # each variable's belief through its interface decoder). rounds=1 with learned_mask off is the single-shot model.
@@ -495,8 +563,10 @@ class DeepEarth(nn.Module):
             # refine against the updated variable states T alone (~5x fewer keys), which the latents already carry C from.
             kv = self.kv_norm(torch.cat([T, C], dim=1) if k == 0 else T)
             z = z + gate * self.read(self.q_norm(z), kv, kv)[0]
-            for blk in self.blocks:
+            for i, blk in enumerate(self.blocks):
                 z = blk(z)
+                if i < len(self.extra_reads):     # deeper fusion: re-read the context between blocks (read_depth>1)
+                    z = z + gate * self.extra_reads[i](self.q_norm(z), kv, kv)[0]
             if stack is not None:
                 stack.append(z)
             if self.write_back and k < self.rounds - 1:
@@ -674,6 +744,18 @@ class DeepEarth(nn.Module):
             if v.any():                                                          # DETACHED default (rule 31) reads the tree's phylo locality without reshaping it toward myco; trait_recon_detach=False + small weight tests gentle backprop (rule-31 tradeoff study).
                 emb = self._refined_species[v] if not getattr(self, "_trait_recon_detach", True) else self._refined_species[v].detach()
                 loss = loss + getattr(self, "_trait_recon_weight", 1.0) * F.cross_entropy(self.species_myco_head(emb), self._species_myco[v].clamp_min(0))
+        # Pollinator phylo self-distillation (mirrors rule 25 for INTERACTIONS): a species' pollinator distribution
+        # predicted from its PHYLO-RELATIVES (masked seed) must match its full-info prediction -> trains the model to
+        # transfer interactions across the phylogeny. Diagnostic (2026-07-15): plant-phylo oracle reaches recall 0.216
+        # but the model only 0.037 (B55) -> the signal is present and unexploited. Default weight 0 = champion-identical.
+        if self.training and getattr(self, "_poll_phylo_weight", 0.0) > 0 and self._refined_species is not None \
+                and getattr(self, "poll_head", None) is not None:
+            m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
+            if m.any():
+                basis = self._pollinator_basis().detach().t()                                        # [d, n_poll]
+                full = F.softmax((self.poll_head(self._refined_species[m].detach()) @ basis).float(), dim=-1)   # target
+                rel = F.log_softmax((self.poll_head(self.species_graph(mask=m)[m]) @ basis).float(), dim=-1)    # from relatives
+                loss = loss + self._poll_phylo_weight * F.kl_div(rel, full, reduction="batchmean")
         return loss
 
     def _decode_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
@@ -702,7 +784,9 @@ class DeepEarth(nn.Module):
             # comm_head toward the local community distribution, with zero gradient into the shared representation.
             if getattr(self, "_sdist_weight", 0.0) > 0 and v.name == self.species_variable \
                     and "_sdist_idx" in values and getattr(self, "comm_head", None) is not None:
-                comm = (self.comm_head(self._pooled(z, v.name).detach()) @ self._refined_species.detach().t()).float()
+                _cp = self._pooled(z, v.name)                                   # [Ensue] comm_attached: let the community loss shape the backbone
+                _cp = _cp if getattr(self, "_comm_attached", False) else _cp.detach()
+                comm = (self.comm_head(_cp) @ self._refined_species.detach().t()).float()
                 sidx = values["_sdist_idx"].clamp(0, comm.shape[1] - 1)   # -1 padding -> 0 (its freq is 0, harmless)
                 tgt = torch.zeros_like(comm).scatter_add_(1, sidx, values["_sdist_frq"].float())
                 kl = -(tgt * F.log_softmax(comm, -1)).sum(-1)            # soft cross-entropy toward the local distribution
