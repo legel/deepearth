@@ -272,6 +272,17 @@ def train_and_evaluate(config, device):
         except Exception as _e:
             print(f"pre-eval checkpoint save failed: {_e}", flush=True)
 
+    # [Ensue] Free training memory (optimizer state ~6GB + grads on the 795M model) before eval, so the eval
+    # train-mean gather fits on large datasets -> big-data runs eval one-shot instead of needing checkpoint recovery.
+    import gc
+    for _p in model.parameters():
+        _p.grad = None
+    try:
+        del opt, sched
+    except Exception:
+        pass
+    gc.collect(); torch.cuda.empty_cache()
+
     given = config.get("condition_on", [])
     targets = [v.name for v in variables if v.reconstruct and v.name not in given]
     scores = evaluate(model, source, given, targets, device)
