@@ -164,6 +164,13 @@ def train_and_evaluate(config, device):
     else:
         opt = torch.optim.AdamW(groups, weight_decay=wd0, fused=True)
     steps = t["steps"]; batch = t.get("batch", 512)
+    # VRAM-adaptive: the config carries big-rig-optimal values; on smaller GPUs auto-cap batch and drop the sparse_hash
+    # precompute (+2GB, bit-identical math) so ONE pushed config runs best on 80GB rigs AND 24GB cards without hand-tuning.
+    _vram = torch.cuda.get_device_properties(device).total_memory / 1e9 if str(device).startswith("cuda") else 1e9
+    if _vram < 40:                                    # 24GB 3090/4090 etc.; A100/H100/H200 (40-80GB) keep the config's values
+        _bcap = 128 if _vram < 18 else 256
+        if batch > _bcap: print(f"[hw] {_vram:.0f}GB GPU: batch {batch}->{_bcap} (VRAM-adaptive)", flush=True); batch = _bcap
+        if sparse_hash: print(f"[hw] {_vram:.0f}GB GPU: sparse_hash off (+2GB precompute won't fit; bit-identical math)", flush=True); sparse_hash = False
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
     bf16 = t.get("precision", "fp32") == "bf16"
     hide_prob = t.get("hide_prob", 0.35)
@@ -180,6 +187,9 @@ def train_and_evaluate(config, device):
             he.clamp_per_level_scale()
     # Full-step compile: fuse context + masked_loss into one graph; random reveal mask computed eagerly so capture stays deterministic.
     # Modes: "graph"/"full" -> reduce-overhead (CUDA graphs, biggest win but its pool can alias live buffers on large models); "compiled"/True -> default fusion (stable at any size); "processor" -> narrow Processor-only compile.
+    import torch._dynamo as _dyn   # this model decodes ~14 variables of DISTINCT sizes -> `decode`/`_reconstruction_error` each need one compiled variant; default recompile_limit 8 thrashes into eager on wider configs
+    if hasattr(_dyn.config, "recompile_limit"): _dyn.config.recompile_limit = 64
+    if hasattr(_dyn.config, "cache_size_limit"): _dyn.config.cache_size_limit = 64
     _cm = m.get("compile")
     compile_full = _cm in (True, "full", "graph", "compiled")
     cuda_graphs = _cm in ("full", "graph")
