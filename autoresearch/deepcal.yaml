@@ -86,11 +86,11 @@ condition_on:
 - vision_dino
 - vision_bio
 training:
-  steps: 8000
+  steps: 12000
   batch: 512
   hide_prob: 0.5
   lr: 0.0005
   weight_decay: 0.001
-  time_budget_s: 900
+  time_budget_s: 1800
   precision: bf16
   seed: 1337
