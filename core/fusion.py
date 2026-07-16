@@ -171,12 +171,10 @@ class DeepEarth(nn.Module):
         pollinator_text: Optional[torch.Tensor] = None,
         pollinator_top_k: Optional[int] = None,
         phylo_head_routing: bool = False,
-        species_mos: int = 1,
         species_trait_recon: bool = False,
     ) -> None:
         super().__init__()
         self.phylo_head_routing = phylo_head_routing   # route the phylo-refined species embedding into the trait heads
-        self.species_mos = species_mos                 # Mixture-of-Softmaxes components on the CORE species decode (1 = single softmax)
         self.species_trait_recon = species_trait_recon # LCA fine-tuning: reconstruct phylo-conserved traits FROM the refined species embedding (tree learns trait structure)
         self.loss_weights = loss_weights or {}
         self.contrastive_weight = contrastive_weight
@@ -326,20 +324,6 @@ class DeepEarth(nn.Module):
         # Phenology (B26): predict whether a (space-time-conditioned) observation is flowering (PhenoVision label).
         self.flower_head = nn.Sequential(nn.Linear(_hd, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
             if species_variable is not None else None
-        # Mixture-of-Softmaxes on the CORE species decode (Yang+2018): K structure-preserving latent reads, each scoring
-        # all species, mixed per-observation -> a high-rank posterior P(species|env,loc) that a rank-d single softmax
-        # cannot express. Sharpens the species-from-env posterior (B1/B23) whose calibrated tail IS the community (B29/39/40).
-        # Created last (RNG after the backbone) so species_mos=1 initializes the shared model bit-identically.
-        if self.species_mos > 1 and species_variable is not None:
-            # IDENTITY init: proj=I, gate=0 (uniform mix), each query = the single species decode query + tiny symmetry-
-            # breaking noise -> at init the MoS EQUALS the single softmax, so it can only improve (never starts worse).
-            si = self.names.index(species_variable)
-            self.species_mos_query = nn.Parameter(self.decode_query[si].detach().clone().unsqueeze(0)
-                                                  .repeat(self.species_mos, 1) + 0.02 * torch.randn(self.species_mos, d_model))
-            self.species_mos_proj = nn.Linear(d_model, d_model)
-            nn.init.eye_(self.species_mos_proj.weight); nn.init.zeros_(self.species_mos_proj.bias)
-            self.species_mos_gate = nn.Linear(self.species_mos * d_model, self.species_mos)
-            nn.init.zeros_(self.species_mos_gate.weight); nn.init.zeros_(self.species_mos_gate.bias)
         # LCA fine-tuning (rule 25 extended to traits): a head reconstructs a species' phylo-conserved trait FROM its
         # refined embedding. Trained NON-detached (shapes the tree) with phylo masking, so a masked species' trait is
         # imputed from relatives through the tree -- learned nearest-neighbor-on-the-dated-tree, which must beat raw NN.
@@ -576,25 +560,9 @@ class DeepEarth(nn.Module):
         sp = self._reencode(self.species_variable, pooled)      # expected phylo-refined species embedding
         return torch.cat([pooled.detach(), sp.detach()], -1) if detach else torch.cat([pooled, sp], -1)
 
-    def _species_logprob(self, latents: torch.Tensor) -> torch.Tensor:
-        """High-rank species posterior via Mixture-of-Softmaxes (Yang+2018, "Breaking the Softmax Bottleneck").
-        K learned queries each pool the latent SET differently (structure-preserving, not one pooled point), score all
-        species against the refined table, and a per-observation gate mixes their softmaxes: log sum_k pi_k softmax_k.
-        Returns LOG-probabilities [B, N] -- log_softmax(logp)=logp and softmax(logp)=p, so the CE loss and topk/softmax
-        eval consume it unchanged. A rank-d single softmax cannot express a fine multi-species assemblage; this can."""
-        z = latents
-        q = self.species_mos_query                                                      # [K, d]
-        w = torch.softmax(torch.einsum("bld,kd->blk", z, q) / (self.d_model ** 0.5), dim=1)   # [B, L, K] over latents
-        pooled = torch.einsum("blk,bld->bkd", w, z)                                      # [B, K, d] K structure reads
-        logits = torch.einsum("bkd,nd->bkn", self.species_mos_proj(pooled), self._refined_species)   # [B, K, N]
-        logpi = torch.log_softmax(self.species_mos_gate(pooled.reshape(pooled.shape[0], -1)), dim=-1) # [B, K]
-        return torch.logsumexp(logpi.unsqueeze(-1) + torch.log_softmax(logits, dim=-1), dim=1)        # [B, N] log-mix
-
     def decode(self, latents: torch.Tensor, name: str) -> torch.Tensor:
         """Read one variable back from the latents. The species variable reads against the refined species states; a diffusion variable is sampled from its head."""
         if name == self.species_variable and self._refined_species is not None:
-            if self.species_mos > 1:
-                return self._species_logprob(latents)                    # high-rank MoS posterior (log-probs)
             return self._pooled(latents, name) @ self._refined_species.t()
         pooled = self._pooled(latents, name)
         if name in self.diffusion_heads:
