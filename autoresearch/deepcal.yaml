@@ -1,34 +1,43 @@
-name: DeepCal
+condition_on:
+- vision_dino
+- vision_bio
 data:
   adapter: california
   cache_dir: data/deepcal
   n_neighbors: 16
   time_axis: true
 model:
-  d_model: 256
-  n_latents: 32
-  n_layers: 4
   capacity: 20
-  decoder_hidden: 2048
-  rounds: 2
   compile: compiled
-  sparse_hash: true
-  relative_window:
-  - 8000
-  - 8000
-  - 300
-  - 130
-  manifolds:
-    biological: phylo
-  loss_weights:
-    vision_dino: 2.0
-    phylo: 2.0
-  contrastive_weight: 0.1
   contrastive_vars:
   - vision_dino
   - naip_rgb
   - naip_ir
   - clay
+  contrastive_weight: 0.1
+  d_model: 256
+  decoder_hidden: 2048
+  densify_weight: 0.3
+  flower_weight: 0.1
+  lfmc_weight: 0.1
+  loss_weights:
+    phylo: 2.0
+    vision_dino: 2.0
+  manifolds:
+    biological: phylo
+  myco_weight: 0.1
+  n_latents: 32
+  n_layers: 4
+  phylo_mask_weight: 0.1
+  poll_weight: 0.1
+  pollinator_top_k: 64
+  relative_window:
+  - 8000
+  - 8000
+  - 300
+  - 130
+  rounds: 2
+  sdist_weight: 0.7
   smooth_geo: true
   smooth_geo_sigmas:
   - 0.25
@@ -36,61 +45,52 @@ model:
   - 4.0
   - 16.0
   - 64.0
-  poll_weight: 0.1
-  pollinator_top_k: 64
+  sparse_hash: true
   species_graph:
-    variable: identity
-    operator: latent-clade
     bioclip_init: true
-    layers: 2
     heads: 4
+    layers: 2
+    operator: latent-clade
     top_k: 128
-  sdist_weight: 0.7
-  lfmc_weight: 0.1
-  flower_weight: 0.1
-  myco_weight: 0.1
-  phylo_mask_weight: 0.1
-  densify_weight: 0.3
-variables:
-- name: vision_dino
-  kind: continuous
-  neighbor: true
-- name: vision_bio
-  kind: continuous
-- name: identity
-  kind: categorical
-  classes: identity
-  neighbor: true
-- name: phylo
-  kind: continuous
-- expand: trait_classes
-- name: climate
-  kind: continuous
-- name: soil
-  kind: continuous
-- name: naip_rgb
-  kind: continuous
-- name: naip_ir
-  kind: continuous
-- name: clay
-  kind: continuous
-- name: topo
-  kind: continuous
-- name: chm
-  kind: continuous
-- name: hydro
-  kind: continuous
-- name: phenology
-  kind: continuous
-condition_on:
-- vision_dino
-- vision_bio
+    variable: identity
+name: DeepCal
 training:
-  steps: 12000
   batch: 512
   hide_prob: 0.5
   lr: 0.0005
-  weight_decay: 0.001
-  time_budget_s: 1800
   precision: bf16
   seed: 1337
+  steps: 16000
+  time_budget_s: 4000
+  weight_decay: 0.001
+variables:
+- kind: continuous
+  name: vision_dino
+  neighbor: true
+- kind: continuous
+  name: vision_bio
+- classes: identity
+  kind: categorical
+  name: identity
+  neighbor: true
+- kind: continuous
+  name: phylo
+- expand: trait_classes
+- kind: continuous
+  name: climate
+- kind: continuous
+  name: soil
+- kind: continuous
+  name: naip_rgb
+- kind: continuous
+  name: naip_ir
+- kind: continuous
+  name: clay
+- kind: continuous
+  name: topo
+- kind: continuous
+  name: chm
+- kind: continuous
+  name: hydro
+- kind: continuous
+  name: phenology
