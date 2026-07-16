@@ -262,6 +262,16 @@ def train_and_evaluate(config, device):
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
     print(f"trained {steps_done} steps in {time.time()-t0:.0f}s", flush=True)
 
+    # [Ensue] Checkpoint the trained model BEFORE eval, always. On large datasets eval can OOM (the train-mean gather);
+    # without this the whole training run is wasted. Recover the score with: train.py <config> --eval_ckpt <this path>
+    # (loads weights, skips training). Kept next to the prepared cache so it survives on the box's data disk.
+    if not eval_ckpt:
+        _ck = str(Path(__file__).resolve().parents[1] / "data" / "deepcal" / f"ckpt_{config.get('_tag', 'run')}.pt")
+        try:
+            torch.save(model.state_dict(), _ck); print(f"saved pre-eval checkpoint: {_ck}", flush=True)
+        except Exception as _e:
+            print(f"pre-eval checkpoint save failed: {_e}", flush=True)
+
     given = config.get("condition_on", [])
     targets = [v.name for v in variables if v.reconstruct and v.name not in given]
     scores = evaluate(model, source, given, targets, device)
