@@ -9,6 +9,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 import torch
+import torch.utils.checkpoint
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -94,7 +95,7 @@ class NeighborContext(nn.Module):
     """
 
     def __init__(self, d_model: int, space_time: dict, manifolds: Dict[str, int] | None = None,
-                 feature_dims: Dict[str, int] | None = None):
+                 feature_dims: Dict[str, int] | None = None, neighbor_op: str = "add"):
         super().__init__()
         self.d_model = d_model
         self.space_time = SpaceTimeField(d_model, **space_time)
@@ -102,6 +103,22 @@ class NeighborContext(nn.Module):
         self.features = nn.ModuleDict({name: nn.Linear(dim, d_model) for name, dim in (feature_dims or {}).items()})
         self.field_marker = nn.ParameterDict(
             {name: nn.Parameter(torch.randn(d_model) * 0.02) for name in ["space_time", *(manifolds or {})]})
+        # neighbor_op: how a neighbor's VALUE (features) binds with its POSITION encoding. 'add'=bare sum (champion).
+        self.neighbor_op = neighbor_op
+        if neighbor_op == "film":       # position FiLM-modulated by the neighbor's value
+            self.film_g = nn.Linear(d_model, d_model); self.film_b = nn.Linear(d_model, d_model)
+        elif neighbor_op == "gate":     # neighbor value gated by where it is
+            self.feat_gate = nn.Linear(d_model, d_model)
+        elif neighbor_op == "bind":     # explicit Hadamard value x position binding term
+            self.bind_proj = nn.Linear(d_model, d_model)
+
+    def _combine(self, pos: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
+        op = self.neighbor_op
+        if op == "add":  return pos + features
+        if op == "film": return pos * (1.0 + self.film_g(features)) + self.film_b(features)
+        if op == "gate": return pos + features * torch.sigmoid(self.feat_gate(pos))
+        if op == "bind": return pos + features + self.bind_proj(pos * features)
+        raise ValueError(f"unknown neighbor_op {op}")
 
     def forward(self, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
                 manifold_positions: Dict[str, torch.Tensor] | None = None,
@@ -110,9 +127,9 @@ class NeighborContext(nn.Module):
         features = query_coords.new_zeros(B, K, self.d_model)
         for name, val in (neighbor_features or {}).items():
             features = features + self.features[name](val)
-        tokens = [self.space_time(query_coords, neighbor_coords) + features + self.field_marker["space_time"]]
+        tokens = [self._combine(self.space_time(query_coords, neighbor_coords), features) + self.field_marker["space_time"]]
         for name, field in self.manifolds.items():
-            tokens.append(field(manifold_positions[name]) + features + self.field_marker[name])
+            tokens.append(self._combine(field(manifold_positions[name]), features) + self.field_marker[name])
         return torch.cat(tokens, dim=1)
 
 
@@ -212,6 +229,13 @@ class DeepEarth(nn.Module):
         block_ffn: str = "torch",
         block_norm: str = "ln",
         read_depth: int = 1,
+        read_op: str = "mha",
+        neighbor_op: str = "add",
+        token_op: str = "add",
+        read_cond: bool = False,
+        joint_decode: bool = False,
+        grad_checkpoint: bool = False,
+        diffusion: bool = False,
         loss_weights: Optional[Dict[str, float]] = None,
         contrastive_weight: float = 0.0,
         contrastive_vars: Optional[Sequence[str]] = None,
@@ -247,6 +271,10 @@ class DeepEarth(nn.Module):
                 return nn.Sequential(nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
             if mod_encoder == "mlp2ln":
                 return nn.Sequential(nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model), nn.LayerNorm(d_model))
+            if mod_encoder == "prenorm":       # per-modality INPUT LayerNorm before projection (standardize raw feature scales across modalities)
+                return nn.Sequential(nn.LayerNorm(in_dim), nn.Linear(in_dim, d_model))
+            if mod_encoder == "prenormmlp2":    # input-normalized 2-layer tokenizer (scale-fix + capacity)
+                return nn.Sequential(nn.LayerNorm(in_dim), nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
             return nn.Linear(in_dim, d_model)
         for v in self.variables:
             if v.kind == "continuous":
@@ -293,7 +321,7 @@ class DeepEarth(nn.Module):
             d_model, space_time=dict(window=relative_window, levels=18, finest=relative_finest,
                                      log2_hashmap_size=relative_log2_hashmap_size,
                                      reference_latitude_deg=reference_latitude_deg),
-            manifolds=manifolds, feature_dims=neighbor_dims)
+            manifolds=manifolds, feature_dims=neighbor_dims, neighbor_op=neighbor_op)
 
         # species graph: refine identity through phylogenetic-neighbor attention. "tree" propagates over the dated phylogeny; "ou-attention" biases attention with an embedding-derived distance.
         self.species_variable = species_variable
@@ -334,6 +362,34 @@ class DeepEarth(nn.Module):
         # latent-attention backbone
         self.latents = nn.Parameter(torch.randn(n_latents, d_model) * 0.02)
         self.read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.n_heads = n_heads
+        self.read_op = read_op
+        # READ-operator variants (architecture lever). 'mha'=champion-identical stock cross-attention.
+        # 'slot': competitive slot-attention (softmax over LATENTS, not keys) -> latents partition/specialize the field.
+        # 'typed': separate cross-attn over variable-state vs neighbor-context, per-latent gated -> respects key type.
+        # 'crossself': latents co-attend to the field AND each other in one softmax -> dissolves read/process split.
+        if read_op == "slot":
+            self.slot_q = nn.Linear(d_model, d_model); self.slot_k = nn.Linear(d_model, d_model)
+            self.slot_v = nn.Linear(d_model, d_model); self.slot_o = nn.Linear(d_model, d_model)
+        elif read_op == "typed":
+            self.read_T = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+            self.read_C = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+            self.type_gate = nn.Linear(d_model, 2)
+        elif read_op == "crossself":
+            self.read_cs = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.token_op = token_op        # value x position binding for the query's own variable tokens
+        if token_op in ("bind", "filmbind"):
+            self.tok_bind_proj = nn.Linear(d_model, d_model)
+        if token_op in ("film", "filmbind"):
+            self.tok_film_g = nn.Linear(d_model, d_model); self.tok_film_b = nn.Linear(d_model, d_model)
+        self.read_cond = read_cond      # location-aware read: FiLM the read query by the query's GLOBAL position
+        if read_cond:
+            self.read_film_g = nn.Linear(d_model, d_model); self.read_film_b = nn.Linear(d_model, d_model)
+        self.joint_decode = joint_decode  # cross-variable joint decoder: variables attend to each other before decoding
+        self.grad_checkpoint = grad_checkpoint  # recompute read+block activations in backward (memory<->compute)
+        self.diffusion = diffusion  # rule-22: masked states start as noise, denoised over rounds
+        if joint_decode:
+            self.joint_block = nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True)
         self.q_norm = nn.LayerNorm(d_model); self.kv_norm = nn.LayerNorm(d_model)
         # Latent self-attention blocks. Default block_ffn="torch" = nn.TransformerEncoderLayer (champion-identical);
         # an ARCHITECTURE variant swaps in the configurable pre-norm LatentBlock (ffn: mlp/swiglu/geglu, norm: ln/rms).
@@ -403,6 +459,14 @@ class DeepEarth(nn.Module):
             self._refine = torch.compile(self._refine)
 
     # ---------------------------------------------------------------- tokens
+    def _token_combine(self, base: torch.Tensor, posn: torch.Tensor) -> torch.Tensor:
+        op = self.token_op
+        if op == "add":  return base + posn
+        if op == "bind": return base + posn + self.tok_bind_proj(base * posn)
+        if op == "film": return base * (1.0 + self.tok_film_g(posn)) + self.tok_film_b(posn)
+        if op == "filmbind": return base * (1.0 + self.tok_film_g(posn)) + self.tok_film_b(posn) + self.tok_bind_proj(base * posn)
+        raise ValueError(f"unknown token_op {op}")
+
     def _variable_token(self, name: str, value: torch.Tensor) -> torch.Tensor:
         if name == self.species_variable and self._refined_species is not None:
             return self._refined_species[value.clamp(min=0)]
@@ -541,17 +605,48 @@ class DeepEarth(nn.Module):
         pos_v = w[:, 0].view(1, -1, 1) * pos_s.unsqueeze(1) + w[:, 1].view(1, -1, 1) * pos_t.unsqueeze(1)   # [B,V,d]
         pres = torch.stack([present[n] for n in self.names], dim=1)                          # [B,V] bool
         val = torch.stack([self._variable_token(n, values[n]) for n in self.names], dim=1)   # [B,V,d] value embeddings
-        content = torch.where(pres[..., None], val, self.mask_token) if self.learned_mask else val
-        T = self.tok_norm(content + self.type_emb) + self.pos_norm(pos_v)                    # [B,V,d] per-variable position
+        if self.diffusion:                                   # rule-22: masked slots begin as noise (round-0 state)
+            content = torch.where(pres[..., None], val, torch.randn_like(val))
+        else:
+            content = torch.where(pres[..., None], val, self.mask_token) if self.learned_mask else val
+        T = self._token_combine(self.tok_norm(content + self.type_emb), self.pos_norm(pos_v))  # [B,V,d] value x position
         if not self.learned_mask:
             T = T * pres[..., None].to(T.dtype)              # single-shot behavior: a masked slot is the zero vector
         ctx = [(context["position"] + self.position_token).unsqueeze(1), context["tokens"]]  # always-present position (combined) + neighbor tokens
         if context.get("cls_tokens") is not None: ctx.append(context["cls_tokens"])
         if context.get("experience") is not None: ctx.append(context["experience"])
-        return self._refine(T, torch.cat(ctx, dim=1), pres, val, pos_v)
+        return self._refine(T, torch.cat(ctx, dim=1), pres, val, pos_v, gpos=context["position"])
+
+    def _read_fn(self, q: torch.Tensor, kv: torch.Tensor, V: int) -> torch.Tensor:
+        """The Perceiver READ. 'mha' is the stock cross-attention; variants restructure how latents pull the field."""
+        op = self.read_op
+        if op == "mha":
+            return self.read(q, kv, kv)[0]
+        if op == "crossself":
+            keys = torch.cat([q, kv], dim=1)          # latents attend to themselves + the field jointly
+            return self.read_cs(q, keys, keys)[0]
+        if op == "typed":
+            Tk = kv[:, :V]; Ck = kv[:, V:]
+            rT = self.read_T(q, Tk, Tk)[0]
+            if Ck.shape[1] == 0:                       # later rounds carry only variable-state tokens
+                return rT
+            rC = self.read_C(q, Ck, Ck)[0]
+            g = torch.softmax(self.type_gate(q), dim=-1)
+            return g[..., :1] * rT + g[..., 1:] * rC
+        if op == "slot":
+            B, L, d = q.shape; H = self.n_heads; dh = d // H; M = kv.shape[1]
+            Q = self.slot_q(q).view(B, L, H, dh).transpose(1, 2)
+            K = self.slot_k(kv).view(B, M, H, dh).transpose(1, 2)
+            Vv = self.slot_v(kv).view(B, M, H, dh).transpose(1, 2)
+            logits = torch.matmul(Q, K.transpose(-1, -2)) / (dh ** 0.5)   # [B,H,L,M]
+            attn = torch.softmax(logits, dim=2)                          # latents COMPETE for each input token
+            attn = attn / (attn.sum(dim=-1, keepdim=True) + 1e-8)        # per-slot weighted mean over inputs
+            out = torch.matmul(attn, Vv).transpose(1, 2).reshape(B, L, d)
+            return self.slot_o(out)
+        raise ValueError(f"unknown read_op {op}")
 
     def _refine(self, T: torch.Tensor, C: torch.Tensor, present: torch.Tensor, value_emb: torch.Tensor,
-                pos: torch.Tensor) -> torch.Tensor:
+                pos: torch.Tensor, gpos: Optional[torch.Tensor] = None) -> torch.Tensor:
         """K rounds of joint-field denoising: the latents read the state+context tokens then attend among themselves;
         each round writes every variable's belief back into its state token, so masked variables are inducted jointly
         and observed ones may be revised. rounds=1 (no write-back) is the single-shot Processor."""
@@ -561,16 +656,23 @@ class DeepEarth(nn.Module):
         for k in range(self.rounds):
             # The context C (neighbors, position) is fixed across rounds, so read it only in round 0; later rounds
             # refine against the updated variable states T alone (~5x fewer keys), which the latents already carry C from.
+            V = T.shape[1]
             kv = self.kv_norm(torch.cat([T, C], dim=1) if k == 0 else T)
-            z = z + gate * self.read(self.q_norm(z), kv, kv)[0]
+            q = self.q_norm(z)
+            if self.read_cond and gpos is not None:
+                gp = gpos.unsqueeze(1)
+                q = q * (1.0 + self.read_film_g(gp)) + self.read_film_b(gp)
+            r = torch.utils.checkpoint.checkpoint(self._read_fn, q, kv, V, use_reentrant=False) \
+                if self.grad_checkpoint else self._read_fn(q, kv, V)
+            z = z + gate * r
             for i, blk in enumerate(self.blocks):
-                z = blk(z)
+                z = torch.utils.checkpoint.checkpoint(blk, z, use_reentrant=False) if self.grad_checkpoint else blk(z)
                 if i < len(self.extra_reads):     # deeper fusion: re-read the context between blocks (read_depth>1)
                     z = z + gate * self.extra_reads[i](self.q_norm(z), kv, kv)[0]
             if stack is not None:
                 stack.append(z)
             if self.write_back and k < self.rounds - 1:
-                T = self._interface_update(z, value_emb, present, pos)
+                T = self._interface_update(z, value_emb, present, pos, k)
         if stack is not None:
             self._round_stack = torch.stack(stack, 0)        # [K,B,n_lat,d] (K fixed -> graph-safe)
         return z
@@ -597,7 +699,7 @@ class DeepEarth(nn.Module):
         return self.encoders[name](self.decoders[name](pooled))
 
     def _interface_update(self, z: torch.Tensor, value_emb: torch.Tensor, present: torch.Tensor,
-                          pos: torch.Tensor) -> torch.Tensor:
+                          pos: torch.Tensor, k: int = 0) -> torch.Tensor:
         """Re-inject round-k beliefs as the next round's state tokens: each variable reads the latents through its own
         query, is decoded+re-embedded into token space by its interface backbone, then masked slots carry the gated
         belief while observed slots keep their value (optionally revised). Flows to the latents only through the
@@ -610,8 +712,13 @@ class DeepEarth(nn.Module):
             obs = (1.0 - r) * value_emb + r * E
         else:
             obs = value_emb
-        content = torch.where(present[..., None], obs, g * E)
-        T = self.tok_norm(content + self.type_emb) + self.pos_norm(pos)   # pos is per-variable [B,V,d]
+        if self.diffusion:                                   # denoise: noise into masked slots decays to 0 by the final round
+            sigma = max(0.0, 1.0 - (k + 1) / max(1, self.rounds - 1))
+            masked = g * E + sigma * torch.randn_like(E)
+        else:
+            masked = g * E
+        content = torch.where(present[..., None], obs, masked)
+        T = self._token_combine(self.tok_norm(content + self.type_emb), self.pos_norm(pos))   # value x position
         return T.detach() if self.feedback_detach else T
 
     def _pooled(self, latents: torch.Tensor, name: str) -> torch.Tensor:
@@ -632,6 +739,12 @@ class DeepEarth(nn.Module):
 
     def decode(self, latents: torch.Tensor, name: str) -> torch.Tensor:
         """Read one variable back from the latents. The species variable reads against the refined species states; a diffusion variable is sampled from its head."""
+        if self.joint_decode:
+            Pall = self._pooled_all(latents)                 # [B,V,d]
+            Pall = Pall + self.joint_block(Pall)             # variables attend to each other (joint field)
+            pooled = Pall[:, self.names.index(name)]
+        else:
+            pooled = self._pooled(latents, name)
         if name == self.species_variable and self._refined_species is not None:
             return self._pooled(latents, name) @ self._refined_species.t()
         pooled = self._pooled(latents, name)
