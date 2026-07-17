@@ -3,27 +3,6 @@
 Autonomous research on DeepEarth: improve the model, train for a fixed budget, score the full benchmark suite, keep
 gains, repeat indefinitely. DeepCal is the first instance (California plant ecology).
 
-## Branch & commit rules (Ensue collaboration)
-
-All Ensue autoresearch work lives on the **`deepcal-ensue-autoresearch`** branch of `github.com/legel/deepearth`
-(branched from Lance's `deepcal`). Never commit to `deepcal`/`main` directly; propose changes via PR from this branch.
-
-- **Commit the current best, not scratch.** `autoresearch/deepcal.yaml` on this branch mirrors the reigning champion
-  config (the settings that produced the best arithmetic mean). Bump it when a new champion is promoted, and put the
-  score + Ensue result key (`results/deepcal-loop/...`) in the commit message.
-- **Never commit secrets or bulk artifacts.** `.env` / API keys / Ensue tokens are gitignored — keep it that way.
-  Do NOT commit data (`data/`, `*.npz`, `*.pt`, prepared caches), the `deepearth` self-symlink, or `__pycache__`.
-  Code + config + docs only; the swarm reproduces data from recipes, not from git.
-- **Data-channel recipes** (`autoresearch/recipes/`): the extra environmental channels (phenology, rsveg, ...)
-  are reproduced from committed recipes, never from git-tracked data. `build_variables` skips any config
-  variable whose channel is absent from the cache, so the champion config stays runnable on the standard data
-  download — a recipe is only needed to *enable* a channel. Run `recipes/build_phenology.py` to reproduce the
-  champion exactly.
-- **Code levers stay default-safe** (see "Architecture search surface"): any toggle a box adds defaults to current
-  behaviour, is committed here, and synced byte-identical to every box.
-- **Commit granularity:** one logical change per commit (a data channel, a toggle, a champion bump); the message
-  states what changed + the measured arithmetic-mean delta. Push to `origin deepcal-ensue-autoresearch`.
-
 **Objective:** maximize the **harmonic mean of the CAPABILITY benchmarks** (`net_score` in `evaluate.py`) — the suite
 is B1..B60 and climbing, each natively in [0,1] (accuracy/F1/cosine/recall/AUC/skill/calibration). Report the harmonic
 mean (headline: no metric may be sacrificed — lift the weakest) AND the arithmetic mean. **No individual metric may
@@ -84,37 +63,6 @@ they lift induction. New datasets must be >= US-national in extent (DeepCal then
 
 ## Architecture search surface — go the whole nine yards (swarm addendum, permanent)
 
-### ARCHITECTURE-FIRST MANDATE (operator directive 2026-07-15 — this reorders the whole loop)
-The loop's PRIMARY job is to find the best **reasoning STRUCTURE**, via LARGE structural variation across every
-layer of the model stack — NOT hyperparameter tuning. Config-knob sweeps (`sdist_weight`, `capacity`,
-`contrastive_*`, `hide_prob`, `poll_weight`, head weights, data-channel on/off) are **diminishing-returns MANUAL
-work done AFTER an architecture is confirmed** — not the loop's main effort, and must not dominate the candidate
-queue. Knob-tweaking plateaued deepcal at ~0.5718 precisely because it never changed how the model reasons. Bias
-hard toward BIG structural bets over small deltas.
-
-**Vary each layer with genuinely-different implementations (not width/depth knobs):**
-1. **Tokenization** — bare Linear vs MLP vs patch/set/perceiver tokenizer; per-modality frequency features;
-   shared vs modality-specific.
-2. **Position / space-time encoding** — Earth4D hash vs RFF vs spherical-harmonic / SatCLIP / sinusoidal; how
-   absolute/relative/neighbor geometry is combined and gated.
-3. **The cross-attention READ (`self.read`)** — Perceiver latents←tokens: softmax MHA vs gated/linear variants;
-   iterative vs single; latent count/structure; routing.
-4. **The latent BLOCK internals (`self.blocks`)** — replace `nn.TransformerEncoderLayer` with configurable
-   attention (softmax / rotary / gated), FFN (MLP / SwiGLU / GeGLU), norm (LayerNorm / RMSNorm), norm placement;
-   or non-attention blocks (state-space / MoE).
-5. **Fusion topology & iterative refinement** — state/context/neighbor interaction; write-back / revise / rounds
-   / deep supervision; diffusion / recurrent / autoregressive decoders.
-6. **Decode** — attention-pooling vs cross-attention decode vs dense field; per-variable vs shared heads.
-7. **Scaling** — d_model / n_latents / n_layers / n_heads AS SCALING LAWS under the step budget, not one-off knobs.
-
-**Mechanism (how the loop searches architectures):** every architectural choice is a PLUGGABLE component selected
-by a `deepcal.yaml` key that DEFAULTS to current behaviour (pulling the code is a no-op until a config sets it).
-The candidate generators sweep these ARCHITECTURE keys as their TOP tier. A new architecture needing new code is
-(a) implemented default-safe, (b) validated in an ISOLATED git worktree that it REPRODUCES the champion (~0.5718)
-at its default config — proving the refactor caused no regression — THEN (c) merged to the shared loop and swept.
-Register every architecture key in the table below. Confirm a winning ARCHITECTURE first; only then hand its
-hyperparameters to a knob sweep.
-
 Do not settle for tuning mechanism knobs. Search the ENTIRE architecture — tokenizers, embeddings, encodings,
 fusion, operators, heads — to find the absolutely best model. The surface, grouped (config = a key in
 `deepcal.yaml` `model:`; code = edit `core/fusion.py` / `encoders/*`):
@@ -156,9 +104,11 @@ worktree, not the shared loop repo, so concurrent candidate runs are never conta
 |---|---|---|---|
 | `comm_attached` | `core/fusion.py` | `false` | let the community-head loss shape the backbone (un-detached) |
 | `mod_encoder` | `core/fusion.py` | `"linear"` | modality tokenizer for continuous vars: `"linear"` (bare Linear) / `"mlp2"` (2-layer MLP) / `"mlp2ln"` (+LayerNorm) |
-| `block_ffn` | `core/fusion.py` | `"torch"` | latent self-attn block: `"torch"` (nn.TransformerEncoderLayer, champion-identical) / `"mlp"` / `"swiglu"` / `"geglu"` (configurable pre-norm LatentBlock) |
-| `block_norm` | `core/fusion.py` | `"ln"` | LatentBlock normalizer (only when block_ffn≠torch): `"ln"` (LayerNorm) / `"rms"` (RMSNorm) |
-| `read_depth` | `core/fusion.py` | `1` | fusion depth: re-read the context between latent blocks (`read_depth-1` extra cross-attentions); `1` = single up-front read (champion-identical) |
-| `poll_phylo_weight` | `core/fusion.py` | `0` | pollinator phylo self-distillation: predict a species' pollinators from phylo-relatives (masked seed) and distill toward full-info -> trains interaction transfer (B55) |
-| `densify_weight` | `autoresearch/train.py` | `1.0` | weighted batch sampling: occurrence-only (vision-masked) obs sampled at this weight vs 1.0 for full-modality, so densify data adds coverage without diluting vision (rule 18) |
-| _(add new tokenizer/embedding/encoding/attention toggles here as they are introduced)_ | | | |
+| `read_op` | `core/fusion.py` | `"mha"` | Perceiver READ operator: `mha`(stock) / `slot`(competitive slot-attn) / `typed`(variable-vs-context split, gated) / `crossself`(latents co-attend field+selves). All tested NEUTRAL vs champion. |
+| `neighbor_op` | `core/fusion.py` | `"add"` | neighbor token value×position combine: `add` / `film` / `gate` / `bind`(Hadamard value⊙pos term). **bind PROMOTED** (+0.0013). film NaN-collapses. |
+| `token_op` | `core/fusion.py` | `"add"` | query variable-token value×position combine: `add` / `bind` / `film`(FiLM by pos) / `filmbind`. **film PROMOTED** (+0.0034). |
+| `read_cond` | `core/fusion.py` | `false` | location-aware read: FiLM the read query by the query GLOBAL position. Tested NEGATIVE (-0.0033). |
+| `joint_decode` | `core/fusion.py` | `false` | cross-variable joint decoder: variables attend to each other (self-attn over pooled beliefs) before decoding. Tested NEGATIVE (-0.0042). |
+| `grad_checkpoint` | `core/fusion.py` | `false` | recompute read+processor-block activations in backward (memory<->compute). NOTE: torch.compile largely overrides it; latent blocks are tiny anyway, so limited effect. |
+| `diffusion` | `core/fusion.py` | `false` | Rule-22 diffusion decode: masked states init as NOISE, denoised over rounds on a decreasing schedule (needs rounds>=3, round_loss=final to fit). |
+| _(add new tokenizer/embedding/encoding toggles here as they are introduced)_ | | | |
