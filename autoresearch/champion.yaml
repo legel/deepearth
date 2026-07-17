@@ -37,7 +37,7 @@ model:
   - 300
   - 130
   rounds: 2
-  sdist_weight: 0.7
+  sdist_weight: 1.0
   smooth_geo: true
   smooth_geo_sigmas:
   - 0.25
