@@ -109,4 +109,6 @@ worktree, not the shared loop repo, so concurrent candidate runs are never conta
 | `token_op` | `core/fusion.py` | `"add"` | query variable-token value×position combine: `add` / `bind` / `film`(FiLM by pos) / `filmbind`. **film PROMOTED** (+0.0034). |
 | `read_cond` | `core/fusion.py` | `false` | location-aware read: FiLM the read query by the query GLOBAL position. Tested NEGATIVE (-0.0033). |
 | `joint_decode` | `core/fusion.py` | `false` | cross-variable joint decoder: variables attend to each other (self-attn over pooled beliefs) before decoding. Tested NEGATIVE (-0.0042). |
+| `grad_checkpoint` | `core/fusion.py` | `false` | recompute read+processor-block activations in backward (memory<->compute). NOTE: torch.compile largely overrides it; latent blocks are tiny anyway, so limited effect. |
+| `diffusion` | `core/fusion.py` | `false` | Rule-22 diffusion decode: masked states init as NOISE, denoised over rounds on a decreasing schedule (needs rounds>=3, round_loss=final to fit). |
 | _(add new tokenizer/embedding/encoding toggles here as they are introduced)_ | | | |

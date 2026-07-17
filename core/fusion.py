@@ -9,6 +9,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 import torch
+import torch.utils.checkpoint
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -233,6 +234,8 @@ class DeepEarth(nn.Module):
         token_op: str = "add",
         read_cond: bool = False,
         joint_decode: bool = False,
+        grad_checkpoint: bool = False,
+        diffusion: bool = False,
         loss_weights: Optional[Dict[str, float]] = None,
         contrastive_weight: float = 0.0,
         contrastive_vars: Optional[Sequence[str]] = None,
@@ -379,6 +382,8 @@ class DeepEarth(nn.Module):
         if read_cond:
             self.read_film_g = nn.Linear(d_model, d_model); self.read_film_b = nn.Linear(d_model, d_model)
         self.joint_decode = joint_decode  # cross-variable joint decoder: variables attend to each other before decoding
+        self.grad_checkpoint = grad_checkpoint  # recompute read+block activations in backward (memory<->compute)
+        self.diffusion = diffusion  # rule-22: masked states start as noise, denoised over rounds
         if joint_decode:
             self.joint_block = nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True)
         self.q_norm = nn.LayerNorm(d_model); self.kv_norm = nn.LayerNorm(d_model)
@@ -589,7 +594,10 @@ class DeepEarth(nn.Module):
         pos_v = w[:, 0].view(1, -1, 1) * pos_s.unsqueeze(1) + w[:, 1].view(1, -1, 1) * pos_t.unsqueeze(1)   # [B,V,d]
         pres = torch.stack([present[n] for n in self.names], dim=1)                          # [B,V] bool
         val = torch.stack([self._variable_token(n, values[n]) for n in self.names], dim=1)   # [B,V,d] value embeddings
-        content = torch.where(pres[..., None], val, self.mask_token) if self.learned_mask else val
+        if self.diffusion:                                   # rule-22: masked slots begin as noise (round-0 state)
+            content = torch.where(pres[..., None], val, torch.randn_like(val))
+        else:
+            content = torch.where(pres[..., None], val, self.mask_token) if self.learned_mask else val
         T = self._token_combine(self.tok_norm(content + self.type_emb), self.pos_norm(pos_v))  # [B,V,d] value x position
         if not self.learned_mask:
             T = T * pres[..., None].to(T.dtype)              # single-shot behavior: a masked slot is the zero vector
@@ -643,15 +651,17 @@ class DeepEarth(nn.Module):
             if self.read_cond and gpos is not None:
                 gp = gpos.unsqueeze(1)
                 q = q * (1.0 + self.read_film_g(gp)) + self.read_film_b(gp)
-            z = z + gate * self._read_fn(q, kv, V)
+            r = torch.utils.checkpoint.checkpoint(self._read_fn, q, kv, V, use_reentrant=False) \
+                if self.grad_checkpoint else self._read_fn(q, kv, V)
+            z = z + gate * r
             for i, blk in enumerate(self.blocks):
-                z = blk(z)
+                z = torch.utils.checkpoint.checkpoint(blk, z, use_reentrant=False) if self.grad_checkpoint else blk(z)
                 if i < len(self.extra_reads):     # deeper fusion: re-read the context between blocks (read_depth>1)
                     z = z + gate * self.extra_reads[i](self.q_norm(z), kv, kv)[0]
             if stack is not None:
                 stack.append(z)
             if self.write_back and k < self.rounds - 1:
-                T = self._interface_update(z, value_emb, present, pos)
+                T = self._interface_update(z, value_emb, present, pos, k)
         if stack is not None:
             self._round_stack = torch.stack(stack, 0)        # [K,B,n_lat,d] (K fixed -> graph-safe)
         return z
@@ -678,7 +688,7 @@ class DeepEarth(nn.Module):
         return self.encoders[name](self.decoders[name](pooled))
 
     def _interface_update(self, z: torch.Tensor, value_emb: torch.Tensor, present: torch.Tensor,
-                          pos: torch.Tensor) -> torch.Tensor:
+                          pos: torch.Tensor, k: int = 0) -> torch.Tensor:
         """Re-inject round-k beliefs as the next round's state tokens: each variable reads the latents through its own
         query, is decoded+re-embedded into token space by its interface backbone, then masked slots carry the gated
         belief while observed slots keep their value (optionally revised). Flows to the latents only through the
@@ -691,7 +701,12 @@ class DeepEarth(nn.Module):
             obs = (1.0 - r) * value_emb + r * E
         else:
             obs = value_emb
-        content = torch.where(present[..., None], obs, g * E)
+        if self.diffusion:                                   # denoise: noise into masked slots decays to 0 by the final round
+            sigma = max(0.0, 1.0 - (k + 1) / max(1, self.rounds - 1))
+            masked = g * E + sigma * torch.randn_like(E)
+        else:
+            masked = g * E
+        content = torch.where(present[..., None], obs, masked)
         T = self._token_combine(self.tok_norm(content + self.type_emb), self.pos_norm(pos))   # value x position
         return T.detach() if self.feedback_detach else T
 

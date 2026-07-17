@@ -101,7 +101,7 @@ def train_and_evaluate(config, device):
                       feedback_detach=m.get("feedback_detach", False), flex_attention=m.get("flex_attention", False),
                       decoder_hidden=m.get("decoder_hidden"), mod_encoder=m.get("mod_encoder", "linear"),
                       block_ffn=m.get("block_ffn", "torch"), block_norm=m.get("block_norm", "ln"),
-                      read_depth=m.get("read_depth", 1), read_op=m.get("read_op", "mha"), neighbor_op=m.get("neighbor_op", "add"), token_op=m.get("token_op", "add"), read_cond=m.get("read_cond", False), joint_decode=m.get("joint_decode", False), loss_weights=m.get("loss_weights"),
+                      read_depth=m.get("read_depth", 1), read_op=m.get("read_op", "mha"), neighbor_op=m.get("neighbor_op", "add"), token_op=m.get("token_op", "add"), read_cond=m.get("read_cond", False), joint_decode=m.get("joint_decode", False), grad_checkpoint=m.get("grad_checkpoint", False), diffusion=m.get("diffusion", False), loss_weights=m.get("loss_weights"),
                       contrastive_weight=m.get("contrastive_weight", 0.0), contrastive_vars=m.get("contrastive_vars"),
                       smooth_geo=m.get("smooth_geo", False),
                       smooth_geo_sigmas=m.get("smooth_geo_sigmas"),
