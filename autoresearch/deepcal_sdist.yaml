@@ -10,6 +10,7 @@ data:
 model:
   d_model: 256
   n_latents: 24
+  phylo_head_routing: true
   n_layers: 4
   capacity: 16                       # space-time encoder resolution (hash levels)
   decoder_hidden: 2048               # sweeping up (512->1024: +2.2%,+1.0%): finding the interface-decoder capacity ceiling (rule 23). Watch for turnover / VRAM.

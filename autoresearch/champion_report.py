@@ -21,18 +21,28 @@ from pathlib import Path
 
 RECORD = Path(__file__).with_name("champion_scores.json")   # the current champion (before for the next run)
 
+try:                                                        # canonical order so EVERY benchmark is listed (inactive ones marked, never silently missing)
+    from deepearth.autoresearch.evaluate import BENCHMARKS as _CANON
+except Exception:
+    _CANON = []
+
 
 def parse_run(log_path: str) -> dict:
     """Extract {Bxx_name: score}, harmonic (net_score) and arithmetic mean from a train/eval run log."""
     txt = Path(log_path).read_text()
     scores = {}
-    for m in re.finditer(r"^\s*(B\d+_\w+)\s+(-?[0-9.]+)\s*$", txt, re.M):
+    # score may be followed by trailing text on the diagnostic lines, e.g. "B24_geo_information_gain 0.593 (net
+    # contrib 0.997)" -- match the score after the name, not requiring end-of-line, so B24/B56-B62 are captured.
+    for m in re.finditer(r"^\s*(B\d+_\w+)\s+(-?[0-9.]+)(?:\s|$)", txt, re.M):
         scores[m.group(1)] = float(m.group(2))                 # last occurrence wins (final eval)
-    h = re.search(r"net_score:\s+([0-9.]+)", txt)
-    a = re.search(r"arithmetic mean:\s+([0-9.]+)", txt)
-    return {"scores": scores,
-            "harmonic": float(h.group(1)) if h else None,
-            "arithmetic": float(a.group(1)) if a else None}
+    try:                                                       # RECOMPUTE the net from scores with the live logic, so
+        from deepearth.autoresearch.evaluate import net_score, arithmetic_net   # every champion record is comparable
+        return {"scores": scores, "harmonic": float(net_score(scores)), "arithmetic": float(arithmetic_net(scores))}
+    except Exception:                                          # fallback: parse whatever the log printed
+        h = re.search(r"net_score:\s+([0-9.]+)", txt)
+        a = re.search(r"arithmetic mean:\s+([0-9.]+)", txt)
+        return {"scores": scores, "harmonic": float(h.group(1)) if h else None,
+                "arithmetic": float(a.group(1)) if a else None}
 
 
 def _n(x):                                                     # benchmark sort key: B<number>
@@ -56,10 +66,16 @@ def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> s
     if config:
         lines += [config, ""]
     lines.append("All benchmarks (before -> after):" if old is not None else "All benchmarks (baseline):")
-    for i, name in enumerate(sorted(ns, key=_n), 1):
-        after = ns[name]
+    allb = sorted(set(_CANON) | set(ns) | set(os_), key=_n)   # EVERY declared benchmark + anything seen; none missing
+    for i, name in enumerate(allb, 1):
+        after = ns.get(name)
         before = os_.get(name)
-        if old is None:
+        if after is None:                                     # not produced by THIS run's holdout (e.g. B25/B31 forecast need a temporal run)
+            if before is not None:                            # carry the champion-record value (from its proper holdout) rather than blank it
+                lines.append(f"{i:>2}. {name}: {_f(before)} (carried; its holdout not re-run here)")
+            else:
+                lines.append(f"{i:>2}. {name}: inactive (needs its holdout: e.g. B25/B31 = temporal)")
+        elif old is None:
             lines.append(f"{i:>2}. {name}: {_f(after)}")
         else:
             d = f"{after - before:+.3f}" if before is not None else "  new  "
@@ -85,10 +101,17 @@ def main():
     old = json.loads(RECORD.read_text()) if RECORD.exists() else None
     print(format_commit(new, old, a.desc, a.config))
     if a.save:
+        import getpass, datetime
+        hist = (old or {}).get("history", [])
+        hist.append({"user": getpass.getuser(),
+                     "timestamp": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                     "label": a.desc, "config": a.config, "harmonic": new["harmonic"],
+                     "arithmetic": new["arithmetic"], "scores": new["scores"]})   # append every champion -> both users' records plot over time
         RECORD.write_text(json.dumps({"label": a.desc, "config": a.config, "harmonic": new["harmonic"],
-                                      "arithmetic": new["arithmetic"], "scores": new["scores"]}, indent=2))
+                                      "arithmetic": new["arithmetic"], "scores": new["scores"],
+                                      "history": hist}, indent=2))
         print(f"\n[champion_scores.json updated: {len(new['scores'])} benchmarks, "
-              f"harmonic {new['harmonic']}, arith {new['arithmetic']}]")
+              f"harmonic {new['harmonic']}, arith {new['arithmetic']}; history={len(hist)} records]")
 
 
 if __name__ == "__main__":

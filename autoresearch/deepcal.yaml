@@ -28,6 +28,7 @@ model:
   myco_weight: 0.1
   n_latents: 32
   n_layers: 4
+  phylo_head_routing: true      # OUR validated feature (0.491->0.503); additive, his config lacked it
   phylo_mask_weight: 0.1
   poll_weight: 0.1
   pollinator_top_k: 64
@@ -45,7 +46,7 @@ model:
   - 4.0
   - 16.0
   - 64.0
-  sparse_hash: true
+  sparse_hash: true      # big-rig optimal (sparse-Adam + precompute, ~12% faster); train.py auto-disables on <40GB GPUs (bit-identical)
   species_graph:
     bioclip_init: true
     heads: 4
@@ -55,13 +56,13 @@ model:
     variable: identity
 name: DeepCal
 training:
-  batch: 512
+  batch: 512              # big-rig optimal; train.py auto-caps to 256 (<40GB) / 128 (<18GB) so this config fits smaller cards
   hide_prob: 0.5
   lr: 0.0005
   precision: bf16
   seed: 1337
   steps: 16000
-  time_budget_s: 4000
+  time_budget_s: 600      # rule 20: fixed 10-min equal-time budget (universal protocol, not hardware); big rigs simply do more steps in the window
   weight_decay: 0.001
 variables:
 - kind: continuous

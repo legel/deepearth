@@ -161,7 +161,7 @@ class California:
             self._save_prepared(prepared)
 
     def _save_prepared(self, path: str) -> None:
-        """Pickle the assembled dataset (tensors on CPU, plus extra modalities and tree buffers) for ~1s reload."""
+        """Pickle the assembled dataset (tensors on CPU, plus extra modalities and tree buffers) for fast reload."""
         blob = {}
         for k in self._PREPARED_KEYS:
             v = getattr(self, k, None)

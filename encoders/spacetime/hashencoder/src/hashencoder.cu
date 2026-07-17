@@ -718,6 +718,7 @@ void hash_encode_second_backward_cuda(const scalar_t *grad, const input_t *input
 
 void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor outputs, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, at::Tensor dy_dx, const bool track_collisions, at::Tensor collision_indices, const uint32_t example_offset, const uint32_t max_tracked_examples, const at::Tensor probe_indices, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c) {
     CHECK_CUDA(inputs);
+    DEVICE_GUARD(inputs);
     CHECK_CUDA(embeddings);
     CHECK_CUDA(offsets);
     CHECK_CUDA(outputs);
@@ -767,6 +768,7 @@ void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, c
 
 void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, const at::Tensor dy_dx, at::Tensor grad_inputs, const at::Tensor probe_indices, const at::Tensor index_logits, at::Tensor grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c) {
     CHECK_CUDA(grad);
+    DEVICE_GUARD(grad);
     CHECK_CUDA(inputs);
     CHECK_CUDA(embeddings);
     CHECK_CUDA(offsets);
@@ -839,6 +841,7 @@ void hash_encode_second_backward(const at::Tensor grad, const at::Tensor inputs,
     const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs,
     const at::Tensor dy_dx, const at::Tensor grad_grad_inputs, at::Tensor grad_grad, at::Tensor grad2_embeddings) {
     CHECK_CUDA(grad);
+    DEVICE_GUARD(grad);
     CHECK_CUDA(inputs);
     CHECK_CUDA(embeddings);
     CHECK_CUDA(offsets);
@@ -1533,6 +1536,7 @@ void hash_encode_precompute(
     const uint32_t N_f, const uint32_t N_p
 ) {
     CHECK_CUDA(inputs);
+    DEVICE_GUARD(inputs);
     CHECK_CUDA(offsets);
     CHECK_CUDA(precomp_h1);
     CHECK_CUDA(precomp_h2);
@@ -1592,6 +1596,7 @@ void hash_encode_forward_precomputed(
     const uint32_t N_f, const uint32_t N_p, const uint32_t N_c
 ) {
     CHECK_CUDA(inputs);
+    DEVICE_GUARD(inputs);
     CHECK_CUDA(embeddings);
     CHECK_CUDA(offsets);
     CHECK_CUDA(precomp_h1);
@@ -1651,6 +1656,7 @@ void hash_encode_backward_precomputed(
     const uint32_t N_p, const uint32_t N_c
 ) {
     CHECK_CUDA(grad);
+    DEVICE_GUARD(grad);
     CHECK_CUDA(offsets);
     CHECK_CUDA(precomp_h1);
     CHECK_CUDA(precomp_h2);
@@ -1706,6 +1712,7 @@ void hash_encode_adam_sparse_update(
     const uint32_t step              // Current optimization step (1-indexed)
 ) {
     CHECK_CUDA(offsets);
+    DEVICE_GUARD(offsets);
     CHECK_CUDA(precomp_h1);
     CHECK_CUDA(precomp_h2);
     CHECK_CUDA(embeddings);

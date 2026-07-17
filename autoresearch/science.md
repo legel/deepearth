@@ -172,13 +172,16 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     explicit regressions summary — no individual metric may regress. The helper diffs against the committed
     `autoresearch/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
 
-31. **Every benchmark-specific head is a DETACHED read-out; only the core self-supervised reconstruction trains
-    the shared weights.** The core (Earth4D + MADE masked-reconstruction of all modalities + the phylo graph) learns
-    ONE high-dimensional multi-modal representation. Each specialized benchmark head (community, pollinator, lfmc,
-    mycorrhiza, flowering, and every future head) is trained on the `.detach()`-ed pooled latent, so its gradient
-    never reaches the core -- no single benchmark can commandeer the representation. This keeps scoring fast (immediate
-    inference, no per-benchmark fine-tuning) AND guarantees the net measures the CORE's capacity: a change that lifts
-    the shared representation lifts all benchmarks together; one that games a single head cannot inflate the net.
+31. **Heads are DETACHED read-outs by default; the universal self-supervised reconstruction is inviolable.** The core
+    learns ONE representation whose dense, always-available capabilities (species, family, vision, environment) are
+    never traded for a niche supervised signal -- each head (community, pollinator, lfmc, mycorrhiza, flowering, ...)
+    trains on the `.detach()`-ed pooled latent, so none commandeers the core and the net measures the core's capacity.
+    A head MAY backprop only if it (a) writes to a dedicated **trait-subspace** -- extra latent bandwidth concatenated
+    with, never overwriting, the universal channels (rule 23 for heads); (b) is one of **>=K reliability-weighted
+    heads** (sparse traits -> ~0 weight); (c) regresses **no universal metric beyond noise** (the champion-report guard
+    is the hard floor). Adopt only when the universal arithmetic holds while the niche family rises. A small coupling
+    weight does NOT protect the universal axis (a single myco head cost -0.012 at both w=0.1 and w=1.0) -- only
+    subspace isolation does.
 
 32. **Score AND optimize 100% of the benchmark suite -- nothing excluded.** Every benchmark exists to be measured and
     driven up. The net score is the harmonic mean over ALL active benchmarks -- capabilities AND ablation-delta /
