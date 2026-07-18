@@ -57,6 +57,7 @@ model:
   token_op: film
   alphaearth_geo: true
   diffusion: true
+  mod_encoder: prenorm
 name: DeepCal
 training:
   batch: 512
