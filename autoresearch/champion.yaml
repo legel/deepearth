@@ -55,6 +55,7 @@ model:
     variable: identity
   neighbor_op: bind
   token_op: film
+  alphaearth_geo: true
 name: DeepCal
 training:
   batch: 512

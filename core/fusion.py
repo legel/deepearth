@@ -242,6 +242,7 @@ class DeepEarth(nn.Module):
         smooth_geo: bool = False,
         smooth_geo_sigmas: Optional[Sequence[float]] = None,
         smooth_geo_per_scale: int = 32,
+        alphaearth_geo: bool = False,
         n_pollinators: int = 0,
         pollinator_distance: Optional[torch.Tensor] = None,
         pollinator_text: Optional[torch.Tensor] = None,
@@ -312,6 +313,9 @@ class DeepEarth(nn.Module):
             d_model, per_scale=smooth_geo_per_scale,
             sigmas=tuple(smooth_geo_sigmas) if smooth_geo_sigmas else (1.0, 4.0, 16.0, 64.0),
         ) if smooth_geo else None
+        # AlphaEarth (Google Satellite Embedding V1, 64d) as a SatCLIP-style LEARNED geo prior: projected and added to the
+        # spatial position channel that EVERY head reads (like smooth_geo), NOT a reconstruction variable competing for head capacity.
+        self.alphaearth_geo = nn.Sequential(nn.Linear(64, d_model), nn.GELU(), nn.Linear(d_model, d_model)) if alphaearth_geo else None
         # neighbor context over coordinate subspaces: space-time, plus any vector manifolds (e.g. biological)
         neighbor_dims = {v.name: (v.dim if v.kind == "continuous" else d_model)
                          for v in self.variables if v.neighbor}
@@ -601,6 +605,10 @@ class DeepEarth(nn.Module):
         if getattr(self, "pollinator_graph", None) is not None:
             self._refined_pollinators = self.pollinator_graph()   # refine all pollinators once per forward (rule 27 basis)
         pos_s, pos_t = context["position_s"], context["position_t"]                          # [B,d] each
+        if self.alphaearth_geo is not None and "alphaearth" in values:                       # SatCLIP-style geo prior: enrich the spatial position seen by every head
+            _ae = self.alphaearth_geo(values["alphaearth"])
+            pos_s = pos_s + _ae
+            context = {**context, "position": context["position"] + _ae}
         w = torch.softmax(self.pos_channel_gate, dim=-1)                                     # [V,2] per-variable prior
         pos_v = w[:, 0].view(1, -1, 1) * pos_s.unsqueeze(1) + w[:, 1].view(1, -1, 1) * pos_t.unsqueeze(1)   # [B,V,d]
         pres = torch.stack([present[n] for n in self.names], dim=1)                          # [B,V] bool

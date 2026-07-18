@@ -9,6 +9,15 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 ![Earth4D space-time encoder](docs/earth4d.png) 
 
+## Reproducing the DeepCal champion
+
+The California DeepCal champion (`autoresearch/champion.yaml`, arithmetic mean **0.6074**) **requires
+[AlphaEarth](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)**
+(Google Satellite Embedding V1), used as a SatCLIP-style learned geo prior (`model.alphaearth_geo: true`).
+Extract it and wire it into the cache with **[`recipes/alphaearth/`](recipes/alphaearth/README.md)** — without the
+AlphaEarth tokens the model silently falls back to the ~0.596 control. The code is backward compatible
+(`alphaearth_geo` defaults to `false`; the modality is skipped if its tokens are absent).
+
 ## Exciting News:
 
 - _March 7, 2026_  
