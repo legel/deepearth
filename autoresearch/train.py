@@ -106,6 +106,7 @@ def train_and_evaluate(config, device):
                       smooth_geo=m.get("smooth_geo", False),
                       smooth_geo_sigmas=m.get("smooth_geo_sigmas"),
                       smooth_geo_per_scale=m.get("smooth_geo_per_scale", 32),
+                      alphaearth_geo=m.get("alphaearth_geo", False),
                       n_pollinators=getattr(source, "n_pollinators", 0) if m.get("poll_weight", 0.0) > 0 else 0, **poll_kw,
                       phylo_head_routing=m.get("phylo_head_routing", False),
                       species_trait_recon=m.get("species_trait_recon", False),

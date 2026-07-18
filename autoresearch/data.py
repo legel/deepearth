@@ -357,6 +357,11 @@ class California:
         if phenology.exists():
             z = np.load(phenology)
             self._add_modality("phenology", z["gbifID"], z["phenology"], gid, dev, zscore=True, valid=z["has_phenology"])
+        alphaearth = cache / "gbif_alphaearth_tokens.npz"                              # [Ensue] Google Satellite Embedding V1 (AlphaEarth) 64d annual @10m -- SatCLIP-style learned geo prior; consumed by model.alphaearth_geo (added to the spatial position every head reads), NOT a reconstruction variable
+        if alphaearth.exists():
+            z = np.load(alphaearth)
+            _ae = np.asarray(z["ae"], dtype=np.float32); _valid = np.isfinite(_ae[:, 0])
+            self._add_modality("alphaearth", z["gbifID"], np.nan_to_num(_ae, nan=0.0, posinf=0.0, neginf=0.0), gid, dev, zscore=True, valid=_valid)
 
     @staticmethod
     def _norm_binom(s):                                                                 # genus+species, lowercased (matches build_pollinator.norm)
