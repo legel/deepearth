@@ -58,6 +58,7 @@ model:
   alphaearth_geo: true
   diffusion: true
   mod_encoder: prenorm
+  latent_diffusion: true
 name: DeepCal
 training:
   batch: 512
