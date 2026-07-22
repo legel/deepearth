@@ -17,6 +17,23 @@ missing values with the train-median (so absence is not a location cue), and wri
 `has_<channel>` presence mask. To reproduce the champion exactly, run `build_phenology.py` before training.
 
 
+## AlphaEarth geo prior (`extract_alphaearth.py`)
+
+The champion consumes **AlphaEarth** ([Google Satellite Embedding V1](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL),
+Brown et al. 2025 — 64-dim, 10 m, annual) not as a reconstruction channel but as a **SatCLIP-style geo prior**
+(`model.alphaearth_geo: true`): a small MLP adds it to the spatial position every head reads, so it informs all
+spatial reasoning instead of competing for head capacity. Ablation (single seed, spatial holdout, 16k steps):
+`true` → **0.6074 / net 0.3311** vs `false` → **0.5962 / 0.3014** (**+0.0112 arith**); as an ordinary reconstruction
+variable it instead *hurts* arith (−0.004…−0.006). Extract (~25–45 min for ~620k points, resumable):
+
+```bash
+EE_PROJECT=<your-ee-project> AE_COORDS=ae_coords.npz \
+AE_OUT=gbif_alphaearth_tokens.npz python autoresearch/recipes/extract_alphaearth.py
+```
+
+Place `gbif_alphaearth_tokens.npz` in the cache dir; `data.py::_load_modalities` loads it (aligned by `gbifID`,
+z-scored on train, uncovered rows masked). Absent → modality skipped and the champion falls back to the ~0.596 control.
+
 ## Occurrence-densification pipeline (the champion's data lever)
 
 The champion (0.5801) trains on 2x the occurrences via three committed steps:
