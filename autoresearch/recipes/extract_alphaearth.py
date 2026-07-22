@@ -3,7 +3,7 @@
 
 AlphaEarth is REQUIRED to reproduce the DeepCal champion (arith 0.6074): the model consumes it as a
 SatCLIP-style learned geo prior (``model.alphaearth_geo: true`` in ``autoresearch/champion.yaml``), added to
-the spatial position that every head reads. See ``recipes/alphaearth/README.md``.
+the spatial position that every head reads. See ``autoresearch/recipes/README.md``.
 
 Prerequisites
 -------------
