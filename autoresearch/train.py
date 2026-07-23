@@ -172,7 +172,14 @@ def train_and_evaluate(config, device):
         _bcap = 128 if _vram < 18 else 256
         if batch > _bcap: print(f"[hw] {_vram:.0f}GB GPU: batch {batch}->{_bcap} (VRAM-adaptive)", flush=True); batch = _bcap
         if sparse_hash: print(f"[hw] {_vram:.0f}GB GPU: sparse_hash off (+2GB precompute won't fit; bit-identical math)", flush=True); sparse_hash = False
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
+    _warm = int(t.get("warmup_steps", 0))                 # optional linear warmup -> peak lr, then cosine; default 0 = unchanged
+    if _warm > 0:
+        _wu = torch.optim.lr_scheduler.LinearLR(opt, start_factor=0.02, end_factor=1.0, total_iters=_warm)
+        _cos = torch.optim.lr_scheduler.CosineAnnealingLR(opt, max(1, steps - _warm))
+        sched = torch.optim.lr_scheduler.SequentialLR(opt, [_wu, _cos], milestones=[_warm])
+        print(f"[sched] linear warmup {_warm} steps -> cosine over {steps-_warm}", flush=True)
+    else:
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
     bf16 = t.get("precision", "fp32") == "bf16"
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
