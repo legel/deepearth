@@ -122,6 +122,15 @@ def load_scores(path: str) -> Dict[str, float]:
     d = json.loads(Path(path).read_text())
     return d.get("scores", d) if isinstance(d, dict) else {}
 
+
+def load_baseline(path: str) -> Dict[str, float]:
+    """Champion baseline for deltas -- a RUN LOG (has the gain deltas, needed for bio_gain/st_gain deltas)
+    or a champion_scores.json (capabilities only). Auto-detected by extension."""
+    if path.endswith(".json"):
+        return load_scores(path)
+    raw, _, _ = parse_log(path)
+    return raw
+
 # ---------------------------------------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------------------------------------
@@ -263,7 +272,7 @@ def main(argv=None):
         raw, diag, meta = load_scores(a.scores), {}, {}
     else:
         ap.error("one of --log or --scores is required")
-    champion = load_scores(a.champion) if a.champion else None
+    champion = load_baseline(a.champion) if a.champion else None
 
     encoders = ["biological", "spacetime"] if a.encoder == "both" else [a.encoder]
     out_traces = {}

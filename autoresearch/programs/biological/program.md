@@ -39,17 +39,22 @@ below closes those rows.
 Rank the backlog by the last trace's **bottleneck**, not by the scalar. Config toggles before code changes;
 cheapest-highest-leverage first. One variable per A/B. Target the unmet science.md rows first.
 
-## ③ Run
-`train.py champion.yaml <one toggle> --tag bio_<hyp>` at the fixed budget (`time_budget_s`, rule 20),
-`profile: true` on. Matched control = champion.yaml, same seed.
+## ③ Run — one variable, fixed budget
+`VARIANT` = champion.yaml with exactly one Levers-table key set to its value. `TAG` = `bio_<lever#>`.
+```
+rm -f data/deepcal/prepared_*.pt                                                  # cache round-trip is lossy — rm before every run
+python -m deepearth.autoresearch.programs.run_experiment VARIANT --cache_dir data/deepcal --tag TAG > TAG.log 2>&1
+```
+`run_experiment` installs the feedback instrument (auto-emits `[profile] refined_seed_norm`); budget = the
+champion.yaml `time_budget_s` (rule 20). CONTROL = the same command on champion.yaml, run once → `CTRL.log`.
 
-## ④ Measure — tools
-- **Objective:** `python -m deepearth.autoresearch.programs.score --log <run.log> --encoder biological --champion <champion_run.log> --json trace.json`
-  → prints `bio_gain`, capability floor, per-benchmark deltas, and the bottleneck block.
-- **Bottleneck (read this to choose ②):** `‖refined−seed‖` (≈0 ⟹ graph moves nothing), `softplus(θ)` OU
-  rate (tree engaging?), phylo-mask ÷ species-recon loss (rule-25 starvation), graph grad-norm. Emitted as
-  `[profile] key=value` when `profile: true`.
-- **Isolation:** the gains use `_ablate_species` (graph ON vs OFF) — already wired in evaluate.py.
+## ④ Measure — one command
+```
+python -m deepearth.autoresearch.programs.score --log TAG.log --encoder biological --champion CTRL.log --ensue-tag biological
+```
+Emits `bio_gain` + Δ vs control · capability floor · per-benchmark Δ · the bottleneck · trace→Ensue.
+**Bottleneck to read** (`[profile]`): `refined_seed_norm` (≈0 ⟹ graph moves nothing), `ou_rate_*`
+(tree engaging?). Isolation (`_ablate_species`, graph ON vs OFF) is already inside the B56–B62 gains.
 
 ## ⑤ Decide
 Keep if `bio_gain` rises beyond the single-seed noise floor **and** the capability floor (B7, B21, B41,

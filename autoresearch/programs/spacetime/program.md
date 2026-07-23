@@ -43,18 +43,23 @@ trained (24). The backlog closes those rows.
 Rank the backlog by the last trace's **bottleneck**, not by the scalar. Config toggles before code changes;
 cheapest-highest-leverage first. One variable per A/B. Target the unmet science.md rows first (1, 2b, 24).
 
-## ③ Run
-`train.py champion.yaml <one toggle> --tag st_<hyp>` at the fixed budget (`time_budget_s`, rule 20),
-`profile: true` on. Matched control = champion.yaml, same seed. Forecast hypotheses set
-`data.holdout: temporal` (`time_axis` already true).
+## ③ Run — one variable, fixed budget
+`VARIANT` = champion.yaml with exactly one Levers-table change set. `TAG` = `st_<lever#>`.
+```
+rm -f data/deepcal/prepared_*.pt                                                             # cache round-trip is lossy — rm before every run
+python -m deepearth.autoresearch.programs.run_experiment VARIANT --st-gain --cache_dir data/deepcal --tag TAG > TAG.log 2>&1
+```
+`--st-gain` builds `st_gain` (a second eval under `ablate_spacetime`, the S0 instrument); budget = the
+champion.yaml `time_budget_s` (rule 20). CONTROL = the same on champion.yaml → `CTRL.log`. Forecast levers
+(S1) additionally set `data.holdout: temporal` in VARIANT (`time_axis` already true).
 
-## ④ Measure — tools
-- **Objective:** `python -m deepearth.autoresearch.programs.score --log <run.log> --encoder spacetime --champion <champion_run.log> --json trace.json`
-  → prints `st_gain`, capability floor, per-benchmark deltas, and the bottleneck block.
-- **Bottleneck (read this to choose ②):** per-benchmark ablation-sensitivity (Δpred when Earth4D zeroed),
-  learned `freq_log_scale` (fine vs coarse resolution actually used), forecast loss on the temporal
-  holdout. Emitted as `[profile] key=value` when `profile: true`.
-- **Isolation:** the gains use `_ablate_spacetime` (Earth4D ON vs OFF) — wired by S0.
+## ④ Measure — one command
+```
+python -m deepearth.autoresearch.programs.score --log TAG.log --encoder spacetime --champion CTRL.log --ensue-tag spacetime
+```
+Emits `st_gain` + Δ vs control · capability floor · per-benchmark Δ · trace→Ensue.
+**Bottleneck to read** = the per-benchmark `*_spacetime_gain` deltas (WITH − WITHOUT Earth4D) — they show
+which capabilities Earth4D does/doesn't carry. Isolation = `ablate_spacetime` (Earth4D ON vs OFF).
 
 ## ⑤ Decide
 Keep if `st_gain` rises beyond the single-seed noise floor **and** the capability floor (B1, B5, B6, B8,
