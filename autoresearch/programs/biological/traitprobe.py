@@ -39,7 +39,7 @@ import torch.nn.functional as F
 from deepearth.autoresearch.programs.biological.probe import (
     load_species, load_trait, nn_trait_acc, nn_trait_ap, nn_trait_num,
 )
-from deepearth.encoders.biological.phylogenomic import SpeciesGraph
+from deepearth.encoders.biological.phylogenomic import SpeciesGraph, build_tree_buffers
 
 
 # --- vision seeds: mean (cached npz) and medoid (built once, cached) -----------------------------
@@ -258,6 +258,90 @@ def train_graph(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, ma
         for _ in range(max(0, impute_steps - 1)):   # extra imputation refinement rounds for the held-out set
             imp = graph(mask=test)
     return s, rep, imp
+
+
+def _oot_tree(cache, gidx, tip_row, keep_mask):
+    """Rule-9 helper. Rebuild the latent-clade tree buffers over ONLY the species kept in (`keep_mask` True at
+    their vocab row), i.e. the tree whose tips are the TRAIN species. Returns (tree_train, tip_row_train) where
+    tip_row_train lists the vocab rows of the retained tips. Species NOT in keep_mask that WERE in-tree become
+    genuinely OUT-OF-TREE rows of the resulting SpeciesGraph -> they carry no tree position and can only be
+    imputed by the clade soft-attach cross-attention (LatentCladeAttention, the has_oot MLA-read path that the
+    all-in-tree probe never exercises). This is science.md rule-9 tested for real."""
+    import csv as _csv
+    rows = list(_csv.DictReader(open(Path(cache) / "derived/species_index.csv")))
+    labels = [rows[int(gidx[int(r)])]["tip_label"] for r in tip_row.tolist()]   # label of each currently in-tree tip
+    keep = keep_mask[tip_row].tolist()                                          # keep this tip in the train tree?
+    kept_pairs = [(int(r), lab) for r, lab, k in zip(tip_row.tolist(), labels, keep) if k]
+    tree_tr = build_tree_buffers(str(Path(cache) / "ca_subtree.dated.nwk"), [lab for _, lab in kept_pairs])
+    tip_row_tr = torch.tensor([r for r, _ in kept_pairs], dtype=torch.long)
+    return tree_tr, tip_row_tr
+
+
+def train_graph_oot(seed, cache, gidx, tip_row, test, dev, d_model, steps, mask_frac, lr, impute_steps,
+                    sup_kind=None, sup_Y=None, sup_obs=None, sup_nclass=None,
+                    resid_readout=False, clade_base=None):
+    """RULE-9 OUT-OF-TREE PROJECTION (science.md rule 9, the `~` row). The standard probe leaves held-out `test`
+    species AS TIPS and only masks their seed -- they still occupy a tree position and are refined by exact
+    message passing. Rule-9 asks the harder question: project a species that is genuinely NOT IN THE TREE. Here we
+    build the phylogeny over the TRAIN tips only; every test species becomes an out-of-tree row that must soft-
+    attach to the refined clade latents via cross-attention (the LatentCladeAttention has_oot MLA read). The graph
+    is trained self-supervised (rule-25 mask-reconstruct) on the in-tree TRAIN tips; test species never enter the
+    tree during training or eval. Returns (seed, refined_full, oot_projection) all [N,d]; test rows of the
+    projection come purely from the out-of-tree soft-attach path."""
+    N = seed.shape[0]
+    train = ~test
+    tree_tr, tip_row_tr = _oot_tree(cache, gidx, tip_row, train)
+    graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree_tr, tip_row=tip_row_tr,
+                         species_text=seed).to(dev)
+    # in-tree train tips (bool over full vocab) -- the only rows we mask/reconstruct during training
+    intree = torch.zeros(N, dtype=torch.bool, device=dev); intree[tip_row_tr.to(dev)] = True
+    # ITER-2: optional trait-supervised residual head. When sup_kind is set, the graph co-trains a magnitude-
+    # explicit readout (predicts y - clade_mean on masked TRAIN tips) alongside the cosine-recon loss, then reads
+    # the OOT-projected embedding through that head at eval -> combines the rule-9 OOT projection (which preserves
+    # the seed's magnitude signal) with the residual-head clade regression (which recovers within-clade rank).
+    head = None; clade_mu = None
+    if sup_kind is not None:
+        out_dim = 1 if sup_kind == "num" else int(sup_nclass)
+        head = torch.nn.Linear(d_model, out_dim).to(dev)
+        yt = sup_Y.float() if sup_kind == "num" else sup_Y.long()
+        if resid_readout and sup_kind == "num" and clade_base is not None:
+            clade_mu = clade_base.to(dev).float(); yt = yt - clade_mu
+    params = list(graph.parameters()) + (list(head.parameters()) if head is not None else [])
+    opt = torch.optim.Adam(params, lr=lr)
+    train_obs = (sup_obs & intree) if sup_kind is not None else None
+    for _ in range(steps):
+        mask = (torch.rand(N, device=dev) < mask_frac) & intree            # mask only in-tree train tips
+        if not mask.any():
+            continue
+        refined = graph(mask=mask)
+        target = graph._seed().detach()
+        loss = (1.0 - F.cosine_similarity(refined[mask], target[mask], dim=-1)).mean()
+        if head is not None:
+            hm = mask & train_obs
+            if hm.any():
+                pred = head(refined[hm])
+                if sup_kind == "num":
+                    loss = loss + F.mse_loss(pred.squeeze(-1), yt[hm])
+                else:
+                    loss = loss + F.cross_entropy(pred, yt[hm])
+        opt.zero_grad(); loss.backward()
+        torch.nn.utils.clip_grad_norm_(params, 1.0)
+        opt.step()
+    with torch.no_grad():
+        s = graph._seed().detach()
+        rep = graph(mask=None)                                             # full refine: test rows = OOT soft-attach
+        oot = rep                                                          # test species already come from the OOT path
+        for _ in range(max(0, impute_steps - 1)):
+            oot = graph(mask=None)
+        head_pred = None
+        head_resid = None
+        if head is not None and sup_kind == "num":
+            add_mu = clade_mu if (resid_readout and clade_mu is not None) else 0.0
+            head_resid = head(oot).squeeze(-1).detach()                    # WITHIN-clade residual (mean added at readout)
+            head_pred = (head_resid + add_mu).detach()                     # magnitude-aware readout on OOT projection
+        elif head is not None and sup_kind == "cat":
+            head_pred = head(oot).argmax(-1).detach()                      # ITER-4: categorical class readout on OOT proj
+    return s, rep, oot, head_pred, head_resid
 
 
 def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps, mask_frac, lr,
@@ -700,6 +784,176 @@ PANEL_AXES = ["cat_form", "cat_growth_rate", "cat_plant_type", "cat_sun", "cat_s
               "num_rain_max", "num_elev_max", "num_lep_support"]
 
 
+def run_oot(a, dev):
+    """RULE-9 OUT-OF-TREE PROJECTION run. For each source, compares two held-out imputation protocols on the SAME
+    split: (baseline) the in-tree masked reconstruction the probe has always used (test species stay tips, seeds
+    masked) vs (oot) the test species held genuinely OUT of the tree, imputed only by clade soft-attach cross-
+    attention over a TRAIN-only phylogeny. Answers: can the operator project a species that has NO tree position
+    at all, and how close does that come to the (easier) in-tree masked reconstruction? Isolates rule-9."""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    N = E1.shape[0]
+    fn, kind, metric = _scorer_for(a.cache_dir, gidx, a.trait_key, dev)
+    _, Y, obs, nclass = load_trait(a.cache_dir, gidx, a.trait_key, dev)
+    do_head = a.num_resid_readout and kind == "num"          # ITER-2: num OOT projection + residual-head readout
+    do_cat_head = a.num_resid_readout and kind == "cat"      # ITER-4: categorical OOT class readout (no clade mean)
+    # hybrid clade base grouping for the residual head (genus mean where trusted, else family), aligned to gidx
+    fam_gid = torch.as_tensor(fam_id).long()
+    gen_gid = None
+    if do_head and a.resid_level in ("genus", "hybrid"):
+        import csv as _csv
+        _rows = list(_csv.DictReader(open(Path(a.cache_dir) / "derived/species_index.csv")))
+        _gen = np.array([_rows[i]["tip_label"].split("_")[0] for i in gidx])
+        gen_gid = torch.tensor(np.unique(_gen, return_inverse=True)[1], dtype=torch.long)
+
+    def _group_mean(gid, ytv, train_mask):
+        gid = gid.to(dev).long(); ytv = ytv.to(dev)
+        G = int(gid.max().item()) + 1
+        gm = ytv[train_mask].mean() if train_mask.any() else ytv.mean()
+        ssum = torch.zeros(G, device=dev).index_add_(0, gid[train_mask], ytv[train_mask])
+        scnt = torch.zeros(G, device=dev).index_add_(0, gid[train_mask], torch.ones(int(train_mask.sum()), device=dev))
+        return torch.where(scnt > 0, ssum / scnt.clamp(min=1), gm)[gid], scnt[gid]
+
+    def _hybrid_base(ytv, train_mask):
+        fmean, _ = _group_mean(fam_gid, ytv, train_mask)
+        gmean, gcnt = _group_mean(gen_gid, ytv, train_mask)
+        return torch.where(gcnt >= a.resid_min_count, gmean, fmean)
+
+    def _head_spearman(pred, test_mask):
+        from scipy.stats import spearmanr
+        if pred is None:
+            return float("nan")
+        tst = (obs & test_mask)
+        yt = Y[tst].detach().cpu().numpy().ravel(); pr = pred[tst].detach().cpu().numpy().ravel()
+        if yt.size < 3:
+            return float("nan")
+        try:
+            r = spearmanr(yt, pr).correlation
+            return float(r) if r == r else 0.0
+        except Exception:
+            return 0.0
+
+    def _head_acc(pred, test_mask):
+        """ITER-4: accuracy of the OOT categorical class readout on held-out OBSERVED test species."""
+        if pred is None:
+            return float("nan")
+        tst = (obs & test_mask)
+        if int(tst.sum().item()) < 1:
+            return float("nan")
+        return (pred[tst] == Y[tst].long()).float().mean().item()
+
+    agg = {s: {"seed": [], "intree": [], "oot": [], "oot_head": []} for s in a.sources}
+    t0 = time.time()
+    for sd in a.seeds:
+        g = torch.Generator(device="cpu").manual_seed(sd)
+        # rule-9 test species must be IN the base tree (else "out of tree" is undefined) -> restrict holdout to tips
+        intree_mask = torch.zeros(N, dtype=torch.bool)
+        intree_mask[tip_row.cpu()] = True
+        test = ((torch.rand(N, generator=g) < a.holdout) & intree_mask).to(dev)
+        clade_base = _hybrid_base(Y.float(), obs & (~test)) if (do_head and a.resid_level == "hybrid") else None
+        for src in a.sources:
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                              pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            # baseline: standard in-tree masked reconstruction (test stays a tip)
+            s_b, _rep_b, imp_b = train_graph(seed, tree, tip_row, test, dev, a.d_model,
+                                             a.steps, a.mask_frac, a.lr, a.impute_steps)
+            # rule-9: test held genuinely out of the tree, imputed by clade soft-attach (+/- residual head)
+            _s_o, _rep_o, oot, head_pred, head_resid = train_graph_oot(
+                seed, a.cache_dir, gidx, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr, a.impute_steps,
+                sup_kind=(kind if (do_head or do_cat_head) else None), sup_Y=Y, sup_obs=obs, sup_nclass=nclass,
+                resid_readout=do_head, clade_base=clade_base)
+            # RULE-10/11 OOT ROLLOUT: fold confident OOT predictions into the clade base as pseudo-observed
+            # relatives, then re-read the (fixed) residual head against the refined base. head_resid is the fixed
+            # within-clade residual on the OOT embedding; only clade_mu (the base) updates as OOT neighbours reveal.
+            if do_head and a.oot_rounds > 1 and head_resid is not None:
+                cur_pred = head_pred.clone()
+                revealed = torch.zeros(N, dtype=torch.bool, device=dev)
+                yaug = Y.float().clone()
+                test_idx = torch.nonzero(test, as_tuple=False).squeeze(1)
+                n_test = int(test.sum().item())
+                per = max(1, int(n_test * a.oot_reveal_frac))
+                # confidence = closeness of the OOT residual to 0 is not informative; use tree-anchor = max cosine
+                r = F.normalize(oot, dim=-1); sim = r @ r.t()
+                anchor = torch.where((~test).unsqueeze(0), sim, torch.full_like(sim, -2.0)).max(1).values  # [N]
+                order = anchor[test_idx].argsort(descending=True)          # most-anchored OOT species first
+                ordered = test_idx[order]
+                for ri in range(a.oot_rounds - 1):
+                    take = ordered[ri * per:(ri + 1) * per]
+                    if take.numel() == 0:
+                        break
+                    revealed[take] = True
+                    yaug[take] = cur_pred[take]                            # pseudo-observed trait for revealed OOT
+                    aug_train = (obs & (~test)) | revealed                 # train relatives + revealed OOT
+                    new_base = _hybrid_base(yaug, aug_train)               # refined clade means include OOT neighbours
+                    cur_pred = (head_resid + new_base).detach()            # re-read fixed head vs refined base
+                head_pred = cur_pred
+            agg[src]["seed"].append(fn(s_b, test))
+            agg[src]["intree"].append(fn(imp_b, test))
+            agg[src]["oot"].append(fn(oot, test))
+            if do_head:
+                agg[src]["oot_head"].append(_head_spearman(head_pred, test))
+            elif do_cat_head:
+                agg[src]["oot_head"].append(_head_acc(head_pred, test))    # ITER-4: categorical class accuracy
+            else:
+                agg[src]["oot_head"].append(float("nan"))
+            # ITER-7/8 BLENDED READOUT: train the IN-TREE residual head too, blend with the OOT head. ITER-8 makes
+            # it HONEST -- split the held-out OOT species into val/test halves, pick alpha on VAL, report on TEST
+            # (alpha never sees the test scores). OOT-head preserves clean-seed signal; in-tree head tree-smooths.
+            if a.oot_blend and do_head and head_pred is not None:
+                _s, _rep, _imp, (ih, ig) = train_graph_trait_supervised(
+                    seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr, a.impute_steps,
+                    kind, Y, obs, nclass, fam_id=None, resid_readout=True,
+                    clade_base=clade_base)
+                intree_head = getattr(ig, "_head_imp", None)
+                # deterministic val/test split of the OOT held-out species (per source-seed)
+                gv = torch.Generator(device="cpu").manual_seed(1000 + sd)
+                val_half = (torch.rand(N, generator=gv) < 0.5).to(dev) & test
+                test_half = test & (~val_half)
+                if intree_head is not None:
+                    best_a, best_v = 1.0, -2.0
+                    for al in [0.0, 0.25, 0.5, 0.75, 1.0]:
+                        bp = al * head_pred + (1 - al) * intree_head
+                        vsc = _head_spearman(bp, val_half)                 # SELECT alpha on validation only
+                        if vsc == vsc and vsc > best_v:
+                            best_v, best_a = vsc, al
+                    bp = best_a * head_pred + (1 - best_a) * intree_head
+                    test_score = _head_spearman(bp, test_half)             # REPORT on the untouched test half
+                    oot_test = _head_spearman(head_pred, test_half)        # pure OOT head on the same test half
+                    agg[src].setdefault("blend", []).append(test_score)
+                    agg[src].setdefault("blend_alpha", []).append(best_a)
+                    agg[src].setdefault("blend_oot_ref", []).append(oot_test)
+
+    def m(xs):
+        return float(np.mean(xs)), float(np.std(xs))
+    print(f"=== BIOLOGICAL OUT-OF-TREE (rule-9) | trait={a.trait_key} metric={metric} sources={a.sources} "
+          f"seeds={a.seeds} holdout={a.holdout} N={N} resid_head={do_head or do_cat_head} ===")
+    print(f"  {'source':7s} | {'seed':>16s} | {'intree_impute':>16s} | {'oot_project':>16s} | {'oot_head':>16s} | oot-intree | oot-seed")
+    summary = {"mode": "out_of_tree", "trait": a.trait_key, "metric": metric,
+               "resid_head": do_head, "cat_head": do_cat_head, "rows": []}
+    for src in a.sources:
+        sm, ss = m(agg[src]["seed"]); im, iss = m(agg[src]["intree"]); om, os = m(agg[src]["oot"])
+        hm, hs = m(agg[src]["oot_head"])
+        d_oi = om - im; d_os = om - sm
+        flag = "  OOT-OK" if d_os > 0.008 else ""
+        print(f"  {src:7s} | {sm:.4f}+/-{ss:.4f} | {im:.4f}+/-{iss:.4f} | {om:.4f}+/-{os:.4f} | "
+              f"{hm:.4f}+/-{hs:.4f} | {d_oi:+.4f}   | {d_os:+.4f}{flag}")
+        row = {"source": src, "seed": round(sm, 4), "intree_impute": round(im, 4),
+               "oot_project": round(om, 4), "oot_std": round(os, 4),
+               "oot_head": round(hm, 4) if hm == hm else None,
+               "d_oot_vs_intree": round(d_oi, 4), "d_oot_vs_seed": round(d_os, 4)}
+        if a.oot_blend and "blend" in agg[src]:
+            bm, bs = m(agg[src]["blend"]); am, _ = m(agg[src]["blend_alpha"]); orf, _ = m(agg[src]["blend_oot_ref"])
+            print(f"           blend(val-picked alpha, TEST-half) = {bm:.4f}+/-{bs:.4f}  vs pure-OOT-head {orf:.4f}  "
+                  f"(delta {bm-orf:+.4f})  mean_alpha={am:.2f}")
+            row["blend_test_half"] = round(bm, 4); row["blend_mean_alpha"] = round(am, 2)
+            row["oot_head_test_half"] = round(orf, 4); row["blend_vs_oot_test_half"] = round(bm - orf, 4)
+        summary["rows"].append(row)
+    import json
+    print("[out_of_tree] " + json.dumps(summary))
+    print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src in {time.time()-t0:.1f}s")
+    return summary
+
+
 def run_multitrait(a, dev):
     """NEW LEVER runner (rule 25/29). Compare, per source, three graphs scored on the frozen EVAL axis
     (--trait_key) held-out NN imputation:
@@ -820,6 +1074,20 @@ def main(argv=None):
     ap.add_argument("--multi_trait", action="store_true",
                     help="NEW LEVER: seed-frozen graph joint-reconstructs a PANEL of aux traits; eval axis "
                          "(--trait_key) excluded -> pure transfer. Compares unsup|sup|multi on the eval axis.")
+    ap.add_argument("--out_of_tree", action="store_true",
+                    help="RULE-9: hold the test species OUT of the tree entirely (train-only phylogeny) and impute "
+                         "them via clade soft-attach cross-attention. Compares OOT projection vs the in-tree masked "
+                         "baseline on the same held-out split, per source.")
+    ap.add_argument("--oot_rounds", type=int, default=1,
+                    help="RULE-10/11 for OOT (--out_of_tree --num_resid_readout): >1 -> autoregressive readout. "
+                         "Each round folds the most-confident OOT trait predictions back into the hybrid clade-mean "
+                         "base as pseudo-observed relatives, then re-reads the residual head. 1=single-pass.")
+    ap.add_argument("--oot_reveal_frac", type=float, default=0.34,
+                    help="fraction of still-unrevealed OOT test species folded into the clade base per oot_round")
+    ap.add_argument("--oot_blend", action="store_true",
+                    help="ITER-7 (num_resid_readout num axis): also train the IN-TREE residual head and report the "
+                         "best convex blend alpha*oot_head_pred + (1-alpha)*intree_head_pred over a sweep. OOT wins "
+                         "on clean-seed axes, in-tree on tree-smoothable axes -> the blend should dominate both.")
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
@@ -830,6 +1098,8 @@ def main(argv=None):
         return run_trait_supervised(a, dev)
     if a.multi_trait:
         return run_multitrait(a, dev)
+    if a.out_of_tree:
+        return run_oot(a, dev)
 
     E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
     tip_row = tip_row.to(dev)
