@@ -108,6 +108,125 @@ def load_env(cache: str, gid):
     return env
 
 
+def load_env_species(cache: str, extra_channels: bool = True):
+    """Species-aggregated ENVIRONMENT features for ENV->NICHE-TRAIT routing (Ensue ROUTING-soil-ph/MAP-*).
+
+    Joins every observation to its worldclim(19) + AlphaEarth(64) [+ soil(9) + elev(1)] covariates by gbifID,
+    then aggregates per species (species_local index, aligned to the 2141-species vocab used by traitprobe).
+    Returns (envmean [S,D], envmedoid [S,D], n_per_species [S]). Aggregation levers exposed to the caller:
+      mean   -- per-column mean over the species' observations (smooth, the route_map baseline)
+      medoid -- the single observation whose feature vector is closest (L2) to the species mean (a real,
+                non-averaged niche exemplar; robust to multi-modal / vagrant records)
+    Columns are z-scored over covered species AFTER aggregation, missing imputed to 0 (= column mean)."""
+    from pathlib import Path
+    cachep = Path(cache)
+    vocab = np.load(cachep / "gbif_vocab.npz", allow_pickle=True)
+    S = len(vocab["global_idx"])
+    wc = np.load(cachep / "gbif_worldclim_tokens.npz"); wcm = {int(g): i for i, g in enumerate(wc["gbifID"])}; WC = wc["worldclim"]
+    ae = np.load(cachep / "gbif_alphaearth_tokens.npz"); aem = {int(g): i for i, g in enumerate(ae["gbifID"])}; AE = ae["ae"]
+    if extra_channels:
+        so = np.load(cachep / "gbif_soil_tokens.npz"); som = {int(g): i for i, g in enumerate(so["gbifID"])}; SO = so["soil"]
+        el = np.load(cachep / "gbif_elev.npz"); elm = {int(g): float(v) for g, v in zip(el["gbifID"], el["elev"])}
+        D = 19 + 64 + 9 + 1
+    else:
+        D = 19 + 64
+    # First pass: per-obs feature rows grouped by species (for both mean and medoid).
+    rows_by_sp = [[] for _ in range(S)]
+    for f in sorted(glob.glob(str(cachep / "gbif_tokens/*.npz"))):
+        z = np.load(f); sl = z["species_local"].astype(np.int64); gid = z["gbifID"]
+        for s, g in zip(sl, gid):
+            g = int(g)
+            if g not in wcm or g not in aem:
+                continue
+            v = np.empty(D, np.float32)
+            v[:19] = WC[wcm[g]]; v[19:83] = AE[aem[g]]
+            if extra_channels:
+                v[83:92] = SO[som[g]] if g in som else np.nan
+                v[92] = elm.get(g, np.nan)
+            rows_by_sp[int(s)].append(v)
+    envmean = np.full((S, D), np.nan, np.float32)
+    envmedoid = np.full((S, D), np.nan, np.float32)
+    envstd = np.full((S, D), np.nan, np.float32)
+    envlo = np.full((S, D), np.nan, np.float32)
+    envhi = np.full((S, D), np.nan, np.float32)
+    n = np.zeros(S, np.int64)
+    for s in range(S):
+        r = rows_by_sp[s]
+        if not r:
+            continue
+        M = np.stack(r, 0)                                        # [k, D]
+        n[s] = len(r)
+        mu = np.nanmean(M, 0)
+        envmean[s] = mu
+        envstd[s] = np.nanstd(M, 0) if len(r) > 1 else 0.0
+        envlo[s] = np.nanpercentile(M, 10, 0); envhi[s] = np.nanpercentile(M, 90, 0)
+        # medoid = obs nearest (L2 over non-nan cols) to the species mean
+        good = ~np.isnan(M).any(1)
+        if good.sum() >= 1:
+            Mg = M[good]
+            d = np.linalg.norm(Mg - np.nan_to_num(mu), axis=1)
+            envmedoid[s] = Mg[int(d.argmin())]
+        else:
+            envmedoid[s] = mu
+    # z-score per column over covered species, impute missing to 0
+    def _z(X):
+        m = np.nanmean(X, 0); sd = np.nanstd(X, 0); sd[sd < 1e-6] = 1.0
+        return np.nan_to_num((X - m) / sd, nan=0.0).astype(np.float32)
+    return _z(envmean), _z(envmedoid), n, _z(envstd), _z(envlo), _z(envhi)
+
+
+def load_env_obs(cache: str):
+    """Per-OBSERVATION env rows (worldclim19+AlphaEarth64) with species_local, for per-obs niche-map training.
+
+    Returns (Xobs [M,83] z-scored, sp_obs [M] species_local int64). Same columns/standardization convention as
+    load_env_species' worldclim+alphaearth block, so a per-obs-trained head is comparable to the per-species one."""
+    from pathlib import Path
+    cachep = Path(cache)
+    wc = np.load(cachep / "gbif_worldclim_tokens.npz"); wcm = {int(g): i for i, g in enumerate(wc["gbifID"])}; WC = wc["worldclim"]
+    ae = np.load(cachep / "gbif_alphaearth_tokens.npz"); aem = {int(g): i for i, g in enumerate(ae["gbifID"])}; AE = ae["ae"]
+    X, S = [], []
+    for f in sorted(glob.glob(str(cachep / "gbif_tokens/*.npz"))):
+        z = np.load(f); sl = z["species_local"].astype(np.int64); gid = z["gbifID"]
+        for s, g in zip(sl, gid):
+            g = int(g)
+            if g in wcm and g in aem:
+                X.append(np.concatenate([WC[wcm[g]], AE[aem[g]]]).astype(np.float32)); S.append(int(s))
+    X = np.stack(X, 0); S = np.array(S, np.int64)
+    m = np.nanmean(X, 0); sd = np.nanstd(X, 0); sd[sd < 1e-6] = 1.0
+    X = np.nan_to_num((X - m) / sd, nan=0.0)
+    return X.astype(np.float32), S
+
+
+def _ridge_spearman(X, y, tr, te, alphas=(0.1, 1.0, 10.0, 100.0)):
+    """RidgeCV fit on train species, Spearman rho on held-out species (route_map's linear baseline)."""
+    from sklearn.linear_model import RidgeCV
+    from scipy.stats import spearmanr
+    r = RidgeCV(alphas=list(alphas)).fit(X[tr], y[tr])
+    pr = r.predict(X[te])
+    rho = spearmanr(y[te], pr).correlation
+    return float(rho if rho == rho else 0.0)
+
+
+def _mlp_spearman(X, y, tr, te, dev, hidden=128, steps=1500, lr=3e-3):
+    """Nonlinear head: 1-hidden-layer MLP trained MSE on train species, Spearman rho on held-out species."""
+    from scipy.stats import spearmanr
+    Xt = torch.tensor(X, dtype=torch.float32, device=dev)
+    yt = torch.tensor(y, dtype=torch.float32, device=dev)
+    ym, ys = yt[tr].mean(), yt[tr].std().clamp_min(1e-6)
+    net = nn.Sequential(nn.Linear(X.shape[1], hidden), nn.ReLU(), nn.Linear(hidden, 1)).to(dev)
+    opt = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=1e-4)
+    tri = torch.tensor(tr, device=dev)
+    for _ in range(steps):
+        b = tri[torch.randint(0, len(tri), (min(512, len(tri)),), device=dev)]
+        pred = net(Xt[b]).squeeze(-1)
+        loss = F.mse_loss(pred, (yt[b] - ym) / ys)
+        opt.zero_grad(); loss.backward(); opt.step()
+    with torch.no_grad():
+        pr = net(Xt[torch.tensor(te, device=dev)]).squeeze(-1).cpu().numpy()
+    rho = spearmanr(y[te], pr).correlation
+    return float(rho if rho == rho else 0.0)
+
+
 def spatial_holdout(lat, lon, frac=0.2, block=0.5, seed=0):
     """Hold out whole 0.5-degree spatial blocks (tests generalization to UNSEEN locations, not memorization)."""
     blk = (np.floor(lat / block).astype(np.int64) * 100000 + np.floor(lon / block).astype(np.int64))
@@ -175,13 +294,26 @@ def main(argv=None):
     ap.add_argument("--attn_layers", type=int, default=2)       # self-attention encoder layers over the past window
     ap.add_argument("--pheno_species", action="store_true")     # ROUND-2: species-conditioned LSTM propagator (neighbour species emb + query species + match bit)
     ap.add_argument("--rec_block_deg", type=float, default=2.0)  # ROUND-3: spatial neighbour-search block width (deg); widen with large K to feed more past-DOY samples
+    ap.add_argument("--rec_fast", action="store_true")           # ROUND-4: vectorized cKDTree causal-window builder (true K-nearest, no block-ring cap, no per-query loop) -- decouples receptive-field breadth from O(block_area) cost so large K is affordable
+    ap.add_argument("--pheno_feats", default="e4d,rff,raw")  # HARD-RULE fast path: comma list subset of e4d,rff,raw to TRAIN (isolate ONE feature-type per run)
     ap.add_argument("--first_arrival", action="store_true")     # dynamic target: per (0.5deg cell, species) EARLIEST DOY (seasonal onset, leading edge); static vs GNN vs LSTM over Earth4D/RFF/raw
     ap.add_argument("--abundance", action="store_true")         # dynamic target: log obs-count in query cell over trailing window (activity a static climatology cannot forecast); static vs GNN vs LSTM
     ap.add_argument("--abund_win", type=float, default=90.0)    # trailing window (days) for the abundance count
+    ap.add_argument("--abund_lead", type=float, default=0.0)    # FORECAST-AHEAD horizon (days): target = activity in [d+lead-win, d+lead]; neighbours see only past<=d, so lead>0 = genuine lead-time forecast
+    ap.add_argument("--abund_delta", action="store_true")       # DELTA-DYNAMICS target: future log-activity MINUS trailing-past log-activity (removes stationary seasonal mean; pure forward change)
     ap.add_argument("--field_decode", action="store_true")      # rule24: TRAIN the encoder end-to-end to decode the dense family field between sparse obs; fair control = trainable-head-on-RFF / coord-MLP
     ap.add_argument("--env", action="store_true")               # Move1: real ENVIRONMENT covariates (worldclim+soil+elev) vs coordinate-PE; + Earth4D+env fused
     ap.add_argument("--env_decode", action="store_true")        # Move2/rule24: TRAIN encoder to decode the smooth ENVIRONMENT field (aux), then predict biology from the learned field
     ap.add_argument("--env_aux_weight", type=float, default=1.0) # weight on the env-reconstruction auxiliary loss
+    ap.add_argument("--env_trait", action="store_true")        # ROUTING (Ensue ROUTING-soil-ph/MAP-*): species-aggregated ENV->NICHE-TRAIT regression (held-out species). Predict num_soil_ph_max/rain_max/rain_min/elev_max/elev_min from per-species env (worldclim+AlphaEarth[+soil+elev]).
+    ap.add_argument("--env_agg", default="mean", choices=["mean", "medoid"])  # per-species env aggregation lever: smooth column-mean vs a real non-averaged niche exemplar
+    ap.add_argument("--env_extra", action="store_true")         # add soil(9)+elev(1) channels on top of worldclim(19)+AlphaEarth(64)
+    ap.add_argument("--env_head", default="ridge", choices=["ridge", "mlp"])  # linear RidgeCV vs 1-hidden MLP niche head
+    ap.add_argument("--env_mlp_hidden", type=int, default=128)
+    ap.add_argument("--env_channels", default="all", choices=["all","worldclim","alphaearth"])  # channel-family ablation: which env source carries the niche-trait routing
+    ap.add_argument("--env_spread", action="store_true")
+    ap.add_argument("--env_quantiles", action="store_true")      # concat per-species p10/p90 env (explicit distribution EDGES) on top of mean(+std) -- most direct match to max/min niche-boundary traits         # concat per-species column STD (niche breadth) to the mean -- directly informs max/min envelope traits
+    ap.add_argument("--env_perobs", action="store_true")        # train the linear niche map on PER-OBSERVATION env rows (train species only), predict held-out species from their species-mean env -- more training rows, same species holdout
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
@@ -216,6 +348,72 @@ def main(argv=None):
         rn = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
         if a.forecast:
             rn = np.concatenate([rn, tnorm[:, None]], 1)
+
+    if a.env_trait:
+        # ---- ENV->NICHE-TRAIT ROUTING (Ensue ROUTING-soil-ph-*/ROUTING-MAP-*): environmental-niche traits are ----
+        # routed to THIS (spacetime/environment) encoder. Aggregate env per species, predict each numeric niche
+        # trait on HELD-OUT species. Reference (worldclim+AlphaEarth, mean, ridge): soil_ph 0.59 rain_min 0.77
+        # rain_max 0.76 elev_min 0.78 elev_max 0.52; vs phylo-graph ~0.1. Levers: --env_agg, --env_extra, --env_head.
+        import sys as _sys
+        _sys.path.insert(0, "/workspace")
+        from deepearth.autoresearch.programs.biological.probe import load_trait as _load_trait
+        vocab = np.load(Path(a.cache_dir) / "gbif_vocab.npz", allow_pickle=True)
+        gidx = vocab["global_idx"]
+        emean, emedoid, npsp, estd, elo, ehi = load_env_species(a.cache_dir, extra_channels=a.env_extra)
+        ENV = emedoid if a.env_agg == "medoid" else emean
+        if a.env_spread:
+            ENV = np.concatenate([ENV, estd], 1)                 # mean niche center ++ per-species breadth
+        if a.env_quantiles:
+            ENV = np.concatenate([ENV, elo, ehi], 1)             # ++ per-species p10/p90 distribution edges
+        if a.env_channels == "worldclim":
+            ENV = ENV[:, :19]                                     # physical climate only (WorldClim 19-band)
+        elif a.env_channels == "alphaearth":
+            ENV = ENV[:, 19:83]                                   # learned satellite embedding only (AlphaEarth 64d)
+        _XOBS = _SPOBS = None
+        if a.env_perobs:
+            _XOBS, _SPOBS = load_env_obs(a.cache_dir)
+            if a.env_channels == "worldclim": _XOBS = _XOBS[:, :19]
+            elif a.env_channels == "alphaearth": _XOBS = _XOBS[:, 19:83]
+        keys = ["num_soil_ph_max", "num_rain_max", "num_rain_min", "num_elev_max", "num_elev_min"]
+        dt0 = time.time()
+        results = {}
+        rows = []
+        for key in keys:
+            _, Y, obs, _ = _load_trait(a.cache_dir, gidx, key, "cpu")
+            Y = np.asarray(Y).astype(np.float32); obs = np.asarray(obs).astype(bool)
+            sp = obs & (npsp > 0) & np.isfinite(ENV).all(1)
+            idx = np.where(sp)[0]
+            if len(idx) < 20:
+                rows.append((key, float("nan"), len(idx))); results[key] = float("nan"); continue
+            rng = np.random.default_rng(a.seed); rng.shuffle(idx)
+            cut = len(idx) // 5
+            te, tr = idx[:cut], idx[cut:]
+            if a.env_perobs:
+                # train linear niche map on PER-OBS env rows of the TRAIN species; predict held-out species from species-mean ENV
+                from sklearn.linear_model import RidgeCV as _RCV
+                from scipy.stats import spearmanr as _sr
+                tr_set = set(tr.tolist())
+                mo = np.array([sp0 in tr_set for sp0 in _SPOBS]) & np.isfinite(Y[_SPOBS]) & np.isfinite(_XOBS).all(1)
+                r = _RCV(alphas=[0.1,1.0,10.0,100.0]).fit(_XOBS[mo], Y[_SPOBS[mo]])
+                pr = r.predict(ENV[te]); _rho = _sr(Y[te], pr).correlation
+                rho = float(_rho if _rho==_rho else 0.0)
+            elif a.env_head == "mlp":
+                rho = _mlp_spearman(ENV, Y, tr, te, dev, hidden=a.env_mlp_hidden, steps=a.steps)
+            else:
+                rho = _ridge_spearman(ENV, Y, tr, te)
+            rows.append((key, rho, len(te))); results[key] = rho
+        dt = time.time() - dt0
+        vals = [r[1] for r in rows if r[1] == r[1]]
+        mean_rho = float(np.mean(vals)) if vals else float("nan")
+        print(f"=== SPACETIME encoder | mode=ENV->NICHE-TRAIT | agg={a.env_agg} extra={a.env_extra} head={a.env_head} env_dim={ENV.shape[1]} species_covered={int((npsp>0).sum())} ===")
+        for key, rho, nte in rows:
+            print(f"  {key:18s} spearman {rho:+.3f}   held-out_species_n={nte}")
+        print(f"  mean_spearman_over_traits {mean_rho:+.4f}   ({dt:.1f}s)")
+        print(f"  [profile] agg={a.env_agg} extra={a.env_extra} head={a.env_head} mlp_hidden={a.env_mlp_hidden} steps={a.steps} env_dim={ENV.shape[1]}")
+        results["mean_spearman"] = mean_rho
+        results["env_dim"] = int(ENV.shape[1]); results["agg"] = a.env_agg
+        results["head"] = a.env_head; results["extra"] = bool(a.env_extra); results["seconds"] = dt
+        return results
 
     if a.env:
         # ---- Move 1: is real ENVIRONMENT >> any coordinate positional encoding at held-out biology? ----
@@ -356,7 +554,8 @@ def main(argv=None):
         r = run_phenology_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, test, dev,
                               K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol,
                               attn=a.pheno_attn, attn_heads=a.attn_heads, attn_layers=a.attn_layers, sp=sp_all,
-                              block_deg=a.rec_block_deg)
+                              block_deg=a.rec_block_deg, fast=a.rec_fast,
+                              feats=tuple(x for x in a.pheno_feats.split(",") if x))
         dt = time.time() - t0
         n_te = r["raw"]["n_te"]
         def pg(ft, prop):
@@ -441,6 +640,7 @@ def main(argv=None):
             sp_all = np.concatenate(_sp).astype(np.int64)
             from deepearth.autoresearch.programs.spacetime.dyntargets import run_first_arrival_all
             r = run_first_arrival_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, sp_all, test, dev,
+                                      feats=tuple(x for x in a.pheno_feats.split(",") if x),
                                       K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol)
             res = _report("FIRST_ARRIVAL(onset-DOY)", "MAEd", r, f"tol=+/-{a.pheno_tol:.0f}d")
             dt = time.time() - t0
@@ -450,8 +650,11 @@ def main(argv=None):
         if a.abundance:
             from deepearth.autoresearch.programs.spacetime.dyntargets import run_abundance_all
             r = run_abundance_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, test, dev,
-                                  K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, win=a.abund_win)
-            res = _report("ABUNDANCE(log-count)", "MAE", r, f"win={a.abund_win:.0f}d")
+                                  feats=tuple(x for x in a.pheno_feats.split(",") if x),
+                                  K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, win=a.abund_win, lead=a.abund_lead, delta=a.abund_delta)
+            _nm = "ABUNDANCE-DELTA(dlog)" if a.abund_delta else "ABUNDANCE(log-count)"
+            res = _report(_nm, "MAE", r, f"win={a.abund_win:.0f}d lead={a.abund_lead:.0f}d delta={a.abund_delta}")
+            res = res | {"abund_lead": a.abund_lead, "abund_win": a.abund_win, "abund_delta": a.abund_delta}
             dt = time.time() - t0
             print(f"  {len(lat)} obs, {a.steps}-step abundance in {dt:.1f}s")
             return res | {"seconds": dt, "abundance": True}
