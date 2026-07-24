@@ -150,7 +150,55 @@ def _pooled_seeds(cache: str, N: int, mode: str, temp: float, keep: float):
     np.savez(out, dino=D, bio=B); return D, B
 
 
-def build_seed(source: str, cache: str, E1: torch.Tensor, medoid: bool, dev,
+def _balance_blocks(D: torch.Tensor, B: torch.Tensor, dev, energy_ratio: float = 0.95):
+    """RULE-26 fused-seed stabilizer. The plain `fused` seed is cat[norm(DINO), norm(BioCLIP-img)] at EQUAL
+    dimensionality/energy; under the unsupervised cosine-reconstruct objective the latent-clade operator
+    diverges on it (per-axis graph std 0.22-0.27, large negative graph deltas on ~5 of 9 axes) because a
+    single cosine target cannot decide which appearance block to trust and the two correlated blocks fight.
+
+    This produces a decorrelated, variance-BALANCED single appearance seed instead of a raw concat:
+      1. mean-center + PCA-whiten each block over the species population (SVD, keep components up to
+         `energy_ratio` cumulative variance -> drop noise directions that destabilize reconstruction),
+      2. scale each whitened block to UNIT total energy so DINO and BioCLIP-image contribute equally
+         (no block dominates the cosine target purely by having larger raw norm/rank),
+      3. concat -> one coherent seed. Deterministic (population stats only), so unseen species use the
+         identical transform (rule-9 out-of-tree species get the same whitening)."""
+    def white(X):
+        Xc = X - X.mean(0, keepdim=True)
+        U, S, Vh = torch.linalg.svd(Xc, full_matrices=False)
+        var = (S ** 2)
+        cum = torch.cumsum(var, 0) / var.sum().clamp_min(1e-12)
+        k = int((cum < energy_ratio).sum().item()) + 1
+        k = max(1, min(k, S.shape[0]))
+        W = U[:, :k] * (Xc.shape[0] ** 0.5)          # whitened scores, unit variance per retained component
+        W = W / (W.norm() + 1e-9)                     # unit TOTAL energy so both blocks weigh equally
+        return W
+    Dw = white(D.to(dev).float()); Bw = white(B.to(dev).float())
+    return torch.cat([Dw, Bw], dim=-1)
+
+
+def _balance_blocks_zca(D: torch.Tensor, B: torch.Tensor, dev, eps: float = 1e-3):
+    """RULE-26 fused-seed stabilizer, FULL-RANK variant. Same goal as _balance_blocks (stop the two appearance
+    blocks fighting under the unsup cosine-recon target) but WITHOUT dropping low-variance directions -- those
+    dropped dirs are what mask-reconstruct/imputation needs, so PCA-whitening hurt impute. ZCA whitens
+    (decorrelates + unit-variance) while keeping the FULL rank and staying in the original block basis, then
+    scales each block to unit total energy so DINO and BioCLIP-image weigh equally. Deterministic population
+    transform (rule-9: unseen species get the identical whitening)."""
+    def zca(X):
+        Xc = X - X.mean(0, keepdim=True)
+        n = Xc.shape[0]
+        cov = (Xc.T @ Xc) / max(n - 1, 1)
+        # symmetric inverse-sqrt of covariance via eigendecomposition (ZCA keeps original basis, full rank)
+        evals, evecs = torch.linalg.eigh(cov)
+        inv_sqrt = evecs @ torch.diag(1.0 / torch.sqrt(evals.clamp_min(eps))) @ evecs.T
+        W = Xc @ inv_sqrt
+        W = W / (W.norm() + 1e-9)                      # unit total energy so both blocks weigh equally
+        return W
+    Dw = zca(D.to(dev).float()); Bw = zca(B.to(dev).float())
+    return torch.cat([Dw, Bw], dim=-1)
+
+
+def build_seed(source: str, cache: str, E1: torch.Tensor, medoid: bool, dev, energy_ratio: float = 0.95,
                pool: str = None, temp: float = 0.05, keep: float = 0.6):
     """Return an [N, dim] seed tensor for the requested source, each per-vector L2-normed for a fair
     cosine-NN comparison (text seed too, so no source gets a norm advantage)."""
@@ -167,6 +215,12 @@ def build_seed(source: str, cache: str, E1: torch.Tensor, medoid: bool, dev,
         return F.normalize(D, dim=-1)
     if source == "fused":
         return torch.cat([F.normalize(D, dim=-1), F.normalize(B, dim=-1)], dim=-1)
+    if source == "fused_white":
+        # RULE-26 variance-balanced, PCA-whitened fused appearance seed (stabilizes the unsup graph)
+        return _balance_blocks(D, B, dev, energy_ratio=energy_ratio)
+    if source == "fused_zca":
+        # RULE-26 full-rank ZCA-whitened variance-balanced fused seed (keep low-var tail for imputation)
+        return _balance_blocks_zca(D, B, dev)
     if source == "routed":
         # ROUND-1 AGGREGATE ROUTER (rule 26/9): a SINGLE seed carrying BOTH the phylo-saturated text prior AND
         # the appearance-carrying vision prior, each L2-normed, concatenated -> ONE SpeciesGraph. The probe
@@ -208,7 +262,9 @@ def train_graph(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, ma
 
 def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps, mask_frac, lr,
                                  impute_steps, kind, Y, obs, nclass, dual_head=False, dual_seed=None,
-                                 head_hidden=0, dual_scale=1.0):
+                                 head_hidden=0, dual_scale=1.0, rollout_rounds=1, reveal_frac=0.25,
+                                 ab_scorer=None, operator="latent-clade", phylo_dist=None,
+                                 fam_id=None, resid_readout=False, clade_base=None):
     """ROUND-2 push for num_lep_support (and any axis): SEED-FROZEN, TRAIT-SUPERVISED graph. The operator is
     trained to reconstruct a MASKED species' TRAIT from its phylo relatives (rule 25+the trait-supervised recipe
     that unlocked cat_form/family): freeze the seed, mask a fraction of TRAIN species, and drive a small readout
@@ -219,10 +275,19 @@ def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps,
     axis where vision(plant appearance) and phylo may COMPOUND. With dual_head we co-train a SECOND readout off a
     detached-vision projection of the SAME refined embedding, so the operator must make the refined rep explain
     the trait through BOTH a phylo-propagated channel and an appearance channel -> an interaction-aware objective
-    that a single reconstruct-identity loss cannot express. `dual_seed` = the [N,vdim] vision block for that head."""
+    that a single reconstruct-identity loss cannot express. `dual_seed` = the [N,vdim] vision block for that head.
+
+    `operator` (rule 29): 'latent-clade' (default, all prior rounds) or 'ou-attention' -- the exact O(N) OU-GP
+    distance-biased attention the champion uses. ou-attention needs a phylo_distance matrix (`phylo_dist`,
+    built from the E1 tree-derived prior) instead of the tree buffers; this isolates the OPERATOR choice on the
+    identical trait-supervised imputation task."""
     N = seed.shape[0]
-    graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
-                         species_text=seed).to(dev)
+    if operator == "ou-attention":
+        graph = SpeciesGraph(N, d_model, operator="ou-attention", phylo_distance=phylo_dist,
+                             n_heads=4, n_layers=2, species_text=seed).to(dev)
+    else:
+        graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
+                             species_text=seed).to(dev)
     train_obs = obs & (~test)
     out_dim = 1 if kind == "num" else int(nclass)
     if head_hidden > 0:   # CEILING-PUSH: deeper trait-supervised readout (2-layer GELU MLP)
@@ -231,6 +296,25 @@ def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps,
     else:
         head = torch.nn.Linear(d_model, out_dim).to(dev)
     yt = Y.float() if kind == "num" else Y.long()
+    # CLADE-MEAN-RESIDUAL READOUT (resid_readout, num only): make magnitude EXPLICIT. The head predicts only the
+    # WITHIN-CLADE deviation y - clade_mean; at readout we add back the held-out species' clade mean. Clade means
+    # are computed from TRAIN-observed species only (per family), so no held-out leakage. This forces the graph to
+    # carry the fine within-family rank (the exact signal kNN neighbor-averaging collapses) while the coarse
+    # family-level magnitude comes from the phylo prior for free.
+    clade_mu = None
+    if resid_readout and kind == "num" and clade_base is not None:
+        clade_mu = clade_base.to(dev).float()                          # caller-supplied [N] base mean (e.g. hybrid)
+        yt = yt - clade_mu
+    elif resid_readout and kind == "num" and fam_id is not None:
+        fam = fam_id.to(dev).long()
+        train_obs0 = obs & (~test)
+        F_ = int(fam.max().item()) + 1
+        gmean = yt[train_obs0].mean() if train_obs0.any() else yt.mean()
+        ssum = torch.zeros(F_, device=dev).index_add_(0, fam[train_obs0], yt[train_obs0])
+        scnt = torch.zeros(F_, device=dev).index_add_(0, fam[train_obs0], torch.ones(int(train_obs0.sum()), device=dev))
+        fmean = torch.where(scnt > 0, ssum / scnt.clamp(min=1), gmean)   # per-family train mean (fallback global)
+        clade_mu = fmean[fam]                                            # [N] each species' family mean
+        yt = yt - clade_mu                                              # head now regresses the residual
     vhead = None
     if dual_head and dual_seed is not None:
         vproj = F.normalize(dual_seed, dim=-1)
@@ -257,6 +341,124 @@ def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps,
                 loss = loss + dual_scale * F.mse_loss(vpred.squeeze(-1), yt[mask])
             else:
                 loss = loss + dual_scale * F.cross_entropy(vpred, yt[mask])
+        opt.zero_grad(); loss.backward()
+        torch.nn.utils.clip_grad_norm_(params, 1.0)
+        opt.step()
+    with torch.no_grad():
+        s = graph._seed().detach()
+        rep = graph(mask=None)
+        imp_single = graph(mask=test)
+        for _ in range(max(0, impute_steps - 1)):
+            imp_single = graph(mask=test)
+        if rollout_rounds > 1:
+            imp = _rollout_impute(graph, test, rollout_rounds, reveal_frac, dev)
+        else:
+            imp = imp_single
+        if ab_scorer is not None:                       # CLEAN same-graph A/B: isolates the readout effect (zero
+            sp = ab_scorer(imp_single, test)            # training variance -- both scored on the SAME trained graph)
+            ro = ab_scorer(imp, test)
+            print(f"    [rollout_ab] single_pass={sp:.4f} rollout={ro:.4f} delta={ro-sp:+.4f}")
+        # MAGNITUDE-AWARE READOUT (num_head_readout): the kNN impute scorer averages relatives' raw
+        # values -> collapses within-clade rank (impute 0.19 << graph 0.54 on num_width_max). The trained
+        # regression `head` is an MSE-fit magnitude map from the refined embedding straight to the value;
+        # applying it to the imputed (mask=test) embedding is a magnitude-aware readout that keeps rank the
+        # neighbor-average destroys. This isolates READOUT (same graph, same imputed embedding) vs the kNN.
+        graph._head_imp = None
+        graph._head_seed = None
+        if kind == "num":
+            add_mu = clade_mu if (resid_readout and clade_mu is not None) else 0.0
+            pred_imp = head(imp).squeeze(-1) + add_mu   # [N] head prediction on IMPUTED (mask=test) embeddings
+            graph._head_imp = pred_imp.detach()
+            # LEAKAGE CONTROL: same head on the held-out species' OWN refined (unmasked) rep. If head-on-imputed
+            # >> this, the gain genuinely rides imputation-from-relatives, not head memorization of the seed.
+            pred_seed = head(rep).squeeze(-1) + add_mu
+            graph._head_seed = pred_seed.detach()
+    return s, rep, imp, (head, graph)
+
+
+def _rollout_impute(graph, test, rounds, reveal_frac, dev):
+    """READOUT LEVER (rule 10-11): autoregressive PROGRESSIVE-REVEAL imputation. Single-pass `graph(mask=test)`
+    masks ALL held-out species at once, so a held-out species reconstructs only from TRAIN relatives and never
+    from another (confidently imputed) held-out relative. Rollout instead reveals, each round, the most-anchored
+    still-masked test species -- clear them from the mask so their seed joins the relative pool -- then re-imputes
+    the rest from the enlarged neighbour set. `an observation of A updates neighbours B, C`. Confidence = a
+    species' max cosine to any currently-UNMASKED species in the refined space (most tree-anchored = revealed
+    first). The FINAL refined table (all test still SCORED by NN vs train, identical metric) is returned; reveals
+    only change which relatives are visible during reconstruction, not the held-out train/test scoring split."""
+    N = test.shape[0]
+    mask = test.clone()
+    n_test = int(test.sum().item())
+    per_round = max(1, int(n_test * reveal_frac))
+    out = graph(mask=mask).clone()                                   # frozen per-species imputed-while-masked table
+    for _ in range(max(1, rounds - 1)):
+        refined = graph(mask=mask)
+        r = F.normalize(refined, dim=-1)
+        sim = r @ r.t()
+        sim.fill_diagonal_(-2.0)
+        vis = ~mask                                                  # currently-visible species (train + revealed)
+        anchor = torch.where(vis.unsqueeze(0), sim, torch.full_like(sim, -2.0)).max(dim=1).values  # [N]
+        cand = mask.clone()                                          # only reveal currently-masked test species
+        anchor = torch.where(cand, anchor, torch.full_like(anchor, -3.0))
+        k = min(per_round, int(cand.sum().item()))
+        if k <= 0:
+            break
+        top = anchor.topk(k).indices
+        mask = mask.clone(); mask[top] = False                      # reveal: their seed now visible to relatives
+        newimp = graph(mask=mask)                                    # re-impute the STILL-masked species anew
+        out[mask] = newimp[mask]                                     # each test species keeps its imputed-while-
+    #                                                                # -masked embedding (revealed ones frozen at reveal)
+    return out
+
+
+def train_graph_multitrait(seed, tree, tip_row, test, dev, d_model, steps, mask_frac, lr, impute_steps,
+                           panel, eval_key, include_eval=False):
+    """NEW LEVER (rule 25/29, richer reconstruction target): SEED-FROZEN graph trained to reconstruct a PANEL of
+    MANY auxiliary traits JOINTLY from relatives, then measured by held-out NN imputation on ONE frozen EVAL axis.
+    Every prior trait-supervised round drove a SINGLE readout at the eval axis; here the operator must make the
+    refined-from-relatives embedding simultaneously explain a whole vector of correlated biology axes (form,
+    growth, size, climate, soil...).
+
+    `include_eval=False` (variant `multi`): the eval axis is EXCLUDED from the panel -> a fair pure-TRANSFER test
+    (does shared multi-axis structure carry to a held-out axis with its labels never in the loss?).
+    `include_eval=True`  (variant `sup_multi`): the eval axis IS one head alongside the panel -> a MULTI-TASK test
+    (do the 12 auxiliary trait heads regularize/boost the single eval-axis head above `sup` alone?).
+    One head per trait; each contributes its loss only on masked species that OBSERVE that trait. Core untouched."""
+    N = seed.shape[0]
+    graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
+                         species_text=seed).to(dev)
+    heads, targets = [], []                                  # (head, kind, Yt, train_obs) per panel trait
+    for k, (kind_k, Y_k, obs_k, nclass_k) in panel.items():
+        if k == eval_key and not include_eval:
+            continue                                         # transfer variant: never supervise the eval axis
+        out_dim = 1 if kind_k == "num" else int(nclass_k)
+        h = torch.nn.Linear(d_model, out_dim).to(dev)
+        yt = Y_k.float() if kind_k == "num" else Y_k.long()
+        heads.append((h, kind_k, yt, obs_k & (~test)))
+        targets.append(k)
+    params = list(graph.parameters())
+    for h, *_ in heads:
+        params += list(h.parameters())
+    opt = torch.optim.Adam(params, lr=lr)
+    for _ in range(steps):
+        mask = (torch.rand(N, device=dev) < mask_frac) & (~test)
+        if not mask.any():
+            continue
+        refined = graph(mask=mask)                          # masked species reconstructed from relatives
+        loss = 0.0
+        n_terms = 0
+        for h, kind_k, yt, tobs in heads:
+            m = mask & tobs                                 # only species that OBSERVE this panel trait
+            if not m.any():
+                continue
+            pred = h(refined[m])
+            if kind_k == "num":
+                loss = loss + F.mse_loss(pred.squeeze(-1), yt[m])
+            else:
+                loss = loss + F.cross_entropy(pred, yt[m])
+            n_terms += 1
+        if n_terms == 0:
+            continue
+        loss = loss / n_terms
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 1.0)
         opt.step()
@@ -308,7 +510,7 @@ def run_multi_axis(a, dev):
         g = torch.Generator(device="cpu").manual_seed(sd)
         test = (torch.rand(N, generator=g) < a.holdout).to(dev)
         for src in a.sources:
-            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio, pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
             s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
                                       a.steps, a.mask_frac, a.lr, a.impute_steps)
             for k in axes:
@@ -377,9 +579,53 @@ def run_trait_supervised(a, dev):
     key = a.trait_key
     fn, kind, metric = _scorer_for(a.cache_dir, gidx, key, dev)
     _, Y, obs, nclass = load_trait(a.cache_dir, gidx, key, dev)
+    # rule-29 operator swap: ou-attention needs a dense phylo_distance from the E1 tree-derived prior
+    phylo_dist = SpeciesGraph.distance_from_embedding(F.normalize(E1.to(dev), dim=-1)) if a.operator == "ou-attention" else None
+    # clade-residual base grouping: family (fam_id) or finer genus (from tip_label 1st token), aligned to gidx
+    fam_gid = torch.as_tensor(fam_id).long()
+    gen_gid = None
+    if a.num_resid_readout and a.resid_level in ("genus", "hybrid"):
+        import csv as _csv
+        _rows = list(_csv.DictReader(open(Path(a.cache_dir) / "derived/species_index.csv")))
+        _gen = np.array([_rows[i]["tip_label"].split("_")[0] for i in gidx])
+        gen_gid = torch.tensor(np.unique(_gen, return_inverse=True)[1], dtype=torch.long)
+    resid_gid = gen_gid if a.resid_level == "genus" else fam_gid
+
+    def _group_mean(gid, ytv, train_mask):
+        """per-group mean of ytv over train_mask species (fallback global); returns ([N] mean, [N] train count)."""
+        gid = gid.to(dev).long(); ytv = ytv.to(dev)
+        G = int(gid.max().item()) + 1
+        gm = ytv[train_mask].mean() if train_mask.any() else ytv.mean()
+        ssum = torch.zeros(G, device=dev).index_add_(0, gid[train_mask], ytv[train_mask])
+        scnt = torch.zeros(G, device=dev).index_add_(0, gid[train_mask], torch.ones(int(train_mask.sum()), device=dev))
+        mean = torch.where(scnt > 0, ssum / scnt.clamp(min=1), gm)
+        return mean[gid], scnt[gid]
+
+    def _hybrid_base(ytv, train_mask):
+        """genus mean where genus has >= resid_min_count train members, else family mean (bias/variance blend)."""
+        fmean, _ = _group_mean(fam_gid, ytv, train_mask)
+        gmean, gcnt = _group_mean(gen_gid, ytv, train_mask)
+        return torch.where(gcnt >= a.resid_min_count, gmean, fmean)
+
     variants = a.variants  # e.g. ["unsup","sup","sup_dual"]
-    agg = {src: {v: {"seed": [], "graph": [], "impute": []} for v in variants} for src in a.sources}
+    agg = {src: {v: {"seed": [], "graph": [], "impute": [], "head_imp": [], "head_seed": []} for v in variants} for src in a.sources}
     t0 = time.time()
+
+    def _head_spearman(pred, test_mask):
+        """Spearman of trained-head predictions vs truth on held-out OBSERVED species (magnitude-aware readout)."""
+        from scipy.stats import spearmanr
+        if pred is None:
+            return float("nan")
+        tst = (obs & test_mask)
+        yt = Y[tst].detach().cpu().numpy().ravel()
+        pr = pred[tst].detach().cpu().numpy().ravel()
+        if yt.size < 3:
+            return float("nan")
+        try:
+            r = spearmanr(yt, pr).correlation
+            return float(r) if r == r else 0.0
+        except Exception:
+            return 0.0
     for sd in a.seeds:
         g = torch.Generator(device="cpu").manual_seed(sd)
         test = (torch.rand(N, generator=g) < a.holdout).to(dev)
@@ -387,44 +633,141 @@ def run_trait_supervised(a, dev):
         Dv, _ = _mean_seeds(a.cache_dir)
         Dv = torch.tensor(Dv).to(dev)
         for src in a.sources:
-            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio, pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
             for v in variants:
+                head_imp_pred = None
+                head_seed_pred = None
                 if v == "unsup":
                     s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
                                               a.steps, a.mask_frac, a.lr, a.impute_steps)
                 else:
-                    s, rep, imp = train_graph_trait_supervised(
+                    s, rep, imp, (head, gr) = train_graph_trait_supervised(
                         seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
                         a.impute_steps, kind, Y, obs, nclass,
                         dual_head=(v == "sup_dual"), dual_seed=(Dv if v == "sup_dual" else None),
+                        head_hidden=a.head_hidden, dual_scale=a.dual_scale,
+                        rollout_rounds=a.rollout_rounds, reveal_frac=a.reveal_frac,
+                        ab_scorer=(fn if a.rollout_rounds > 1 else None),
+                        operator=a.operator, phylo_dist=phylo_dist,
+                        fam_id=(resid_gid if a.num_resid_readout else None),
+                        resid_readout=a.num_resid_readout,
+                        clade_base=(_hybrid_base(Y.float(), obs & (~test))
+                                    if (a.num_resid_readout and a.resid_level == "hybrid" and kind == "num")
+                                    else None))
+                    head_imp_pred = getattr(gr, "_head_imp", None)   # magnitude-aware head readout on imputed emb
+                    head_seed_pred = getattr(gr, "_head_seed", None) # leakage control: head on own refined rep
+                agg[src][v]["seed"].append(fn(s, test))
+                agg[src][v]["graph"].append(fn(rep, test))
+                agg[src][v]["impute"].append(fn(imp, test))
+                agg[src][v]["head_imp"].append(_head_spearman(head_imp_pred, test))
+                agg[src][v]["head_seed"].append(_head_spearman(head_seed_pred, test))
+
+    def m(xs):
+        return float(np.mean(xs)), float(np.std(xs))
+    print(f"=== BIOLOGICAL TRAIT-SUPERVISED | trait={key} metric={metric} sources={a.sources} "
+          f"variants={variants} seeds={a.seeds} holdout={a.holdout} ===")
+    ref_v = "unsup" if ("text" in agg and "unsup" in agg["text"]) else (variants[0] if "text" in agg else None)
+    txt_ref = m(agg["text"][ref_v]["graph"])[0] if ref_v else float("nan")
+    txt_ref_imp = m(agg["text"][ref_v]["impute"])[0] if ref_v else float("nan")
+    print(f"  reference: text-seed {ref_v} graph={txt_ref:.4f}  impute={txt_ref_imp:.4f}")
+    print(f"  {'source':7s} {'variant':9s} | {'seed':>16s} | {'GRAPH':>16s} | {'impute(kNN)':>16s} | {'impute(head)':>16s} | d_head_vs_kNN")
+    summary = {"mode": "trait_supervised", "trait": key, "metric": metric,
+               "text_unsup_graph": round(txt_ref, 4), "text_unsup_impute": round(txt_ref_imp, 4), "rows": []}
+    for src in a.sources:
+        for v in variants:
+            sm, ss = m(agg[src][v]["seed"]); gm, gs = m(agg[src][v]["graph"]); im, iss = m(agg[src][v]["impute"])
+            hm, hs = m(agg[src][v]["head_imp"]); hsd, _ = m(agg[src][v]["head_seed"])
+            dg = gm - txt_ref; di = im - txt_ref_imp
+            dhead = (hm - im) if (hm == hm and im == im) else float("nan")   # magnitude-aware readout gain over kNN
+            flag = " HEAD-WIN" if (dhead == dhead and dhead > 0.008) else ""
+            print(f"  {src:7s} {v:9s} | {sm:.4f}+/-{ss:.4f} | {gm:.4f}+/-{gs:.4f} | {im:.4f}+/-{iss:.4f} | "
+                  f"{hm:.4f}+/-{hs:.4f} | head_seed={hsd:.4f} | {dhead:+.4f}{flag}")
+            summary["rows"].append({"source": src, "variant": v, "seed": round(sm, 4),
+                                    "graph": round(gm, 4), "graph_std": round(gs, 4), "impute": round(im, 4),
+                                    "impute_head": round(hm, 4), "head_seed_ctrl": round(hsd, 4),
+                                    "d_head_vs_knn": round(dhead, 4) if dhead == dhead else None,
+                                    "d_graph_vs_txt": round(dg, 4), "d_imp_vs_txt": round(di, 4)})
+    import json
+    print("[trait_supervised] " + json.dumps(summary))
+    print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src x {len(variants)}v in {time.time()-t0:.1f}s")
+    return summary
+
+
+# Default multi-trait panel: broad, mixed cat+num biology axes spanning morphology / climate / soil / husbandry.
+# The eval axis (--trait_key) is auto-excluded so the reported score is a pure TRANSFER from the panel.
+PANEL_AXES = ["cat_form", "cat_growth_rate", "cat_plant_type", "cat_sun", "cat_soil_drainage",
+              "cat_water", "cat_seasonality", "num_height_max", "num_width_max", "num_soil_ph_max",
+              "num_rain_max", "num_elev_max", "num_lep_support"]
+
+
+def run_multitrait(a, dev):
+    """NEW LEVER runner (rule 25/29). Compare, per source, three graphs scored on the frozen EVAL axis
+    (--trait_key) held-out NN imputation:
+      unsup     = cosine-recon-identity graph (Round-1 baseline)
+      sup       = SINGLE-axis trait-supervised graph on the eval axis (Round-2 recipe -- the incumbent)
+      multi     = PANEL joint-reconstruct graph, eval axis EXCLUDED (this round's hypothesis; pure transfer)
+    If `multi` graph/impute on the eval axis beats `sup` (and text-unsup champion) beyond the floor, a richer
+    multi-axis reconstruction target transfers better than single-axis supervision. Multi-seed, one process."""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    N = E1.shape[0]
+    key = a.trait_key
+    fn, kind, metric = _scorer_for(a.cache_dir, gidx, key, dev)
+    _, Yk, obsk, nclk = load_trait(a.cache_dir, gidx, key, dev)
+    panel_keys = a.axes if a.axes else PANEL_AXES
+    panel = {k: load_trait(a.cache_dir, gidx, k, dev) for k in panel_keys}
+    variants = a.variants  # subset of ["unsup","sup","multi"]
+    agg = {src: {v: {"seed": [], "graph": [], "impute": []} for v in variants} for src in a.sources}
+    t0 = time.time()
+    for sd in a.seeds:
+        g = torch.Generator(device="cpu").manual_seed(sd)
+        test = (torch.rand(N, generator=g) < a.holdout).to(dev)
+        for src in a.sources:
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                              pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            for v in variants:
+                if v == "unsup":
+                    s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
+                                              a.steps, a.mask_frac, a.lr, a.impute_steps)
+                elif v == "sup":
+                    s, rep, imp, _hg = train_graph_trait_supervised(
+                        seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+                        a.impute_steps, kind, Yk, obsk, nclk, dual_head=False, dual_seed=None,
                         head_hidden=a.head_hidden, dual_scale=a.dual_scale)
+                else:  # multi (transfer, eval excluded) | sup_multi (multi-task, eval included)
+                    s, rep, imp = train_graph_multitrait(
+                        seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+                        a.impute_steps, panel, key, include_eval=(v == "sup_multi"))
                 agg[src][v]["seed"].append(fn(s, test))
                 agg[src][v]["graph"].append(fn(rep, test))
                 agg[src][v]["impute"].append(fn(imp, test))
 
     def m(xs):
         return float(np.mean(xs)), float(np.std(xs))
-    print(f"=== BIOLOGICAL TRAIT-SUPERVISED | trait={key} metric={metric} sources={a.sources} "
-          f"variants={variants} seeds={a.seeds} holdout={a.holdout} ===")
-    txt_ref = m(agg["text"]["unsup"]["graph"])[0] if "text" in agg else float("nan")
-    txt_ref_imp = m(agg["text"]["unsup"]["impute"])[0] if "text" in agg else float("nan")
-    print(f"  champion text-seed unsup graph={txt_ref:.4f}  impute={txt_ref_imp:.4f}")
-    print(f"  {'source':7s} {'variant':9s} | {'seed':>16s} | {'GRAPH':>16s} | {'impute':>16s} | d_graph_vs_txt | d_imp_vs_txt")
-    summary = {"mode": "trait_supervised", "trait": key, "metric": metric,
+    n_panel = sum(1 for k in panel_keys if k != key)
+    print(f"=== BIOLOGICAL MULTI-TRAIT PANEL | eval={key} metric={metric} panel={n_panel}axes "
+          f"sources={a.sources} variants={variants} seeds={a.seeds} holdout={a.holdout} ===")
+    # reference = text-seed unsup if present, else text-seed of the first available variant (delta still meaningful)
+    ref_v = "unsup" if ("text" in agg and "unsup" in agg["text"]) else (variants[0] if "text" in agg else None)
+    txt_ref = m(agg["text"][ref_v]["graph"])[0] if ref_v else float("nan")
+    txt_ref_imp = m(agg["text"][ref_v]["impute"])[0] if ref_v else float("nan")
+    print(f"  reference: text-seed {ref_v} graph={txt_ref:.4f}  impute={txt_ref_imp:.4f}")
+    print(f"  {'source':7s} {'variant':7s} | {'seed':>16s} | {'GRAPH':>16s} | {'impute':>16s} | d_graph_vs_txt | d_imp_vs_txt")
+    summary = {"mode": "multi_trait", "eval": key, "metric": metric, "n_panel": n_panel,
                "text_unsup_graph": round(txt_ref, 4), "text_unsup_impute": round(txt_ref_imp, 4), "rows": []}
     for src in a.sources:
         for v in variants:
             sm, ss = m(agg[src][v]["seed"]); gm, gs = m(agg[src][v]["graph"]); im, iss = m(agg[src][v]["impute"])
             dg = gm - txt_ref; di = im - txt_ref_imp
             flag = " WIN" if dg > 0.008 else ""
-            print(f"  {src:7s} {v:9s} | {sm:.4f}+/-{ss:.4f} | {gm:.4f}+/-{gs:.4f} | {im:.4f}+/-{iss:.4f} | "
+            print(f"  {src:7s} {v:7s} | {sm:.4f}+/-{ss:.4f} | {gm:.4f}+/-{gs:.4f} | {im:.4f}+/-{iss:.4f} | "
                   f"{dg:+.4f}       | {di:+.4f}{flag}")
             summary["rows"].append({"source": src, "variant": v, "seed": round(sm, 4),
                                     "graph": round(gm, 4), "graph_std": round(gs, 4), "impute": round(im, 4),
                                     "d_graph_vs_txt": round(dg, 4), "d_imp_vs_txt": round(di, 4)})
     import json
-    print("[trait_supervised] " + json.dumps(summary))
-    print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src x {len(variants)}v in {time.time()-t0:.1f}s")
+    print("[multi_trait] " + json.dumps(summary))
+    print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src x {len(variants)}v panel={n_panel} in {time.time()-t0:.1f}s")
     return summary
 
 
@@ -452,10 +795,31 @@ def main(argv=None):
                     help="ROUND-3 denoised per-species DINO aggregation: attn (attention-pooled) | qfilt (quality-filtered)")
     ap.add_argument("--pool_temp", type=float, default=0.05, help="ROUND-3 attn-pool softmax temperature")
     ap.add_argument("--pool_keep", type=float, default=0.6, help="ROUND-3 qfilt keep-fraction (top cosine-to-centroid)")
+    ap.add_argument("--energy_ratio", type=float, default=0.95,
+                    help="fused_white PCA-whiten cumulative-variance keep fraction (rule-26 seed stabilizer)")
     ap.add_argument("--head_hidden", type=int, default=0,
                     help="CEILING-PUSH: >0 -> deeper 2-layer GELU trait-supervised readout of this width (0=linear, current)")
     ap.add_argument("--dual_scale", type=float, default=1.0,
                     help="CEILING-PUSH: weight on the dual (appearance) head loss (1.0=current)")
+    ap.add_argument("--operator", default="latent-clade", choices=["latent-clade", "ou-attention"],
+                    help="rule-29 refinement operator for the trait-supervised graph: latent-clade (prior rounds) "
+                         "or ou-attention (the champion OU-GP distance-biased attention). Only wired for --trait_supervised sup.")
+    ap.add_argument("--rollout_rounds", type=int, default=1,
+                    help="READOUT LEVER (rule 10-11): >1 -> autoregressive progressive-reveal imputation at eval "
+                         "(reveal most-anchored held-out species each round so they anchor the rest). 1=single-pass.")
+    ap.add_argument("--reveal_frac", type=float, default=0.25,
+                    help="fraction of still-masked held-out species revealed per rollout round")
+    ap.add_argument("--num_resid_readout", action="store_true",
+                    help="MAGNITUDE-EXPLICIT: head regresses within-clade residual (y - train clade mean); "
+                         "add the clade mean back at readout. num_ traits + trait_supervised only.")
+    ap.add_argument("--resid_level", default="family", choices=["family", "genus", "hybrid"],
+                    help="clade granularity for --num_resid_readout base mean: family (coarse), genus (finer), "
+                         "or hybrid (genus mean where genus has >= --resid_min_count train members, else family).")
+    ap.add_argument("--resid_min_count", type=int, default=4,
+                    help="hybrid residual: min TRAIN-observed members for a genus mean to be trusted (else family).")
+    ap.add_argument("--multi_trait", action="store_true",
+                    help="NEW LEVER: seed-frozen graph joint-reconstructs a PANEL of aux traits; eval axis "
+                         "(--trait_key) excluded -> pure transfer. Compares unsup|sup|multi on the eval axis.")
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
@@ -464,6 +828,8 @@ def main(argv=None):
         return run_multi_axis(a, dev)
     if a.trait_supervised:
         return run_trait_supervised(a, dev)
+    if a.multi_trait:
+        return run_multitrait(a, dev)
 
     E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
     tip_row = tip_row.to(dev)
@@ -483,7 +849,7 @@ def main(argv=None):
         g = torch.Generator(device="cpu").manual_seed(sd)
         test = (torch.rand(N, generator=g) < a.holdout).to(dev)
         for src in a.sources:
-            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio, pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
             s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
                                       a.steps, a.mask_frac, a.lr, a.impute_steps)
             agg[src]["seed"].append(scorer(s, test))
