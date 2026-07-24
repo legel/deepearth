@@ -263,6 +263,13 @@ def run_interaction(a, dev):
         Z = linkage(squareform(Dt, checks=False), method="average")            # taxonomic dendrogram
         Dco = squareform(cophenet(Z)).astype(np.float32)       # cophenetic = tree-depth-to-common-ancestor (ultrametric)
         poll_dist = torch.tensor(Dco / (Dco.max() + 1e-9), device=dev)         # normalised patristic-style tree distance
+    elif a.poll_dist == "realtree":                             # tree2 = REAL DATED pollinator phylogeny (pollitree pipeline):
+        # OToL induced-subtree topology + taxonomic-rank Myr calibration over the recovered pollinator names,
+        # precomputed and aligned to poll_used in derived/pollinator_distance_real.npy. This is a genuine
+        # cross-tree structure NOT derivable from the plant graph nor a monotone re-expression of the text seed.
+        Dreal = np.load(Path(a.cache_dir) / "derived/pollinator_distance_real.npy").astype(np.float32)
+        assert Dreal.shape == (Nq, Nq), (Dreal.shape, Nq)       # must be aligned to the probe's poll_used order
+        poll_dist = torch.tensor(Dreal / (Dreal.max() + 1e-9), device=dev)  # normalised patristic tree distance
     else:
         poll_dist = SpeciesGraph.distance_from_embedding(F.normalize(poll_text, dim=-1))  # tree2 distance from BioCLIP prior
     poll = SpeciesGraph(Nq, a.d_model, operator="ou-attention", phylo_distance=poll_dist,
@@ -342,7 +349,7 @@ def main(argv=None):
     ap.add_argument("--objective", choices=["family", "trait", "interaction"], default="family")  # family=byte-identical default; interaction=rule-27 two-tree
     ap.add_argument("--trait_key", default="cat_plant_type")     # trait target when --objective trait (cat_* single-label or multi_* multi-label)
     ap.add_argument("--no_mask", action="store_true")           # interaction: don't rule-25 mask TRAIN plants during training (ablate the recover-from-relatives signal)
-    ap.add_argument("--poll_dist", choices=["text", "covis", "taxo"], default="text")  # pollinator-tree topology: text=BioCLIP prior (redundant w/ seed); covis=co-visitation over TRAIN plants (seed-orthogonal); taxo=taxonomic ultrametric (cophenetic dendrogram over the text prior; strong but seed-correlated)
+    ap.add_argument("--poll_dist", choices=["text", "covis", "taxo", "realtree"], default="text")  # pollinator-tree topology: text=BioCLIP prior (redundant w/ seed); covis=co-visitation over TRAIN plants (seed-orthogonal); taxo=taxonomic ultrametric (cophenetic dendrogram over the text prior; strong but seed-correlated)
     ap.add_argument("--bidir_mask", action="store_true")        # rule-27 both-ways: also hold out+mask a fraction of pollinators, recover via pollinator relatives; metric = held-out plant x held-out pollinator
     ap.add_argument("--covis_weighted", action="store_true")    # covis edges from log1p visitation-FREQUENCY mass (marg_poll_frq) not binary adjacency -> richer seed-orthogonal 2nd tree
     ap.add_argument("--device", default="cuda")

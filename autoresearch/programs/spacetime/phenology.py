@@ -191,9 +191,9 @@ class AttnDOY(nn.Module):
         return F.normalize(self.head(pooled.squeeze(1)), dim=-1)
 
 
-def _windows(lat, lon, days, q_idx, pool_idx, K):
+def _windows(lat, lon, days, q_idx, pool_idx, K, block_deg=2.0):
     qi, vi = build_causal_windows(lat[q_idx], lon[q_idx], days[q_idx],
-                                  lat[pool_idx], lon[pool_idx], days[pool_idx], K)
+                                  lat[pool_idx], lon[pool_idx], days[pool_idx], K, block_deg=block_deg)
     gi = np.where(qi >= 0, pool_idx[np.clip(qi, 0, None)], -1)
     return gi, vi
 
@@ -240,7 +240,7 @@ def _skill(pred_vec, ytrue, tol_days=15.0):
 
 def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4000, lr=3e-3,
                   hidden=256, hops=2, tol_days=15.0, attn=False, attn_heads=4, attn_layers=2, warmup=200,
-                  sp=None):
+                  sp=None, block_deg=2.0):
     """Train static / GNN / LSTM DOY heads on PAST queries; evaluate circular DOY skill on future+new-place.
 
     Returns dict of {static_mae, static_acc, gnn_mae, gnn_acc, lstm_mae, lstm_acc, n_te} in DAYS / within-tol.
@@ -252,8 +252,8 @@ def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4
     te_idx = np.where(test)[0]
     rng = np.random.default_rng(0)
     q_train = tr_idx if len(tr_idx) <= 6000 else rng.choice(tr_idx, 6000, replace=False)
-    g_tr, v_tr = _windows(lat, lon, days, q_train, tr_idx, K)
-    g_te, v_te = _windows(lat, lon, days, te_idx, tr_idx, K)
+    g_tr, v_tr = _windows(lat, lon, days, q_train, tr_idx, K, block_deg=block_deg)
+    g_te, v_te = _windows(lat, lon, days, te_idx, tr_idx, K, block_deg=block_deg)
 
     tr = _tensors(qfeat_all, doyvec, days, lat, lon, q_train, g_tr, v_tr, K, sp=sp)
     te = _tensors(qfeat_all, doyvec, days, lat, lon, te_idx, g_te, v_te, K, sp=sp)
@@ -342,9 +342,10 @@ def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4
 
 
 def run_phenology_all(e4d, rff, raw, feat_dims, days, coords_ll, test, dev, K=16, steps=4000, lr=3e-3,
-                      hidden=256, hops=2, tol_days=15.0, attn=False, attn_heads=4, attn_layers=2, sp=None):
+                      hidden=256, hops=2, tol_days=15.0, attn=False, attn_heads=4, attn_layers=2, sp=None,
+                      block_deg=2.0):
     """Run the three heads over Earth4D / RFF / raw features; return per-feature dicts."""
-    kw = dict(attn=attn, attn_heads=attn_heads, attn_layers=attn_layers, sp=sp)
+    kw = dict(attn=attn, attn_heads=attn_heads, attn_layers=attn_layers, sp=sp, block_deg=block_deg)
     r = {}
     r["e4d"] = run_phenology(e4d, feat_dims["e4d"], days, coords_ll, test, dev, K, steps, lr, hidden, hops, tol_days, **kw)
     r["rff"] = run_phenology(rff, feat_dims["rff"], days, coords_ll, test, dev, K, steps, lr, hidden, hops, tol_days, **kw)

@@ -174,6 +174,7 @@ def main(argv=None):
     ap.add_argument("--attn_heads", type=int, default=4)        # attention heads for AttnDOY
     ap.add_argument("--attn_layers", type=int, default=2)       # self-attention encoder layers over the past window
     ap.add_argument("--pheno_species", action="store_true")     # ROUND-2: species-conditioned LSTM propagator (neighbour species emb + query species + match bit)
+    ap.add_argument("--rec_block_deg", type=float, default=2.0)  # ROUND-3: spatial neighbour-search block width (deg); widen with large K to feed more past-DOY samples
     ap.add_argument("--first_arrival", action="store_true")     # dynamic target: per (0.5deg cell, species) EARLIEST DOY (seasonal onset, leading edge); static vs GNN vs LSTM over Earth4D/RFF/raw
     ap.add_argument("--abundance", action="store_true")         # dynamic target: log obs-count in query cell over trailing window (activity a static climatology cannot forecast); static vs GNN vs LSTM
     ap.add_argument("--abund_win", type=float, default=90.0)    # trailing window (days) for the abundance count
@@ -354,7 +355,8 @@ def main(argv=None):
             sp_all = np.concatenate(_sp).astype(np.int64)
         r = run_phenology_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, test, dev,
                               K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol,
-                              attn=a.pheno_attn, attn_heads=a.attn_heads, attn_layers=a.attn_layers, sp=sp_all)
+                              attn=a.pheno_attn, attn_heads=a.attn_heads, attn_layers=a.attn_layers, sp=sp_all,
+                              block_deg=a.rec_block_deg)
         dt = time.time() - t0
         n_te = r["raw"]["n_te"]
         def pg(ft, prop):

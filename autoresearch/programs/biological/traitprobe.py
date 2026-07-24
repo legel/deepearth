@@ -207,7 +207,8 @@ def train_graph(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, ma
 
 
 def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps, mask_frac, lr,
-                                 impute_steps, kind, Y, obs, nclass, dual_head=False, dual_seed=None):
+                                 impute_steps, kind, Y, obs, nclass, dual_head=False, dual_seed=None,
+                                 head_hidden=0, dual_scale=1.0):
     """ROUND-2 push for num_lep_support (and any axis): SEED-FROZEN, TRAIT-SUPERVISED graph. The operator is
     trained to reconstruct a MASKED species' TRAIT from its phylo relatives (rule 25+the trait-supervised recipe
     that unlocked cat_form/family): freeze the seed, mask a fraction of TRAIN species, and drive a small readout
@@ -223,17 +224,19 @@ def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps,
     graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
                          species_text=seed).to(dev)
     train_obs = obs & (~test)
-    if kind == "num":
-        head = torch.nn.Linear(d_model, 1).to(dev)
-        yt = Y.float()
+    out_dim = 1 if kind == "num" else int(nclass)
+    if head_hidden > 0:   # CEILING-PUSH: deeper trait-supervised readout (2-layer GELU MLP)
+        head = torch.nn.Sequential(torch.nn.Linear(d_model, head_hidden), torch.nn.GELU(),
+                                   torch.nn.Linear(head_hidden, out_dim)).to(dev)
     else:
-        head = torch.nn.Linear(d_model, int(nclass)).to(dev)
-        yt = Y.long()
+        head = torch.nn.Linear(d_model, out_dim).to(dev)
+    yt = Y.float() if kind == "num" else Y.long()
     vhead = None
     if dual_head and dual_seed is not None:
         vproj = F.normalize(dual_seed, dim=-1)
-        vhead = torch.nn.Sequential(torch.nn.Linear(vproj.shape[1], d_model), torch.nn.GELU(),
-                                    torch.nn.Linear(d_model, 1 if kind == "num" else int(nclass))).to(dev)
+        vh = head_hidden if head_hidden > 0 else d_model   # CEILING-PUSH: match dual-head capacity to readout
+        vhead = torch.nn.Sequential(torch.nn.Linear(vproj.shape[1], vh), torch.nn.GELU(),
+                                    torch.nn.Linear(vh, 1 if kind == "num" else int(nclass))).to(dev)
     params = list(graph.parameters()) + list(head.parameters()) + (list(vhead.parameters()) if vhead else [])
     opt = torch.optim.Adam(params, lr=lr)
     for p in graph.parameters():
@@ -251,9 +254,9 @@ def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps,
         if vhead is not None:                               # interaction-aware 2nd channel (appearance)
             vpred = vhead(vproj[mask])
             if kind == "num":
-                loss = loss + F.mse_loss(vpred.squeeze(-1), yt[mask])
+                loss = loss + dual_scale * F.mse_loss(vpred.squeeze(-1), yt[mask])
             else:
-                loss = loss + F.cross_entropy(vpred, yt[mask])
+                loss = loss + dual_scale * F.cross_entropy(vpred, yt[mask])
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 1.0)
         opt.step()
@@ -393,7 +396,8 @@ def run_trait_supervised(a, dev):
                     s, rep, imp = train_graph_trait_supervised(
                         seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
                         a.impute_steps, kind, Y, obs, nclass,
-                        dual_head=(v == "sup_dual"), dual_seed=(Dv if v == "sup_dual" else None))
+                        dual_head=(v == "sup_dual"), dual_seed=(Dv if v == "sup_dual" else None),
+                        head_hidden=a.head_hidden, dual_scale=a.dual_scale)
                 agg[src][v]["seed"].append(fn(s, test))
                 agg[src][v]["graph"].append(fn(rep, test))
                 agg[src][v]["impute"].append(fn(imp, test))
@@ -448,6 +452,10 @@ def main(argv=None):
                     help="ROUND-3 denoised per-species DINO aggregation: attn (attention-pooled) | qfilt (quality-filtered)")
     ap.add_argument("--pool_temp", type=float, default=0.05, help="ROUND-3 attn-pool softmax temperature")
     ap.add_argument("--pool_keep", type=float, default=0.6, help="ROUND-3 qfilt keep-fraction (top cosine-to-centroid)")
+    ap.add_argument("--head_hidden", type=int, default=0,
+                    help="CEILING-PUSH: >0 -> deeper 2-layer GELU trait-supervised readout of this width (0=linear, current)")
+    ap.add_argument("--dual_scale", type=float, default=1.0,
+                    help="CEILING-PUSH: weight on the dual (appearance) head loss (1.0=current)")
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
