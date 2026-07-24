@@ -39,12 +39,13 @@ trained (24). The backlog closes those rows.
    └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## ② Pick — preferences
-Rank the backlog by the last trace's **bottleneck**, not by the scalar. Config toggles before code changes;
-cheapest-highest-leverage first. One variable per A/B. Target the unmet science.md rows first (1, 2b, 24).
+## ② Pick — architecture, not knobs
+One structural change per round that satisfies a science.md rule this encoder fails. Reject anything that leaves
+the mechanism unchanged. Filters: upholds science.md · fair controls (untouched baseline + mechanism ablation) ·
+beats the ±0.008 noise floor.
 
 ## ③ Run — one variable, fixed budget
-`VARIANT` = champion.yaml with exactly one Levers-table change set. `TAG` = `st_<lever#>`.
+`VARIANT` = the champion path with your one structural change applied. `TAG` = `st_<short-name>`.
 ```
 rm -f data/deepcal/prepared_*.pt                                                             # cache round-trip is lossy — rm before every run
 python -m deepearth.autoresearch.programs.run_experiment VARIANT --st-gain --cache_dir data/deepcal --tag TAG > TAG.log 2>&1
@@ -66,14 +67,13 @@ Keep if `st_gain` rises beyond the single-seed noise floor **and** the capabilit
 B23, B29, B39, B40, B34, B42, B50, B51, B26, B27, B28) does not regress. Else: read the bottleneck, set the
 next hypothesis.
 
-## Levers (backlog — each closes an unmet science.md row)
-| # | rule | bottleneck it targets | change | expect |
-|---|---|---|---|---|
-| S0 | — | no isolation metric exists | build `_ablate_spacetime` flag + `*_spacetime_gain` deltas | `st_gain` measurable (≈0 today) |
-| S1 | 1 | no forecast objective → B25/B31 inactive | `data.holdout: temporal` + forecast reconstruction loss on the future split | B25/B31 active (0→>0), B23 ↑ |
-| S2 | 24 | dense field never trained | wire `query_field` into the loss (`field_decode_weight`, default 0) | B29/B39/B40 dist-skill ↑ |
-| S3 | 5 | absolute capacity hardcoded | expose `abs_spatial_levels`/`abs_temporal_levels`/`abs_log2_hashmap` (default 18/18/20) | B29/B40 fine-scale ↑ if starved |
-| S4 | 2b | relative path is an offset hash, not recurrence | temporal-context recurrence in the relative encoder (new toggle, isolated) | B5/B8/B25 ↑ |
+## Search space (axes, non-exhaustive — invert or invent past them)
+| axis | rule | structural move |
+|---|---|---|
+| Objective | 1 | make Earth4D causal autoregressive — forecast future state from past (`data.holdout: temporal` + future-reconstruction loss) |
+| Dense field | 24 | train the field decoder to infer every variable at every space-time point between sparse obs, forward in time |
+| Relative path | 2b | replace the offset-hash with a physics-inspired 4D recurrence (4D-LSTM / GNN rollout) over a temporal window |
+| Encoding fabric | 3–5 | position code fused with every token — but only in service of the above; static capacity alone tested neutral/harmful |
 
 ## Ensue (steps ① and ⑥, tag `spacetime`)
 - **① READ** before picking: pull open hypotheses + logged dead-ends for `spacetime`; skip anything tried.

@@ -35,12 +35,14 @@ below closes those rows.
    └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## ② Pick — preferences
-Rank the backlog by the last trace's **bottleneck**, not by the scalar. Config toggles before code changes;
-cheapest-highest-leverage first. One variable per A/B. Target the unmet science.md rows first.
+## ② Pick — architecture, not knobs
+One structural change per round that satisfies a science.md rule this encoder fails. Reject anything that leaves
+the mechanism unchanged. Filters: upholds science.md · fair controls (untouched baseline + mechanism ablation) ·
+beats the ±0.008 noise floor.
 
 ## ③ Run — one variable, fixed budget
-`VARIANT` = champion.yaml with exactly one Levers-table key set to its value. `TAG` = `bio_<lever#>`.
+`VARIANT` = the champion path with your one bold hypothesis applied (it may bundle several coordinated changes
+under a single thesis). `TAG` = `bio_<short-name>`.
 ```
 rm -f data/deepcal/prepared_*.pt                                                  # cache round-trip is lossy — rm before every run
 python -m deepearth.autoresearch.programs.run_experiment VARIANT --cache_dir data/deepcal --tag TAG > TAG.log 2>&1
@@ -60,14 +62,13 @@ Emits `bio_gain` + Δ vs control · capability floor · per-benchmark Δ · the 
 Keep if `bio_gain` rises beyond the single-seed noise floor **and** the capability floor (B7, B21, B41,
 B53, B54, B55, B63) does not regress. Else: read the bottleneck, set the next hypothesis.
 
-## Levers (backlog — each closes an unmet science.md row)
-| # | rule | bottleneck it targets | toggle | expect |
-|---|---|---|---|---|
-| B1 | 25 | rule-25 signal too weak → graph learns identity | `phylo_mask_weight` 0.1→1–2 | B56, then B58/B61/B62 ↑ |
-| B2 | 25 | graph rarely needed → few species masked | `phylo_mask_frac` ↑ (new toggle, default=current) | all gains ↑, B55 ↑; guard B7 |
-| B3 | 10–11 | detached heads can't shape the graph | `phylo_head_routing: true` + `species_trait_recon` | B60/B61/B62 ↑ |
-| B4 | 27 | interactions don't cross trees | `poll_phylo_weight` 0→>0 | B59 ↑, **B55 ↑**, B41/B54 ↑ |
-| B5 | 26 | wrong seed geometry caps zero-shot (9, 26) | seed → frozen BioCLIP-2.5 1024-d text + probe | all gains ↑ (deferred: needs synced emb) |
+## Search space (axes, non-exhaustive — invert or invent past them)
+| axis | rule | structural move |
+|---|---|---|
+| Seed | 26, 9 | reseed orthogonal to tree topology (BioCLIP trait/appearance prior) so the graph is additive, not redundant |
+| Objective | 25, 27 | off family onto axes the seed lacks; loss = reconstruct a masked species from relatives, never identity |
+| Operator | 29, 27, 9 | bidirectional plant↔pollinator two-tree message passing; internal-clade Markov blanket; out-of-tree soft-attach |
+| Readout | 10–11 | autoregressive rollout — an observation of A updates neighbours B, C — not a detached head |
 
 ## Ensue (steps ① and ⑥, tag `biological`)
 - **① READ** before picking: pull open hypotheses + logged dead-ends for `biological`; skip anything tried.
