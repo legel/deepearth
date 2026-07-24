@@ -91,12 +91,77 @@ def _medoid_seeds(cache: str, N: int):
     return Dm, Bm
 
 
-def build_seed(source: str, cache: str, E1: torch.Tensor, medoid: bool, dev):
+def _pooled_seeds(cache: str, N: int, mode: str, temp: float, keep: float):
+    """ROUND-3 denoised per-species VISION seed. The champion vision seed is a plain MEAN of each species' DINO
+    cloud -- pulled off-manifold by outlier photos (wrong crop, non-plant, bad lighting), which is what drives the
+    ~1/5 vision-seed collapse. Two robust aggregators, each cached:
+
+      mode='attn'   ATTENTION-POOLED: weight each observation by softmax(cos(obs, species-centroid)/temp), so
+                    representative photos dominate and outliers are down-weighted (a soft, self-supervised pooling
+                    toward the species' modal appearance; temp->0 -> medoid, temp->inf -> mean).
+      mode='qfilt'  QUALITY-FILTERED trimmed mean: keep only the top `keep` fraction of observations by cosine to
+                    the centroid, then mean -> hard outlier rejection.
+
+    Two streaming passes over gbif_tokens (memory-safe, never holds all 621k obs). Both DINO and BioCLIP-image are
+    pooled with the SAME per-obs weights (a coherent appearance seed)."""
+    tag = f"{mode}_t{temp}_k{keep}".replace(".", "p")
+    out = Path(cache) / f"derived/species_vision_pool_{tag}.npz"
+    if out.exists():
+        z = np.load(out); return z["dino"].astype(np.float32), z["bio"].astype(np.float32)
+    import glob
+    files = sorted(glob.glob(str(Path(cache) / "gbif_tokens/*.npz")))
+    z0 = np.load(files[0]); dd, bd = z0["dino"].shape[1], z0["bio"].shape[1]
+    # pass 1: normed centroid direction per species
+    csum = np.zeros((N, dd), np.float64)
+    for f in files:
+        z = np.load(f); sl = z["species_local"].astype(np.int64)
+        dn = z["dino"].astype(np.float32); dn = dn / (np.linalg.norm(dn, axis=1, keepdims=True) + 1e-9)
+        np.add.at(csum, sl, dn)
+    cnorm = csum / (np.linalg.norm(csum, axis=1, keepdims=True) + 1e-9)
+    if mode == "qfilt":
+        # need a per-species cosine THRESHOLD (the `keep`-quantile). Pass 1b: collect cosines per species.
+        from collections import defaultdict
+        coslist = defaultdict(list)
+        for f in files:
+            z = np.load(f); sl = z["species_local"].astype(np.int64)
+            d = z["dino"].astype(np.float32); dn = d / (np.linalg.norm(d, axis=1, keepdims=True) + 1e-9)
+            sc = (dn * cnorm[sl]).sum(1)
+            for i in range(len(sl)):
+                coslist[int(sl[i])].append(float(sc[i]))
+        thr = np.full(N, -2.0, np.float64)
+        for s, cs in coslist.items():
+            thr[s] = np.quantile(cs, 1.0 - keep) if len(cs) > 2 else -2.0
+    # pass 2: weighted sums
+    Dw = np.zeros((N, dd), np.float64); Bw = np.zeros((N, bd), np.float64); Wsum = np.zeros(N, np.float64)
+    for f in files:
+        z = np.load(f); sl = z["species_local"].astype(np.int64)
+        d = z["dino"].astype(np.float32); b = z["bio"].astype(np.float32)
+        dn = d / (np.linalg.norm(d, axis=1, keepdims=True) + 1e-9)
+        sc = (dn * cnorm[sl]).sum(1)                                       # cosine to species centroid
+        if mode == "attn":
+            w = np.exp(sc / max(temp, 1e-6))                              # softmax numerator (per-species norm below)
+        elif mode == "qfilt":
+            w = (sc >= thr[sl]).astype(np.float64)                        # keep top-`keep` by cosine
+        else:
+            raise ValueError(mode)
+        np.add.at(Dw, sl, d * w[:, None]); np.add.at(Bw, sl, b * w[:, None]); np.add.at(Wsum, sl, w)
+    Wsum = np.maximum(Wsum, 1e-9)
+    D = (Dw / Wsum[:, None]).astype(np.float32); B = (Bw / Wsum[:, None]).astype(np.float32)
+    np.savez(out, dino=D, bio=B); return D, B
+
+
+def build_seed(source: str, cache: str, E1: torch.Tensor, medoid: bool, dev,
+               pool: str = None, temp: float = 0.05, keep: float = 0.6):
     """Return an [N, dim] seed tensor for the requested source, each per-vector L2-normed for a fair
     cosine-NN comparison (text seed too, so no source gets a norm advantage)."""
     if source == "text":
         return F.normalize(E1.to(dev), dim=-1)
-    D, B = (_medoid_seeds(cache, E1.shape[0]) if medoid else _mean_seeds(cache))
+    if pool in ("attn", "qfilt"):
+        D, B = _pooled_seeds(cache, E1.shape[0], pool, temp, keep)        # ROUND-3 denoised aggregation
+    elif medoid:
+        D, B = _medoid_seeds(cache, E1.shape[0])
+    else:
+        D, B = _mean_seeds(cache)
     D = torch.tensor(D).to(dev); B = torch.tensor(B).to(dev)
     if source == "vision":
         return F.normalize(D, dim=-1)
@@ -141,6 +206,66 @@ def train_graph(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, ma
     return s, rep, imp
 
 
+def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps, mask_frac, lr,
+                                 impute_steps, kind, Y, obs, nclass, dual_head=False, dual_seed=None):
+    """ROUND-2 push for num_lep_support (and any axis): SEED-FROZEN, TRAIT-SUPERVISED graph. The operator is
+    trained to reconstruct a MASKED species' TRAIT from its phylo relatives (rule 25+the trait-supervised recipe
+    that unlocked cat_form/family): freeze the seed, mask a fraction of TRAIN species, and drive a small readout
+    off the refined masked embedding toward that species' true trait (regression MSE for num_, CE for cat_).
+    This aligns the objective with the held-out imputation task and pushes the axis the seed lacks.
+
+    `dual_head` (interaction-aware): num_lep_support is lepidoptera HOST support -- a plant x insect interaction
+    axis where vision(plant appearance) and phylo may COMPOUND. With dual_head we co-train a SECOND readout off a
+    detached-vision projection of the SAME refined embedding, so the operator must make the refined rep explain
+    the trait through BOTH a phylo-propagated channel and an appearance channel -> an interaction-aware objective
+    that a single reconstruct-identity loss cannot express. `dual_seed` = the [N,vdim] vision block for that head."""
+    N = seed.shape[0]
+    graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
+                         species_text=seed).to(dev)
+    train_obs = obs & (~test)
+    if kind == "num":
+        head = torch.nn.Linear(d_model, 1).to(dev)
+        yt = Y.float()
+    else:
+        head = torch.nn.Linear(d_model, int(nclass)).to(dev)
+        yt = Y.long()
+    vhead = None
+    if dual_head and dual_seed is not None:
+        vproj = F.normalize(dual_seed, dim=-1)
+        vhead = torch.nn.Sequential(torch.nn.Linear(vproj.shape[1], d_model), torch.nn.GELU(),
+                                    torch.nn.Linear(d_model, 1 if kind == "num" else int(nclass))).to(dev)
+    params = list(graph.parameters()) + list(head.parameters()) + (list(vhead.parameters()) if vhead else [])
+    opt = torch.optim.Adam(params, lr=lr)
+    for p in graph.parameters():
+        pass  # seed frozen via detached target below; operator params train
+    for _ in range(steps):
+        mask = (torch.rand(N, device=dev) < mask_frac) & train_obs
+        if not mask.any():
+            continue
+        refined = graph(mask=mask)                          # masked species reconstructed from relatives
+        pred = head(refined[mask])
+        if kind == "num":
+            loss = F.mse_loss(pred.squeeze(-1), yt[mask])
+        else:
+            loss = F.cross_entropy(pred, yt[mask])
+        if vhead is not None:                               # interaction-aware 2nd channel (appearance)
+            vpred = vhead(vproj[mask])
+            if kind == "num":
+                loss = loss + F.mse_loss(vpred.squeeze(-1), yt[mask])
+            else:
+                loss = loss + F.cross_entropy(vpred, yt[mask])
+        opt.zero_grad(); loss.backward()
+        torch.nn.utils.clip_grad_norm_(params, 1.0)
+        opt.step()
+    with torch.no_grad():
+        s = graph._seed().detach()
+        rep = graph(mask=None)
+        imp = graph(mask=test)
+        for _ in range(max(0, impute_steps - 1)):
+            imp = graph(mask=test)
+    return s, rep, imp
+
+
 # --- helpers used by both single-axis main() and the multi-axis aggregate router ------------------
 def _scorer_for(cache, gidx, key, dev):
     """Return (scorer_fn, kind, metric_name) for one trait key. scorer(emb, test) -> absolute NN score."""
@@ -180,7 +305,7 @@ def run_multi_axis(a, dev):
         g = torch.Generator(device="cpu").manual_seed(sd)
         test = (torch.rand(N, generator=g) < a.holdout).to(dev)
         for src in a.sources:
-            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev)
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
             s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
                                       a.steps, a.mask_frac, a.lr, a.impute_steps)
             for k in axes:
@@ -238,6 +363,67 @@ def run_multi_axis(a, dev):
     return summary
 
 
+def run_trait_supervised(a, dev):
+    """ROUND-2: SEED-FROZEN TRAIT-SUPERVISED graph on ONE axis (default num_lep_support). Compares, per source,
+    the unsupervised cosine-recon graph (the Round-1 protocol) vs the trait-supervised graph (+/- the dual-signal
+    interaction head), against the text-seed champion, on held-out NN imputation. Answers: how high can the single
+    best axis go when the objective is aligned with the trait and an interaction-aware appearance channel is added?"""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    N = E1.shape[0]
+    key = a.trait_key
+    fn, kind, metric = _scorer_for(a.cache_dir, gidx, key, dev)
+    _, Y, obs, nclass = load_trait(a.cache_dir, gidx, key, dev)
+    variants = a.variants  # e.g. ["unsup","sup","sup_dual"]
+    agg = {src: {v: {"seed": [], "graph": [], "impute": []} for v in variants} for src in a.sources}
+    t0 = time.time()
+    for sd in a.seeds:
+        g = torch.Generator(device="cpu").manual_seed(sd)
+        test = (torch.rand(N, generator=g) < a.holdout).to(dev)
+        # vision block for the dual head (mean-DINO), aligned to N
+        Dv, _ = _mean_seeds(a.cache_dir)
+        Dv = torch.tensor(Dv).to(dev)
+        for src in a.sources:
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            for v in variants:
+                if v == "unsup":
+                    s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
+                                              a.steps, a.mask_frac, a.lr, a.impute_steps)
+                else:
+                    s, rep, imp = train_graph_trait_supervised(
+                        seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+                        a.impute_steps, kind, Y, obs, nclass,
+                        dual_head=(v == "sup_dual"), dual_seed=(Dv if v == "sup_dual" else None))
+                agg[src][v]["seed"].append(fn(s, test))
+                agg[src][v]["graph"].append(fn(rep, test))
+                agg[src][v]["impute"].append(fn(imp, test))
+
+    def m(xs):
+        return float(np.mean(xs)), float(np.std(xs))
+    print(f"=== BIOLOGICAL TRAIT-SUPERVISED | trait={key} metric={metric} sources={a.sources} "
+          f"variants={variants} seeds={a.seeds} holdout={a.holdout} ===")
+    txt_ref = m(agg["text"]["unsup"]["graph"])[0] if "text" in agg else float("nan")
+    txt_ref_imp = m(agg["text"]["unsup"]["impute"])[0] if "text" in agg else float("nan")
+    print(f"  champion text-seed unsup graph={txt_ref:.4f}  impute={txt_ref_imp:.4f}")
+    print(f"  {'source':7s} {'variant':9s} | {'seed':>16s} | {'GRAPH':>16s} | {'impute':>16s} | d_graph_vs_txt | d_imp_vs_txt")
+    summary = {"mode": "trait_supervised", "trait": key, "metric": metric,
+               "text_unsup_graph": round(txt_ref, 4), "text_unsup_impute": round(txt_ref_imp, 4), "rows": []}
+    for src in a.sources:
+        for v in variants:
+            sm, ss = m(agg[src][v]["seed"]); gm, gs = m(agg[src][v]["graph"]); im, iss = m(agg[src][v]["impute"])
+            dg = gm - txt_ref; di = im - txt_ref_imp
+            flag = " WIN" if dg > 0.008 else ""
+            print(f"  {src:7s} {v:9s} | {sm:.4f}+/-{ss:.4f} | {gm:.4f}+/-{gs:.4f} | {im:.4f}+/-{iss:.4f} | "
+                  f"{dg:+.4f}       | {di:+.4f}{flag}")
+            summary["rows"].append({"source": src, "variant": v, "seed": round(sm, 4),
+                                    "graph": round(gm, 4), "graph_std": round(gs, 4), "impute": round(im, 4),
+                                    "d_graph_vs_txt": round(dg, 4), "d_imp_vs_txt": round(di, 4)})
+    import json
+    print("[trait_supervised] " + json.dumps(summary))
+    print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src x {len(variants)}v in {time.time()-t0:.1f}s")
+    return summary
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache_dir", default="data/deepcal")
@@ -254,12 +440,22 @@ def main(argv=None):
     ap.add_argument("--multi_axis", action="store_true",
                     help="ROUND-1 aggregate router: one graph per source, scored on EVERY win-axis at once")
     ap.add_argument("--axes", nargs="+", default=None, help="override the win-axis list for --multi_axis")
+    ap.add_argument("--trait_supervised", action="store_true",
+                    help="ROUND-2: seed-frozen trait-supervised graph on --trait_key (+/- dual interaction head)")
+    ap.add_argument("--variants", nargs="+", default=["unsup", "sup", "sup_dual"],
+                    help="ROUND-2 variants: unsup | sup | sup_dual")
+    ap.add_argument("--vision_pool", default=None, choices=[None, "attn", "qfilt"],
+                    help="ROUND-3 denoised per-species DINO aggregation: attn (attention-pooled) | qfilt (quality-filtered)")
+    ap.add_argument("--pool_temp", type=float, default=0.05, help="ROUND-3 attn-pool softmax temperature")
+    ap.add_argument("--pool_keep", type=float, default=0.6, help="ROUND-3 qfilt keep-fraction (top cosine-to-centroid)")
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
 
     if a.multi_axis:
         return run_multi_axis(a, dev)
+    if a.trait_supervised:
+        return run_trait_supervised(a, dev)
 
     E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
     tip_row = tip_row.to(dev)
@@ -279,7 +475,7 @@ def main(argv=None):
         g = torch.Generator(device="cpu").manual_seed(sd)
         test = (torch.rand(N, generator=g) < a.holdout).to(dev)
         for src in a.sources:
-            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev)
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
             s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
                                       a.steps, a.mask_frac, a.lr, a.impute_steps)
             agg[src]["seed"].append(scorer(s, test))

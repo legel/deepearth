@@ -173,6 +173,7 @@ def main(argv=None):
     ap.add_argument("--pheno_attn", action="store_true")        # ROUND-1: add temporal self-attention propagator (AttnDOY) alongside static/GNN/LSTM
     ap.add_argument("--attn_heads", type=int, default=4)        # attention heads for AttnDOY
     ap.add_argument("--attn_layers", type=int, default=2)       # self-attention encoder layers over the past window
+    ap.add_argument("--pheno_species", action="store_true")     # ROUND-2: species-conditioned LSTM propagator (neighbour species emb + query species + match bit)
     ap.add_argument("--first_arrival", action="store_true")     # dynamic target: per (0.5deg cell, species) EARLIEST DOY (seasonal onset, leading edge); static vs GNN vs LSTM over Earth4D/RFF/raw
     ap.add_argument("--abundance", action="store_true")         # dynamic target: log obs-count in query cell over trailing window (activity a static climatology cannot forecast); static vs GNN vs LSTM
     ap.add_argument("--abund_win", type=float, default=90.0)    # trailing window (days) for the abundance count
@@ -343,9 +344,17 @@ def main(argv=None):
         with torch.no_grad():
             e4d_sp = enc(coords_sp.to(dev)).cpu()
         fd = {"e4d": e4d_sp.shape[1], "rff": rff_sp.shape[1], "raw": raw_sp.shape[1]}
+        sp_all = None
+        if a.pheno_species:
+            import glob as _glob
+            from pathlib import Path as _Path
+            _sp = []
+            for _f in sorted(_glob.glob(str(_Path(a.cache_dir) / "gbif_tokens/*.npz")))[:a.n_shards]:
+                _sp.append(np.load(_f)["species_local"])
+            sp_all = np.concatenate(_sp).astype(np.int64)
         r = run_phenology_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, test, dev,
                               K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol,
-                              attn=a.pheno_attn, attn_heads=a.attn_heads, attn_layers=a.attn_layers)
+                              attn=a.pheno_attn, attn_heads=a.attn_heads, attn_layers=a.attn_layers, sp=sp_all)
         dt = time.time() - t0
         n_te = r["raw"]["n_te"]
         def pg(ft, prop):
@@ -359,20 +368,26 @@ def main(argv=None):
         if a.pheno_attn:
             pg_raw_attn_mae, pg_raw_attn_acc = pg("raw", "attn")
             best_prop_raw_mae = max(best_prop_raw_mae, pg_raw_attn_mae)
+        pg_raw_sp_mae = pg_raw_sp_acc = float("nan")
+        if a.pheno_species:
+            pg_raw_sp_mae, pg_raw_sp_acc = pg("raw", "sp")
+            best_prop_raw_mae = max(best_prop_raw_mae, pg_raw_sp_mae)
         print(f"=== SPACETIME encoder (standalone) | mode=PHENOLOGY(day-of-year, non-stationary, future+newplace) obs={len(lat)} forecast-queries={n_te} tol=+/-{a.pheno_tol:.0f}d K={a.rec_k} hops={a.gnn_hops} attn={a.pheno_attn} ===")
         for ft in ("raw", "rff", "e4d"):
             d = r[ft]
             attn_s = f" | ATTN MAE {d.get('attn_mae', float('nan')):6.2f}d acc {d.get('attn_acc', float('nan')):.4f} (prop {d['static_mae']-d.get('attn_mae', float('nan')):+.2f}d)" if a.pheno_attn else ""
-            print(f"  {ft:>4} | static MAE {d['static_mae']:6.2f}d acc {d['static_acc']:.4f} -> GNN MAE {d['gnn_mae']:6.2f}d acc {d['gnn_acc']:.4f} (prop {d['static_mae']-d['gnn_mae']:+.2f}d) | LSTM MAE {d['lstm_mae']:6.2f}d acc {d['lstm_acc']:.4f} (prop {d['static_mae']-d['lstm_mae']:+.2f}d){attn_s}")
-        print(f"  BEST propagator_gain (raw features, MAE reduction in days; POSITIVE=propagation helps) GNN {pg_raw_gnn_mae:+.2f}d  LSTM {pg_raw_lstm_mae:+.2f}d  ATTN {pg_raw_attn_mae:+.2f}d  best {best_prop_raw_mae:+.2f}d")
-        print(f"  propagator_gain(within-tol acc, raw) GNN {pg_raw_gnn_acc:+.4f}  LSTM {pg_raw_lstm_acc:+.4f}  ATTN {pg_raw_attn_acc:+.4f}")
+            sp_s = f" | SP MAE {d.get('sp_mae', float('nan')):6.2f}d acc {d.get('sp_acc', float('nan')):.4f} (prop {d['static_mae']-d.get('sp_mae', float('nan')):+.2f}d)" if a.pheno_species else ""
+            print(f"  {ft:>4} | static MAE {d['static_mae']:6.2f}d acc {d['static_acc']:.4f} -> GNN MAE {d['gnn_mae']:6.2f}d acc {d['gnn_acc']:.4f} (prop {d['static_mae']-d['gnn_mae']:+.2f}d) | LSTM MAE {d['lstm_mae']:6.2f}d acc {d['lstm_acc']:.4f} (prop {d['static_mae']-d['lstm_mae']:+.2f}d){attn_s}{sp_s}")
+        print(f"  BEST propagator_gain (raw features, MAE reduction in days; POSITIVE=propagation helps) GNN {pg_raw_gnn_mae:+.2f}d  LSTM {pg_raw_lstm_mae:+.2f}d  ATTN {pg_raw_attn_mae:+.2f}d  SP {pg_raw_sp_mae:+.2f}d  best {best_prop_raw_mae:+.2f}d")
+        print(f"  propagator_gain(within-tol acc, raw) GNN {pg_raw_gnn_acc:+.4f}  LSTM {pg_raw_lstm_acc:+.4f}  ATTN {pg_raw_attn_acc:+.4f}  SP {pg_raw_sp_acc:+.4f}")
         print(f"  ENCODER control (GNN MAE reduction vs static, per PE): raw {pg_raw_gnn_mae:+.2f}d | RFF {pg_rff_gnn_mae:+.2f}d | Earth4D {pg_e4d_gnn_mae:+.2f}d  (Earth4D-vs-raw GNN MAE {r['raw']['gnn_mae']-r['e4d']['gnn_mae']:+.2f}d: +=E4D better)")
         print(f"  [profile] forecast_queries={n_te} K={a.rec_k} hidden={a.rec_hidden} hops={a.gnn_hops} steps={a.steps}")
         print(f"  {len(lat)} obs, {a.steps}-step phenology in {dt:.1f}s")
         return {"static_mae_raw": r["raw"]["static_mae"], "gnn_mae_raw": r["raw"]["gnn_mae"], "lstm_mae_raw": r["raw"]["lstm_mae"],
-                "attn_mae_raw": r["raw"].get("attn_mae", float("nan")),
+                "attn_mae_raw": r["raw"].get("attn_mae", float("nan")), "sp_mae_raw": r["raw"].get("sp_mae", float("nan")),
                 "propagator_gain_mae": best_prop_raw_mae, "propagator_gain_gnn_mae": pg_raw_gnn_mae, "propagator_gain_lstm_mae": pg_raw_lstm_mae,
                 "propagator_gain_attn_mae": pg_raw_attn_mae, "propagator_gain_attn_acc": pg_raw_attn_acc,
+                "propagator_gain_sp_mae": pg_raw_sp_mae, "propagator_gain_sp_acc": pg_raw_sp_acc,
                 "propagator_gain_acc": pg_raw_gnn_acc, "propagator_gain_e4d_mae": pg_e4d_gnn_mae, "propagator_gain_rff_mae": pg_rff_gnn_mae,
                 "static_acc_raw": r["raw"]["static_acc"], "gnn_acc_raw": r["raw"]["gnn_acc"], "lstm_acc_raw": r["raw"]["lstm_acc"],
                 "obs": len(lat), "seconds": dt, "phenology": True, "n_te": n_te}

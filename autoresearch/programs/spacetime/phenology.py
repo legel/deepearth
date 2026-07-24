@@ -130,6 +130,33 @@ class LSTMDOY(nn.Module):
         return F.normalize(self.head(h[-1]), dim=-1)
 
 
+class LSTMDOYsp(nn.Module):
+    """ROUND-2 STRUCTURAL: SPECIES-CONDITIONED LSTM propagator. Round-1 showed a more expressive propagator
+    (self-attention) ties the LSTM -> the bottleneck is the SIGNAL in the window, not propagator capacity.
+    Phenology is strongly species-specific, yet the base propagator sees only an ANONYMOUS neighbour DOY (it
+    averages the timing of whatever happened to be nearby). This head adds the missing information: each
+    neighbour step carries a learned SPECIES embedding + a species-MATCH bit (neighbour species == query
+    species), and the QUERY's own species embedding is fused before the head. Species is NOT the target (DOY
+    is), so this is not a leak; it lets the propagator weight same-species past timing over cross-species noise.
+    Leak-guards intact: query features space-only t=0; edge = spatial offset only (no dt-to-query)."""
+
+    def __init__(self, feat_dim, n_sp, hidden=256, sp_emb=32):
+        super().__init__()
+        self.sp = nn.Embedding(n_sp + 1, sp_emb)                  # +1 = pad id
+        self.lstm = nn.LSTM(feat_dim + 2 + 2 + sp_emb + 1, hidden, batch_first=True)  # +neighbour species emb +match bit
+        self.head = nn.Sequential(nn.Linear(hidden + sp_emb, hidden), nn.GELU(), nn.Linear(hidden, 2))
+
+    def forward(self, nfeat, ndoy, edge, nsp, qsp, lengths):
+        nse = self.sp(nsp)                                        # [B,K,sp_emb] neighbour species
+        qse = self.sp(qsp)                                        # [B,sp_emb] query species
+        match = (nsp == qsp.unsqueeze(1)).float().unsqueeze(-1)   # [B,K,1] same-species indicator
+        x = torch.cat([nfeat, ndoy, edge, nse, match], -1)
+        packed = nn.utils.rnn.pack_padded_sequence(x, lengths.cpu().clamp(min=1),
+                                                   batch_first=True, enforce_sorted=False)
+        _, (h, _) = self.lstm(packed)
+        return F.normalize(self.head(torch.cat([h[-1], qse], -1)), dim=-1)
+
+
 class AttnDOY(nn.Module):
     """ROUND-1 STRUCTURAL PROPAGATOR: temporal self-attention over the K-neighbour causal past-context window.
 
@@ -171,8 +198,9 @@ def _windows(lat, lon, days, q_idx, pool_idx, K):
     return gi, vi
 
 
-def _tensors(qfeat_all, doyvec, days, lat, lon, q_idx, gidx, valid, K):
+def _tensors(qfeat_all, doyvec, days, lat, lon, q_idx, gidx, valid, K, sp=None):
     """Assemble neighbour (feat, DOY vec), query feat, SPATIAL edge (dlat,dlon), mask, and target DOY vec + true DOY.
+    If sp is given, also returns (neighbour_species[B,K], query_species[B]) for the species-conditioned head.
 
     LEAK-GUARD: the edge deliberately EXCLUDES dt (elapsed days to the query). The query's day-of-year IS the
     target, so handing the model the exact (query_day - neighbour_day) lets it reconstruct query_DOY =
@@ -194,7 +222,14 @@ def _tensors(qfeat_all, doyvec, days, lat, lon, q_idx, gidx, valid, K):
     yvec = torch.tensor(doyvec[q_idx])
     ok = vmask.any(1)
     lengths = vmask.sum(1)
-    return (nfeat[ok], ndoy[ok], qfeat[ok], edge[ok], vmask[ok], lengths[ok], yvec[ok], ytrue[ok])
+    if sp is None:
+        nsp = torch.zeros(B, K, dtype=torch.long)
+        qsp = torch.zeros(B, dtype=torch.long)
+    else:
+        n_sp = int(sp.max()) + 1
+        nsp = torch.tensor(np.where(valid, sp[gsafe], n_sp)).long()   # pad id = n_sp
+        qsp = torch.tensor(sp[q_idx]).long()
+    return (nfeat[ok], ndoy[ok], qfeat[ok], edge[ok], vmask[ok], lengths[ok], yvec[ok], ytrue[ok], nsp[ok], qsp[ok])
 
 
 def _skill(pred_vec, ytrue, tol_days=15.0):
@@ -204,7 +239,8 @@ def _skill(pred_vec, ytrue, tol_days=15.0):
 
 
 def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4000, lr=3e-3,
-                  hidden=256, hops=2, tol_days=15.0, attn=False, attn_heads=4, attn_layers=2, warmup=200):
+                  hidden=256, hops=2, tol_days=15.0, attn=False, attn_heads=4, attn_layers=2, warmup=200,
+                  sp=None):
     """Train static / GNN / LSTM DOY heads on PAST queries; evaluate circular DOY skill on future+new-place.
 
     Returns dict of {static_mae, static_acc, gnn_mae, gnn_acc, lstm_mae, lstm_acc, n_te} in DAYS / within-tol.
@@ -219,11 +255,11 @@ def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4
     g_tr, v_tr = _windows(lat, lon, days, q_train, tr_idx, K)
     g_te, v_te = _windows(lat, lon, days, te_idx, tr_idx, K)
 
-    tr = _tensors(qfeat_all, doyvec, days, lat, lon, q_train, g_tr, v_tr, K)
-    te = _tensors(qfeat_all, doyvec, days, lat, lon, te_idx, g_te, v_te, K)
+    tr = _tensors(qfeat_all, doyvec, days, lat, lon, q_train, g_tr, v_tr, K, sp=sp)
+    te = _tensors(qfeat_all, doyvec, days, lat, lon, te_idx, g_te, v_te, K, sp=sp)
     to = lambda ts: [t.to(dev) for t in ts]
-    nftr, ndtr, qftr, etr, mtr, ltr, yvtr, yttr = to(tr)
-    nfte, ndte, qfte, ete, mte, lte, yvte, ytte = to(te)
+    nftr, ndtr, qftr, etr, mtr, ltr, yvtr, yttr, nsptr, qsptr = to(tr)
+    nfte, ndte, qfte, ete, mte, lte, yvte, ytte, nspte, qspte = to(te)
 
     n_te = int(nfte.shape[0])
     out = {"n_te": n_te}
@@ -289,13 +325,26 @@ def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4
         with torch.no_grad():
             out["attn_mae"], out["attn_acc"] = _skill(att(nfte, ndte, qfte, ete, mte), ytte, tol_days)
 
+    # ---- ROUND-2: species-conditioned LSTM propagator (adds INFORMATION to the window, not capacity) ----
+    if sp is not None:
+        n_sp = int(sp.max()) + 1
+        lsp = LSTMDOYsp(feat_dim, n_sp, hidden).to(dev)
+        opt = torch.optim.Adam(lsp.parameters(), lr=lr)
+        for _ in range(steps):
+            s = torch.randint(0, Btr, (bs,), device=dev)
+            loss = vec_loss(lsp(nftr[s], ndtr[s], etr[s], nsptr[s], qsptr[s], ltr[s]), yvtr[s])
+            opt.zero_grad(); loss.backward(); opt.step()
+        lsp.eval()
+        with torch.no_grad():
+            out["sp_mae"], out["sp_acc"] = _skill(lsp(nfte, ndte, ete, nspte, qspte, lte), ytte, tol_days)
+
     return out
 
 
 def run_phenology_all(e4d, rff, raw, feat_dims, days, coords_ll, test, dev, K=16, steps=4000, lr=3e-3,
-                      hidden=256, hops=2, tol_days=15.0, attn=False, attn_heads=4, attn_layers=2):
+                      hidden=256, hops=2, tol_days=15.0, attn=False, attn_heads=4, attn_layers=2, sp=None):
     """Run the three heads over Earth4D / RFF / raw features; return per-feature dicts."""
-    kw = dict(attn=attn, attn_heads=attn_heads, attn_layers=attn_layers)
+    kw = dict(attn=attn, attn_heads=attn_heads, attn_layers=attn_layers, sp=sp)
     r = {}
     r["e4d"] = run_phenology(e4d, feat_dims["e4d"], days, coords_ll, test, dev, K, steps, lr, hidden, hops, tol_days, **kw)
     r["rff"] = run_phenology(rff, feat_dims["rff"], days, coords_ll, test, dev, K, steps, lr, hidden, hops, tol_days, **kw)
