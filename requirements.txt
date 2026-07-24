@@ -1,0 +1,18 @@
+# DeepCal / DeepEarth autoresearch — Python 3.10+. Validated on torch 2.6-2.7 (CUDA 12.4/12.6).
+# After installing, BUILD the Earth4D CUDA hash encoder against YOUR torch (the shipped .so is ABI-specific):
+#     cd encoders/spacetime && bash install.sh
+# Core runtime (train.py + evaluate.py from the downloaded cache):
+torch>=2.6,<2.8          # the hashencoder .so must be rebuilt to match your exact torch
+numpy>=2.0               # builders carry a np.float_ shim for numpy 2.x
+scipy>=1.15
+pandas>=2.3
+pyyaml>=6.0
+cachetools>=5.3
+tqdm>=4.67
+huggingface_hub>=1.0
+safetensors>=0.8
+# Ingestion + builders (add_observation/add_species, env_priors, BioCLIP-2.5 / DINOv3 rebuilds):
+open_clip_torch==3.3.0   # BioCLIP-2.5 (text prior) + BioCLIP-2 (image, vision_bio)
+transformers>=5.13       # DINOv3-ViT-L/16 ground + aerial vision
+timm>=1.0
+rasterio>=1.4            # 3DEP topo / CHM / NAIP tile reads
