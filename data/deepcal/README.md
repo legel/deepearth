@@ -1,1 +1,1 @@
-![DeepCal logo](docs/deepcal.png)
+![DeepCal logo](../../docs/deepcal.png)
