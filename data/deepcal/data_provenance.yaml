@@ -1,0 +1,201 @@
+# DeepCal Data Provenance
+# Every data source, model, config, and filter used to build each modality — so any cache is reproducible and
+# verifiable. `reproducible` states whether re-running the builder yields the SAME values as the shipped cache.
+# `provenance_gap` flags what the ORIGINAL cache failed to record (the reason a re-run may not match bit-for-bit).
+# Formal citations with DOIs live in ../../bibliography.md; this file is the operational build record.
+
+dataset:
+  name: DeepCal
+  region: California, USA
+  temporal: 2025 (single calendar year)
+  observation_source:
+    provider: GBIF
+    dataset: iNaturalist Research-grade Observations
+    dataset_key: 50c9509d-22c7-4a22-a47d-8c48425ef4a7
+    download_predicate: {country: US, stateProvince: California, year: 2025,
+                         hasCoordinate: true, mediaType: StillImage, coordinateUncertaintyInMeters: "<=10"}
+    gbif_download_dois:            # RECORD each GBIF download DOI here at acquisition (the original two are unrecorded)
+      plants_original: UNRECORDED  # provenance gap: the base 207,431-obs download DOI was not saved
+      pollinators_2026: "0035626-260623161305970"   # 15 pollinator families, 38,457 records
+      plants_recovery_2026: "0035680-260623161305970"  # B-II dropped-species, 339,628 records
+
+models:
+  ground_vision:   {id: facebook/dinov3-vitl16-pretrain-lvd1689m, output: CLS, dim: 1024, hf_gated: true}
+  aerial_vision:   {id: facebook/dinov3-vitl16-pretrain-sat493m,  output: pooled, dim: 1024}
+  bioclip_image:   {id: hf-hub:imageomics/bioclip-2,  dim: 768}   # legacy image "bio" tokens
+  bioclip_text:    {id: hf-hub:imageomics/bioclip-2.5-vith14, dim: 1024}  # species-graph seed (rules 26/27)
+  clay:            {id: Clay v1.5 large, checkpoint: clay-v1.5.ckpt, dim: 1024}
+
+modalities:
+  vision_dino:
+    source: iNaturalist observation photo (GBIF media)
+    model: ground_vision ; embed: DINOv3-ViT-L/16 CLS, MEAN-pooled over ALL of an observation's photos
+    builder: add_observation.py
+    output: {file: "gbif_tokens/*.npz", key: dino, shape: "[N,1024]", dtype: float32}
+    pooling: MEAN over ALL of an observation's photos (up to 6)   # AUDITED: model+preproc match cache exactly
+    reproducible: YES — single-photo obs reproduce at cos 0.99; the shipped cache mean-pools multi-photo obs, and the
+                  divergence correlated perfectly with photo count (1ph 0.99, 2ph 0.75, 5ph 0.32). FIXED add_observation
+                  (was first-photo-only) to mean-pool all photos. Plant vision cache is CORRECT/reproducible — kept.
+
+  climate:
+    source: Daymet V4 daily (ORNL single-pixel REST)
+    config: {vars: [dayl, prcp, srad, swe, tmax, tmin, vp], window_days: 180, end: eventDate}
+    builder: env_priors/build_daymet.py
+    output: {dir: gbif_daymet_tokens, key: daymet, shape: "[180,7]", dtype: float16, mask: ndays}
+    reproducible: yes — validated byte-exact incl. leap-year calendar; deterministic given (lat,lon,date)
+    provenance_gap: obs_coords.npz lacks eventDate → original per-obs windows need eventDate threaded in to reproduce exactly
+
+  soil:
+    source: SSURGO via USDA Soil Data Access (Tabular/post.rest)
+    config: {props: [ph1to1h2o_r, om_r, claytotal_r, sandtotal_r, silttotal_r, awc_r, ksat_r, cec7_r, dbthirdbar_r],
+             aggregation: "comppct_r-weighted mean of each component's surface (min hzdept_r) horizon"}
+    builder: env_priors/build_soil.py
+    output: {file: gbif_soil_tokens.npz, key: soil, shape: "[N,9]", dtype: float32, mask: has_soil}
+    reproducible: YES — VALIDATED 12/12 rows exact vs shipped cache
+
+  topo:
+    source: USGS 3DEP 1m DEM staged COGs on AWS prd-tnm (s3://prd-tnm/StagedProducts/Elevation/1m/), tile URL per cell
+            resolved via the TNM Access product API (tnmaccess.nationalmap.gov, dataset "Digital Elevation Model (DEM)
+            1 meter"); windowed /vsicurl range read of the 512 m patch. Replaces the throttled nationalmap ImageServer
+            (2026-07-13) — the ImageServer anonymous-IP-throttles + gives dynamically-mosaicked patches with NO stable id.
+    upstream_id_per_obs: topo_scene = the exact 1m tile filename (e.g. USGS_1M_10_x58y419_CA_AlamedaCounty_2021_B21.tif)
+    config: {patch_m: 512, features: 12, TPI_radii_m: [8, 24, 72, 140]}
+    builder: env_priors/build_topo.py
+    output: {file: gbif_topo_tokens.npz, key: topo, shape: "[N,12]", dtype: float32, mask: has_topo, provenance: topo_scene}
+    reproducible: YES — deterministic given the pinned 1m tile (fixed S3 COG). Cross-source audit vs the prior ImageServer
+                  cache: elevations match to ~0.01 m (same 3DEP data); minor slope/aspect deltas = sub-pixel resampling.
+                  Overlapping CA 1m projects handled by candidate-tile fallback on nodata gaps (validated on the Alameda cell).
+
+  chm:
+    source: NAIP-CHM canopy height (rangeland.ntsg.umt.edu index)
+    builder: env_priors/build_chm.py
+    output: {file: gbif_chm_tokens.npz, key: chm, shape: "[N,11]", dtype: float32, mask: has_chm}
+    reproducible: YES — AUDITED (reused process_tile on cache obs): BYTE-EXACT vs the shipped cache (6/6 cos 1.0000,
+                  maxdiff 0); deterministic given the NAIP-CHM tile + obs coords. Only hydro remains to spot-audit (needs a free GPU).
+
+  hydro:
+    source: USGS 3DEP 1m DEM (same AWS prd-tnm COG source + TNM Access resolution as topo; reuses topo's tile index) ->
+            drainage (TWI/HAND/SCA) + Winstral wind exposure (GPU physics). Patch decimated to 2 m via the COG overview.
+            Replaces the throttled nationalmap ImageServer (2026-07-13).
+    upstream_id_per_obs: hydro_scene = the exact 1m tile filename (same scheme as topo_scene)
+    builder: env_priors/build_hydrowind_torch.py
+    output: {file: gbif_hydro_tokens.npz, key: hydro, shape: "[N,6]", dtype: float32, mask: has_hydro, provenance: hydro_scene}
+    reproducible: YES — deterministic given the pinned 1m tile. Cross-source audit vs the prior ImageServer cache:
+                  HAND/TPI/Winstral-wind match closely; TWI/lnSCA diverge more (flow-accumulation is chaotically
+                  sensitive to sub-pixel DEM differences — both are valid 3DEP-derived hydrology, not a bug).
+
+  naip:
+    source: "NAIP 2024 CA CNIR (USGS EROS M2M API) — 2024-EXCLUSIVE. Planetary Computer only serves 2022 for CA, so the
+             prior env_priors/build_naip.py (PC, reverse-engineered, RGB cos 0.72/IR 0.50) is SUPERSEDED. 2024 lives on M2M."
+    model: aerial_vision (DINOv3-SAT493M)
+    builder: env_priors/build_naip_m2m2024.py  (statewide tile catalog naip2024_tiles.json = 18,956 tiles)
+    config: {patch_m: 300, patch_px: 512, pooling: "MEAN over patch tokens (NOT CLS)",
+             bands: "rgb_pool=DINO(R,G,B); ir_pool=DINO(inferno(normalized NIR))",
+             batching: "each covering tile downloaded ONCE via M2M, window-read a 300m patch centered per obs (avg 37 obs/tile)"}
+    output: {dir: gbif_naip_tokens, keys: [gbifID, naip_year, naip_scene, rgb_pool, ir_pool], shape: "[N,1024]", dtype: float32,
+             naip_scene: "M2M entityId per obs (e.g. M_3311628_NE_11_060_20240503) — scene-pinned provenance",
+             imagery: "raw 300m patches -> NERSC /global/cfs/cdirs/m5239/deepearth/naip2024_imagery via Globus (GCP endpoint), deleted local"}
+    reproducible: YES — scene-pinned (M2M entityId + naip_year); deterministic given the versioned tile + DINOv3-SAT493M.
+    coverage: "215,299/215,356 (100%) of the tree-obs covered; obs_coords now the full 345,357 plant set -> 6,350 covering tiles."
+
+  clay:
+    source: Sentinel-2 L2A via Microsoft Planetary Computer STAC
+    model: clay (Clay v1.5 large CLS token)
+    config: {bands: [blue, green, red, rededge1, rededge2, rededge3, nir, nir08, swir16, swir22],
+             patch_px: 224, gsd_m: 10, scene_selection: "least-cloudy 2025, eo:cloud_cover < 20",
+             normalization: "Clay metadata mean/std on raw DN", tokens: [time, latlon, waves, gsd]}
+    builder: env_priors/build_clay.py
+    output: {file: gbif_clay_tokens.npz, keys: [clay, clay_year, clay_scene, has_clay], shape: "[N,1024]", dtype: float16,
+             clay_scene: "exact Sentinel-2 L2A item id per obs (e.g. S2C_MSIL2A_20251230T191821_R056_T10TDL_...)"}
+    recompute_status: IN PROGRESS (~111K/207K as of 2026-07-13) — VERIFIED healthy mid-run: embeddings finite/1024-d/non-zero
+                  (0 all-zero rows, mean|emb| 0.054), and clay_scene populated at 100% coverage (2000/2000 sampled). On
+                  completion the Clay cache is SCENE-PINNED + reproducible (the provenance gap below is then closed).
+    reproducible: NO — our builder is self-consistent (cross-scene cosine 0.996, i.e. scene-robust + deterministic) but
+                  differs from the SHIPPED cache at cosine ~0.84. DIAGNOSED (clay_diagnose.py): scene selection is NOT
+                  the cause (0.996); this is a genuine PIPELINE difference vs the original (unknown normalization / band
+                  order / patch / Clay version / token). The original config was not recorded, so the shipped cache is
+                  IRREPRODUCIBLE. Decision: RECOMPUTE all Clay with this verified, scene-id-pinned builder for a single
+                  consistent pipeline (mixing 0.84-different pipelines across obs would give the model two Clay dists).
+    provenance_gap: CRITICAL — shipped cache records clay_year only (no scene id, no config); config unknowable.
+
+  flowering:
+    source: iNaturalist phenology / PhenoVision probe (per-observation flowering probe over the observation photos)
+    output: {file: gbif_flower_all.npz, keys: [gbifID, p_flower, flower, source], labeled_obs: 35805, flower_positive_rate: 0.575}
+    benchmark: B26_flowering_auc (jointly-trained detached phenology head -> ROC-AUC on the held-out set)
+    reproducible: yes given the PhenoVision probe outputs (per-obs labels keyed by gbifID)
+
+  mycorrhiza:
+    source: "FungalRoot (Soudzilovskaia et al. 2020, New Phytologist) — GBIF dataset 744edc21-8dd2-474e-8a0b-b8c3d56a3c2d,
+             direct DwCA https://orphans.gbif.org/EE/744edc21-...232.zip (no auth). Per-occurrence 'Mycorrhiza type'
+             measurement + occurrence genus; majority mycorrhizal type per plant genus -> mapped to the plant vocab."
+    builder: build_mycorrhiza.py
+    output: {file: gbif_mycorrhiza.npz, keys: [myco, has_myco, classes], classes: [AM, EcM, ErM, OM, NM], labeled_species: 2567}
+    benchmark: B42_mycorrhiza_from_env (jointly-trained detached symbiosis head -> macro-F1)
+    reproducible: yes — deterministic given the versioned FungalRoot DwCA (genus-majority mapping is exact)
+  species_dist:   {source: GBIF local community, output: gbif_species_dist.npz, reproducible: yes}
+  pollinator_interactions:
+    source: GloBI interactions.tsv (CA plants, flower-visit interaction types); snapshot filtered 2026-07-11
+    output: gbif_pollinator_dist.npz
+    reproducible: yes given the GloBI snapshot (record the exact GloBI release version at next pull)
+    provenance_gap: pollinator vocab was ~2% plant/fungi-contaminated (GloBI side-parsing) -> Animalia mask
+                    pollinator_animal_mask.npy excludes non-animals from the vocab/dist/graph/benchmarks (FIX)
+  pollinator_observations:
+    source: iNaturalist Research-grade (GBIF Download API), kingdom Animalia pollinator clades (bees/butterflies/moths/
+            flies/beetles/wasps + nectar birds), stateProvince California, year 2025, hasCoordinate, mediaType StillImage.
+    gbif_download: 0035626-260623161305970
+    count: 38029 observations (first-class pollinator taxa, GloBI interaction label mostly masked -> learn pollinator SDM +
+           what they visit via DINOv3)
+    output: gbif_pollinator_obs/*.npz {gbifID, species_local, lat, lon, ord, dino[1024], eventDate, species}
+    vision: DINOv3-ViT-L/16 (facebook/dinov3-vitl16-pretrain-lvd1689m) CLS, mean-pooled over ALL of an observation's photos
+    vocab_mapping: species_local -> the 8157-taxon pollinator vocab (map_pollinator_species.py = 98.9% direct; the 46 missing
+                   registered via add_pollinator_species.py inductive placement, vocab 8111->8157) -> 100% obs mapped
+    env_fanout: the co-occurring env modalities are UNIFIED gbifID-keyed caches covering plant+pollinator (obs_coords.npz
+                appended to 383,386) — pollinator coverage soil 96.4% / topo 98.7% / hydro 98.9% / daymet 100% / chm 100%;
+                naip+clay for the pollinator obs are pending (GPU, after the plant naip finishes)
+    reproducible: yes given the GBIF download DOI + the DINOv3 model+config; the env is coordinate-based (see topo/hydro/etc.)
+  phylogeny_plants:
+    source: "ca_subtree.dated.nwk (3486 tips; 2141 modeled)"
+    origin: "DETERMINED 2026-07-13 (high confidence): Jin&Qian2019 V.PhyloMaker on the Smith&Brown2018 GBOTB.extended backbone.
+             Evidence: 60% of TIP branch lengths are shared with another tip = the V.PhyloMaker genus-crown binding signature
+             (a raw GBOTB molecular subtree would have near-unique tip lengths). See bibliography.md [P1]."
+    reproducible: "yes given the species list + V.PhyloMaker/GBOTB (the published method + backbone are the pinned provenance)"
+    species_graph_distance: "gbif_plant_dist.npz — REAL dated cophenetic (Myr) on ca_subtree.dated.nwk for the 2141/3280 model
+             species that are tree tips; the ou-attention plant graph blends this over the tree-covered block (rescaled to the
+             embedding-shadow scale) and keeps SpeciesGraph.distance_from_embedding only for the 1139 inductively-placed species
+             (rules 25/26) absent from the dated tree. FIXES the prior crude approximation where ou-attention used the BioCLIP
+             distance_from_embedding shadow for ALL species. Builders: plant_dated_patristic.R + plant_dated_distance.py.
+             Validated: congeners nearest by divergence time (Salvia radiation ~1 Myr, Quercus ~50 Myr, family-level structure)."
+  phylogeny_pollinators:
+    vocab: "pollinator_vocab_final.csv — 7373 REAL animal-pollinator taxa (down from a contaminated 8111). The original
+            GloBI-derived vocab carried plant/fungus/family-junk/unresolvable rows; cleaned via the committed pipeline
+            clean_pollinator_vocab.py -> gbif_resolve_pollinators.py -> merge_pollinator_vocab.py, remapped with
+            pollinator_vocab_final_map.json (old_idx->final_idx|null). The BioCLIP-2.5 pollinator text prior
+            (pollinator_taxon_text_emb.npy [7373,1024]) is rebuilt by build_pollinator_text.py and REPRODUCES the shipped
+            cache exactly (audited cosine 1.000000, 100% rows). Interactions remapped by remap_pollinator_interactions.py."
+    source: "pollinator_distance.npy [7373x7373] (cleaned vocab) — DATED patristics from published chronograms where
+             covered, OpenTree topological cophenetic + BioCLIP-2.5 text shadow elsewhere. Validated: symmetric, zero
+             diagonal, congeners nearest (Apis/Bombus/Halictus/Lasioglossum within-genus means 0.055-0.136)."
+    dated_clades: "2025 taxa on real divergence-time (Myr) distances via ape cophenetic on published dated trees, HYBRID
+                   placement (species-level where an exact chronogram tip exists, else the species is placed at its GENUS crown
+                   — the same genus-level resolution the V.PhyloMaker plant tree uses; within-genus distance is the honest 0
+                   floor, not an invented divergence): bees=Henriquez-Piskulich2024 BEE_mat7 treePL (1745: 1143 exact + 602
+                   genus), ants=Nelsen2018 (66: 31+35), butterflies=Kawahara2023 (173: 16 exact + 157 genus — the SOTA global
+                   butterfly chronogram, Nature Ecol Evol), hawkmoths=Couch2026 Sphingidae (41: 20+21), birds=datelife/McGuire2014
+                   dated hummingbird chronogram (9: the 8 CA Trochilidae plant-pollinators + 1 genus; the raw hummingbirds.nwk was
+                   topology-only so unusable). Total 2034. Builders:
+                   pollinator_dated_patristic.R + pollinator_dated_distance.py (within-clade blocks overwritten, rescaled to keep
+                   block mean). Topological backup: pollinator_distance_topo.npy."
+    datelife: "datelife 0.6.9 installed + validated in the rphylo env (msa was an OPTIONAL Suggests, never needed for the
+               congruification path). datelife_search pulls the same published chronograms (Kawahara2023 etc.) from OpenTree's
+               store; available for further per-clade full-coverage synthesis where a single clade tree is thin."
+    reproducible: "yes given the versioned chronograms + scripts; the dated-clade blocks reproduce exactly (ape cophenetic is deterministic)"
+
+# ---------------------------------------------------------------------------------------------------------------
+# REPRODUCIBILITY POLICY (added 2026-07-12 after the Clay 0.82 finding):
+# 1. Every builder MUST record the exact upstream source id per observation (Sentinel-2 scene id, NAIP tile id,
+#    SSURGO mukey, GBIF gbifID, GloBI snapshot date) so a re-run is pinned and verifiable — not just the year.
+# 2. Where the ORIGINAL cache lacks that provenance (clay, naip scene ids; plant tree origin; GBIF download DOI),
+#    it is IRREPRODUCIBLE as shipped. Policy per user: in the worst case, RECOMPUTE the modality end-to-end with the
+#    provenance-tracked builder so the whole dataset has verifiable, pinned provenance.
+# TODO: add `clay_scene` (S2 item id) to build_clay output; add `naip_scene` to build_naip; record GloBI snapshot date;
+#       backfill gbif download DOIs above; confirm the plant phylogeny origin.
