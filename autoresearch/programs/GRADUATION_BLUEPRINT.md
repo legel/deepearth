@@ -1,62 +1,57 @@
-# DeepEarth Graduation Blueprint (overnight 2026-07-25)
+# DeepEarth Graduation Blueprint (v2 — CORRECTED on repaired data foundation, 2026-07-25)
 
-All findings below are **probe-level** (encoder-isolation), leak-guarded, multi-seed. The champion
-benchmark (arith ~0.6153) is **unchanged** — nothing here is graduated. This document is the reviewable
-spec for the operator PRs that would turn these into actual bench movement. Every probe is additive and
-flag-gated; champion default paths are byte-identical.
+**READ THIS FIRST.** v1 of this blueprint (commit 6f9bcc7) contained numbers measured on a BROKEN data
+foundation and are now corrected below. A data-integrity audit found 2 mislabeled arrays + 5 missing
+files; all 6 are repaired (`data/deepcal/derived/*_rebuilt.*`, alignment-verified, non-destructive).
+Several v1 conclusions changed when re-tested on correct data. All findings remain probe-level; champion
+bench 0.6153 is unchanged (nothing graduated). Numbers below are on the CORRECTED foundation.
 
-## The unifying architectural finding
-In **both** encoders the fancy learned operator is redundant-to-harmful; the real engine is the
-**objective/mechanism** on a good base representation. Graduation should ship the objectives, demote the operators.
-
-| encoder | operator (demote) | engine (ship) | base representation |
+## 0. DATA FOUNDATION — repair first, then graduate (6/6 fixed)
+Activating a rebuilt file = copy `derived/<name>_rebuilt.*` onto its live name (a champion-pipeline change).
+| file | was | now | re-enables |
 |---|---|---|---|
-| spacetime | Earth4D hash → spatial index | causal seasonal-persistence propagator | raw coords / small coord-MLP |
-| biological | phylo-graph → supervised-only minor refine | supervised masked phylo-imputation | BioCLIP text seed (0.90 family-coherent) |
+| gbif_species_dist | MISSING | rebuilt from 621k occ | B21/B29/B39/B40 SDM supervision (was silently OFF) |
+| gbif_plant_dist | MISSING | real dated patristic (all 2141 tips) | real tree (was embedding shadow) |
+| pollinator_distance | dim-mismatch | full 8157² | real pollinator tree (was BioCLIP shadow) |
+| bioclip_taxon_text_emb | MISSING | BioCLIP-2.5 regenerated | rule-26 species-text seed (was never loaded) |
+| gbif_mycorrhiza | STALE 4628 (mislabeled) | FungalRoot, 77% cov | B42 correct labels |
+| gbif_lfmc | STALE (corrupt) | Globe-LFMC, 19% cov | B34 correct labels |
 
-## 1. Spacetime forecast head (marquee) — the interpretable dynamical model
-- **Within-year**: LSTM propagator over K causal-nearest past neighbours (own past DOY + spatial offset).
-  Mechanism = seasonal auto-persistence, recency kernel τ = 0.741 ± 0.000 d ("freshest local obs"),
-  modulated by Hopkins latitude cline +2.31 d/°lat and elevation cline +2.8–3.2 d/100m (ecology-validated).
-  Skill +51–73d MAE-gain over static floor; 80% recovered by explicit physics.
-- **Across-year**: condition on year-specific spring-temp anomaly (Daymet). Spring-guild plants shift
-  −5.9 d/°C (R²0.67, OOS +0.17); woody/late do not (guild-specific). Fit β per guild.
-- **Unified head** = climatology + within-year-persistence (primary) + β·spring_anom (sparse-data backstop).
-  Beats persistence by +0.64d [95% +0.46,+0.83]. Climate term dominant where neighbour data is sparse.
-- Earth4D-hash: keep only as a static spatial index for SDM; drop the time-conditioned branch (harmful).
-- Probe: `autoresearch/programs/spacetime/earth4d_engine.py`.
+## 1. Recoverable signal — CORRECTED (wrong routing/framing, not "capped")
+| benchmark | champion | best route | corrected lift | fix |
+|---|---|---|---|---|
+| **B42 myco** | 0.656 macro-F1 (E1-embed, leak-guarded) | **phylo-kNN patristic 0.81** | **+0.15 over champ route, +0.64 over floor** | route myco through the real phylo distance; predicts rare EcM/ErM classes (not AM-majority) |
+| **B16 infer_clay** | 0.426 | ridge **0.92** | **+0.50** | higher-capacity env-block→env-block decode head |
+| B43 hydro / B17 soil / B18 climate | 0.72/0.64/0.88 | 0.96/0.85/0.98 | +0.24/+0.21/+0.11 | same decode head (~+1.0 summed w/ clay) |
+| **B1/B6 SDM argmax** | species 0.32 / family 0.10 | ArcFace metric head **2.3×** (species top1 0.035→0.080; family→0.099) | real | NOT "env-capped" — it was a metric artifact; env-niche AUC is 0.91. Add a cosine-prototype/ArcFace head + direct env→family aux head |
+| **B23 calibration** | 0.143 | temp-scaling −83 to −98% ECE | large, free | temperature scaling on every eval head (~10 LOC, 0 acc cost); k=3 ensembles on low-data B53 for honest uncertainty |
 
-## 2. Biological head — seed + supervised imputation
-- BioCLIP text seed by default; **trait-supervised masked-imputation objective is MANDATORY** (without it the
-  graph operator is net-negative — it destroys seed structure).
-- Route fused text⊕vision seed on conserved categorical axes (seasonality); text-only on continuous/interaction (lep).
-- Defensible axes (held-out impute, multi-seed): num_lep_support 0.126→0.793 (strong); seasonality +0.114;
-  rarity/sun +0.05–0.07 (modest). Seed-saturation caps the operator: corr(seed-saturation, graph-gain) = −0.52.
-- Probe: `autoresearch/programs/biological/traitprobe.py` (`--trait_supervised`, seed routing, `--blanket_k`).
+## 2. Spacetime forecast head (unchanged — was on clean data)
+LSTM propagator (encoder-agnostic; Earth4D hash demotes to index) + interpretable surrogate:
+seasonal persistence τ=0.74d + Hopkins lat/elev clines (+2.3 d/°lat, +2.8-3.2 d/100m, ecology-validated);
+cross-year climate-anomaly term (spring guild −6 d/°C, OOS +0.17). Activates dormant B25/B31.
 
-## 3. Env-encoder niche capabilities (routing law: niche → env)
-- **Rarity** = range-size (n occupied cells): Spearman 0.741 ± 0.048.
-- **Co-occurrence** = env (AlphaEarth): micro-AP 0.871 ± 0.007, +0.433 gain.
-- **SDM presence** = env: +0.219 (660-cell block-CV).
-- **Pollinator syndrome** = env/climate (latitude-dominated): bee-vs-lep AUC 0.733. (phylo two-tree is dead.)
-- Probe: `autoresearch/programs/spacetime/probe.py` (`--env_construct`, `--cooccur`, `--sdm_hard`).
+## 3. Biological head — CORRECTED (the "graph is redundant" story was shadow-contaminated)
+- Seed: the rule-26 BioCLIP-2.5 text seed (now rebuilt; the champion ran on the E1 shadow).
+- The trait-supervised masked-imputation objective is the dominant lever (mandatory).
+- **Phylo graph (latent-clade topology) is SELECTIVELY additive on deeply-conserved biology:**
+  num_lep_support +0.046, family +0.031, myco +0.038 (5/5 seeds; via topology, not branch-length distance).
+  7 of 11 trait axes stay flat — so it's selective, not a broad unlock, but NOT "redundant" as v1 claimed.
+- rule-27 two-tree: DEAD confirmed on the real pollinator distance (interaction signal genuinely sparse).
 
-## 4. Calibration (rule 17 — cheapest first bench win)
-- **Temperature scaling: mandatory, near-free on every eval head** — fit on held-out spatial-block cal split,
-  ~10 LOC, zero accuracy cost, cuts ECE −90 to −98%. Raw ECE: Earth4D-B53 0.74, Env-B53 0.50, Env-B23 0.19.
-- **Deep-ensemble k=3 only on the low-data B53 pollinator branch** for honest uncertainty (softmax confidence is
-  anti-correlated with correctness; ensemble variance ranks it, AUROC 0.55–0.61; use variance as abstention).
-- Always report conf-AUROC beside ECE. Skip isotonic (costs acc) and conformal (huge set-size).
-- Probe: `autoresearch/programs/spacetime/calib_probe.py`.
+## 4. Honest ceilings (levers exhausted) & genuine gaps
+- B55 pollinator-transfer (0.037), B21 community (0.289), B28 peak-month (0.451): near leak-safe ceilings.
+- ease_of_care: nature-ceiling ~0.33 (rest is human judgment — don't chase via labels).
+- B29/B39/B40 dist-skill were INACTIVE (missing file, now rebuilt — re-score after activation).
 
-## Genuine dead-ends (definitively characterized, not just unexplored)
-- Earth4D-hash unique contribution (redundant with coords/env, even under causal end-to-end training).
-- Phylo two-tree pollinator induction (rule 27) — sparse interaction signal, dead on real GloBI.
-- Across-year *persistence* forecasting (inter-annual noise) — but climate-anomaly model IS a GO (see §1).
-- ease_of_care beyond nature-ceiling (~0.33) — residual is irreducibly human judgment.
+## Recommended graduation order
+1. **Activate the 6 rebuilt data files + re-run champion_report** (before→after) — this alone re-enables SDM
+   supervision, the real trees/distances, and the rule-26 seed, and gives the first real corrected baseline.
+2. **Temperature-scaling calibration** — cheapest, near-free, first bench win (B23 0.143 is worst).
+3. **Env-recon decode head** (~+1.0 across B16/17/18/43).
+4. **Myco phylo-route + SDM metric head.**
+5. **Spacetime forecast head + biological rule-26 seed / topology-selective trait routing.**
 
-## Recommended graduation order (confidence × cheapness)
-1. Temperature-scaling calibration — cheapest, near-free, first real bench win (calibration 0.143 is worst).
-2. Env niche capabilities (rarity, co-occurrence) — clean, strong, env-encoder additive heads.
-3. Spacetime forecast head — activates dormant B25/B31; the marquee science.
-4. Biological supervised-imputation objective — narrow but real on lep/seasonality.
+Every number here is probe-level and on the corrected foundation; graduation (core PRs + data activation)
+is required to move the bench. v1's inflated/miscredited claims (myco +0.61 accuracy, "env-capped",
+graph "seasonality+myco") are superseded by the corrected values above.
