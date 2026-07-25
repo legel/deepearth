@@ -25,11 +25,61 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def build_causal_windows(q_lat, q_lon, q_day, p_lat, p_lon, p_day, K, block_deg=2.0):
+def build_causal_windows_kdtree(q_lat, q_lon, q_day, p_lat, p_lon, p_day, K, over=8):
+    """VECTORIZED causal-window builder (cKDTree) -- same contract as build_causal_windows.
+
+    The bucketed builder searches a FIXED 3x3 ring of `block_deg` cells; to widen the receptive field you must
+    grow block_deg, whose candidate count -- and per-query Python cost -- scales with the block AREA (K128 at
+    block 5deg took 2271s, CPU-bound on the neighbour loop, per LOOP-spacetime-window-breadth-K128-push). This
+    builder replaces the ring scan with a single cKDTree over the pool's (lat,lon): it returns the TRUE K
+    spatial-nearest CAUSAL (strictly-earlier-day) neighbours directly, with NO ring-boundary truncation and NO
+    per-query Python loop, so receptive-field breadth (K) is decoupled from an O(block_area) cost.
+
+    Because ~half the spatial-nearest neighbours may be non-causal (later day), we over-query K*over candidates
+    from the tree, drop the future ones, then keep the K spatially-closest survivors and order them past->present
+    in time -- identical output semantics to the bucketed builder (K nearest-in-space among strictly-earlier
+    obs). Leak-safe: the causal filter uses ONLY p_day<q_day; no dt is emitted here (edges add spatial offset
+    only downstream). Returns index array [Nq,K] into the pool (padded with -1) and a valid mask [Nq,K]."""
+    from scipy.spatial import cKDTree
+    q_lat = np.asarray(q_lat); q_lon = np.asarray(q_lon); q_day = np.asarray(q_day)
+    p_lat = np.asarray(p_lat); p_lon = np.asarray(p_lon); p_day = np.asarray(p_day)
+    Nq = len(q_lat); Np = len(p_lat)
+    idx = np.full((Nq, K), -1, dtype=np.int64)
+    if Np == 0 or Nq == 0:
+        return idx, idx >= 0
+    tree = cKDTree(np.stack([p_lat, p_lon], -1))
+    kq = min(Np, K * over)                                        # over-query so enough survive the causal filter
+    dist, nn_idx = tree.query(np.stack([q_lat, q_lon], -1), k=kq, workers=-1)
+    if kq == 1:                                                   # cKDTree squeezes the last axis when k==1
+        dist = dist[:, None]; nn_idx = nn_idx[:, None]
+    # nn_idx[Nq,kq] already sorted by increasing spatial distance. Mask the non-causal (future/simultaneous)
+    # neighbours, then take the first K valid per row (still nearest-first), preserving the K-nearest-in-space set.
+    causal = p_day[nn_idx] < q_day[:, None]                       # [Nq,kq] True where neighbour strictly earlier
+    order_in_row = np.argsort(~causal, axis=1, kind="stable")     # valid (causal) entries float to the front, nearest-first
+    nn_sorted = np.take_along_axis(nn_idx, order_in_row, axis=1)
+    causal_sorted = np.take_along_axis(causal, order_in_row, axis=1)
+    take = min(K, nn_sorted.shape[1])
+    sel = nn_sorted[:, :take]                                     # [Nq,take] K spatial-nearest causal (padded logically by mask)
+    selc = causal_sorted[:, :take]
+    kept = np.where(selc, sel, -1)                               # [Nq,take], -1 = pad
+    # order each kept window past->present in time (match the bucketed builder). Vectorized: pad rows get +inf
+    # day so they sort to the end; argsort by day keeps valid neighbours contiguous at the front, earliest-first.
+    key = np.where(kept >= 0, p_day[np.clip(kept, 0, None)], np.inf)   # [Nq,take]
+    torder = np.argsort(key, axis=1, kind="stable")
+    kept = np.take_along_axis(kept, torder, axis=1)
+    idx[:, :take] = kept
+    return idx, idx >= 0
+
+
+def build_causal_windows(q_lat, q_lon, q_day, p_lat, p_lon, p_day, K, block_deg=2.0, fast=False):
     """For each query, K nearest PAST train obs (strictly earlier day), ordered past->present.
 
+    fast=True dispatches to the vectorized cKDTree builder (build_causal_windows_kdtree) -- same output
+    contract, receptive field NOT limited to the 3x3 block ring, and no per-query Python neighbour loop.
     Neighbour search is bucketed into coarse `block_deg` spatial cells (query cell + 8 ring) so it is O(N)
     not O(Nq*Np). Returns index array [Nq, K] into the pool (padded with -1) and a valid mask [Nq, K]."""
+    if fast:
+        return build_causal_windows_kdtree(q_lat, q_lon, q_day, p_lat, p_lon, p_day, K)
     q_lat = np.asarray(q_lat); q_lon = np.asarray(q_lon); q_day = np.asarray(q_day)
     p_lat = np.asarray(p_lat); p_lon = np.asarray(p_lon); p_day = np.asarray(p_day)
     # bucket the pool

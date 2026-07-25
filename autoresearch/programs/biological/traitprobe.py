@@ -230,6 +230,45 @@ def build_seed(source: str, cache: str, E1: torch.Tensor, medoid: bool, dev, ene
         # the signals interfere? Text block = E1 (2048-d), vision block = mean-DINO (1024-d). N.B. this is the PR
         # artifact -- one graph, all axes measured off it at once.
         return torch.cat([F.normalize(E1.to(dev), dim=-1), F.normalize(D, dim=-1)], dim=-1)
+    if source.startswith("text_hipass"):
+        # RULE-26/9 tree-ORTHOGONAL reseed (label-free). The dominant principal components of the E1 text prior
+        # ARE the coarse taxonomic axis the dated tree already re-encodes (E1 is itself phylo-derived, ~0.89
+        # family-NN -> redundant with the graph). Removing the top-P PCs high-passes the seed onto the finer,
+        # tree-ORTHOGONAL structure the operator can be ADDITIVE on, instead of re-deriving what the seed holds.
+        # Suffix P sets #PCs dropped (default 8): source="text_hipass" -> 8, "text_hipass16" -> 16.
+        P = int(source[len("text_hipass"):] or 8)
+        X = F.normalize(E1.to(dev), dim=-1).float()
+        Xc = X - X.mean(0, keepdim=True)
+        U, Sv, Vh = torch.linalg.svd(Xc, full_matrices=False)               # rows of Vh = principal axes (desc)
+        keep = Vh[P:]                                                       # drop the top-P coarse axes
+        Xhp = Xc @ keep.t() @ keep                                         # project onto the orthogonal complement
+        return F.normalize(Xhp, dim=-1)
+    if source.startswith("text_bandstop"):
+        # RULE-26 MECHANISM CONTROL (additive, default-off). Drop a MIDDLE band of PCs [A:B] instead of the
+        # TOP-P, keeping the top-A coarse axes. If width imputation only recovers when the TOP PCs are dropped
+        # (text_hipass) and NOT when a middle band is dropped (this), the tree-redundancy thesis is confirmed:
+        # the blocking signal is specifically the top principal components. Suffix 'A_B' -> band [A:B].
+        spec = source[len("text_bandstop"):]
+        A, B = (int(x) for x in spec.split("_"))
+        X = F.normalize(E1.to(dev), dim=-1).float()
+        Xc = X - X.mean(0, keepdim=True)
+        _, _, Vh = torch.linalg.svd(Xc, full_matrices=False)
+        idx = [i for i in range(Vh.shape[0]) if not (A <= i < B)]   # keep everything EXCEPT the middle band
+        keep = Vh[idx]
+        Xbs = Xc @ keep.t() @ keep
+        return F.normalize(Xbs, dim=-1)
+    if source.startswith("routed_hipass"):
+        # RULE-26/9 combo: high-pass the text block (drop the tree-redundant coarse taxonomy) AND concat the
+        # vision block to REFILL that deleted coarse-appearance capacity. Text_hipass carries fine tree-orthogonal
+        # structure; vision (mean-DINO) carries appearance/size -- both are axes the phylo operator can ADD on,
+        # neither re-derives the tree. One routed graph, probe learns the per-dim mix. Suffix = #PCs dropped.
+        P = int(source[len("routed_hipass"):] or 16)
+        X = F.normalize(E1.to(dev), dim=-1).float()
+        Xc = X - X.mean(0, keepdim=True)
+        _, _, Vh = torch.linalg.svd(Xc, full_matrices=False)
+        keep = Vh[P:]
+        Xhp = F.normalize(Xc @ keep.t() @ keep, dim=-1)
+        return torch.cat([Xhp, F.normalize(D, dim=-1)], dim=-1)
     raise ValueError(source)
 
 
@@ -260,6 +299,59 @@ def train_graph(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, ma
     return s, rep, imp
 
 
+# --- COMMUNITY / CO-OCCURRENCE axis (rule 10-12; flag-gated --cooccur; default path never calls these) ----
+# HONEST JOIN provenance: gbif_tokens/*.npz["species_local"] is the row's index into the 2141-vocab
+# (gbif_vocab.npz), the SAME vocab load_species/the graph use (data.py L68). obs_cache.npy is row-aligned
+# to those chunks (lat/lon match 1.0) but its col2 is an ORPHANED 164-index -> IGNORED. We rebuild the
+# community target directly from species_local, so every occurrence carries a real vocab row -> no fragile
+# name match. Coverage: 2068/2141 species have >=1 occurrence (the 73 absent keep an all-zero community row,
+# excluded from scoring via the `obs` mask). Target = per-species co-occurrence partner profile over grid
+# cells (derived/cooccur_count_<res>.npy, built offline). We isolate: does the phylo graph help predict a
+# species' co-occurrence community FROM ITS RELATIVES (graph-refined rep vs raw seed, held-out NN)?
+def load_cooccur(cache: str, dev, res_tag: str = "005", topk: int = 64):
+    """Community target aligned to the 2141-vocab. CO[i,j] = #grid-cells where species i and j co-occur.
+    Returns (Y, obs, nclass): Y float32 [N, N] BINARY partner target (1 if i,j share >=1 cell, self-excluded),
+    obs bool [N] species present in >=1 cell. `topk` keeps only each species' top-K co-partners in the target
+    (a discriminative COMMUNITY signature, not the near-universal thresholded set) -- the held-out question is
+    whether relatives recover a species' characteristic co-occurring community."""
+    CO = np.load(Path(cache) / f"derived/cooccur_count_{res_tag}.npy").astype(np.float32)
+    N = CO.shape[0]
+    np.fill_diagonal(CO, 0.0)
+    present = torch.tensor(CO.sum(1) > 0)
+    Y = np.zeros_like(CO)
+    if topk and topk < N:                                    # top-K strongest partners per species -> binary signature
+        idx = np.argpartition(-CO, topk, axis=1)[:, :topk]
+        rows = np.repeat(np.arange(N), topk)
+        Y[rows, idx.ravel()] = (CO[rows, idx.ravel()] > 0).astype(np.float32)
+    else:
+        Y = (CO > 0).astype(np.float32)
+    return torch.tensor(Y).to(dev), present.to(dev), N
+
+
+def nn_cooccur_ap(emb, Y, obs, test, k=5):
+    """Held-out species -> k nearest OBSERVED-TRAIN species (cosine on the representation) -> predicted community
+    profile = mean of neighbours' partner rows -> micro-AP vs the true top-K partner target. Positive AP over the
+    community-prior baseline = the geometry carries co-occurrence structure; graph_gain = refined - seed under an
+    identical NN protocol. This is the rule 10-12 capability the phylo graph should serve (community from relatives),
+    scored EXACTLY like the multi-label trait AP so it is comparable to the trait axes."""
+    from sklearn.metrics import average_precision_score
+    train = obs & (~test)
+    tst = obs & test
+    et = F.normalize(emb[train], dim=-1)
+    ett = F.normalize(emb[tst], dim=-1)
+    sim = ett @ et.t()
+    topk = sim.topk(min(k, sim.shape[1]), dim=-1).indices
+    pred = Y[train][topk].mean(1)                            # [ntest, N] predicted community profile
+    # score partner columns only over species that ever appear as a partner (drop all-zero cols -> honest AP)
+    col_ok = (Y[train].sum(0) > 0)
+    yt = Y[tst][:, col_ok].cpu().numpy().ravel()
+    pr = pred[:, col_ok].cpu().numpy().ravel()
+    try:
+        return float(average_precision_score(yt, pr))
+    except Exception:
+        return float("nan")
+
+
 def _oot_tree(cache, gidx, tip_row, keep_mask):
     """Rule-9 helper. Rebuild the latent-clade tree buffers over ONLY the species kept in (`keep_mask` True at
     their vocab row), i.e. the tree whose tips are the TRAIN species. Returns (tree_train, tip_row_train) where
@@ -279,7 +371,8 @@ def _oot_tree(cache, gidx, tip_row, keep_mask):
 
 def train_graph_oot(seed, cache, gidx, tip_row, test, dev, d_model, steps, mask_frac, lr, impute_steps,
                     sup_kind=None, sup_Y=None, sup_obs=None, sup_nclass=None,
-                    resid_readout=False, clade_base=None):
+                    resid_readout=False, clade_base=None, recon_relative=False, fam_gid=None, recon_k=0,
+                    oot_heads=4, oot_layers=2):
     """RULE-9 OUT-OF-TREE PROJECTION (science.md rule 9, the `~` row). The standard probe leaves held-out `test`
     species AS TIPS and only masks their seed -- they still occupy a tree position and are refined by exact
     message passing. Rule-9 asks the harder question: project a species that is genuinely NOT IN THE TREE. Here we
@@ -292,9 +385,50 @@ def train_graph_oot(seed, cache, gidx, tip_row, test, dev, d_model, steps, mask_
     train = ~test
     tree_tr, tip_row_tr = _oot_tree(cache, gidx, tip_row, train)
     graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree_tr, tip_row=tip_row_tr,
-                         species_text=seed).to(dev)
+                         species_text=seed, n_heads=oot_heads, n_layers=oot_layers).to(dev)
     # in-tree train tips (bool over full vocab) -- the only rows we mask/reconstruct during training
     intree = torch.zeros(N, dtype=torch.bool, device=dev); intree[tip_row_tr.to(dev)] = True
+    # RULE-25 (recon_relative): reconstruct a masked species toward the MEAN SEED of its same-family TRAIN
+    # relatives -- the real held-out imputation target -- not the leaked identity copy of its own seed. Identity
+    # recon is trivially satisfiable by the seed, so the operator learns ~identity and adds little (established
+    # weak in-tree path). A relative target forces the operator to place a masked species where its relatives
+    # predict, which is exactly the OOT soft-attach eval task. Default off (byte-identical when the flag is unset).
+    rel_target = None
+    if recon_relative and fam_gid is not None:
+        fg = fam_gid.to(dev).long()
+        s0 = graph._seed().detach()
+        G = int(fg.max().item()) + 1
+        tr = intree
+        if recon_k and recon_k > 0:
+            # ITER-2: rank-PRESERVING relative target. Each species' target = mean seed of its recon_k nearest
+            # SAME-FAMILY TRAIN relatives (cosine in seed space), NOT the whole-family centroid (which erased
+            # within-family rank in ITER-1). A local neighborhood keeps the fine structure a continuous trait
+            # needs while still forcing reconstruction FROM relatives (leak-free: a species is never its own
+            # neighbor, and only TRAIN tips are eligible relatives).
+            sn = F.normalize(s0, dim=-1)
+            eligible = tr.clone()                                        # only train tips are relatives
+            same_fam = (fg.unsqueeze(1) == fg.unsqueeze(0))             # [N,N] same-family mask
+            sim = sn @ sn.t()
+            valid = same_fam & eligible.unsqueeze(0)                    # relative must be same-family AND a train tip
+            valid.fill_diagonal_(False)                                 # never self
+            sim = sim.masked_fill(~valid, -2.0)
+            kk = min(int(recon_k), sim.shape[1])
+            topv, topi = sim.topk(kk, dim=1)                           # [N,kk]
+            has = (topv > -1.5)                                        # rows with >=1 same-family train relative
+            neigh = s0[topi]                                            # [N,kk,d]
+            w = (topv.clamp(min=-1.5) * has.float()).unsqueeze(-1)     # ignore pad slots
+            wsum = has.float().sum(1, keepdim=True).clamp(min=1)
+            knn_mean = (neigh * has.float().unsqueeze(-1)).sum(1) / wsum.unsqueeze(-1).squeeze(1)
+            # fall back to family centroid for species with no same-family train relative
+            cnt = torch.zeros(G, device=dev).index_add_(0, fg[tr], torch.ones(int(tr.sum()), device=dev))
+            ssum = torch.zeros(G, s0.shape[1], device=dev).index_add_(0, fg[tr], s0[tr])
+            fam_mean = (ssum / cnt.clamp(min=1).unsqueeze(-1))[fg]
+            rel_target = torch.where(has.any(1, keepdim=True), knn_mean, fam_mean)
+        else:
+            cnt = torch.zeros(G, device=dev).index_add_(0, fg[tr], torch.ones(int(tr.sum()), device=dev))
+            ssum = torch.zeros(G, s0.shape[1], device=dev).index_add_(0, fg[tr], s0[tr])
+            fam_mean = ssum / cnt.clamp(min=1).unsqueeze(-1)
+            rel_target = fam_mean[fg]
     # ITER-2: optional trait-supervised residual head. When sup_kind is set, the graph co-trains a magnitude-
     # explicit readout (predicts y - clade_mean on masked TRAIN tips) alongside the cosine-recon loss, then reads
     # the OOT-projected embedding through that head at eval -> combines the rule-9 OOT projection (which preserves
@@ -314,7 +448,10 @@ def train_graph_oot(seed, cache, gidx, tip_row, test, dev, d_model, steps, mask_
         if not mask.any():
             continue
         refined = graph(mask=mask)
-        target = graph._seed().detach()
+        if rel_target is not None:
+            target = rel_target
+        else:
+            target = graph._seed().detach()
         loss = (1.0 - F.cosine_similarity(refined[mask], target[mask], dim=-1)).mean()
         if head is not None:
             hm = mask & train_obs
@@ -348,7 +485,8 @@ def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps,
                                  impute_steps, kind, Y, obs, nclass, dual_head=False, dual_seed=None,
                                  head_hidden=0, dual_scale=1.0, rollout_rounds=1, reveal_frac=0.25,
                                  ab_scorer=None, operator="latent-clade", phylo_dist=None,
-                                 fam_id=None, resid_readout=False, clade_base=None):
+                                 fam_id=None, resid_readout=False, clade_base=None,
+                                 blanket_k=0, mask_curriculum=None):
     """ROUND-2 push for num_lep_support (and any axis): SEED-FROZEN, TRAIT-SUPERVISED graph. The operator is
     trained to reconstruct a MASKED species' TRAIT from its phylo relatives (rule 25+the trait-supervised recipe
     that unlocked cat_form/family): freeze the seed, mask a fraction of TRAIN species, and drive a small readout
@@ -367,8 +505,11 @@ def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps,
     identical trait-supervised imputation task."""
     N = seed.shape[0]
     if operator == "ou-attention":
+        # blanket_k (rule-29 Markov-blanket restriction): restrict each species' reconstruction to its k NEAREST
+        # phylo relatives via the operator's top_k sparsification of phylo_distance (dense = whole-clade). 0 = dense.
         graph = SpeciesGraph(N, d_model, operator="ou-attention", phylo_distance=phylo_dist,
-                             n_heads=4, n_layers=2, species_text=seed).to(dev)
+                             n_heads=4, n_layers=2, species_text=seed,
+                             top_k=(blanket_k if blanket_k and blanket_k > 0 else None)).to(dev)
     else:
         graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
                              species_text=seed).to(dev)
@@ -409,8 +550,15 @@ def train_graph_trait_supervised(seed, tree, tip_row, test, dev, d_model, steps,
     opt = torch.optim.Adam(params, lr=lr)
     for p in graph.parameters():
         pass  # seed frozen via detached target below; operator params train
-    for _ in range(steps):
-        mask = (torch.rand(N, device=dev) < mask_frac) & train_obs
+    for _step in range(steps):
+        # mask_curriculum (rule-25 mechanism knob): ('easy2hard', lo, hi) linearly RAMPS the mask fraction
+        # lo->hi over training (harder recon later); ('hard2easy', lo, hi) reverses it. None = fixed mask_frac.
+        mf = mask_frac
+        if mask_curriculum is not None:
+            _sched, _lo, _hi = mask_curriculum
+            _frac = _step / max(1, steps - 1)
+            mf = (_lo + (_hi - _lo) * _frac) if _sched == "easy2hard" else (_hi - (_hi - _lo) * _frac)
+        mask = (torch.rand(N, device=dev) < mf) & train_obs
         if not mask.any():
             continue
         refined = graph(mask=mask)                          # masked species reconstructed from relatives
@@ -737,7 +885,8 @@ def run_trait_supervised(a, dev):
                         resid_readout=a.num_resid_readout,
                         clade_base=(_hybrid_base(Y.float(), obs & (~test))
                                     if (a.num_resid_readout and a.resid_level == "hybrid" and kind == "num")
-                                    else None))
+                                    else None),
+                        blanket_k=a.blanket_k, mask_curriculum=a.mask_curriculum)
                     head_imp_pred = getattr(gr, "_head_imp", None)   # magnitude-aware head readout on imputed emb
                     head_seed_pred = getattr(gr, "_head_seed", None) # leakage control: head on own refined rep
                 agg[src][v]["seed"].append(fn(s, test))
@@ -861,7 +1010,9 @@ def run_oot(a, dev):
             _s_o, _rep_o, oot, head_pred, head_resid = train_graph_oot(
                 seed, a.cache_dir, gidx, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr, a.impute_steps,
                 sup_kind=(kind if (do_head or do_cat_head) else None), sup_Y=Y, sup_obs=obs, sup_nclass=nclass,
-                resid_readout=do_head, clade_base=clade_base)
+                resid_readout=do_head, clade_base=clade_base,
+                recon_relative=a.recon_relative, fam_gid=fam_gid, recon_k=a.recon_k,
+                oot_heads=a.oot_heads, oot_layers=a.oot_layers)
             # RULE-10/11 OOT ROLLOUT: fold confident OOT predictions into the clade base as pseudo-observed
             # relatives, then re-read the (fixed) residual head against the refined base. head_resid is the fixed
             # within-clade residual on the OOT embedding; only clade_mu (the base) updates as OOT neighbours reveal.
@@ -1025,6 +1176,618 @@ def run_multitrait(a, dev):
     return summary
 
 
+def run_cooccur(a, dev):
+    """rule 10-12 COMMUNITY capability. Pin the community readout (top-K co-occurrence partner target,
+    micro-AP over held-out species from their relatives); vary ONLY the encoder: graph-refined rep vs raw
+    seed, per source, across seeds. graph_gain = graph_AP - seed_AP isolates the phylo operator's value for
+    predicting a species' co-occurring community FROM RELATIVES -- a NEW axis beyond single traits. Reuses the
+    identical latent-clade train_graph protocol; edits nothing in core/."""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    Y, obs, N = load_cooccur(a.cache_dir, dev, res_tag=a.cooccur_res, topk=a.cooccur_topk)
+    scorer = lambda emb, test: nn_cooccur_ap(emb, Y, obs, test)
+    agg = {s: {"seed": [], "graph": [], "impute": []} for s in a.sources}
+    t0 = time.time()
+    for sd in a.seeds:
+        g = torch.Generator(device="cpu").manual_seed(sd)
+        test = (torch.rand(N, generator=g) < a.holdout).to(dev)
+        for src in a.sources:
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                              pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
+                                      a.steps, a.mask_frac, a.lr, a.impute_steps)
+            agg[src]["seed"].append(scorer(s, test))
+            agg[src]["graph"].append(scorer(rep, test))
+            agg[src]["impute"].append(scorer(imp, test))
+
+    def m(xs):
+        return float(np.mean(xs)), float(np.std(xs))
+    n_partner = int((Y[obs].sum(0) > 0).sum().item())
+    print(f"=== BIOLOGICAL COMMUNITY (co-occurrence rule10-12) | res={a.cooccur_res} topk={a.cooccur_topk} "
+          f"metric=micro-AP seeds={a.seeds} holdout={a.holdout} N={N} present={int(obs.sum())} partners={n_partner} ===")
+    print(f"  {'source':7s} | {'seed_only':>18s} | {'GRAPH(rep)':>18s} | {'impute':>18s} | graph_gain")
+    for src in a.sources:
+        sm, ss = m(agg[src]["seed"]); gm, gs = m(agg[src]["graph"]); im, iis = m(agg[src]["impute"])
+        print(f"  {src:7s} | {sm:.4f} +/- {ss:.4f} | {gm:.4f} +/- {gs:.4f} | {im:.4f} +/- {iis:.4f} | {gm - sm:+.4f}")
+    print(f"  [profile] {len(a.seeds)} seeds x {len(a.sources)} sources in {time.time()-t0:.1f}s")
+    import json
+    summary = {"axis": "cooccur_community", "res": a.cooccur_res, "topk": a.cooccur_topk, "metric": "micro-AP",
+               "seeds": a.seeds, "N": N, "present": int(obs.sum().item())}
+    for src in a.sources:
+        summary[src] = {"seed": round(m(agg[src]["seed"])[0], 4), "graph": round(m(agg[src]["graph"])[0], 4),
+                        "graph_std": round(m(agg[src]["graph"])[1], 4),
+                        "impute": round(m(agg[src]["impute"])[0], 4),
+                        "graph_gain": round(m(agg[src]["graph"])[0] - m(agg[src]["seed"])[0], 4)}
+    print("[cooccur_compare] " + json.dumps(summary))
+    return summary
+
+
+def load_myco(cache: str, gidx, dev):
+    """Mycorrhizal-association trait (B63, FungalRoot -> per-GENUS majority type), aligned to the 2141-graph via
+    gidx. 5 classes AM/EcM/ErM/OM/NM. Returns (Y int64 [N], obs bool [N], nclass). Phylogenetically CONSERVED
+    (genus-level majority): the graph SHOULD serve it -- this is the graph-friendly counterpart to the community
+    axis. Additive/flag-gated; touches nothing in core/ or probe.py."""
+    z = np.load(Path(cache) / "gbif_mycorrhiza.npz", allow_pickle=True)
+    myco = z["myco"]; has = z["has_myco"]
+    y = torch.tensor(myco[gidx].astype(np.int64)).to(dev)
+    obs = torch.tensor(has[gidx].astype(bool)).to(dev)
+    y = torch.where(obs, y, torch.zeros_like(y))                 # park unobserved at 0 (excluded by obs everywhere)
+    return y, obs, int(len(z["classes"]))
+
+
+def run_myco_supervised(a, dev):
+    """TEST 2. Myco (B63) trait-supervised imputation. Pin the myco-NN accuracy readout; vary the encoder: raw
+    seed vs unsup-graph vs trait-SUPERVISED graph (frozen seed + CE on masked-species reconstruction from
+    relatives -- the SAME mechanism that rescued lep/height/cat_water). Does the graph serve a phylogenetically
+    conserved association trait? Reports seed / unsup-graph / sup-graph acc per source, graph_gain = sup - seed,
+    and where myco lands vs the lep-like wins. Reuses train_graph_trait_supervised (kind='cat'); edits nothing
+    in core/."""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    N = E1.shape[0]
+    Y, obs, nclass = load_myco(a.cache_dir, gidx, dev)
+    scorer = lambda emb, test: nn_trait_acc(emb, Y, obs, test)
+    variants = ["unsup", "sup"]
+    agg = {src: {v: {"seed": [], "graph": [], "impute": []} for v in variants} for src in a.sources}
+    t0 = time.time()
+    for sd in a.seeds:
+        g = torch.Generator(device="cpu").manual_seed(sd)
+        test = (torch.rand(N, generator=g) < a.holdout).to(dev)
+        for src in a.sources:
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                              pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            for v in variants:
+                if v == "unsup":
+                    s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
+                                              a.steps, a.mask_frac, a.lr, a.impute_steps)
+                else:
+                    s, rep, imp, _ = train_graph_trait_supervised(
+                        seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+                        a.impute_steps, "cat", Y, obs, nclass, operator=a.operator,
+                        phylo_dist=(SpeciesGraph.distance_from_embedding(F.normalize(E1.to(dev), dim=-1))
+                                    if a.operator == "ou-attention" else None),
+                        blanket_k=a.blanket_k)
+                agg[src][v]["seed"].append(scorer(s, test))
+                agg[src][v]["graph"].append(scorer(rep, test))
+                agg[src][v]["impute"].append(scorer(imp, test))
+
+    def m(xs):
+        return float(np.mean(xs)), float(np.std(xs))
+    n_obs = int(obs.sum().item())
+    print(f"=== BIOLOGICAL MYCO-SUPERVISED (B63) | metric=acc classes={nclass} sources={a.sources} "
+          f"variants={variants} seeds={a.seeds} holdout={a.holdout} N={N} obs={n_obs} ===")
+    print(f"  {'source':7s} {'variant':6s} | {'seed':>16s} | {'GRAPH':>16s} | {'impute':>16s} | graph_gain")
+    summary = {"axis": "myco_B63", "metric": "acc", "nclass": nclass, "seeds": a.seeds, "N": N, "obs": n_obs,
+               "rows": []}
+    for src in a.sources:
+        for v in variants:
+            sm, ss = m(agg[src][v]["seed"]); gm, gs = m(agg[src][v]["graph"]); im, iis = m(agg[src][v]["impute"])
+            print(f"  {src:7s} {v:6s} | {sm:.4f}+/-{ss:.4f} | {gm:.4f}+/-{gs:.4f} | {im:.4f}+/-{iis:.4f} | {gm-sm:+.4f}")
+            summary["rows"].append({"source": src, "variant": v, "seed": round(sm, 4), "graph": round(gm, 4),
+                                    "graph_std": round(gs, 4), "impute": round(im, 4),
+                                    "graph_gain": round(gm - sm, 4)})
+    import json
+    print("[myco_supervised] " + json.dumps(summary))
+    print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src x {len(variants)}v in {time.time()-t0:.1f}s")
+    return summary
+
+
+def train_graph_cooccur_supervised(seed, tree, tip_row, test, dev, d_model, steps, mask_frac, lr,
+                                   impute_steps, Y, obs):
+    """COMMUNITY-SUPERVISED refinement (the untested positive branch). SAME mechanism as the trait-supervised
+    recipe that rescued the trait axes, applied to the co-occurrence target: freeze the seed, mask a fraction of
+    TRAIN species, and drive a small MULTI-LABEL head off each masked species' refined (reconstructed-from-
+    relatives) embedding toward that species' true top-K co-occurrence partner row (BCE). If the phylo operator
+    can be SUPERVISED to reconstruct a species' community from its relatives, graph_gain should flip positive as
+    it did for traits; if community stays graph-resistant even under supervision, it confirms community is a
+    spatial-niche (not phylo) axis. Returns (seed, rep, impute) exactly like train_graph, so the identical
+    nn_cooccur_ap scorer applies. Additive; edits nothing in core/."""
+    N = seed.shape[0]
+    graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
+                         species_text=seed).to(dev)
+    train_obs = obs & (~test)
+    head = torch.nn.Linear(d_model, Y.shape[1]).to(dev)          # multi-label partner-set readout (BCE)
+    params = list(graph.parameters()) + list(head.parameters())
+    opt = torch.optim.Adam(params, lr=lr)
+    for _ in range(steps):
+        mask = (torch.rand(N, device=dev) < mask_frac) & train_obs
+        if not mask.any():
+            continue
+        refined = graph(mask=mask)                              # masked species reconstructed from relatives
+        pred = head(refined[mask])
+        loss = F.binary_cross_entropy_with_logits(pred, Y[mask])
+        opt.zero_grad(); loss.backward()
+        torch.nn.utils.clip_grad_norm_(params, 1.0)
+        opt.step()
+    with torch.no_grad():
+        s = graph._seed().detach()
+        rep = graph(mask=None)
+        imp = graph(mask=test)
+        for _ in range(max(0, impute_steps - 1)):
+            imp = graph(mask=test)
+    return s, rep, imp
+
+
+def run_cooccur_supervised(a, dev):
+    """TEST 1. Community-SUPERVISED refinement. Pin the co-occurrence micro-AP readout (nn_cooccur_ap); vary
+    ONLY the encoder: raw seed vs UNSUP graph vs community-SUPERVISED graph. graph_gain = graph_AP - seed_AP.
+    The untested positive branch: does supervising the graph to reconstruct a masked species' co-occurrence
+    partner-set from relatives flip graph_gain POSITIVE (as trait-supervision did for the trait axes), or does
+    community stay graph-resistant even supervised (confirming spatial-niche, not phylo)? Either is clean DATA."""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    Y, obs, N = load_cooccur(a.cache_dir, dev, res_tag=a.cooccur_res, topk=a.cooccur_topk)
+    scorer = lambda emb, test: nn_cooccur_ap(emb, Y, obs, test)
+    variants = ["unsup", "sup"]
+    agg = {src: {v: {"seed": [], "graph": [], "impute": []} for v in variants} for src in a.sources}
+    t0 = time.time()
+    for sd in a.seeds:
+        g = torch.Generator(device="cpu").manual_seed(sd)
+        test = (torch.rand(N, generator=g) < a.holdout).to(dev)
+        for src in a.sources:
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                              pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            for v in variants:
+                if v == "unsup":
+                    s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
+                                              a.steps, a.mask_frac, a.lr, a.impute_steps)
+                else:
+                    s, rep, imp = train_graph_cooccur_supervised(
+                        seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+                        a.impute_steps, Y, obs)
+                agg[src][v]["seed"].append(scorer(s, test))
+                agg[src][v]["graph"].append(scorer(rep, test))
+                agg[src][v]["impute"].append(scorer(imp, test))
+
+    def m(xs):
+        return float(np.mean(xs)), float(np.std(xs))
+    n_partner = int((Y[obs].sum(0) > 0).sum().item())
+    print(f"=== BIOLOGICAL COMMUNITY-SUPERVISED | res={a.cooccur_res} topk={a.cooccur_topk} metric=micro-AP "
+          f"sources={a.sources} variants={variants} seeds={a.seeds} holdout={a.holdout} N={N} "
+          f"present={int(obs.sum())} partners={n_partner} ===")
+    print(f"  {'source':7s} {'variant':6s} | {'seed':>16s} | {'GRAPH':>16s} | {'impute':>16s} | graph_gain")
+    summary = {"axis": "cooccur_community_supervised", "res": a.cooccur_res, "topk": a.cooccur_topk,
+               "metric": "micro-AP", "seeds": a.seeds, "N": N, "present": int(obs.sum().item()), "rows": []}
+    for src in a.sources:
+        for v in variants:
+            sm, ss = m(agg[src][v]["seed"]); gm, gs = m(agg[src][v]["graph"]); im, iis = m(agg[src][v]["impute"])
+            print(f"  {src:7s} {v:6s} | {sm:.4f}+/-{ss:.4f} | {gm:.4f}+/-{gs:.4f} | {im:.4f}+/-{iis:.4f} | {gm-sm:+.4f}")
+            summary["rows"].append({"source": src, "variant": v, "seed": round(sm, 4), "graph": round(gm, 4),
+                                    "graph_std": round(gs, 4), "impute": round(im, 4),
+                                    "graph_gain": round(gm - sm, 4)})
+    import json
+    print("[cooccur_supervised] " + json.dumps(summary))
+    print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src x {len(variants)}v in {time.time()-t0:.1f}s")
+    return summary
+
+
+def run_route_contrast(a, dev):
+    """TEST 3. Routing confirmation. Quantify HOW MUCH better vision/env-niche seeds are than text/phylo on the
+    community axis vs on a phylo-friendly axis (lep). Reports the vision-text SEED gap on each axis. A large
+    positive gap on community + small/negative on lep => community should route to the spacetime/vision path in
+    the champion. Cheap: seed-only NN scores, no graph training."""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    N = E1.shape[0]
+    Yc, obsc, Ncc = load_cooccur(a.cache_dir, dev, res_tag=a.cooccur_res, topk=a.cooccur_topk)
+    lep_fn, lep_kind, _ = _scorer_for(a.cache_dir, gidx, "num_lep_support", dev)
+    axes = {"community": (lambda emb, test: nn_cooccur_ap(emb, Yc, obsc, test)),
+            "lep": lep_fn}
+    srcs = ["text", "vision"]
+    agg = {ax: {s: [] for s in srcs} for ax in axes}
+    for sd in a.seeds:
+        g = torch.Generator(device="cpu").manual_seed(sd)
+        test = (torch.rand(N, generator=g) < a.holdout).to(dev)
+        for src in srcs:
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                              pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep).to(dev)
+            for ax, fn in axes.items():
+                agg[ax][src].append(fn(seed, test))
+
+    def m(xs):
+        return float(np.mean(xs)), float(np.std(xs))
+    print(f"=== BIOLOGICAL ROUTING CONTRAST (seed-only) | axes={list(axes)} seeds={a.seeds} N={N} ===")
+    print(f"  {'axis':10s} | {'text_seed':>16s} | {'vision_seed':>16s} | vision-text gap")
+    summary = {"mode": "route_contrast", "seeds": a.seeds, "rows": []}
+    for ax in axes:
+        tm, ts = m(agg[ax]["text"]); vm, vs = m(agg[ax]["vision"])
+        gap = vm - tm
+        print(f"  {ax:10s} | {tm:.4f}+/-{ts:.4f} | {vm:.4f}+/-{vs:.4f} | {gap:+.4f}")
+        summary["rows"].append({"axis": ax, "text_seed": round(tm, 4), "vision_seed": round(vm, 4),
+                                "vision_minus_text": round(gap, 4)})
+    import json
+    print("[route_contrast] " + json.dumps(summary))
+    return summary
+
+
+
+
+# ============================================================================================
+# NEW AUTHORITATIVE-DATA RETESTS (2026-07-24, additive/flag-gated; edits nothing in core/ or probe.py).
+# Tests whether the REAL landed data (GloBI interactions, NatureServe G-ranks, USDA husbandry) are
+# phylo-graph-served traits: for each, seed_only vs unsup-graph vs trait-SUPERVISED graph, graph_gain
+# on held-out species. Targets are keyed by global_idx in derived/*, aligned to the N graph tips via gidx.
+# ============================================================================================
+
+# Curated pollinator-genus -> guild map covering the dominant GloBI genera (survey of top ~150). Higher-taxon
+# tokens (Apoidea, Lepidoptera, Diptera, Coleoptera, ...) route by clade. Unknown genera -> "other".
+_GUILD_GENUS = {
+    # --- bees (Anthophila) ---
+    "bee": ["Bombus", "Lasioglossum", "Andrena", "Hylaeus", "Halictus", "Osmia", "Megachile", "Apis",
+            "Nomada", "Ceratina", "Anthophora", "Agapostemon", "Colletes", "Xylocopa", "Melissodes",
+            "Hoplitis", "Eucera", "Perdita", "Habropoda", "Diadasia", "Svastra", "Peponapis", "Dufourea",
+            "Sphecodes", "Augochlorella", "Augochlora", "Augochloropsis", "Dialictus", "Melitta",
+            "Panurginus", "Calliopsis", "Pseudopanurgus", "Anthidium", "Coelioxys", "Triepeolus",
+            "Epeolus", "Protandrena", "Macrotera", "Nomia", "Exomalopsis", "Ashmeadiella", "Chelostoma",
+            "Heriades", "Stelis", "Bombus", "Apoidea", "Anthophila", "Halictidae", "Apidae", "Megachilidae",
+            "Andrenidae", "Colletidae", "Melittidae", "Zadontomerus"],
+    # --- butterflies + moths (Lepidoptera) ---
+    "lep": ["Vanessa", "Papilio", "Callophrys", "Colias", "Danaus", "Pieris", "Strymon", "Speyeria",
+            "Phyciodes", "Icaricia", "Chlosyne", "Euphydryas", "Apodemia", "Hesperia", "Hylephila",
+            "Pontia", "Celastrina", "Plebejus", "Satyrium", "Erynnis", "Battus", "Lon", "Hyles",
+            "Junonia", "Nymphalis", "Polygonia", "Limenitis", "Adelpha", "Coenonympha", "Cercyonis",
+            "Euptoieta", "Agraulis", "Lycaena", "Glaucopsyche", "Leptotes", "Brephidium", "Atlides",
+            "Ministrymon", "Ochlodes", "Poanes", "Atalopedes", "Lerema", "Pyrgus", "Thorybes",
+            "Epargyreus", "Anthocharis", "Euchloe", "Nathalis", "Zerene", "Phoebis", "Manduca",
+            "Autographa", "Trichoplusia", "Lepidoptera", "Nymphalidae", "Hesperiidae", "Pieridae",
+            "Lycaenidae", "Papilionidae", "Riodinidae", "Sphingidae", "Noctuidae"],
+    # --- flies (Diptera), syrphid + others ---
+    "fly": ["Eristalis", "Toxomerus", "Eupeodes", "Sphaerophoria", "Copestylum", "Platycheirus",
+            "Syrphus", "Allograpta", "Helophilus", "Palpada", "Volucella", "Bombylius", "Villa",
+            "Systoechus", "Sarcophaga", "Lucilia", "Calliphora", "Musca", "Delia", "Scaeva",
+            "Melanostoma", "Chrysotoxum", "Sericomyia", "Diptera", "Syrphidae", "Bombyliidae",
+            "Tachinidae", "Calliphoridae", "Sarcophagidae"],
+    # --- beetles (Coleoptera) ---
+    "beetle": ["Acmaeodera", "Coccinella", "Hippodamia", "Chauliognathus", "Trichodes", "Diabrotica",
+               "Epicauta", "Nemognatha", "Mordellistena", "Mordella", "Dasytes", "Listrus",
+               "Trichochrous", "Coleoptera", "Cerambycidae", "Buprestidae", "Cantharidae",
+               "Coccinellidae", "Melyridae", "Mordellidae", "Scarabaeidae", "Meloidae", "Chrysomelidae"],
+    # --- wasps (non-bee Hymenoptera) ---
+    "wasp": ["Polistes", "Vespula", "Dolichovespula", "Ammophila", "Sphex", "Bembix", "Philanthus",
+             "Ichneumonoidea", "Ichneumonidae", "Braconidae", "Vespidae", "Sphecidae", "Crabronidae",
+             "Pompilidae", "Scoliidae", "Tiphiidae", "Chrysididae", "Pemphredon", "Cerceris", "Eumenes"],
+    # --- birds ---
+    "bird": ["Selasphorus", "Calypte", "Archilochus", "Colibri", "Trochilidae", "Aves", "Setophaga",
+             "Passerina", "Carpodacus", "Haemorhous", "Zonotrichia"],
+}
+def _guild_lookup():
+    m = {}
+    for guild, genera in _GUILD_GENUS.items():
+        for g in genera:
+            m[g] = guild
+    return m
+
+
+def _globi_guild_vectors(cache, gidx, dev, min_partners=3):
+    """Build per-species pollinator-guild signatures from the REAL GloBI interaction records, aligned to the N
+    graph tips via gidx. Returns (Yfrac [N, G] guild-fraction, dom [N] argmax-guild int, obs [N] bool has>=min
+    recognized partners, guilds list). Catalog-noise tokens (all-caps codes / uuids / digit strings) are dropped;
+    only genera in the curated guild map contribute (so 'obs' = species with >= min_partners RECOGNIZED partners)."""
+    import csv as _csv
+    from collections import defaultdict
+    gl = _guild_lookup()
+    guilds = ["bee", "lep", "fly", "beetle", "wasp", "bird"]
+    gi = {g: i for i, g in enumerate(guilds)}
+    counts = defaultdict(lambda: np.zeros(len(guilds), dtype=np.float32))    # global_idx -> guild counts
+    with open(Path(cache) / "derived/pollinator_globi_interactions.tsv") as f:
+        r = _csv.DictReader(f, delimiter="\t", quoting=_csv.QUOTE_NONE)
+        for row in r:
+            gi_raw = row.get("global_idx")
+            if gi_raw is None or not str(gi_raw).strip().isdigit():
+                continue                                # skip ~10 quote-mangled rows
+            g_idx = int(gi_raw)
+            parts = (row.get("partners") or "")
+            for tok in parts.split("|"):
+                tok = tok.strip()
+                if not tok:
+                    continue
+                genus = tok.split()[0]
+                if genus.isupper():                     # catalog codes (WSU, WSUC, WSDA_...)
+                    continue
+                if any(ch.isdigit() for ch in genus):
+                    continue
+                guild = gl.get(genus)
+                if guild is not None:
+                    counts[g_idx][gi[guild]] += 1.0
+    N = len(gidx)
+    C = np.zeros((N, len(guilds)), dtype=np.float32)
+    for i, g_idx in enumerate(gidx):
+        if int(g_idx) in counts:
+            C[i] = counts[int(g_idx)]
+    tot = C.sum(1)
+    obs = tot >= float(min_partners)
+    Yfrac = np.zeros_like(C)
+    nz = tot > 0
+    Yfrac[nz] = C[nz] / tot[nz][:, None]
+    dom = C.argmax(1).astype(np.int64)
+    return (torch.tensor(Yfrac).to(dev), torch.tensor(dom).to(dev),
+            torch.tensor(obs).to(dev), guilds)
+
+
+def run_globi_guild(a, dev):
+    """RETEST (task 1+3). REAL GloBI plant->pollinator guild signature as a phylo target. Two readouts on the
+    SAME held-out split: (A) DOMINANT-guild categorical accuracy (is a plant's main pollinator guild -- bee vs
+    lep vs fly... -- phylo-conserved / imputable from relatives?), and (B) multi-guild fraction micro-AP (the
+    full guild signature). For each: seed_only vs unsup-graph vs trait-SUPERVISED graph, graph_gain = sup-seed.
+    Related plants often share pollinators -> if pollination syndrome is graph-served this flips positive where
+    the old BioCLIP co-visitation proxy could not. Either way = clean DATA."""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    N = E1.shape[0]
+    Yfrac, dom, obs, guilds = _globi_guild_vectors(a.cache_dir, gidx, dev, min_partners=a.globi_min_partners)
+    nclass = len(guilds)
+    acc_scorer = lambda emb, test: nn_trait_acc(emb, dom, obs, test)
+    def ap_scorer(emb, test, k=5):
+        from sklearn.metrics import average_precision_score
+        train = obs & (~test); tst = obs & test
+        et = F.normalize(emb[train], dim=-1); ett = F.normalize(emb[tst], dim=-1)
+        sim = ett @ et.t()
+        topk = sim.topk(min(k, sim.shape[1]), dim=-1).indices
+        pred = Yfrac[train][topk].mean(1).cpu().numpy()        # [ntest, G] predicted guild fractions
+        yt = (Yfrac[tst].cpu().numpy() > 0).astype(int)        # binary: guild present for that plant
+        aps = []
+        for c in range(yt.shape[1]):
+            if yt[:, c].sum() > 0 and yt[:, c].sum() < len(yt[:, c]):
+                aps.append(average_precision_score(yt[:, c], pred[:, c]))
+        return float(np.mean(aps)) if aps else float("nan")
+    variants = ["unsup", "sup"]
+    agg = {src: {v: {"seed_acc": [], "graph_acc": [], "seed_ap": [], "graph_ap": []} for v in variants}
+           for src in a.sources}
+    t0 = time.time()
+    for sd in a.seeds:
+        g = torch.Generator(device="cpu").manual_seed(sd)
+        test = (torch.rand(N, generator=g) < a.holdout).to(dev)
+        for src in a.sources:
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                              pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            for v in variants:
+                if v == "unsup":
+                    s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
+                                              a.steps, a.mask_frac, a.lr, a.impute_steps)
+                else:
+                    s, rep, imp, _ = train_graph_trait_supervised(
+                        seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+                        a.impute_steps, "cat", dom, obs, nclass, operator=a.operator,
+                        phylo_dist=(SpeciesGraph.distance_from_embedding(F.normalize(E1.to(dev), dim=-1))
+                                    if a.operator == "ou-attention" else None),
+                        blanket_k=a.blanket_k)
+                agg[src][v]["seed_acc"].append(acc_scorer(s, test))
+                agg[src][v]["graph_acc"].append(acc_scorer(rep, test))
+                agg[src][v]["seed_ap"].append(ap_scorer(s, test))
+                agg[src][v]["graph_ap"].append(ap_scorer(rep, test))
+
+    def m(xs):
+        return float(np.mean(xs)), float(np.std(xs))
+    n_obs = int(obs.sum().item())
+    # majority-guild floor for the dominant-guild acc
+    dom_obs = dom[obs].cpu().numpy()
+    import numpy as _np
+    floor = float(_np.bincount(dom_obs, minlength=nclass).max() / max(1, len(dom_obs)))
+    print(f"=== BIOLOGICAL GloBI-GUILD (REAL interactions) | guilds={guilds} classes={nclass} "
+          f"sources={a.sources} variants={variants} seeds={a.seeds} holdout={a.holdout} N={N} "
+          f"obs(>= {a.globi_min_partners} recog. partners)={n_obs} majority-floor={floor:.4f} ===")
+    print(f"  {'source':7s} {'var':5s} | {'domguild_acc seed->graph':>28s} | {'guildsig_AP seed->graph':>28s} | gain(acc)")
+    summary = {"axis": "globi_pollinator_guild", "guilds": guilds, "nclass": nclass, "seeds": a.seeds,
+               "N": N, "obs": n_obs, "majority_floor": round(floor, 4), "rows": []}
+    for src in a.sources:
+        for v in variants:
+            sa, _ = m(agg[src][v]["seed_acc"]); ga, gas = m(agg[src][v]["graph_acc"])
+            sp, _ = m(agg[src][v]["seed_ap"]); gp, gps = m(agg[src][v]["graph_ap"])
+            print(f"  {src:7s} {v:5s} | {sa:.4f} -> {ga:.4f}+/-{gas:.4f}      | "
+                  f"{sp:.4f} -> {gp:.4f}+/-{gps:.4f}      | {ga-sa:+.4f}")
+            summary["rows"].append({"source": src, "variant": v,
+                                    "seed_acc": round(sa, 4), "graph_acc": round(ga, 4),
+                                    "graph_acc_std": round(gas, 4), "gain_acc": round(ga - sa, 4),
+                                    "seed_ap": round(sp, 4), "graph_ap": round(gp, 4),
+                                    "gain_ap": round(gp - sp, 4)})
+    import json
+    print("[globi_guild] " + json.dumps(summary))
+    print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src x {len(variants)}v in {time.time()-t0:.1f}s")
+    return summary
+
+
+def _natureserve_grank(cache, gidx, dev, binary=True):
+    """Load NatureServe G-ranks aligned to N tips via gidx. Returns (y int64 [N], obs bool [N], nclass, name).
+    binary=True: at-risk (G1/G2/G3 -> 1) vs secure (G4/G5 -> 0). binary=False: ordinal G1..G5 -> 0..4."""
+    import json as _json
+    rank = {}                                                # global_idx -> gRank string
+    with open(Path(cache) / "derived/rarity_natureserve_global.jsonl") as f:
+        for line in f:
+            d = _json.loads(line)
+            gr = d.get("gRank")
+            if gr and isinstance(gr, str) and gr.startswith("G") and len(gr) >= 2 and gr[1].isdigit():
+                rank[int(d["global_idx"])] = int(gr[1])      # 1..5
+    N = len(gidx)
+    y = np.zeros(N, dtype=np.int64)
+    obs = np.zeros(N, dtype=bool)
+    for i, g_idx in enumerate(gidx):
+        if int(g_idx) in rank:
+            r = rank[int(g_idx)]
+            if r < 1 or r > 5:
+                continue
+            obs[i] = True
+            y[i] = (1 if r <= 3 else 0) if binary else (r - 1)
+    nclass = 2 if binary else 5
+    name = "natureserve_atrisk_bin" if binary else "natureserve_grank_ord"
+    return (torch.tensor(y).to(dev), torch.tensor(obs).to(dev), nclass, name)
+
+
+def run_natureserve(a, dev):
+    """RETEST (task 2). NatureServe G-rank (REAL conservation rarity, 2063/2141) as a phylo target. Binary
+    at-risk (G1-3) vs secure (G4-5) balanced-accuracy: seed_only vs unsup-graph vs trait-SUPERVISED graph. Is
+    rarity a GRAPH-served trait (relatives share rarity -> graph additive over the seed) or a niche/range axis
+    (like community -> flat under the graph, belongs to the env encoder)? Reports balanced-acc vs the majority
+    floor, graph_gain = graph - seed. Prior E1-seed retest got bal-acc ~0.627; this isolates the GRAPH delta."""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    N = E1.shape[0]
+    y, obs, nclass, name = _natureserve_grank(a.cache_dir, gidx, dev, binary=not a.natureserve_ordinal)
+
+    def bal_acc(emb, test):
+        train = obs & (~test); tst = obs & test
+        et = F.normalize(emb[train], dim=-1); ett = F.normalize(emb[tst], dim=-1)
+        nn = (ett @ et.t()).argmax(-1)
+        pred = y[train][nn]; true = y[tst]
+        accs = []
+        for c in range(nclass):
+            m_ = (true == c)
+            if m_.any():
+                accs.append((pred[m_] == c).float().mean().item())
+        return float(np.mean(accs)) if accs else float("nan")
+
+    variants = ["unsup", "sup"]
+    agg = {src: {v: {"seed": [], "graph": [], "impute": []} for v in variants} for src in a.sources}
+    t0 = time.time()
+    for sd in a.seeds:
+        g = torch.Generator(device="cpu").manual_seed(sd)
+        test = (torch.rand(N, generator=g) < a.holdout).to(dev)
+        for src in a.sources:
+            seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                              pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+            for v in variants:
+                if v == "unsup":
+                    s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
+                                              a.steps, a.mask_frac, a.lr, a.impute_steps)
+                else:
+                    s, rep, imp, _ = train_graph_trait_supervised(
+                        seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+                        a.impute_steps, "cat", y, obs, nclass, operator=a.operator,
+                        phylo_dist=(SpeciesGraph.distance_from_embedding(F.normalize(E1.to(dev), dim=-1))
+                                    if a.operator == "ou-attention" else None),
+                        blanket_k=a.blanket_k)
+                agg[src][v]["seed"].append(bal_acc(s, test))
+                agg[src][v]["graph"].append(bal_acc(rep, test))
+                agg[src][v]["impute"].append(bal_acc(imp, test))
+
+    def m(xs):
+        return float(np.mean(xs)), float(np.std(xs))
+    n_obs = int(obs.sum().item())
+    yo = y[obs].cpu().numpy()
+    floor = float(np.bincount(yo, minlength=nclass).max() / max(1, len(yo)))
+    print(f"=== BIOLOGICAL NATURESERVE {name} | metric=balanced-acc classes={nclass} sources={a.sources} "
+          f"variants={variants} seeds={a.seeds} holdout={a.holdout} N={N} obs={n_obs} "
+          f"majority-floor={floor:.4f} ===")
+    print(f"  {'source':7s} {'var':5s} | {'seed':>16s} | {'GRAPH':>16s} | {'impute':>16s} | graph_gain")
+    summary = {"axis": name, "metric": "balanced-acc", "nclass": nclass, "seeds": a.seeds, "N": N,
+               "obs": n_obs, "majority_floor": round(floor, 4), "rows": []}
+    for src in a.sources:
+        for v in variants:
+            sm, ss = m(agg[src][v]["seed"]); gm, gs = m(agg[src][v]["graph"]); im, iis = m(agg[src][v]["impute"])
+            print(f"  {src:7s} {v:5s} | {sm:.4f}+/-{ss:.4f} | {gm:.4f}+/-{gs:.4f} | {im:.4f}+/-{iis:.4f} | {gm-sm:+.4f}")
+            summary["rows"].append({"source": src, "variant": v, "seed": round(sm, 4), "graph": round(gm, 4),
+                                    "graph_std": round(gs, 4), "impute": round(im, 4),
+                                    "graph_gain": round(gm - sm, 4)})
+    import json
+    print("[natureserve] " + json.dumps(summary))
+    print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src x {len(variants)}v in {time.time()-t0:.1f}s")
+    return summary
+
+
+_USDA_ORDINAL = {
+    "Drought Tolerance": {"None": 0, "Low": 1, "Medium": 2, "High": 3},
+    "Growth Rate": {"Slow": 0, "Moderate": 1, "Rapid": 2},
+    "Moisture Use": {"Low": 0, "Medium": 1, "High": 2},
+}
+def _usda_trait(cache, gidx, dev, col):
+    """Load one USDA husbandry ordinal trait (Drought Tolerance / Growth Rate / Moisture Use) aligned via gidx.
+    Returns (y int64 [N], obs bool [N], nclass). Small n (~400 covered) -> report as caveat."""
+    import csv as _csv
+    mp = _USDA_ORDINAL[col]
+    val = {}
+    with open(Path(cache) / "derived/usda_plants_traits.csv") as f:
+        r = _csv.DictReader(f)
+        for row in r:
+            v = (row.get(col) or "").strip()
+            if v in mp:
+                val[int(row["global_idx"])] = mp[v]
+    N = len(gidx)
+    y = np.zeros(N, dtype=np.int64); obs = np.zeros(N, dtype=bool)
+    for i, g_idx in enumerate(gidx):
+        if int(g_idx) in val:
+            obs[i] = True; y[i] = val[int(g_idx)]
+    return torch.tensor(y).to(dev), torch.tensor(obs).to(dev), len(mp)
+
+
+def run_usda(a, dev):
+    """RETEST (task 4). USDA husbandry traits (Drought Tolerance / Growth Rate / Moisture Use, ~400 covered) as
+    phylo targets. Per trait: seed_only vs unsup-graph vs trait-SUPERVISED graph, categorical accuracy on
+    held-out species, graph_gain = graph - seed. Does the graph serve real husbandry traits from relatives?
+    SMALL-n caveat (report obs count). Reuses train_graph_trait_supervised; edits nothing in core/."""
+    E1, fam_id, tree, tip_row, gidx = load_species(a.cache_dir)
+    tip_row = tip_row.to(dev)
+    N = E1.shape[0]
+    cols = a.usda_cols if a.usda_cols else list(_USDA_ORDINAL.keys())
+    variants = ["unsup", "sup"]
+    import json
+    all_sum = []
+    t0 = time.time()
+    for col in cols:
+        y, obs, nclass = _usda_trait(a.cache_dir, gidx, dev, col)
+        n_obs = int(obs.sum().item())
+        scorer = lambda emb, test: nn_trait_acc(emb, y, obs, test)
+        agg = {src: {v: {"seed": [], "graph": []} for v in variants} for src in a.sources}
+        for sd in a.seeds:
+            g = torch.Generator(device="cpu").manual_seed(sd)
+            test = (torch.rand(N, generator=g) < a.holdout).to(dev)
+            for src in a.sources:
+                seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                                  pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+                for v in variants:
+                    if v == "unsup":
+                        s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
+                                                  a.steps, a.mask_frac, a.lr, a.impute_steps)
+                    else:
+                        s, rep, imp, _ = train_graph_trait_supervised(
+                            seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+                            a.impute_steps, "cat", y, obs, nclass, operator=a.operator,
+                            phylo_dist=(SpeciesGraph.distance_from_embedding(F.normalize(E1.to(dev), dim=-1))
+                                        if a.operator == "ou-attention" else None),
+                            blanket_k=a.blanket_k)
+                    agg[src][v]["seed"].append(scorer(s, test))
+                    agg[src][v]["graph"].append(scorer(rep, test))
+
+        def m(xs):
+            return float(np.mean(xs)), float(np.std(xs))
+        yo = y[obs].cpu().numpy()
+        floor = float(np.bincount(yo, minlength=nclass).max() / max(1, len(yo)))
+        print(f"=== BIOLOGICAL USDA '{col}' | metric=acc classes={nclass} sources={a.sources} "
+              f"variants={variants} seeds={a.seeds} N={N} obs={n_obs} majority-floor={floor:.4f} (SMALL-n) ===")
+        print(f"  {'source':7s} {'var':5s} | {'seed':>16s} | {'GRAPH':>16s} | graph_gain")
+        summary = {"axis": f"usda_{col.replace(' ', '_')}", "metric": "acc", "nclass": nclass,
+                   "seeds": a.seeds, "N": N, "obs": n_obs, "majority_floor": round(floor, 4), "rows": []}
+        for src in a.sources:
+            for v in variants:
+                sm, ss = m(agg[src][v]["seed"]); gm, gs = m(agg[src][v]["graph"])
+                print(f"  {src:7s} {v:5s} | {sm:.4f}+/-{ss:.4f} | {gm:.4f}+/-{gs:.4f} | {gm-sm:+.4f}")
+                summary["rows"].append({"source": src, "variant": v, "seed": round(sm, 4),
+                                        "graph": round(gm, 4), "graph_std": round(gs, 4),
+                                        "graph_gain": round(gm - sm, 4)})
+        print(f"[usda_{col.replace(' ', '_')}] " + json.dumps(summary))
+        all_sum.append(summary)
+    print(f"  [profile] usda {len(cols)}cols x {len(a.seeds)}s x {len(a.sources)}src in {time.time()-t0:.1f}s")
+    return all_sum
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache_dir", default="data/deepcal")
@@ -1058,6 +1821,12 @@ def main(argv=None):
     ap.add_argument("--operator", default="latent-clade", choices=["latent-clade", "ou-attention"],
                     help="rule-29 refinement operator for the trait-supervised graph: latent-clade (prior rounds) "
                          "or ou-attention (the champion OU-GP distance-biased attention). Only wired for --trait_supervised sup.")
+    ap.add_argument("--blanket_k", type=int, default=0,
+                    help="rule-29 Markov-blanket restriction (ou-attention only): restrict each species' "
+                         "reconstruction to its k NEAREST phylo relatives (top_k over phylo_distance). 0=whole-clade dense.")
+    ap.add_argument("--mask_curriculum", default=None,
+                    help="rule-25 mask curriculum: 'easy2hard:LO:HI' ramps mask_frac LO->HI over training, "
+                         "'hard2easy:LO:HI' reverses. e.g. easy2hard:0.1:0.5. None=fixed --mask_frac. trait_supervised only.")
     ap.add_argument("--rollout_rounds", type=int, default=1,
                     help="READOUT LEVER (rule 10-11): >1 -> autoregressive progressive-reveal imputation at eval "
                          "(reveal most-anchored held-out species each round so they anchor the rest). 1=single-pass.")
@@ -1084,14 +1853,67 @@ def main(argv=None):
                          "base as pseudo-observed relatives, then re-reads the residual head. 1=single-pass.")
     ap.add_argument("--oot_reveal_frac", type=float, default=0.34,
                     help="fraction of still-unrevealed OOT test species folded into the clade base per oot_round")
+    ap.add_argument("--recon_relative", action="store_true",
+                    help="RULE-25 objective (OOT): reconstruct masked TRAIN species toward the mean seed of their "
+                         "same-family train relatives (leak-free imputation target) instead of the identity copy of "
+                         "their own seed. Fixes the weak identity-recon in-tree path. Default off (byte-identical).")
+    ap.add_argument("--oot_heads", type=int, default=4,
+                    help="RULE-29 operator (OOT): number of clade cross-attention heads for the out-of-tree "
+                         "soft-attach (default 4). More heads -> each addresses a different clade subspace when "
+                         "projecting an out-of-tree species onto the shared clade latents.")
+    ap.add_argument("--oot_layers", type=int, default=2,
+                    help="RULE-29 operator (OOT): tree message-passing depth for the OOT graph (default 2).")
+    ap.add_argument("--recon_k", type=int, default=0,
+                    help="RULE-25 (with --recon_relative): >0 -> relative target = mean seed of the k NEAREST "
+                         "same-family TRAIN relatives (rank-preserving local target) instead of the family centroid "
+                         "(0, ITER-1, which erased within-family rank). Leak-free: never self, train tips only.")
     ap.add_argument("--oot_blend", action="store_true",
                     help="ITER-7 (num_resid_readout num axis): also train the IN-TREE residual head and report the "
                          "best convex blend alpha*oot_head_pred + (1-alpha)*intree_head_pred over a sweep. OOT wins "
                          "on clean-seed axes, in-tree on tree-smoothable axes -> the blend should dominate both.")
+    ap.add_argument("--cooccur", action="store_true",
+                    help="rule 10-12 COMMUNITY axis: predict a species' co-occurrence partner set from relatives (graph-on vs off)")
+    ap.add_argument("--cooccur_res", default="005", help="grid-res tag of derived/cooccur_count_<tag>.npy (005=0.05deg)")
+    ap.add_argument("--cooccur_topk", type=int, default=64, help="keep each species' top-K strongest co-partners as the target signature")
+    ap.add_argument("--cooccur_supervised", action="store_true",
+                    help="TEST1: community-SUPERVISED graph (BCE on masked-species partner-set reconstruction) vs unsup vs seed")
+    ap.add_argument("--myco_supervised", action="store_true",
+                    help="TEST2: myco (B63) trait-supervised imputation -- seed vs unsup-graph vs CE-supervised graph")
+    ap.add_argument("--route_contrast", action="store_true",
+                    help="TEST3: seed-only vision-text gap on community vs lep (routing contrast)")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--globi_guild", action="store_true",
+                    help="RETEST: REAL GloBI pollinator-guild signature (dominant-guild acc + guild-frac AP) as a phylo target")
+    ap.add_argument("--globi_min_partners", type=int, default=3,
+                    help="GloBI: min RECOGNIZED-guild partner records for a species to count as observed")
+    ap.add_argument("--natureserve", action="store_true",
+                    help="RETEST: NatureServe G-rank rarity (binary at-risk G1-3 vs secure) balanced-acc; graph vs seed")
+    ap.add_argument("--natureserve_ordinal", action="store_true",
+                    help="NatureServe: ordinal G1..G5 (5-class) instead of the binary at-risk target")
+    ap.add_argument("--usda", action="store_true",
+                    help="RETEST: USDA husbandry traits (Drought Tolerance/Growth Rate/Moisture Use, ~400 sp) graph vs seed")
+    ap.add_argument("--usda_cols", nargs="+", default=None,
+                    help="USDA: subset of ordinal columns to test (default all three)")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
+    if isinstance(a.mask_curriculum, str) and a.mask_curriculum:   # 'easy2hard:LO:HI' -> (sched, lo, hi) tuple
+        _p = a.mask_curriculum.split(":")
+        a.mask_curriculum = (_p[0], float(_p[1]), float(_p[2]))
 
+    if a.cooccur_supervised:
+        return run_cooccur_supervised(a, dev)
+    if a.globi_guild:
+        return run_globi_guild(a, dev)
+    if a.natureserve:
+        return run_natureserve(a, dev)
+    if a.usda:
+        return run_usda(a, dev)
+    if a.myco_supervised:
+        return run_myco_supervised(a, dev)
+    if a.route_contrast:
+        return run_route_contrast(a, dev)
+    if a.cooccur:
+        return run_cooccur(a, dev)
     if a.multi_axis:
         return run_multi_axis(a, dev)
     if a.trait_supervised:
