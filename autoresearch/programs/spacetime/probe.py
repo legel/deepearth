@@ -81,6 +81,18 @@ def load_obs(cache: str, n_shards: int, with_time: bool = False, with_gid: bool 
     return lat, lon, fam, n_fam, days, gids
 
 
+def load_species(cache: str, n_shards: int):
+    """Per-observation species_local id aligned to the SAME shard subsample load_obs uses (for community /
+    per-species breadth targets). Additive; used only by --breadth_target."""
+    import glob as _g
+    from pathlib import Path as _P
+    sp = []
+    for f in sorted(_g.glob(str(_P(cache) / "gbif_tokens/*.npz")))[:n_shards]:
+        z = np.load(f)
+        sp.append(z["species_local"])
+    return np.concatenate(sp).astype(np.int64)
+
+
 def load_env(cache: str, gid):
     """Join real ENVIRONMENT covariates to each observation by gbifID (science.md rule 24: environment field).
 
@@ -108,7 +120,7 @@ def load_env(cache: str, gid):
     return env
 
 
-def load_env_species(cache: str, extra_channels: bool = True):
+def load_env_species(cache: str, extra_channels: bool = True, temporal: bool = False):
     """Species-aggregated ENVIRONMENT features for ENV->NICHE-TRAIT routing (Ensue ROUTING-soil-ph/MAP-*).
 
     Joins every observation to its worldclim(19) + AlphaEarth(64) [+ soil(9) + elev(1)] covariates by gbifID,
@@ -124,6 +136,10 @@ def load_env_species(cache: str, extra_channels: bool = True):
     S = len(vocab["global_idx"])
     wc = np.load(cachep / "gbif_worldclim_tokens.npz"); wcm = {int(g): i for i, g in enumerate(wc["gbifID"])}; WC = wc["worldclim"]
     ae = np.load(cachep / "gbif_alphaearth_tokens.npz"); aem = {int(g): i for i, g in enumerate(ae["gbifID"])}; AE = ae["ae"]
+    id2day = {}
+    if temporal:
+        et = np.load(cachep / "gbif_eventtime.npz"); id2day = {int(g): float(d) for g, d in zip(et["gbifID"], et["days"])}
+    doy_by_sp = [[] for _ in range(S)]  # per-species observed day-of-year radians (seasonal niche timing)
     if extra_channels:
         so = np.load(cachep / "gbif_soil_tokens.npz"); som = {int(g): i for i, g in enumerate(so["gbifID"])}; SO = so["soil"]
         el = np.load(cachep / "gbif_elev.npz"); elm = {int(g): float(v) for g, v in zip(el["gbifID"], el["elev"])}
@@ -144,11 +160,15 @@ def load_env_species(cache: str, extra_channels: bool = True):
                 v[83:92] = SO[som[g]] if g in som else np.nan
                 v[92] = elm.get(g, np.nan)
             rows_by_sp[int(s)].append(v)
+            if temporal and g in id2day:
+                doy_by_sp[int(s)].append((id2day[g] % 365.25) / 365.25 * 2.0 * np.pi)
     envmean = np.full((S, D), np.nan, np.float32)
     envmedoid = np.full((S, D), np.nan, np.float32)
     envstd = np.full((S, D), np.nan, np.float32)
     envlo = np.full((S, D), np.nan, np.float32)
     envhi = np.full((S, D), np.nan, np.float32)
+    envmin = np.full((S, D), np.nan, np.float32)
+    envmax = np.full((S, D), np.nan, np.float32)
     n = np.zeros(S, np.int64)
     for s in range(S):
         r = rows_by_sp[s]
@@ -160,6 +180,7 @@ def load_env_species(cache: str, extra_channels: bool = True):
         envmean[s] = mu
         envstd[s] = np.nanstd(M, 0) if len(r) > 1 else 0.0
         envlo[s] = np.nanpercentile(M, 10, 0); envhi[s] = np.nanpercentile(M, 90, 0)
+        envmin[s] = np.nanmin(M, 0); envmax[s] = np.nanmax(M, 0)  # explicit realized niche envelope (boundary extremes)
         # medoid = obs nearest (L2 over non-nan cols) to the species mean
         good = ~np.isnan(M).any(1)
         if good.sum() >= 1:
@@ -168,11 +189,36 @@ def load_env_species(cache: str, extra_channels: bool = True):
             envmedoid[s] = Mg[int(d.argmin())]
         else:
             envmedoid[s] = mu
+    # per-species seasonal-timing features: circular mean sin/cos of observed DOY + resultant length R
+    # (R in [0,1] = seasonal SPECIALIZATION; high R = tight active season, a temporal niche axis)
+    envtime = np.full((S, 3), np.nan, np.float32)
+    if temporal:
+        for s in range(S):
+            th = doy_by_sp[s]
+            if not th:
+                continue
+            th = np.asarray(th, np.float64)
+            c = np.cos(th).mean(); si = np.sin(th).mean()
+            envtime[s] = (si, c, np.hypot(c, si))                 # mean-sin, mean-cos, resultant length R
+    # per-species PHENOLOGICAL-BREADTH: season DURATION + multimodality (distinct from the unimodal mean+R above)
+    #   col0 = active-month occupancy fraction (# distinct DOY-months with >=1 obs / 12) -> longer/broader season
+    #   col1 = 2nd-harmonic resultant length R2 (bimodality; high when two activity peaks ~ multivoltine)
+    envpheno = np.full((S, 2), np.nan, np.float32)
+    if temporal:
+        for s in range(S):
+            th = doy_by_sp[s]
+            if not th:
+                continue
+            th = np.asarray(th, np.float64)
+            months = np.unique(np.floor((th % (2.0 * np.pi)) / (2.0 * np.pi) * 12.0).astype(np.int64))
+            occ = len(months) / 12.0
+            c2 = np.cos(2.0 * th).mean(); s2 = np.sin(2.0 * th).mean()
+            envpheno[s] = (occ, np.hypot(c2, s2))
     # z-score per column over covered species, impute missing to 0
     def _z(X):
         m = np.nanmean(X, 0); sd = np.nanstd(X, 0); sd[sd < 1e-6] = 1.0
         return np.nan_to_num((X - m) / sd, nan=0.0).astype(np.float32)
-    return _z(envmean), _z(envmedoid), n, _z(envstd), _z(envlo), _z(envhi)
+    return _z(envmean), _z(envmedoid), n, _z(envstd), _z(envlo), _z(envhi), _z(envmin), _z(envmax), _z(envtime), _z(envpheno)
 
 
 def load_env_obs(cache: str):
@@ -296,6 +342,14 @@ def main(argv=None):
     ap.add_argument("--rec_block_deg", type=float, default=2.0)  # ROUND-3: spatial neighbour-search block width (deg); widen with large K to feed more past-DOY samples
     ap.add_argument("--rec_fast", action="store_true")           # ROUND-4: vectorized cKDTree causal-window builder (true K-nearest, no block-ring cap, no per-query loop) -- decouples receptive-field breadth from O(block_area) cost so large K is affordable
     ap.add_argument("--pheno_feats", default="e4d,rff,raw")  # HARD-RULE fast path: comma list subset of e4d,rff,raw to TRAIN (isolate ONE feature-type per run)
+    # ---- LOOP-spacetime NEW DIRECTIONS on the mean-DOY graduation target (additive, default-off) ----
+    ap.add_argument("--pheno_spatial", action="store_true")     # (1) SPATIAL generalization: query set = held-out 0.5deg BLOCKS (unseen geography), neighbours from train blocks; MAE-gain over static floor in new places
+    ap.add_argument("--pheno_env", action="store_true")         # (2) ENV-conditioning: join per-obs worldclim(+soil+elev) as a propagator INPUT; neighbour-only vs neighbour+env vs env-only(static)
+    ap.add_argument("--pheno_disttarget", default="")           # (3) distributional-timing target class: phase_centroid | peak_week | mean_doy (static vs GNN vs LSTM)
+    ap.add_argument("--pheno_taxon", default="")                # (4) per-taxon breakdown of mean-DOY propagator gain: order | family (per-group static/LSTM MAE-gain)
+    ap.add_argument("--pheno_densefield", action="store_true")  # rule-24 dense-field: mean-DOY at query cells whose OWN cell is EXCLUDED from the window (pure spatial interpolation from surrounding occupied cells); reports EMPTY-cell vs OCCUPIED-cell MAE-gain over static. leak-guard: query cell contributes nothing to itself.
+    ap.add_argument("--densefield_drop", type=float, default=0.0)  # sparsity stress: drop this fraction of pool CELLS before interpolating (0.25/0.5/0.75) -- bounds where dense-field interpolation breaks.
+    ap.add_argument("--densefield_block", type=float, default=0.5)  # cell size (deg) defining "same cell" for the exclusion + empty/occupied labelling.
     ap.add_argument("--first_arrival", action="store_true")     # dynamic target: per (0.5deg cell, species) EARLIEST DOY (seasonal onset, leading edge); static vs GNN vs LSTM over Earth4D/RFF/raw
     ap.add_argument("--abundance", action="store_true")         # dynamic target: log obs-count in query cell over trailing window (activity a static climatology cannot forecast); static vs GNN vs LSTM
     ap.add_argument("--abund_win", type=float, default=90.0)    # trailing window (days) for the abundance count
@@ -313,19 +367,118 @@ def main(argv=None):
     ap.add_argument("--env_channels", default="all", choices=["all","worldclim","alphaearth"])  # channel-family ablation: which env source carries the niche-trait routing
     ap.add_argument("--env_spread", action="store_true")
     ap.add_argument("--env_quantiles", action="store_true")      # concat per-species p10/p90 env (explicit distribution EDGES) on top of mean(+std) -- most direct match to max/min niche-boundary traits         # concat per-species column STD (niche breadth) to the mean -- directly informs max/min envelope traits
+    ap.add_argument("--env_extremes", action="store_true")      # concat per-species column MIN/MAX env (realized niche ENVELOPE boundaries) -- the most literal match to num_*_max / num_*_min niche-boundary traits
+    ap.add_argument("--env_extra_traits", action="store_true")  # extend the env-niche routing panel with num_soil_ph_min (the min counterpart already env-routed, 366 species) -- broader niche-trait coverage test
+    ap.add_argument("--env_morph_traits", action="store_true")  # extend the routing panel with MORPHOLOGICAL traits (num_height_max 1768sp, num_width_max 420sp) -- tests whether env-niche routing carries non-climate (structural) traits, not just climate-envelope
+    ap.add_argument("--env_biotic_trait", action="store_true")  # extend panel with num_lep_support (lepidopteran host-support, full 2141sp) -- a BIOTIC-interaction niche axis: does env routing carry biotic niche, not just abiotic climate/structure
+    ap.add_argument("--env_trait_phylo", action="store_true")   # REROUTE VERDICT: alongside the env->trait Spearman, compute the PHYLO-SEED baseline (E1 text/tree species seed -> RidgeCV -> same held-out species split) for each numeric trait, and print the per-axis winner (env vs phylo). Isolates which encoder each numeric trait routes to.
+    ap.add_argument("--env_temporal", action="store_true")     # concat per-species SEASONAL-TIMING features (circular mean sin/cos of observed DOY + resultant length R = seasonal specialization) -- a temporal niche axis on top of static env aggregates
+    ap.add_argument("--env_phenobreadth", action="store_true")  # concat per-species PHENOLOGICAL-BREADTH temporal features (active-month occupancy fraction + 2nd-harmonic resultant R2 = bimodality/multivoltinism) -- a season-DURATION/multimodality axis (distinct from env_temporal mean+R) aimed at the biotic lep-support axis
     ap.add_argument("--env_perobs", action="store_true")        # train the linear niche map on PER-OBSERVATION env rows (train species only), predict held-out species from their species-mean env -- more training rows, same species holdout
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--abund_prop_arch", action="store_true")  # LOOP-spacetime: alt propagator ARCHITECTURES on the LEVEL-abundance target (rule-2b recurrence depth): single-LSTM vs deep-LSTM(2/3L) vs attention-over-neighbour-history; report ABSOLUTE R2 vs static floor. raw features only, one PE.
+    ap.add_argument("--prop_arch", default="lstm1,lstm2,lstm3,attn")  # comma list subset of {lstm1,lstm2,lstm3,attn,mv} to run
+    ap.add_argument("--prop_attn_heads", type=int, default=4)
+    ap.add_argument("--prop_attn_layers", type=int, default=2)
+    ap.add_argument("--abund_multivar", action="store_true")  # LOOP-spacetime: neighbour PAST state = joint [past-abundance || past-DOY(sin,cos) || past-occupancy] (rule24 dense-field cross-signal) forecasting abundance LEVEL; mv head in prop_arch
+    ap.add_argument("--breadth_target", default="", choices=["", "occupancy", "richness", "community_activity"])
+    ap.add_argument("--breadth_sub", type=float, default=30.0)
+    # ---- LOOP-spacetime rule-1 AR ROLLOUT (this turn) ----------------------------------------------------
+    ap.add_argument("--ar_rollout", action="store_true")        # rule-1 CAUSAL autoregressive rollout: predict one Delta-step ahead, FEED prediction back as the query's own current-state, roll forward to the final horizon; compare absR2 vs a single-shot DIRECT predictor at the SAME final horizon. Community-activity (default) or single-species abundance.
+    ap.add_argument("--ar_target", default="community_activity", choices=["community_activity", "abundance", "richness"])  # AR rollout target: strong LEVEL signals only
+    ap.add_argument("--ar_final", type=float, default=540.0)     # final forecast horizon (days) reached by the rollout AND by the direct baseline (matched)
+    ap.add_argument("--ar_step", type=float, default=180.0)      # rollout step size Delta (days); n_steps = round(ar_final/ar_step). overlap regime keeps win = ar_step + 180 unless overridden
+    ap.add_argument("--ar_cond_lead", action="store_true")      # PIVOT: continuous-lead conditioning -- feed the target lead as an input so ONE model spans all horizons; compare vs per-lead direct specialists
+    ap.add_argument("--cooccur", action="store_true")            # CROSS-ENCODER ROUTING: predict per-species co-occurrence PARTNER-SET from ENV/SPACE (held-out species); micro-AP + gain over non-spatial prevalence baseline.
+    ap.add_argument("--cooccur_mech", default="env", choices=["env","space","both"])
+    ap.add_argument("--cooccur_thresh", type=int, default=2)
+    ap.add_argument("--cooccur_file", default="cooccur_count_005.npy")
+    ap.add_argument("--cooccur_channels", default="all", choices=["all","worldclim","alphaearth"])
+    ap.add_argument("--sdm_presence", action="store_true")       # SDM env->biology (rules 1-6, B1/B5/B6/B8): predict which SPECIES occur at a held-out 0.5deg CELL from env+space.
+    ap.add_argument("--sdm_hard", action="store_true")            # HARDENED SDM presence: finer grid + spatial-block CV -> many held-out cells; per-channel env decomp; optional seasonal-time feature.
+    ap.add_argument("--sdm_cell_deg", type=float, default=0.1)     # grid cell size (deg); smaller => many more cells.
+    ap.add_argument("--sdm_holdout_mode", default="block", choices=["block","random"])  # spatial-block CV vs random cell holdout.
+    ap.add_argument("--sdm_block_deg", type=float, default=2.0)    # super-block width (deg) for spatial-block CV.
+    ap.add_argument("--sdm_channels", default="all", choices=["all","worldclim","alphaearth","soil","elev"])  # per-channel env decomposition.
+    ap.add_argument("--sdm_time", action="store_true")            # append per-cell seasonal timing (sin/cos mean-DOY + R).
+    ap.add_argument("--sdm_seeds", type=int, default=1)            # run seeds seed..seed+n-1; report mean +/- std.
+    # ---- LOOP-spacetime ENV-DERIVABLE CONSTRUCT test (rarity=range-size, ease=climate-breadth) ----
+    ap.add_argument("--env_construct", action="store_true")
+    ap.add_argument("--construct", default="rarity", choices=["rarity","ease","ns_grank","crpr"])
+    ap.add_argument("--construct_feature", default="range", choices=["range","breadth","both","nichebreadth","nichebreadth_env","allbreadth"])
+    ap.add_argument("--construct_shuffle", action="store_true")
+    ap.add_argument("--construct_only", default="")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
 
+    if a.env_construct:
+        r = env_construct(a.cache_dir, seed=a.seed, construct=a.construct,
+                          feature=a.construct_feature, holdout=a.holdout, shuffle=a.construct_shuffle, only=a.construct_only)
+        print(f"=== SPACETIME | ENV-CONSTRUCT | {r['construct']} <- {r['feature']} | shuffle={r['shuffle_null']} seed={r['seed']} ===")
+        print(f"  n_labeled_used={r['n_labeled_used']} n_classes={r['n_classes']} held_out={r['held_out']}")
+        print(f"  FLOOR acc {r['floor_acc']:.4f} bacc {r['floor_bacc']:.4f}  |  FEAT acc {r['acc']:.4f} bacc {r['bacc']:.4f}  |  Spearman(ord) {r['spearman_ord']:+.4f}")
+        print(f"  univar Spearman: {r['univar_spearman']}")
+        return r
+
+    if a.cooccur:
+        import sys as _sys; _sys.path.insert(0, '/workspace')
+        from deepearth.autoresearch.programs.spacetime.dyntargets import cooccur_routing
+        r = cooccur_routing(a.cache_dir, thresh=a.cooccur_thresh, seed=a.seed,
+                            mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file,
+                            env_channels=a.cooccur_channels)
+        print(f"=== SPACETIME encoder | mode=COOCCUR-ROUTING | mech={r['mechanism']} thresh={r['thresh']} file={r['cooccur_file']} ===")
+        print(f"  query_sp={r['n_query_sp']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
+        print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
+        print(f"  [leak-guard] {r['leak_guard']}")
+        return r
+
+    if a.sdm_presence:
+        import sys as _sys; _sys.path.insert(0, '/workspace')
+        from deepearth.autoresearch.programs.spacetime.dyntargets import sdm_presence
+        r = sdm_presence(a.cache_dir, seed=a.seed, mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file)
+        print(f"=== SPACETIME encoder | mode=SDM-PRESENCE(env->species@cell) | mech={r['mechanism']} ===")
+        print(f"  query_cells={r['n_query_cells']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
+        print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
+        print(f"  [leak-guard] {r['leak_guard']}")
+        return r
+
+    if a.sdm_hard:
+        import sys as _sys; _sys.path.insert(0, '/workspace')
+        from deepearth.autoresearch.programs.spacetime.dyntargets import sdm_presence_hard
+        import numpy as _np
+        runs = []
+        for sd in range(a.seed, a.seed + a.sdm_seeds):
+            r = sdm_presence_hard(a.cache_dir, seed=sd, mechanism=a.cooccur_mech,
+                                  cell_deg=a.sdm_cell_deg, holdout_mode=a.sdm_holdout_mode,
+                                  block_deg=a.sdm_block_deg, env_channels=a.sdm_channels,
+                                  add_time=a.sdm_time, cooccur_file=a.cooccur_file)
+            runs.append(r)
+        aps = _np.array([x['micro_AP_feat'] for x in runs])
+        gns = _np.array([x['gain_over_prevalence'] for x in runs])
+        r0 = runs[0]
+        print(f"=== SPACETIME | SDM-HARD | mech={r0['mechanism']} chans={r0['env_channels']} time={r0['add_time']} "
+              f"grid={r0['cell_deg']}deg holdout={r0['holdout_mode']}({r0['block_deg']}deg) seeds={a.sdm_seeds} ===")
+        print(f"  query_cells={r0['n_query_cells']} train_cells={r0['n_train_cells']} cand_sp={r0['n_cand_sp']} "
+              f"feat_dim={r0['feat_dim']} base_rate={r0['micro_AP_baserate']:.4f}")
+        print(f"  micro-AP(feat) {aps.mean():.4f} +/- {aps.std():.4f} | prevalence {r0['micro_AP_prevalence']:.4f} | "
+              f"GAIN {gns.mean():+.4f} +/- {gns.std():.4f} | lift {r0['lift_over_baserate']:.2f}x")
+        print(f"  [leak-guard] {r0['leak_guard']}")
+        return {'runs': runs, 'ap_mean': float(aps.mean()), 'ap_std': float(aps.std()),
+                'gain_mean': float(gns.mean()), 'gain_std': float(gns.std())}
+
     t0 = time.time()
-    need_gid = a.env or a.env_decode
+    need_gid = a.env or a.env_decode or a.pheno_env
     lat, lon, fam, n_fam, days, gid = load_obs(a.cache_dir, a.n_shards, with_time=a.forecast, with_gid=need_gid)
     fam_t = torch.tensor(fam)
 
     if a.forecast:
         # science.md rule 1: causal auto-regressive -- test = future, train = past; time is a LIVE coordinate.
         test = temporal_holdout(days, a.holdout)
+        if a.pheno_spatial:
+            # LOOP-spacetime (1) SPATIAL generalization: the mean-DOY graduation head must forecast timing in
+            # UNSEEN geography, not just future time. Swap the query set to held-out 0.5deg spatial blocks;
+            # neighbours are drawn from TRAIN (seen) blocks. Tests generalization to new places, not memorization.
+            test = spatial_holdout(lat, lon, a.holdout, seed=a.seed)
         if a.forecast_spatial:
             # Remove the same-location recall shortcut: future test set must ALSO be a held-out spatial block,
             # so raw lat/lon cannot memorize place->family. This is the true rule-1 forecast: new place, future time.
@@ -359,12 +512,18 @@ def main(argv=None):
         from deepearth.autoresearch.programs.biological.probe import load_trait as _load_trait
         vocab = np.load(Path(a.cache_dir) / "gbif_vocab.npz", allow_pickle=True)
         gidx = vocab["global_idx"]
-        emean, emedoid, npsp, estd, elo, ehi = load_env_species(a.cache_dir, extra_channels=a.env_extra)
+        emean, emedoid, npsp, estd, elo, ehi, emin, emax, etime, epheno = load_env_species(a.cache_dir, extra_channels=a.env_extra, temporal=(a.env_temporal or a.env_phenobreadth))
         ENV = emedoid if a.env_agg == "medoid" else emean
         if a.env_spread:
             ENV = np.concatenate([ENV, estd], 1)                 # mean niche center ++ per-species breadth
         if a.env_quantiles:
             ENV = np.concatenate([ENV, elo, ehi], 1)             # ++ per-species p10/p90 distribution edges
+        if a.env_extremes:
+            ENV = np.concatenate([ENV, emin, emax], 1)           # ++ per-species realized min/max envelope (literal niche boundaries)
+        if a.env_temporal:
+            ENV = np.concatenate([ENV, etime], 1)                # ++ per-species seasonal-timing (DOY circular mean + specialization R)
+        if a.env_phenobreadth:
+            ENV = np.concatenate([ENV, epheno], 1)               # ++ per-species phenological-breadth (active-month occupancy + 2nd-harmonic R2 bimodality)
         if a.env_channels == "worldclim":
             ENV = ENV[:, :19]                                     # physical climate only (WorldClim 19-band)
         elif a.env_channels == "alphaearth":
@@ -375,6 +534,21 @@ def main(argv=None):
             if a.env_channels == "worldclim": _XOBS = _XOBS[:, :19]
             elif a.env_channels == "alphaearth": _XOBS = _XOBS[:, 19:83]
         keys = ["num_soil_ph_max", "num_rain_max", "num_rain_min", "num_elev_max", "num_elev_min"]
+        if a.env_extra_traits:
+            keys = keys + ["num_soil_ph_min"]
+        if a.env_morph_traits:
+            keys = keys + ["num_height_max", "num_width_max"]
+        if a.env_biotic_trait:
+            keys = keys + ["num_lep_support"]
+        PHY = None
+        if a.env_trait_phylo:
+            # REROUTE VERDICT: load the PHYLO/text species seed (E1, the SAME BioCLIP text prior the biological
+            # graph refines) aligned to the 2141-vocab, and predict each trait from it via the identical RidgeCV
+            # + same held-out species split as the env side. Fair head-for-head: only the FEATURE source differs
+            # (env aggregates vs phylo seed), so the winner is the honest per-axis routing verdict.
+            from deepearth.autoresearch.programs.biological.probe import load_species as _load_species
+            E1, _famid, _tree, _tiprow, _gidxb = _load_species(a.cache_dir)
+            PHY = np.asarray(E1.detach().cpu()).astype(np.float32)   # [2141, seed_dim] text/tree species seed
         dt0 = time.time()
         results = {}
         rows = []
@@ -401,14 +575,33 @@ def main(argv=None):
                 rho = _mlp_spearman(ENV, Y, tr, te, dev, hidden=a.env_mlp_hidden, steps=a.steps)
             else:
                 rho = _ridge_spearman(ENV, Y, tr, te)
-            rows.append((key, rho, len(te))); results[key] = rho
+            phy_rho = float("nan")
+            if PHY is not None:
+                # phylo baseline on the SAME te/tr species split; drop any species with a non-finite seed row
+                fin = np.isfinite(PHY).all(1)
+                tr_p = tr[fin[tr]]; te_p = te[fin[te]]
+                if len(tr_p) >= 5 and len(te_p) >= 5:
+                    phy_rho = _ridge_spearman(PHY, Y, tr_p, te_p)
+                results[key + "_phylo"] = phy_rho
+            rows.append((key, rho, len(te), phy_rho)); results[key] = rho
         dt = time.time() - dt0
         vals = [r[1] for r in rows if r[1] == r[1]]
         mean_rho = float(np.mean(vals)) if vals else float("nan")
         print(f"=== SPACETIME encoder | mode=ENV->NICHE-TRAIT | agg={a.env_agg} extra={a.env_extra} head={a.env_head} env_dim={ENV.shape[1]} species_covered={int((npsp>0).sum())} ===")
-        for key, rho, nte in rows:
-            print(f"  {key:18s} spearman {rho:+.3f}   held-out_species_n={nte}")
-        print(f"  mean_spearman_over_traits {mean_rho:+.4f}   ({dt:.1f}s)")
+        if PHY is not None:
+            phyvals = [r[3] for r in rows if r[3] == r[3]]
+            phy_mean = float(np.mean(phyvals)) if phyvals else float("nan")
+            print(f"  {'axis':18s} {'env':>8s} {'phylo':>8s} {'winner':>7s}  (n)   phylo_seed_dim={PHY.shape[1]}")
+            for key, rho, nte, prho in rows:
+                win = "ENV" if (rho == rho and (prho != prho or rho >= prho)) else "PHYLO"
+                d = (rho - prho) if (rho == rho and prho == prho) else float("nan")
+                print(f"  {key:18s} {rho:+8.3f} {prho:+8.3f} {win:>7s}  n={nte}  env-phylo={d:+.3f}")
+            print(f"  mean_over_traits  env {mean_rho:+.4f}  phylo {phy_mean:+.4f}  ({dt:.1f}s)")
+            results["phylo_mean_spearman"] = phy_mean
+        else:
+            for key, rho, nte, prho in rows:
+                print(f"  {key:18s} spearman {rho:+.3f}   held-out_species_n={nte}")
+            print(f"  mean_spearman_over_traits {mean_rho:+.4f}   ({dt:.1f}s)")
         print(f"  [profile] agg={a.env_agg} extra={a.env_extra} head={a.env_head} mlp_hidden={a.env_mlp_hidden} steps={a.steps} env_dim={ENV.shape[1]}")
         results["mean_spearman"] = mean_rho
         results["env_dim"] = int(ENV.shape[1]); results["agg"] = a.env_agg
@@ -593,6 +786,626 @@ def main(argv=None):
                 "static_acc_raw": r["raw"]["static_acc"], "gnn_acc_raw": r["raw"]["gnn_acc"], "lstm_acc_raw": r["raw"]["lstm_acc"],
                 "obs": len(lat), "seconds": dt, "phenology": True, "n_te": n_te}
 
+    if a.pheno_densefield:
+        # ===== LOOP-spacetime rule-24 DENSE-FIELD interpolation (mean-DOY, empty vs occupied query cells) =====
+        # Reuses ALL phenology leak-guards: query features SPACE-ONLY (t=0 baked into raw_sp), spatial-only
+        # edge (no dt-to-query), neighbours carry OWN observed DOY. ADDITIONAL leak-guard: the query cell is
+        # excluded from its own neighbour window (contributes nothing to itself). raw features only.
+        assert a.forecast, "--pheno_densefield requires --forecast"
+        import numpy as _np
+        from deepearth.autoresearch.programs.spacetime.dyntargets import run_pheno_densefield
+        coords_ll = torch.tensor(_np.stack([lat, lon], 1).astype(_np.float32))
+        rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
+        raw_sp = torch.tensor(rn_sp)
+        SPLIT = "SPATIAL(unseen-geo)" if a.pheno_spatial else "TEMPORAL(future)"
+        r = run_pheno_densefield(raw_sp, raw_sp.shape[1], days, coords_ll, test, dev,
+                                 block=a.densefield_block, drop_cell_frac=a.densefield_drop,
+                                 K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.pheno_tol, seed=a.seed)
+        dt = time.time() - t0
+        print("=== SPACETIME | mode=PHENO-DENSEFIELD(mean-DOY, same-cell-EXCLUDED) split=%s obs=%d queries=%d block=%.2fdeg drop_cells=%.2f pool=%d K=%d ===" % (SPLIT, len(lat), r.get("n_te", 0), a.densefield_block, a.densefield_drop, r.get("pool_n", 0), a.rec_k))
+        for _lab, _key in (("ALL      ", "all"), ("EMPTY-cell", "empty"), ("OCCUPIED ", "occ")):
+            d = r.get(_key, {})
+            print("  %s n=%6d | static MAE %6.2fd  LSTM MAE %6.2fd  gain %+.2fd" % (_lab, d.get("n", 0), d.get("static_mae", float("nan")), d.get("lstm_mae", float("nan")), d.get("gain", float("nan"))))
+        print("  LEAK-GUARD: query feat SPACE-ONLY(t=0); edge SPATIAL-only(no dt); query cell EXCLUDED from own window (surrounding cells only)")
+        print("  %d obs in %.1fs" % (len(lat), dt))
+        return {"pheno_densefield": True, "split": SPLIT, "block": a.densefield_block, "drop_cell_frac": a.densefield_drop,
+                "n_te": r.get("n_te", 0), "pool_n": r.get("pool_n", 0),
+                "all": r.get("all"), "empty": r.get("empty"), "occ": r.get("occ"), "seconds": dt}
+
+    if a.pheno_env or a.pheno_disttarget or a.pheno_taxon:
+        # ============ LOOP-spacetime NEW DIRECTIONS on the mean-DOY graduation target ============
+        # All reuse phenology leak-guards: query feature SPACE-ONLY (t=0); edge = spatial offset only
+        # (no dt-to-query); neighbours carry OWN observed DOY. raw features only (Earth4D settled neutral).
+        assert a.forecast, "--pheno_env/--pheno_disttarget/--pheno_taxon require --forecast"
+        import numpy as _np
+        coords_ll = torch.tensor(_np.stack([lat, lon], 1).astype(_np.float32))
+        rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
+        raw_sp = torch.tensor(rn_sp)
+        fdim = raw_sp.shape[1]
+        SPLIT = "SPATIAL(unseen-geo)" if a.pheno_spatial else "TEMPORAL(future)"
+        res = {"obs": len(lat), "split": SPLIT}
+
+        if a.pheno_env:
+            from deepearth.autoresearch.programs.spacetime.dyntargets import run_pheno_env
+            env = load_env(a.cache_dir, gid)
+            r = run_pheno_env(raw_sp, fdim, days, coords_ll, env, test, dev,
+                              K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.pheno_tol)
+            dt = time.time() - t0
+            gain_env = r["static_mae"] - r["neighbourenv_mae"]
+            gain_nbr = r["static_mae"] - r["neighbour_mae"]
+            gain_only = r["static_mae"] - r["envonly_mae"]
+            env_lift = r["neighbour_mae"] - r["neighbourenv_mae"]
+            print("=== SPACETIME | mode=PHENO-ENV(mean-DOY) split=%s obs=%d queries=%d env_dim=%d tol=+/-%.0fd K=%d ===" % (SPLIT, len(lat), r["n_te"], r["env_dim"], a.pheno_tol, a.rec_k))
+            print("  static           MAE %6.2fd acc %.4f  (no propagation, no env floor)" % (r["static_mae"], r["static_acc"]))
+            print("  neighbour-only   MAE %6.2fd acc %.4f  gain %+.2fd" % (r["neighbour_mae"], r["neighbour_acc"], gain_nbr))
+            print("  neighbour+env    MAE %6.2fd acc %.4f  gain %+.2fd  (env-lift-over-neighbour %+.2fd)" % (r["neighbourenv_mae"], r["neighbourenv_acc"], gain_env, env_lift))
+            print("  env-only(static) MAE %6.2fd acc %.4f  gain %+.2fd" % (r["envonly_mae"], r["envonly_acc"], gain_only))
+            print("  %d obs in %.1fs" % (len(lat), dt))
+            res.update({"pheno_env": True, "n_te": r["n_te"], "env_dim": r["env_dim"],
+                    "static_mae": r["static_mae"], "neighbour_mae": r["neighbour_mae"],
+                    "neighbourenv_mae": r["neighbourenv_mae"], "envonly_mae": r["envonly_mae"],
+                    "gain_neighbour": gain_nbr, "gain_neighbourenv": gain_env, "gain_envonly": gain_only,
+                    "env_lift_over_neighbour": env_lift, "seconds": dt})
+            return res
+
+        if a.pheno_disttarget:
+            from deepearth.autoresearch.programs.spacetime.dyntargets import run_pheno_disttarget
+            r = run_pheno_disttarget(raw_sp, fdim, days, coords_ll, test, dev, target=a.pheno_disttarget,
+                                     K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol)
+            dt = time.time() - t0
+            gnn_gain = r["static_mae"] - r["gnn_mae"]; lstm_gain = r["static_mae"] - r["lstm_mae"]
+            print("=== SPACETIME | mode=PHENO-DISTTARGET(%s) split=%s obs=%d queries=%d tol=+/-%.0fd K=%d ===" % (a.pheno_disttarget, SPLIT, len(lat), r["n_te"], a.pheno_tol, a.rec_k))
+            print("  static MAE %6.2fd acc %.4f -> GNN MAE %6.2fd (gain %+.2fd) | LSTM MAE %6.2fd (gain %+.2fd)" % (r["static_mae"], r["static_acc"], r["gnn_mae"], gnn_gain, r["lstm_mae"], lstm_gain))
+            print("  %d obs in %.1fs" % (len(lat), dt))
+            res.update({"pheno_disttarget": a.pheno_disttarget, "n_te": r["n_te"],
+                    "static_mae": r["static_mae"], "gnn_mae": r["gnn_mae"], "lstm_mae": r["lstm_mae"],
+                    "gnn_gain": gnn_gain, "lstm_gain": lstm_gain, "seconds": dt})
+            return res
+
+        if a.pheno_taxon:
+            from deepearth.autoresearch.programs.spacetime.dyntargets import run_pheno_by_taxon
+            import csv as _csv
+            from pathlib import Path as _P
+            rows = list(_csv.DictReader(open(_P(a.cache_dir) / "derived/species_index.csv")))
+            vocab = _np.load(_P(a.cache_dir) / "gbif_vocab.npz", allow_pickle=True)["global_idx"]
+            col = a.pheno_taxon
+            taxon_str = _np.array([rows[i][col] for i in vocab])
+            names, gid_of_species = _np.unique(taxon_str, return_inverse=True)
+            sp_all = load_species(a.cache_dir, a.n_shards)
+            group = gid_of_species[sp_all].astype(_np.int64)
+            r = run_pheno_by_taxon(raw_sp, fdim, days, coords_ll, group, test, dev,
+                                   K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.pheno_tol)
+            dt = time.time() - t0
+            print("=== SPACETIME | mode=PHENO-BY-TAXON(%s) split=%s obs=%d queries=%d tol=+/-%.0fd K=%d ===" % (col, SPLIT, len(lat), r["n_te"], a.pheno_tol, a.rec_k))
+            for row in r["groups"][:15]:
+                print("  %-22s n_te %5d | static %6.2fd -> LSTM %6.2fd  gain %+.2fd" % (str(names[row["group"]])[:22], row["n_te"], row["static_mae"], row["lstm_mae"], row["gain"]))
+            print("  %d obs in %.1fs" % (len(lat), dt))
+            res.update({"pheno_taxon": col, "n_te": r["n_te"],
+                    "groups": [{"name": str(names[row["group"]]), "n_te": row["n_te"], "static_mae": row["static_mae"], "lstm_mae": row["lstm_mae"], "gain": row["gain"]} for row in r["groups"]],
+                    "seconds": dt})
+            return res
+
+    if a.ar_rollout:
+        # ================= LOOP-spacetime: rule-1 CAUSAL AUTOREGRESSIVE ROLLOUT ==========================
+        # The forecast head so far is DIRECT single-shot lead prediction. Rule 1 demands a causal AR model:
+        # predict ONE Delta-step ahead, FEED the prediction back as the query's OWN current-state, and roll
+        # forward to the final horizon. Compare absR2 of the ROLLED prediction vs a single-shot DIRECT
+        # predictor at the SAME final horizon. Strong LEVEL targets only (community-activity / abundance).
+        #
+        # LEAK-GUARDS (identical discipline to breadth/abundance):
+        #   * query positional feature is SPACE-ONLY (t stripped); the query timestamp is never a feature.
+        #   * edge carries ONLY the spatial offset (dlat,dlon) -- no dt-to-query.
+        #   * neighbour state = each neighbour's OWN TRAILING-PAST activity over [d-win, d] (lead=0): purely
+        #     historical, observed <= the neighbour's own day; NEVER anything relative to the query or future.
+        #   * the fed-back value is the model's OWN prediction (seeded 0), so the rollout consumes only its
+        #     predictions + past-window features. A separate query-state channel carries it (1 extra dim).
+        #   * time-only static smoke test at the FINAL horizon reported for every run.
+        assert a.forecast, "--ar_rollout requires --forecast"
+        import numpy as _np
+        from deepearth.autoresearch.programs.spacetime.dyntargets import (
+            _windows, _assemble, _reg_skill, _community_activity_target, _abundance_target, _richness_target)
+        lat_a = lat.astype(_np.float32); lon_a = lon.astype(_np.float32)
+        rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
+        raw_feat = torch.tensor(rn_sp)                                 # SPACE-ONLY query feature
+        fdim = raw_feat.shape[1]; K = a.rec_k; H = a.rec_hidden; out_dim = 1
+        win = a.abund_win                                              # overlap regime: win = step + 180 (set by caller)
+        n_steps = max(1, int(round(a.ar_final / a.ar_step)))
+        leads = [float(j * a.ar_step) for j in range(1, n_steps + 1)]  # intermediate + final leads
+        assert abs(leads[-1] - a.ar_final) < 1e-6, f"ar_final {a.ar_final} not a multiple of ar_step {a.ar_step}"
+        _sp_arr = load_species(a.cache_dir, a.n_shards) if a.ar_target == "richness" else None
+
+        def _tgt_at(lead):
+            if a.ar_target == "abundance":
+                return _abundance_target(lat_a, lon_a, days, win=win, lead=lead, delta=False).astype(_np.float32)
+            if a.ar_target == "richness":
+                return _richness_target(lat_a, lon_a, days, _sp_arr, win=win, lead=lead)[0].astype(_np.float32)
+            return _community_activity_target(lat_a, lon_a, days, win=win, lead=lead)[0].astype(_np.float32)
+
+        # neighbour PAST state = its OWN target-lead activity (SAME convention as the settled breadth/direct
+        # baseline, whose leak guard passes): each neighbour carries only its own observed quantity, never
+        # anything relative to the query. This makes AR-vs-direct a fair matched comparison; the ONLY AR
+        # addition is the fed-back query-state channel.
+        past_state = _tgt_at(a.ar_final).reshape(-1, 1).astype(_np.float32)
+        S = past_state.shape[1]
+
+        _test = test
+        tr_idx = _np.where(~_test)[0]; te_idx = _np.where(_test)[0]
+        _rng = _np.random.default_rng(0)
+        q_tr = tr_idx if len(tr_idx) <= 6000 else _rng.choice(tr_idx, 6000, replace=False)
+        g_tr, v_tr = _windows(lat_a, lon_a, days, q_tr, tr_idx, K)
+        g_te, v_te = _windows(lat_a, lon_a, days, te_idx, tr_idx, K)
+        # assemble the neighbour tensors ONCE (windows are lead-independent: causal past<=d); only the target
+        # scalar changes per lead. Use a dummy target to grab the leak-safe (nfeat,nstate,edge,mask,len) tensors.
+        dummy = _np.zeros(len(lat_a), _np.float32)
+        tr0 = _assemble(raw_feat, past_state, days, lat_a, lon_a, q_tr, g_tr, v_tr, dummy, K, out_dim)
+        te0 = _assemble(raw_feat, past_state, days, lat_a, lon_a, te_idx, g_te, v_te, dummy, K, out_dim)
+        _to = lambda ts: [t.to(dev) for t in ts]
+        nftr, nstr, qftr, etr, mtr, ltr, _, _ = _to(tr0)
+        nfte, nste, qfte, ete, mte, lte, _, _ = _to(te0)
+        # per-lead targets aligned to the SAME ok-masked rows _assemble kept (ok = window has >=1 valid nb)
+        ok_tr = torch.tensor(v_tr).any(1).numpy(); ok_te = torch.tensor(v_te).any(1).numpy()
+        Ytr = {ld: torch.tensor(_tgt_at(ld)[q_tr][ok_tr]).unsqueeze(-1).to(dev) for ld in leads}
+        Yte = {ld: torch.tensor(_tgt_at(ld)[te_idx][ok_te]).unsqueeze(-1).to(dev) for ld in leads}
+        Btr = int(nftr.shape[0]); n_te = int(nfte.shape[0])
+        if Btr == 0 or n_te == 0:
+            print("=== ar_rollout: EMPTY window set, abort ==="); return {"ar_rollout": True, "n_te": n_te}
+        bs = min(2048, Btr)
+
+        # single-step propagator g: (neighbour window, edge, query-prev-state ŷ) -> level at this step's lead.
+        # The +1 input dim is the fed-back query state channel (0 at step 1, then the model's own prediction).
+        class _ARStep(nn.Module):
+            def __init__(s):
+                super().__init__()
+                s.lstm = nn.LSTM(fdim + S + 2, H, num_layers=2, batch_first=True)
+                s.head = nn.Sequential(nn.Linear(H + 1, H), nn.GELU(), nn.Linear(H, out_dim))
+            def forward(s, nf, ns, edge, lengths, qprev):
+                x = torch.cat([nf, ns, edge], -1)
+                packed = nn.utils.rnn.pack_padded_sequence(x, lengths.cpu().clamp(min=1),
+                                                           batch_first=True, enforce_sorted=False)
+                _, (h, _) = s.lstm(packed)
+                return s.head(torch.cat([h[-1], qprev], -1))
+        # direct single-shot: identical capacity, no fed-back channel (qprev fixed 0), trained ONLY on final lead
+        class _Direct(nn.Module):
+            def __init__(s):
+                super().__init__()
+                s.lstm = nn.LSTM(fdim + S + 2, H, num_layers=2, batch_first=True)
+                s.head = nn.Sequential(nn.Linear(H, H), nn.GELU(), nn.Linear(H, out_dim))
+            def forward(s, nf, ns, edge, lengths):
+                x = torch.cat([nf, ns, edge], -1)
+                packed = nn.utils.rnn.pack_padded_sequence(x, lengths.cpu().clamp(min=1),
+                                                           batch_first=True, enforce_sorted=False)
+                _, (h, _) = s.lstm(packed)
+                return s.head(h[-1])
+
+        loss_fn = lambda p, y: F.smooth_l1_loss(p, y)
+        # ---- train the AR step model: shared weights over ALL steps; teacher-forced qprev = prev-lead target,
+        #      plus scheduled feed-back of the model's own prediction (0.5 mix) so eval-time rollout matches.
+        arm = _ARStep().to(dev); opt = torch.optim.Adam(arm.parameters(), lr=a.lr); arm.train()
+        for it in range(a.steps):
+            sidx = torch.randint(0, Btr, (bs,), device=dev)
+            qprev = torch.zeros(bs, 1, device=dev)
+            loss = 0.0
+            for j, ld in enumerate(leads):
+                pred = arm(nftr[sidx], nstr[sidx], etr[sidx], ltr[sidx], qprev)
+                loss = loss + loss_fn(pred, Ytr[ld][sidx])
+                # feed BACK: mix model prediction with teacher (prev-lead truth) -> AR consistency w/o drift
+                tf = Ytr[ld][sidx]
+                qprev = (0.5 * pred.detach() + 0.5 * tf).detach()
+            opt.zero_grad(); (loss / len(leads)).backward(); opt.step()
+        arm.eval()
+        # ---- ROLLOUT at eval: seed qprev=0, feed the model's OWN prediction forward. NO future obs consumed.
+        roll_r2 = {}; qprev = torch.zeros(n_te, 1, device=dev)
+        with torch.no_grad():
+            for ld in leads:
+                pred = arm(nfte, nste, ete, lte, qprev)
+                roll_r2[ld] = _reg_skill(pred, Yte[ld], Yte[ld])
+                qprev = pred                                          # pure AR: its own prediction only
+        # ---- DIRECT single-shot at the final horizon (matched capacity, one prediction) ----
+        dm = _Direct().to(dev); opt = torch.optim.Adam(dm.parameters(), lr=a.lr); dm.train()
+        yfin_tr = Ytr[leads[-1]]
+        for it in range(a.steps):
+            sidx = torch.randint(0, Btr, (bs,), device=dev)
+            loss = loss_fn(dm(nftr[sidx], nstr[sidx], etr[sidx], ltr[sidx]), yfin_tr[sidx])
+            opt.zero_grad(); loss.backward(); opt.step()
+        dm.eval()
+        with torch.no_grad():
+            direct_fin = _reg_skill(dm(nfte, nste, ete, lte), Yte[leads[-1]], Yte[leads[-1]])
+
+        # ---- STATIC FLOOR at final horizon (query space-only feat, no propagation) for dR2 context ----
+        class _StaticH(nn.Module):
+            def __init__(s):
+                super().__init__(); s.net = nn.Sequential(nn.Linear(fdim, H), nn.GELU(), nn.Linear(H, out_dim))
+            def forward(s, qf): return s.net(qf)
+        sh = _StaticH().to(dev); opt = torch.optim.Adam(sh.parameters(), lr=a.lr); sh.train()
+        for _ in range(a.steps):
+            sidx = torch.randint(0, Btr, (bs,), device=dev)
+            loss = loss_fn(sh(qftr[sidx]), yfin_tr[sidx]); opt.zero_grad(); loss.backward(); opt.step()
+        sh.eval()
+        with torch.no_grad(): static_fin = _reg_skill(sh(qfte), Yte[leads[-1]], Yte[leads[-1]])
+
+        # ---- LEAK-GUARD: time-only static head at the FINAL horizon must NOT solve it ----
+        tnorm = ((days - days.min()) / (days.max() - days.min() + 1e-9)).astype(_np.float32)
+        tq_tr = torch.tensor(tnorm[q_tr][ok_tr]).unsqueeze(-1).to(dev)[: Btr]
+        tq_te = torch.tensor(tnorm[te_idx][ok_te]).unsqueeze(-1).to(dev)[: n_te]
+        yl_tr = Ytr[leads[-1]][: tq_tr.shape[0]]; yl_te = Yte[leads[-1]][: tq_te.shape[0]]
+        class _TimeOnly(nn.Module):
+            def __init__(s):
+                super().__init__(); s.net = nn.Sequential(nn.Linear(1, H), nn.GELU(), nn.Linear(H, 1))
+            def forward(s, x): return s.net(x)
+        tom = _TimeOnly().to(dev); opt = torch.optim.Adam(tom.parameters(), lr=a.lr)
+        for _ in range(a.steps):
+            sidx = torch.randint(0, tq_tr.shape[0], (min(2048, tq_tr.shape[0]),), device=dev)
+            loss = loss_fn(tom(tq_tr[sidx]), yl_tr[sidx]); opt.zero_grad(); loss.backward(); opt.step()
+        tom.eval()
+        with torch.no_grad(): leak_mae, leak_r2 = _reg_skill(tom(tq_te), yl_te, yl_te)
+
+        print(f"=== SPACETIME AR-ROLLOUT | target={a.ar_target} | raw PE | obs={len(lat_a)} q={n_te} K={K} win={win:.0f}d step={a.ar_step:.0f}d final={a.ar_final:.0f}d n_steps={n_steps} Sdim={S} ===")
+        for ld in leads:
+            m, r2 = roll_r2[ld]
+            tag = " <FINAL>" if abs(ld - leads[-1]) < 1e-6 else ""
+            print(f"  rollout  lead {ld:6.0f}d | MAE {m:7.4f}  absR2 {r2:+.4f}{tag}")
+        dmae, dr2 = direct_fin
+        rmae, rr2 = roll_r2[leads[-1]]
+        smae, sr2 = static_fin
+        print(f"  DIRECT   lead {leads[-1]:6.0f}d | MAE {dmae:7.4f}  absR2 {dr2:+.4f}  (single-shot, matched horizon; dR2 vs static {dr2 - sr2:+.4f})")
+        print(f"  STATIC   lead {leads[-1]:6.0f}d | MAE {smae:7.4f}  absR2 {sr2:+.4f}  (no-propagation floor)")
+        print(f"  AR final dR2 vs static           | {rr2 - sr2:+.4f}")
+        print(f"  AR - DIRECT (final absR2)        | {rr2 - dr2:+.4f}   (POSITIVE = rollout holds skill better)")
+        print(f"  LEAK-GUARD time-only (final)     | MAE {leak_mae:7.4f}  absR2 {leak_r2:+.4f}  (must be ~0/neg = no time leak)")
+        dt = time.time() - t0
+        print(f"  [profile] q={n_te} K={K} hidden={H} steps={a.steps} n_steps={n_steps}")
+        print(f"  {len(lat_a)} obs, {a.steps}-step AR-rollout in {dt:.1f}s")
+        return {"ar_rollout": True, "target": a.ar_target, "final_lead": leads[-1], "step": a.ar_step,
+                "n_steps": n_steps, "win": win, "K": K, "n_te": n_te,
+                "rollout_absR2": {ld: roll_r2[ld][1] for ld in leads},
+                "direct_final_absR2": dr2, "static_final_absR2": sr2,
+                "ar_minus_direct": rr2 - dr2, "ar_dR2_vs_static": rr2 - sr2,
+                "leak_absR2": leak_r2, "seconds": dt}
+
+    if a.ar_cond_lead:
+        # ================= PIVOT: CONTINUOUS-LEAD CONDITIONING ===========================================
+        # Feed the target lead as an INPUT so ONE model spans all horizons; compare vs per-lead DIRECT
+        # specialists at each horizon. Same leak-guards (space-only query feat, spatial-only edge, neighbour
+        # OWN trailing-past state). The lead scalar is a MODEL CONTROL, not an observation -> no leak (it says
+        # WHICH horizon to predict, carries no future data). Time-only smoke test still reported.
+        assert a.forecast, "--ar_cond_lead requires --forecast"
+        import numpy as _np
+        from deepearth.autoresearch.programs.spacetime.dyntargets import (
+            _windows, _assemble, _reg_skill, _community_activity_target)
+        lat_a = lat.astype(_np.float32); lon_a = lon.astype(_np.float32)
+        rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
+        raw_feat = torch.tensor(rn_sp); fdim = raw_feat.shape[1]
+        K = a.rec_k; H = a.rec_hidden; out_dim = 1; win = a.abund_win
+        n_steps = max(1, int(round(a.ar_final / a.ar_step)))
+        leads = [float(j * a.ar_step) for j in range(1, n_steps + 1)]
+        past_state = _community_activity_target(lat_a, lon_a, days, win=win, lead=0.0)[0].reshape(-1, 1).astype(_np.float32)
+        S = past_state.shape[1]
+        _test = test
+        tr_idx = _np.where(~_test)[0]; te_idx = _np.where(_test)[0]
+        _rng = _np.random.default_rng(0)
+        q_tr = tr_idx if len(tr_idx) <= 6000 else _rng.choice(tr_idx, 6000, replace=False)
+        g_tr, v_tr = _windows(lat_a, lon_a, days, q_tr, tr_idx, K)
+        g_te, v_te = _windows(lat_a, lon_a, days, te_idx, tr_idx, K)
+        dummy = _np.zeros(len(lat_a), _np.float32)
+        tr0 = _assemble(raw_feat, past_state, days, lat_a, lon_a, q_tr, g_tr, v_tr, dummy, K, out_dim)
+        te0 = _assemble(raw_feat, past_state, days, lat_a, lon_a, te_idx, g_te, v_te, dummy, K, out_dim)
+        _to = lambda ts: [t.to(dev) for t in ts]
+        nftr, nstr, qftr, etr, mtr, ltr, _, _ = _to(tr0)
+        nfte, nste, qfte, ete, mte, lte, _, _ = _to(te0)
+        ok_tr = torch.tensor(v_tr).any(1).numpy(); ok_te = torch.tensor(v_te).any(1).numpy()
+        Ytr = {ld: torch.tensor(_community_activity_target(lat_a, lon_a, days, win=win, lead=ld)[0][q_tr][ok_tr]).unsqueeze(-1).to(dev) for ld in leads}
+        Yte = {ld: torch.tensor(_community_activity_target(lat_a, lon_a, days, win=win, lead=ld)[0][te_idx][ok_te]).unsqueeze(-1).to(dev) for ld in leads}
+        Btr = int(nftr.shape[0]); n_te = int(nfte.shape[0])
+        if Btr == 0 or n_te == 0:
+            print("=== ar_cond_lead: EMPTY window set, abort ==="); return {"ar_cond_lead": True, "n_te": n_te}
+        bs = min(2048, Btr); lscale = float(max(leads))
+
+        class _CondLead(nn.Module):
+            def __init__(s):
+                super().__init__()
+                s.lstm = nn.LSTM(fdim + S + 2, H, num_layers=2, batch_first=True)
+                s.head = nn.Sequential(nn.Linear(H + 1, H), nn.GELU(), nn.Linear(H, out_dim))
+            def forward(s, nf, ns, edge, lengths, lead_scalar):
+                x = torch.cat([nf, ns, edge], -1)
+                packed = nn.utils.rnn.pack_padded_sequence(x, lengths.cpu().clamp(min=1),
+                                                           batch_first=True, enforce_sorted=False)
+                _, (h, _) = s.lstm(packed)
+                return s.head(torch.cat([h[-1], lead_scalar], -1))
+        class _Direct(nn.Module):
+            def __init__(s):
+                super().__init__()
+                s.lstm = nn.LSTM(fdim + S + 2, H, num_layers=2, batch_first=True)
+                s.head = nn.Sequential(nn.Linear(H, H), nn.GELU(), nn.Linear(H, out_dim))
+            def forward(s, nf, ns, edge, lengths):
+                x = torch.cat([nf, ns, edge], -1)
+                packed = nn.utils.rnn.pack_padded_sequence(x, lengths.cpu().clamp(min=1),
+                                                           batch_first=True, enforce_sorted=False)
+                _, (h, _) = s.lstm(packed)
+                return s.head(h[-1])
+        loss_fn = lambda p, y: F.smooth_l1_loss(p, y)
+        # one conditioned model over ALL leads (lead sampled each step)
+        cm = _CondLead().to(dev); opt = torch.optim.Adam(cm.parameters(), lr=a.lr); cm.train()
+        for it in range(a.steps):
+            ld = leads[torch.randint(0, len(leads), (1,)).item()]
+            sidx = torch.randint(0, Btr, (bs,), device=dev)
+            ls = torch.full((bs, 1), ld / lscale, device=dev)
+            loss = loss_fn(cm(nftr[sidx], nstr[sidx], etr[sidx], ltr[sidx], ls), Ytr[ld][sidx])
+            opt.zero_grad(); loss.backward(); opt.step()
+        cm.eval()
+        cond_r2 = {}
+        with torch.no_grad():
+            for ld in leads:
+                ls = torch.full((n_te, 1), ld / lscale, device=dev)
+                cond_r2[ld] = _reg_skill(cm(nfte, nste, ete, lte, ls), Yte[ld], Yte[ld])
+        # per-lead DIRECT specialists
+        spec_r2 = {}
+        for ld in leads:
+            dm = _Direct().to(dev); opt = torch.optim.Adam(dm.parameters(), lr=a.lr); dm.train()
+            for it in range(a.steps):
+                sidx = torch.randint(0, Btr, (bs,), device=dev)
+                loss = loss_fn(dm(nftr[sidx], nstr[sidx], etr[sidx], ltr[sidx]), Ytr[ld][sidx])
+                opt.zero_grad(); loss.backward(); opt.step()
+            dm.eval()
+            with torch.no_grad(): spec_r2[ld] = _reg_skill(dm(nfte, nste, ete, lte), Yte[ld], Yte[ld])
+
+        print(f"=== SPACETIME CONTINUOUS-LEAD conditioning | community-activity | raw PE | obs={len(lat_a)} q={n_te} K={K} win={win:.0f}d leads={[int(l) for l in leads]} ===")
+        for ld in leads:
+            cm_, cr2 = cond_r2[ld]; sm_, sr2 = spec_r2[ld]
+            print(f"  lead {ld:6.0f}d | 1-model-cond absR2 {cr2:+.4f}  vs  specialist absR2 {sr2:+.4f}  (cond-spec {cr2 - sr2:+.4f})")
+        mean_gap = float(_np.mean([cond_r2[ld][1] - spec_r2[ld][1] for ld in leads]))
+        print(f"  mean (cond - specialist) absR2 over leads | {mean_gap:+.4f}   (>=0 = one model matches per-lead specialists)")
+        dt = time.time() - t0
+        print(f"  [profile] q={n_te} K={K} hidden={H} steps={a.steps} n_leads={len(leads)}")
+        print(f"  {len(lat_a)} obs, {a.steps}-step cond-lead in {dt:.1f}s")
+        return {"ar_cond_lead": True, "leads": leads, "win": win, "K": K, "n_te": n_te,
+                "cond_absR2": {ld: cond_r2[ld][1] for ld in leads},
+                "spec_absR2": {ld: spec_r2[ld][1] for ld in leads},
+                "mean_cond_minus_spec": mean_gap, "seconds": dt}
+
+    if a.breadth_target:
+        # LOOP-spacetime-target-breadth: reuse the settled propagator scaffold (space-only query feat,
+        # SPATIAL-only edge, neighbour carries OWN past state) but swap the dynamic LEVEL target. raw PE only,
+        # deepLSTM-2L propagator, K<=32. Reports propagator absR2 vs static-floor absR2. Same leak-guards.
+        assert a.forecast, "--breadth_target requires --forecast"
+        import numpy as _np
+        from deepearth.autoresearch.programs.spacetime.dyntargets import (
+            _windows, _assemble, _reg_skill, _occupancy_target, _richness_target, _community_activity_target)
+        coords_ll = torch.tensor(_np.stack([lat, lon], 1).astype(_np.float32))
+        lat_a = coords_ll[:, 0].numpy(); lon_a = coords_ll[:, 1].numpy()
+        rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
+        raw_feat = torch.tensor(rn_sp)                                 # SPACE-ONLY query feature (t stripped)
+        fdim = raw_feat.shape[1]
+        sp_arr = load_species(a.cache_dir, a.n_shards)
+        win, lead = a.abund_win, a.abund_lead
+        if a.breadth_target == "occupancy":
+            tgt, past = _occupancy_target(lat_a, lon_a, days, sp_arr, win=win, lead=lead, sub=a.breadth_sub)
+            _tn = "OCCUPANCY-LEVEL(detect-frac)"
+        elif a.breadth_target == "richness":
+            tgt, past = _richness_target(lat_a, lon_a, days, sp_arr, win=win, lead=lead)
+            _tn = "COMMUNITY-RICHNESS-LEVEL(log-nspp)"
+        else:
+            tgt, past = _community_activity_target(lat_a, lon_a, days, win=win, lead=lead)
+            _tn = "COMMUNITY-ACTIVITY-LEVEL(log-count-all)"
+        tgt = tgt.astype(_np.float32)
+        nstate = past.astype(_np.float32) if past is not None else tgt.reshape(-1, 1).astype(_np.float32)
+        S = nstate.shape[1]; K = a.rec_k; H = a.rec_hidden; out_dim = 1
+
+        _test = test
+        tr_idx = _np.where(~_test)[0]; te_idx = _np.where(_test)[0]
+        _rng = _np.random.default_rng(0)
+        q_tr = tr_idx if len(tr_idx) <= 6000 else _rng.choice(tr_idx, 6000, replace=False)
+        g_tr, v_tr = _windows(lat_a, lon_a, days, q_tr, tr_idx, K)
+        g_te, v_te = _windows(lat_a, lon_a, days, te_idx, tr_idx, K)
+        tr = _assemble(raw_feat, nstate, days, lat_a, lon_a, q_tr, g_tr, v_tr, tgt, K, out_dim)
+        te = _assemble(raw_feat, nstate, days, lat_a, lon_a, te_idx, g_te, v_te, tgt, K, out_dim)
+        _to = lambda ts: [t.to(dev) for t in ts]
+        nftr, nstr, qftr, etr, mtr, ltr, ytr, _ = _to(tr)
+        nfte, nste, qfte, ete, mte, lte, yte, _ = _to(te)
+        n_te = int(nfte.shape[0]); Btr = int(nftr.shape[0])
+        if Btr == 0 or n_te == 0:
+            print("=== breadth_target: EMPTY window set, abort ==="); return {"breadth_target": a.breadth_target, "n_te": n_te}
+        bs = min(2048, Btr)
+
+        class _StaticH(nn.Module):
+            def __init__(s):
+                super().__init__(); s.net = nn.Sequential(nn.Linear(fdim, H), nn.GELU(), nn.Linear(H, out_dim))
+            def forward(s, qf): return s.net(qf)
+
+        class _DeepLSTM(nn.Module):
+            def __init__(s, layers):
+                super().__init__()
+                s.lstm = nn.LSTM(fdim + S + 2, H, num_layers=layers, batch_first=True)
+                s.head = nn.Linear(H, out_dim)
+            def forward(s, nf, ns, edge, lengths):
+                x = torch.cat([nf, ns, edge], -1)
+                packed = nn.utils.rnn.pack_padded_sequence(x, lengths.cpu().clamp(min=1),
+                                                           batch_first=True, enforce_sorted=False)
+                _, (h, _) = s.lstm(packed)
+                return s.head(h[-1])
+
+        loss_fn = lambda p, y: F.smooth_l1_loss(p, y)
+        def _train(model, fwd):
+            opt = torch.optim.Adam(model.parameters(), lr=a.lr)
+            model.train()
+            for _ in range(a.steps):
+                sidx = torch.randint(0, Btr, (bs,), device=dev)
+                loss = loss_fn(fwd(model, sidx), ytr[sidx])
+                opt.zero_grad(); loss.backward(); opt.step()
+            model.eval()
+
+        results = {}
+        sh = _StaticH().to(dev); _train(sh, lambda m, s: m(qftr[s]))
+        with torch.no_grad(): results["static"] = _reg_skill(sh(qfte), yte, yte)
+        lstm = _DeepLSTM(2).to(dev)
+        _train(lstm, lambda m, s: m(nftr[s], nstr[s], etr[s], ltr[s]))
+        with torch.no_grad(): results["lstm2"] = _reg_skill(lstm(nfte, nste, ete, lte), yte, yte)
+
+        # LEAK-GUARD SMOKE TEST: a static head reading ONLY the query's own normalized time coord must NOT
+        # solve it. Low absR2 => the propagator result is not a time-arithmetic leak. Uses the SAME ok-masked
+        # test rows so it is directly comparable to the propagator absR2 above.
+        tnorm = ((days - days.min()) / (days.max() - days.min() + 1e-9)).astype(_np.float32)
+        okmask_te = torch.tensor(v_te).any(1).numpy()
+        tq_te = torch.tensor(tnorm[te_idx][okmask_te]).unsqueeze(-1).to(dev)
+        okmask_tr = torch.tensor(v_tr).any(1).numpy()
+        tq_tr = torch.tensor(tnorm[q_tr][okmask_tr]).unsqueeze(-1).to(dev)
+        n_lk = min(tq_tr.shape[0], ytr.shape[0]); tq_tr = tq_tr[:n_lk]; yl_tr = ytr[:n_lk]
+        n_lke = min(tq_te.shape[0], yte.shape[0]); tq_te = tq_te[:n_lke]; yl_te = yte[:n_lke]
+        class _TimeOnly(nn.Module):
+            def __init__(s):
+                super().__init__(); s.net = nn.Sequential(nn.Linear(1, H), nn.GELU(), nn.Linear(H, 1))
+            def forward(s, x): return s.net(x)
+        to_m = _TimeOnly().to(dev); opt = torch.optim.Adam(to_m.parameters(), lr=a.lr)
+        for _ in range(a.steps):
+            sidx = torch.randint(0, tq_tr.shape[0], (min(2048, tq_tr.shape[0]),), device=dev)
+            loss = loss_fn(to_m(tq_tr[sidx]), yl_tr[sidx]); opt.zero_grad(); loss.backward(); opt.step()
+        to_m.eval()
+        with torch.no_grad(): leak_mae, leak_r2 = _reg_skill(to_m(tq_te), yl_te, yl_te)
+
+        print(f"=== SPACETIME breadth probe | {_tn} | raw PE | obs={len(lat_a)} q={n_te} K={K} win={win:.0f}d lead={lead:.0f}d Sdim={S} ===")
+        s_mae, s_r2 = results["static"]; l_mae, l_r2 = results["lstm2"]
+        print(f"  static-floor        | MAE {s_mae:7.4f}  absR2 {s_r2:+.4f}")
+        print(f"  deepLSTM-2L         | MAE {l_mae:7.4f}  absR2 {l_r2:+.4f}  (dR2 vs static {l_r2 - s_r2:+.4f})")
+        print(f"  LEAK-GUARD time-only| MAE {leak_mae:7.4f}  absR2 {leak_r2:+.4f}  (must be ~0/negative = no time leak)")
+        dt = time.time() - t0
+        print(f"  [profile] q={n_te} K={K} hidden={H} steps={a.steps}")
+        print(f"  {len(lat_a)} obs, {a.steps}-step breadth in {dt:.1f}s")
+        return {"breadth_target": a.breadth_target, "target": _tn, "static_absR2": s_r2,
+                "lstm2_absR2": l_r2, "leak_absR2": leak_r2, "win": win, "lead": lead, "K": K,
+                "n_te": n_te, "seconds": dt}
+
+    if a.abund_prop_arch:
+        # ensure space-only query feature + coords are available (mirror the first_arrival/abundance setup)
+        import numpy as _np0
+        _rn = _np0.stack([lat / 90.0, lon / 180.0], 1).astype(_np0.float32)
+        raw_sp = torch.tensor(_rn)
+        coords_ll = torch.tensor(_np0.stack([lat, lon], 1).astype(_np0.float32))
+        # LOOP-spacetime propagator-ARCHITECTURE probe on the LEVEL abundance target (settled forecastable:
+        # LSTM abs R2 up to +0.76). ONE structural change: swap the causal propagator head. Reuse dyntargets'
+        # leak-guarded window builder + target; define deeper/attention heads LOCALLY (additive, probe-only).
+        assert a.forecast, "--abund_prop_arch requires --forecast"
+        import numpy as _np
+        from deepearth.autoresearch.programs.spacetime.dyntargets import (
+            _abundance_target, _windows, _assemble, _reg_skill, doy_of, doy_to_vec)
+        lat_a = coords_ll[:, 0].numpy(); lon_a = coords_ll[:, 1].numpy()
+        raw_feat = raw_sp                                              # SPACE-ONLY query feature (t stripped)
+        fdim = raw_feat.shape[1]
+        tgt = _abundance_target(lat_a, lon_a, days, win=a.abund_win, lead=a.abund_lead, delta=a.abund_delta)
+        # neighbour PAST state: abundance-only, or joint multivariate [abund || DOY sin,cos || occupancy bit]
+        if a.abund_multivar:
+            doyv = doy_to_vec(doy_of(days))                           # [N,2] each neighbour's own past DOY phase
+            occ = (tgt > 0).astype(_np.float32).reshape(-1, 1)        # past occupancy (was cell active)
+            nstate = _np.concatenate([tgt.reshape(-1, 1), doyv, occ], 1).astype(_np.float32)
+        else:
+            nstate = tgt.reshape(-1, 1).astype(_np.float32)
+        S = nstate.shape[1]; K = a.rec_k; H = a.rec_hidden; out_dim = 1
+
+        # build the SAME leak-guarded train/test window tensors used by dyntargets._fit_eval
+        _test = test
+        tr_idx = _np.where(~_test)[0]; te_idx = _np.where(_test)[0]
+        _rng = _np.random.default_rng(0)
+        q_tr = tr_idx if len(tr_idx) <= 6000 else _rng.choice(tr_idx, 6000, replace=False)
+        g_tr, v_tr = _windows(lat_a, lon_a, days, q_tr, tr_idx, K)
+        g_te, v_te = _windows(lat_a, lon_a, days, te_idx, tr_idx, K)
+        tr = _assemble(raw_feat, nstate, days, lat_a, lon_a, q_tr, g_tr, v_tr, tgt, K, out_dim)
+        te = _assemble(raw_feat, nstate, days, lat_a, lon_a, te_idx, g_te, v_te, tgt, K, out_dim)
+        _to = lambda ts: [t.to(dev) for t in ts]
+        nftr, nstr, qftr, etr, mtr, ltr, ytr, _ = _to(tr)
+        nfte, nste, qfte, ete, mte, lte, yte, _ = _to(te)
+        n_te = int(nfte.shape[0]); Btr = int(nftr.shape[0])
+        if Btr == 0 or n_te == 0:
+            print("=== abund_prop_arch: EMPTY window set, abort ==="); return {"abund_prop_arch": True, "n_te": n_te}
+        bs = min(2048, Btr)
+
+        class _StaticH(nn.Module):
+            def __init__(s):
+                super().__init__(); s.net = nn.Sequential(nn.Linear(fdim, H), nn.GELU(), nn.Linear(H, out_dim))
+            def forward(s, qf): return s.net(qf)
+
+        class _DeepLSTM(nn.Module):
+            def __init__(s, layers):
+                super().__init__()
+                s.lstm = nn.LSTM(fdim + S + 2, H, num_layers=layers, batch_first=True,
+                                 dropout=0.0)
+                s.head = nn.Linear(H, out_dim)
+            def forward(s, nf, ns, edge, lengths):
+                x = torch.cat([nf, ns, edge], -1)
+                packed = nn.utils.rnn.pack_padded_sequence(x, lengths.cpu().clamp(min=1),
+                                                           batch_first=True, enforce_sorted=False)
+                _, (h, _) = s.lstm(packed)
+                return s.head(h[-1])
+
+        class _AttnH(nn.Module):
+            # attention-over-neighbour-history: query token attends over K past-neighbour tokens
+            def __init__(s, heads, layers):
+                super().__init__()
+                s.tok = nn.Linear(fdim + S + 2, H)
+                s.q = nn.Linear(fdim, H)
+                enc = nn.TransformerEncoderLayer(H, heads, H * 2, batch_first=True, activation="gelu")
+                s.tr = nn.TransformerEncoder(enc, layers)
+                s.head = nn.Linear(H, out_dim)
+            def forward(s, nf, ns, edge, mask):
+                x = s.tok(torch.cat([nf, ns, edge], -1))              # [B,K,H]
+                pad = ~mask.bool()                                    # True where padded
+                x = s.tr(x, src_key_padding_mask=pad)
+                x = x.masked_fill(pad.unsqueeze(-1), 0.0)
+                pooled = x.sum(1) / mask.sum(1, keepdim=True).clamp(min=1)
+                return s.head(pooled)
+
+        loss_fn = lambda p, y: F.smooth_l1_loss(p, y)
+        def _train(model, fwd):
+            opt = torch.optim.Adam(model.parameters(), lr=a.lr)
+            model.train()
+            for _ in range(a.steps):
+                sidx = torch.randint(0, Btr, (bs,), device=dev)
+                loss = loss_fn(fwd(model, sidx), ytr[sidx])
+                opt.zero_grad(); loss.backward(); opt.step()
+            model.eval()
+
+        want = set(x for x in a.prop_arch.split(",") if x)
+        results = {}
+        # static floor (shared)
+        sh = _StaticH().to(dev); _train(sh, lambda m, s: m(qftr[s]))
+        with torch.no_grad():
+            results["static"] = _reg_skill(sh(qfte), yte, yte)
+        arch_defs = {
+            "lstm1": ("deepLSTM-1L", lambda: _DeepLSTM(1), "seq"),
+            "lstm2": ("deepLSTM-2L", lambda: _DeepLSTM(2), "seq"),
+            "lstm3": ("deepLSTM-3L", lambda: _DeepLSTM(3), "seq"),
+            "lstm4": ("deepLSTM-4L", lambda: _DeepLSTM(4), "seq"),
+            "attn":  ("attn-hist",   lambda: _AttnH(a.prop_attn_heads, a.prop_attn_layers), "attn"),
+            "mv":    ("deepLSTM-2L", lambda: _DeepLSTM(2), "seq"),
+        }
+        for key in ("lstm1", "lstm2", "lstm3", "lstm4", "attn", "mv"):
+            if key not in want: continue
+            nm, ctor, kind = arch_defs[key]
+            model = ctor().to(dev)
+            if kind == "seq":
+                _train(model, lambda m, s: m(nftr[s], nstr[s], etr[s], ltr[s]))
+                with torch.no_grad():
+                    results[key] = _reg_skill(model(nfte, nste, ete, lte), yte, yte)
+            else:
+                _train(model, lambda m, s: m(nftr[s], nstr[s], etr[s], mtr[s]))
+                with torch.no_grad():
+                    results[key] = _reg_skill(model(nfte, nste, ete, mte), yte, yte)
+
+        _tgtn = "ABUND-DELTA(dlog)" if a.abund_delta else "ABUND-LEVEL(log-count)"
+        _mv = " MULTIVAR-nstate[abund|doy|occ]" if a.abund_multivar else ""
+        print(f"=== SPACETIME propagator-ARCH probe | {_tgtn}{_mv} | raw PE | obs={len(lat_a)} q={n_te} K={K} win={a.abund_win:.0f}d lead={a.abund_lead:.0f}d Sdim={S} ===")
+        s_mae, s_r2 = results["static"]
+        print(f"  static-floor        | MAE {s_mae:7.3f}  absR2 {s_r2:+.4f}")
+        for key in ("lstm1", "lstm2", "lstm3", "lstm4", "attn", "mv"):
+            if key in results and key != "static":
+                nm = arch_defs[key][0]
+                mae, r2 = results[key]
+                print(f"  {nm:<18}| MAE {mae:7.3f}  absR2 {r2:+.4f}  (dR2 vs static {r2 - s_r2:+.4f})")
+        dt = time.time() - t0
+        print(f"  [profile] q={n_te} K={K} hidden={H} steps={a.steps} attn_heads={a.prop_attn_heads} attn_layers={a.prop_attn_layers}")
+        print(f"  {len(lat_a)} obs, {a.steps}-step prop-arch in {dt:.1f}s")
+        return {"abund_prop_arch": True, "target": _tgtn, "static_absR2": s_r2,
+                "results": {k: {"mae": v[0], "absR2": v[1]} for k, v in results.items()},
+                "abund_lead": a.abund_lead, "abund_win": a.abund_win, "abund_delta": a.abund_delta,
+                "multivar": a.abund_multivar, "K": K, "n_te": n_te, "seconds": dt}
+
     if a.first_arrival or a.abundance:
         # GENERALITY test of the phenology unlock (LOOP-spacetime-nonstationary-phenology-dayofyear): does the
         # propagator carry large value on OTHER temporally-dynamic targets, and does Earth4D remain neutral?
@@ -764,6 +1577,272 @@ def main(argv=None):
     print(f"  {len(lat)} obs, {a.steps}-step probe in {dt:.1f}s")
     return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc, "raw_acc": raw_acc,
             "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "forecast": a.forecast}
+
+
+
+# ============================================================================================
+# LOOP-spacetime: ENV-DERIVABLE CONSTRUCT test (flag-gated, default-off, additive).
+# Question: cat_rarity / cat_ease_of_care categorical LABELS are degenerate proxies (rarity floor
+# 0.885, ease 0.772). But rarity and ease-of-care are NICHE/SPATIAL constructs. Does the on-box
+# occurrence+env data carry them DIRECTLY, via RANGE-SIZE (rarity) and CLIMATE-TOLERANCE BREADTH
+# (ease)? If yes -> route rarity/ease to spacetime/env encoder (range/breadth features), not phylo.
+# Leak-guard: held-out species; a species' features come only from ITS OWN occurrences; a species'
+# own label is never a feature; label-shuffle null reported.
+# ============================================================================================
+def _range_features_per_species(cache, S):
+    """Per-species RANGE-SIZE features from the 621k occurrences (gbif_tokens lat/lon/species_local,
+    the SAME 2141-vocab join used by --cooccur). Returns dict name->[S] float32 (raw, un-z-scored):
+      n_obs             total occurrence count
+      n_cells_05        # distinct occupied 0.5deg cells (ECOLOGICAL RANGE SIZE)
+      n_cells_10        # distinct occupied 1.0deg cells (coarser range)
+      lat_span/lon_span geographic extent (max-min) in degrees
+      hull_area         convex-hull area of occurrence points (deg^2 geographic extent)
+      max_gc            max pairwise great-circle-ish extent (deg) = range diameter proxy
+    """
+    import numpy as _np, glob as _glob
+    from pathlib import Path as _P
+    lats = [[] for _ in range(S)]; lons = [[] for _ in range(S)]
+    for f in sorted(_glob.glob(str(_P(cache) / "gbif_tokens/*.npz"))):
+        z = _np.load(f); sl = z["species_local"].astype(_np.int64); la = z["lat"]; lo = z["lon"]
+        for s, a, b in zip(sl, la, lo):
+            s = int(s)
+            if 0 <= s < S:
+                lats[s].append(float(a)); lons[s].append(float(b))
+    n_obs = _np.zeros(S, _np.float32); n05 = _np.full(S, _np.nan, _np.float32); n10 = _np.full(S, _np.nan, _np.float32)
+    lat_span = _np.full(S, _np.nan, _np.float32); lon_span = _np.full(S, _np.nan, _np.float32)
+    hull = _np.full(S, _np.nan, _np.float32); maxgc = _np.full(S, _np.nan, _np.float32)
+    try:
+        from scipy.spatial import ConvexHull as _CH
+    except Exception:
+        _CH = None
+    for s in range(S):
+        if not lats[s]:
+            continue
+        la = _np.asarray(lats[s]); lo = _np.asarray(lons[s]); n_obs[s] = len(la)
+        n05[s] = len(set(zip(_np.floor(la / 0.5).astype(int).tolist(), _np.floor(lo / 0.5).astype(int).tolist())))
+        n10[s] = len(set(zip(_np.floor(la / 1.0).astype(int).tolist(), _np.floor(lo / 1.0).astype(int).tolist())))
+        lat_span[s] = la.max() - la.min(); lon_span[s] = lo.max() - lo.min()
+        maxgc[s] = _np.hypot(lat_span[s], lon_span[s])
+        pts = _np.stack([la, lo], 1)
+        if _CH is not None and len(_np.unique(pts, axis=0)) >= 3:
+            try: hull[s] = _CH(pts).volume  # 2D volume == area
+            except Exception: hull[s] = 0.0
+        else:
+            hull[s] = 0.0
+    return {"n_obs": n_obs, "n_cells_05": n05, "n_cells_10": n10, "lat_span": lat_span,
+            "lon_span": lon_span, "hull_area": hull, "max_gc": maxgc}
+
+
+
+def _niche_breadth_features_per_species(cache, S):
+    """Nature-derived MULTIVARIATE niche-BREADTH (tolerance) descriptor per species, from ITS OWN
+    occurrences + on-box env only (NO human labels). Returns dict name->[S] float32 (raw):
+      elev_span     elevation range (max-min, m) occupied  -> topographic tolerance
+      elev_iqr      elevation p90-p10 (robust vertical breadth)
+      lat_span_abs  latitudinal extent (deg)                -> thermal-latitude tolerance
+      lon_span      longitudinal extent (deg)
+      hyper_logdet  log-det of the (wc19+ae64) env covariance = climate-envelope HYPERVOLUME
+      hyper_trace   trace of that covariance = total per-channel variance (additive niche width)
+      ae_effrank    AlphaEarth-64 covariance effective rank (participation ratio) = HABITAT DIVERSITY
+      ae_meanpair   mean pairwise L2 among a species' AlphaEarth vectors (habitat spread, subsampled)
+    Leak-safe: purely a species' own occurrence env distribution."""
+    import numpy as _np, glob as _glob
+    from pathlib import Path as _P
+    cachep = _P(cache)
+    wc = _np.load(cachep / "gbif_worldclim_tokens.npz"); wcm = {int(g): i for i, g in enumerate(wc["gbifID"])}; WC = wc["worldclim"]
+    ae = _np.load(cachep / "gbif_alphaearth_tokens.npz"); aem = {int(g): i for i, g in enumerate(ae["gbifID"])}; AE = ae["ae"]
+    el = _np.load(cachep / "gbif_elev.npz"); elm = {int(g): float(v) for g, v in zip(el["gbifID"], el["elev"])}
+    # gather per-species: env rows (wc+ae, z-scored per-channel globally so det/trace comparable), lat, elev
+    # global per-channel standardization of wc+ae so hypervolume is unit-free & channels comparable
+    D = 19 + 64
+    WCz = (WC - _np.nanmean(WC, 0)) / (_np.nanstd(WC, 0) + 1e-6)
+    AEz = (AE - _np.nanmean(AE, 0)) / (_np.nanstd(AE, 0) + 1e-6)
+    rows = [[] for _ in range(S)]; aerows = [[] for _ in range(S)]
+    lats = [[] for _ in range(S)]; lons = [[] for _ in range(S)]; elevs = [[] for _ in range(S)]
+    for f in sorted(_glob.glob(str(cachep / "gbif_tokens/*.npz"))):
+        z = _np.load(f); sl = z["species_local"].astype(_np.int64); gid = z["gbifID"]; la = z["lat"]; lo = z["lon"]
+        for s, g, a, b in zip(sl, gid, la, lo):
+            s = int(s); g = int(g)
+            if not (0 <= s < S):
+                continue
+            lats[s].append(float(a)); lons[s].append(float(b))
+            if g in elm:
+                elevs[s].append(elm[g])
+            if g in wcm and g in aem:
+                v = _np.empty(D, _np.float32); v[:19] = WCz[wcm[g]]; v[19:] = AEz[aem[g]]
+                rows[s].append(v); aerows[s].append(AEz[aem[g]])
+    elev_span = _np.full(S, _np.nan, _np.float32); elev_iqr = _np.full(S, _np.nan, _np.float32)
+    lat_span_abs = _np.full(S, _np.nan, _np.float32); lon_span = _np.full(S, _np.nan, _np.float32)
+    hyper_logdet = _np.full(S, _np.nan, _np.float32); hyper_trace = _np.full(S, _np.nan, _np.float32)
+    ae_effrank = _np.full(S, _np.nan, _np.float32); ae_meanpair = _np.full(S, _np.nan, _np.float32)
+    _rng = _np.random.RandomState(0)
+    for s in range(S):
+        if lats[s]:
+            la = _np.asarray(lats[s]); lo = _np.asarray(lons[s])
+            lat_span_abs[s] = la.max() - la.min(); lon_span[s] = lo.max() - lo.min()
+        if elevs[s]:
+            ev = _np.asarray(elevs[s]); ev = ev[~_np.isnan(ev)]
+            if ev.size:
+                elev_span[s] = float(ev.max() - ev.min())
+                elev_iqr[s] = float(_np.percentile(ev, 90) - _np.percentile(ev, 10))
+        r = rows[s]
+        if len(r) >= 3:
+            M = _np.stack(r, 0)
+            M = M[~_np.isnan(M).any(1)]
+            if M.shape[0] >= D + 1:
+                C = _np.cov(M, rowvar=False)
+                ev = _np.linalg.eigvalsh(C); ev = _np.clip(ev, 1e-8, None)
+                hyper_logdet[s] = float(_np.log(ev).sum())        # env-envelope hypervolume (log)
+                hyper_trace[s] = float(_np.trace(C))
+            elif M.shape[0] >= 3:
+                hyper_trace[s] = float(_np.var(M, 0).sum())        # trace still defined w/o full-rank cov
+        a = aerows[s]
+        if len(a) >= 3:
+            A = _np.stack(a, 0); A = A[~_np.isnan(A).any(1)]
+            if A.shape[0] >= 3:
+                Ca = _np.cov(A, rowvar=False); eva = _np.clip(_np.linalg.eigvalsh(Ca), 0, None)
+                ssum = eva.sum()
+                if ssum > 1e-9:
+                    ae_effrank[s] = float((ssum ** 2) / (_np.square(eva).sum() + 1e-12))  # participation ratio
+                idx = _rng.permutation(A.shape[0])[:min(60, A.shape[0])]
+                As = A[idx]
+                dif = As[:, None, :] - As[None, :, :]
+                dm = _np.sqrt(_np.square(dif).sum(-1))
+                iu = _np.triu_indices(As.shape[0], 1)
+                if iu[0].size:
+                    ae_meanpair[s] = float(dm[iu].mean())
+    return {"elev_span": elev_span, "elev_iqr": elev_iqr, "lat_span_abs": lat_span_abs,
+            "lon_span": lon_span, "hyper_logdet": hyper_logdet, "hyper_trace": hyper_trace,
+            "ae_effrank": ae_effrank, "ae_meanpair": ae_meanpair}
+
+
+def env_construct(cache, seed=0, construct="rarity", feature="range", holdout=0.3, shuffle=False, only=""):
+    """Test whether a construct label is predictable from occurrence/env-derived features on held-out species.
+
+    construct: 'rarity' (cat_rarity ordinal) or 'ease' (cat_ease_of_care ordinal). Only LABELED species
+              (raw label>0; 0 == unlabeled/missing) enter the supervised task.
+    feature:  'range'   -> range-size features (n_cells_05/10, n_obs, spans, hull, max_gc)  [log1p heavy-tailed]
+              'breadth' -> per-species env-tolerance breadth (worldclim+alphaearth std/p10-p90/min-max)
+              'both'    -> concat
+    Reports, on held-out species: balanced accuracy vs a MAJORITY floor, Spearman(feature-score, ordinal),
+    per-feature univariate Spearman (channel decomposition), and a label-shuffle null (same pipeline, y permuted).
+    """
+    import numpy as _np
+    from pathlib import Path as _P
+    from scipy.stats import spearmanr as _sp
+    from sklearn.linear_model import LogisticRegression as _LR
+    from sklearn.metrics import balanced_accuracy_score as _bacc
+    import sys as _sys; _sys.path.insert(0, "/workspace")
+    from deepearth.autoresearch.programs.biological.probe import load_trait as _load_trait
+
+    vocab = _np.load(_P(cache) / "gbif_vocab.npz", allow_pickle=True); gidx = vocab["global_idx"]; S = len(gidx)
+    if construct in ("ns_grank", "crpr"):
+        # AUTHORITATIVE EXTERNAL rarity ordinal from derived/species_rarity.jsonl (idx aligned to 2141 vocab).
+        import json as _json, re as _re
+        rows = [_json.loads(l) for l in open(_P(cache) / "derived/species_rarity.jsonl")]
+        yord = _np.full(S, -1, _np.int64)
+        for r in rows:
+            ii = int(r["idx"])
+            if not (0 <= ii < S):
+                continue
+            if construct == "ns_grank":  # NatureServe Global rank G1(rarest)..G5(secure) -> rarity ordinal 4..0
+                m = _re.match(r"G(\d)", r.get("ns_g_rank", "") or "")
+                if m:
+                    yord[ii] = 5 - int(m.group(1))   # G1->4 (rarest), G5->0 (common)
+            else:                          # CNPS Rare Plant Rank ordinal (0 = not-ranked/common .. higher = rarer)
+                yord[ii] = int(r.get("crpr_ordinal", 0))
+        labeled = yord >= 0
+    else:
+        key = "cat_rarity" if construct == "rarity" else "cat_ease_of_care"
+        _, yt, _, _ = _load_trait(cache, gidx, key, "cpu")
+        yraw = yt.cpu().numpy().astype(_np.int64)
+        # ordinal maps: raw label -> rarity/difficulty ordinal (higher = rarer / harder). 0 == missing.
+        if construct == "rarity":  # vocab [Abundant,Common,Rare,Uncommon]; raw = vocab_idx+1
+            ordmap = {1: 0, 2: 1, 4: 2, 3: 3}   # Abundant<Common<Uncommon<Rare
+        else:                       # vocab [Challenging,Easy,Moderate]; raw = vocab_idx+1; higher=harder
+            ordmap = {2: 0, 3: 1, 1: 2}         # Easy<Moderate<Challenging
+        labeled = _np.array([v in ordmap for v in yraw])
+        yord = _np.array([ordmap.get(v, -1) for v in yraw], _np.int64)
+
+    # ---- feature construction ----
+    feats = {}
+    if feature in ("range", "both"):
+        rf = _range_features_per_species(cache, S)
+        for k, v in rf.items():
+            vv = v.copy()
+            if k in ("n_obs", "n_cells_05", "n_cells_10", "hull_area"):
+                vv = _np.log1p(_np.nan_to_num(vv, nan=0.0))
+            feats[k] = vv
+    if feature in ("breadth", "both", "nichebreadth_env", "allbreadth"):
+        emean, emedoid, npsp, estd, elo, ehi, emin, emax, etime, epheno = load_env_species(cache, extra_channels=False, temporal=False)
+        # per-species scalar breadth summaries per channel-group (worldclim 0:19, alphaearth 19:83)
+        iqr = ehi - elo
+        feats["breadth_wc_std"]  = _np.nanmean(estd[:, :19], 1)
+        feats["breadth_ae_std"]  = _np.nanmean(estd[:, 19:83], 1)
+        feats["breadth_wc_iqr"]  = _np.nanmean(iqr[:, :19], 1)
+        feats["breadth_ae_iqr"]  = _np.nanmean(iqr[:, 19:83], 1)
+        feats["breadth_wc_range"] = _np.nanmean((emax - emin)[:, :19], 1)
+        feats["breadth_ae_range"] = _np.nanmean((emax - emin)[:, 19:83], 1)
+    if feature in ("nichebreadth", "allbreadth", "nichebreadth_env"):
+        nb = _niche_breadth_features_per_species(cache, S)
+        for k, v in nb.items():
+            vv = v.copy()
+            if k in ("elev_span", "elev_iqr"):
+                vv = _np.log1p(_np.nan_to_num(vv, nan=0.0))   # heavy-tailed elevation
+            feats[k] = vv
+    if feature == "allbreadth":
+        rf = _range_features_per_species(cache, S)
+        for k, v in rf.items():
+            vv = v.copy()
+            if k in ("n_obs", "n_cells_05", "n_cells_10", "hull_area"):
+                vv = _np.log1p(_np.nan_to_num(vv, nan=0.0))
+            feats[k] = vv
+
+    if only:
+        keep=[k for k in feats if any(t in k for t in only.split(","))]
+        feats={k:feats[k] for k in keep}
+    fnames = list(feats.keys())
+    X = _np.stack([feats[k] for k in fnames], 1).astype(_np.float32)
+    # a species with zero occurrences has all-nan features -> drop from labeled set (no self-data)
+    have = ~_np.isnan(X).any(1)
+    use = labeled & have
+    Xu = X[use]; yu = yord[use]
+    # z-score features over used species
+    mu = Xu.mean(0); sd = Xu.std(0); sd[sd < 1e-9] = 1.0; Xz = (Xu - mu) / sd
+    n = len(yu)
+
+    rng = _np.random.RandomState(seed)
+    if shuffle:
+        yu = yu[rng.permutation(n)]
+    perm = rng.permutation(n); ncut = int(round((1 - holdout) * n))
+    tr = perm[:ncut]; te = perm[ncut:]
+    # majority floor on the held-out split
+    vals, cts = _np.unique(yu[tr], return_counts=True); maj = vals[cts.argmax()]
+    floor_acc = float((yu[te] == maj).mean())
+    floor_bacc = float(_bacc(yu[te], _np.full(len(te), maj)))
+
+    # multinomial logistic (balanced) on train features -> held-out
+    clf = _LR(max_iter=2000, class_weight="balanced", C=1.0).fit(Xz[tr], yu[tr])
+    pred = clf.predict(Xz[te])
+    acc = float((pred == yu[te]).mean()); bacc = float(_bacc(yu[te], pred))
+    # ordinal signal: Spearman between a 1-D risk score (LR decision projected to ordinal expectation) and truth
+    proba = clf.predict_proba(Xz[te])
+    classes = clf.classes_.astype(_np.float32)
+    score = (proba * classes[None, :]).sum(1)  # expected ordinal
+    rho = _sp(yu[te], score).correlation
+    rho = float(rho if rho == rho else 0.0)
+
+    # per-feature univariate Spearman over ALL used labeled species (channel decomposition)
+    uni = {}
+    for j, name in enumerate(fnames):
+        r = _sp(yu, Xz[:, j]).correlation
+        uni[name] = round(float(r if r == r else 0.0), 3)
+
+    return {"construct": construct, "feature": feature, "n_labeled_used": int(n), "n_classes": int(len(vals)),
+            "held_out": int(len(te)), "floor_acc": round(floor_acc, 4), "floor_bacc": round(floor_bacc, 4),
+            "acc": round(acc, 4), "bacc": round(bacc, 4), "spearman_ord": round(rho, 4),
+            "univar_spearman": dict(sorted(uni.items(), key=lambda kv: -abs(kv[1]))),
+            "shuffle_null": shuffle, "seed": seed}
 
 
 if __name__ == "__main__":
