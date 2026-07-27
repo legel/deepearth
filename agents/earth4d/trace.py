@@ -3,18 +3,21 @@
 Surface = ONLY the spacetime encoder. Every experiment is a big architectural swing on Earth4D
 (encoders/spacetime/earth4d.py) measured by the fast encoder probe
 (autoresearch/programs/spacetime/probe.py & friends) — NOT full-model training. The probe trains only
-the encoder + a light head on ~65k obs in minutes and reports st_gain (Earth4D vs the fair coordinate /
-RFF / MLP baseline) = the encoder's isolated marginal on the SAME capability the scorecard/science measures.
+the encoder + a light head on ~65k obs in minutes and reports the encoder-isolated marginal vs a FAIR
+baseline (RFF / MLP / best generic PE) on the SAME capability the scorecard/science measures.
 
---metric (required) declares which scorecard capability this run targets (keeps the loop on track).
---probe  (required) is the probe invocation flags = the architectural lever. Native probe metrics only.
---ensue  auto-logs the trace to Ensue (token from /workspace/.env, never committed).
+Every run produces the SAME consistent trace:
+  - OBJECTIVE block: the declared --metric's primary score + fair st_gain + RECORD verdict.
+  - BOTTLENECK read: ARCHITECTURE-LIMITED (Earth4D loses to a generic PE) vs EARNING vs EARNING-BUT-LOW.
+  - the parsed probe header + native metric lines.
+  - RECORD tracking in agents/earth4d/records.json (fill the scorecard by breaking records).
+
+--metric (required) declares the objective capability (keeps the loop on track).
+--probe  (required) is the probe flags = the architectural lever.  --ensue auto-logs to Ensue.
 
 Usage:
   python -m deepearth.agents.earth4d.trace --metric family_from_spacetime \
-      --probe "--n_shards 8 --steps 800" --tag baseline --device cuda:0 --ensue
-  python -m deepearth.agents.earth4d.trace --metric species_from_env \
-      --probe "--sdm_presence --n_shards 8" --tag sdm_recurrence --device cuda:1 --ensue
+      --probe "--forecast --n_shards 8" --tag forecast --device cuda:0 --ensue
 """
 from __future__ import annotations
 import argparse
@@ -27,7 +30,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]  # .../deepearth
+REPO = Path(__file__).resolve().parents[2]                 # .../deepearth
+RECORDS = Path(__file__).resolve().parent / "records.json"  # the machine record (fill scorecard by breaking these)
 
 # The scorecard capabilities — the objective must be one (keeps the loop on track). Same capabilities as
 # the science / evaluate.py, scoped to the encoder probe. The probe MODE/architecture is the loop's choice.
@@ -37,6 +41,19 @@ CAPABILITIES = [
     "calibration", "flowering_auc", "flowering_fidelity", "flowering_peak_month",
     "infer_clay", "infer_soil", "infer_climate", "infer_hydro",
 ]
+
+# How to read the capability's PRIMARY absolute score from the probe output (native metric, first match wins).
+PRIMARY_RE = {
+    "species_from_env": [r"micro-AP\(feat\)\s+([\d.]+)"],
+    "community_from_env": [r"micro-AP\(feat\)\s+([\d.]+)"],
+    "family_from_env": [r"Earth4D\+ENV\s+([\d.]+)", r"\bEarth4D\s+([\d.]+)"],
+    "family_from_spacetime": [r"\bEarth4D\s+([\d.]+)"],
+    "species_from_spacetime": [r"\bEarth4D\s+([\d.]+)"],
+    "flowering_peak_month": [r"acc\s+([\d.]+)"],
+    "flowering_auc": [r"acc\s+([\d.]+)"],
+}
+# Fair-baseline preference: Earth4D must beat a TRAINED generic PE, not just raw coords.
+FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "best-coord", "raw"]
 
 
 def _run(module: str, probe_args: str, device: str, log_path: str) -> int:
@@ -50,12 +67,41 @@ def _run(module: str, probe_args: str, device: str, log_path: str) -> int:
 
 def _parse(text: str):
     header = next((l.strip() for l in text.splitlines() if l.strip().startswith("=== SPACETIME")), "")
-    st_gains = {}
-    for m in re.finditer(r"st_gain(?:\(([^)]*)\))?\s*([+\-]?\d+\.\d+)", text):
-        st_gains[(m.group(1) or "default").strip()] = float(m.group(2))
+    gains = {}
+    for m in re.finditer(r"st_gain(?:\(([^)]*)\))?\s*([+\-]?\d+\.\d+)", text):   # coord/env/forecast modes
+        gains[(m.group(1) or "default").strip()] = float(m.group(2))
+    for m in re.finditer(r"\bGAIN\s+([+\-]?\d+\.\d+)", text):                    # sdm / cooccur modes report GAIN
+        gains["GAIN"] = float(m.group(1))
     metrics = [l.strip() for l in text.splitlines()
                if re.search(r"\b(acc|micro-AP|MAE|absR2|GAIN|Spearman|top5|prop)\b", l) and l.strip()]
-    return header, st_gains, metrics[:24]
+    return header, gains, metrics[:24]
+
+
+def _fair_gain(gains: dict):
+    """The honest encoder marginal = gain vs the strongest fair baseline present (best-ctrl > RFF > mlp > ...)."""
+    for pref in FAIR_ORDER:
+        for k, v in gains.items():
+            if pref.lower() in k.lower():
+                return v, k
+    return (None, None)
+
+
+def _primary(text: str, cap: str):
+    for p in PRIMARY_RE.get(cap, [r"\bEarth4D\s+([\d.]+)"]):
+        m = re.search(p, text)
+        if m:
+            return float(m.group(1))
+    return None
+
+
+def _bottleneck(fair, primary) -> str:
+    if fair is None:
+        return "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain — check output)"
+    if fair <= 0:
+        return "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE → swing bigger on the architecture"
+    if primary is not None and primary < 0.20:
+        return "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+    return "EARNING: the architecture is carrying real signal → push it further"
 
 
 def _ensue_token() -> str:
@@ -75,18 +121,20 @@ def post_ensue(trace: dict) -> None:
     if not tok:
         print("[trace] --ensue set but no ENSUE_API_TOKEN (env or /workspace/.env); skipping", flush=True)
         return
-    best = max(trace["st_gain"].values()) if trace["st_gain"] else None
+    o = trace["objective"]
     val = (f"Earth4D ENCODER-PROBE '{trace['tag']}' | capability {trace['metric']} | probe='{trace['probe']}'. "
-           f"st_gain={trace['st_gain']} (best {best}). {trace['header']}. "
-           f"metrics: {' || '.join(trace['metrics'][:8])}")
+           f"primary={o['primary']} fair_st_gain={o['fair_st_gain']} ({o['fair_baseline']}) RECORD={o['record']} "
+           f"(prev {o['prev_record']}). BOTTLENECK: {trace['bottleneck']}. all_gains={trace['gains']}. "
+           f"{trace['header']}. metrics: {' || '.join(trace['metrics'][:6])}")
     payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "create_memory", "arguments": {
         "items": [{"key_name": f"earth4d_probe_{trace['tag']}_{trace['metric']}", "value": val,
-                   "description": f"Earth4D probe {trace['metric']} via '{trace['tag']}' (best st_gain {best})"}]}}}
+                   "description": f"Earth4D probe {trace['metric']} '{trace['tag']}': primary {o['primary']} "
+                                  f"fair_st_gain {o['fair_st_gain']} record={o['record']}"}]}}}
     req = urllib.request.Request("https://api.ensue-network.ai/", data=json.dumps(payload).encode(),
                                  headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            print(f"[trace] Ensue logged ({r.status}): earth4d_probe_{trace['tag']}_{trace['metric']}", flush=True)
+            print(f"[trace] Ensue logged ({r.status})", flush=True)
     except Exception as e:
         print(f"[trace] Ensue POST failed: {e}", flush=True)
 
@@ -95,8 +143,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Earth4D encoder-probe trace harness — big architectural swings, measured fast.")
     ap.add_argument("--metric", required=True, help="objective capability (one of the scorecard capabilities)")
     ap.add_argument("--probe", required=True, help="probe flags = the architectural lever (quote the whole string)")
-    ap.add_argument("--probe-module", default="deepearth.autoresearch.programs.spacetime.probe",
-                    help="probe module to run (e.g. ...spacetime.calib_probe for calibration)")
+    ap.add_argument("--probe-module", default="deepearth.autoresearch.programs.spacetime.probe")
     ap.add_argument("--tag", default=None)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--ensue", action="store_true")
@@ -114,26 +161,46 @@ def main() -> None:
     print(f"[trace] OBJECTIVE={a.metric}  probe='{a.probe}'  tag={tag}", flush=True)
     rc = _run(a.probe_module, a.probe, a.device, log_path)
     text = Path(log_path).read_text(errors="ignore")
-    header, st_gains, metrics = _parse(text)
-    if rc != 0 and not st_gains and not header:
+    header, gains, metrics = _parse(text)
+    if rc != 0 and not gains and not header:
         print(text[-1800:])
         sys.exit(f"[trace] probe FAILED (rc={rc}); see {log_path}")
 
-    trace = {"metric": a.metric, "tag": tag, "probe": a.probe, "probe_module": a.probe_module,
-             "st_gain": st_gains, "header": header, "metrics": metrics, "rc": rc}
+    primary = _primary(text, a.metric)
+    fair, fair_base = _fair_gain(gains)
+    bottleneck = _bottleneck(fair, primary)
 
-    print("\n" + "=" * 74)
-    print(f"OBJECTIVE {a.metric}   probe='{a.probe}'")
+    # RECORD tracking (the fill-the-scorecard-by-breaking-records mechanism) -----------------------------
+    recs = json.loads(RECORDS.read_text()) if RECORDS.exists() else {}
+    key_val = primary if primary is not None else fair
+    prev = recs.get(a.metric, {}).get("score")
+    is_record = key_val is not None and (prev is None or key_val > prev)
+    if is_record:
+        recs[a.metric] = {"score": key_val, "primary": primary, "fair_st_gain": fair,
+                          "fair_baseline": fair_base, "tag": tag, "probe": a.probe}
+        RECORDS.write_text(json.dumps(recs, indent=2, sort_keys=True))
+
+    objective = {"primary": primary, "fair_st_gain": fair, "fair_baseline": fair_base,
+                 "record": bool(is_record), "prev_record": prev, "record_value": key_val}
+    trace = {"metric": a.metric, "tag": tag, "probe": a.probe, "probe_module": a.probe_module,
+             "objective": objective, "gains": gains, "header": header, "metrics": metrics,
+             "bottleneck": bottleneck, "rc": rc}
+
+    # one-screen consistent summary ---------------------------------------------------------------------
+    print("\n" + "=" * 76)
+    print(f"OBJECTIVE  {a.metric}   probe='{a.probe}'")
     print(header or "(no '=== SPACETIME' header parsed — check the log)")
-    print("-" * 74)
-    print("st_gain (encoder marginal vs fair baseline):", st_gains or "(none parsed)")
-    print("metrics:")
+    print("-" * 76)
+    print(f"  primary(score) = {primary}   fair_st_gain = {fair} (vs {fair_base})   all_gains = {gains}")
+    print(f"  RECORD = {'YES (new best!)' if is_record else 'no'}   prev_record = {prev}")
+    print(f"  BOTTLENECK: {bottleneck}")
+    print("  metrics:")
     for m in metrics:
-        print("  " + m)
-    print("=" * 74)
+        print("    " + m)
+    print("=" * 76)
     out = Path(log_path).with_suffix(".trace.json")
     out.write_text(json.dumps(trace, indent=2))
-    print(f"[trace] wrote {out}")
+    print(f"[trace] wrote {out}" + ("  |  RECORDS.json updated" if is_record else ""))
     if a.ensue:
         post_ensue(trace)
 
