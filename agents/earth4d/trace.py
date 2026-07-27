@@ -104,6 +104,31 @@ def _bottleneck(fair, primary) -> str:
     return "EARNING: the architecture is carrying real signal → push it further"
 
 
+def _print_net_scorecard(recs: dict, current: str) -> None:
+    """The NET scorecard: every capability's current best encoder-probe record. Printed after every run."""
+    print("\n" + "#" * 76)
+    print("# NET SCORECARD  —  Earth4D encoder-probe records so far")
+    print("#" * 76)
+    print(f"{'capability':<26}{'record':>9}{'fair_gain':>11}  best-lever")
+    earning = 0
+    for cap in CAPABILITIES:
+        r = recs.get(cap)
+        mark = "  <— this run" if cap == current else ""
+        if not r:
+            print(f"{cap:<26}{'—':>9}{'—':>11}  —{mark}")
+            continue
+        fg = r.get("fair_st_gain")
+        if fg is not None and fg > 0:
+            earning += 1
+        sc = r.get("score")
+        print(f"{cap:<26}{(f'{sc:.3f}' if sc is not None else '—'):>9}"
+              f"{(f'{fg:+.3f}' if fg is not None else '—'):>11}  {r.get('tag', '')}{mark}")
+    probed = sum(1 for c in CAPABILITIES if recs.get(c))
+    print("-" * 76)
+    print(f"probed {probed}/{len(CAPABILITIES)}   |   earning (fair_gain > 0): {earning}")
+    print("#" * 76, flush=True)
+
+
 def _ensue_token() -> str:
     t = os.environ.get("ENSUE_API_TOKEN")
     if t:
@@ -201,6 +226,9 @@ def main() -> None:
     out = Path(log_path).with_suffix(".trace.json")
     out.write_text(json.dumps(trace, indent=2))
     print(f"[trace] wrote {out}" + ("  |  RECORDS.json updated" if is_record else ""))
+
+    _print_net_scorecard(recs, a.metric)   # show the whole board after every run
+
     if a.ensue:
         post_ensue(trace)
 
