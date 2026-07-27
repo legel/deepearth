@@ -53,7 +53,7 @@ PRIMARY_RE = {
     "flowering_auc": [r"acc\s+([\d.]+)"],
 }
 # Fair-baseline preference: Earth4D must beat a TRAINED generic PE, not just raw coords.
-FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "best-coord", "raw"]
+FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "prop_acc", "best-coord", "raw"]
 
 
 def _run(module: str, probe_args: str, device: str, log_path: str) -> int:
@@ -72,6 +72,11 @@ def _parse(text: str):
         gains[(m.group(1) or "default").strip()] = float(m.group(2))
     for m in re.finditer(r"\bGAIN\s+([+\-]?\d+\.\d+)", text):                    # sdm / cooccur modes report GAIN
         gains["GAIN"] = float(m.group(1))
+    for line in text.splitlines():                                              # phenology: within-tol-acc propagator gain
+        if "propagator_gain(within-tol acc" in line:
+            nums = [float(x) for x in re.findall(r"([+\-]\d+\.\d+)", line)]
+            if nums:
+                gains["prop_acc"] = max(nums)
     metrics = [l.strip() for l in text.splitlines()
                if re.search(r"\b(acc|micro-AP|MAE|absR2|GAIN|Spearman|top5|prop)\b", l) and l.strip()]
     return header, gains, metrics[:24]
@@ -87,6 +92,9 @@ def _fair_gain(gains: dict):
 
 
 def _primary(text: str, cap: str):
+    if cap.startswith("flowering"):                       # phenology modes report within-tol acc (0..1), take the best
+        accs = [float(x) for x in re.findall(r"\bacc\s+([\d.]+)", text)]
+        return max(accs) if accs else None
     for p in PRIMARY_RE.get(cap, [r"\bEarth4D\s+([\d.]+)"]):
         m = re.search(p, text)
         if m:
