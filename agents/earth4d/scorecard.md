@@ -13,13 +13,14 @@ Same capabilities, **scoped to the fast Earth4D encoder probe** (`trace.py` → 
 
 | Capability | Probe record | fair_gain | Best lever | Read |
 |---|---|---|---|---|
+| community_from_env | **0.881** (micro-AP) | **+0.453** | cooccur_both | EARNING — strongest signal |
 | species_from_env | **0.634** (micro-AP) | **+0.407** | sdm_hard | EARNING — 7.5× over prevalence |
-| family_from_spacetime | 0.126 | **+0.066** vs RFF | forecast | EARNING (low) — hash beats generic PE only on the forecast objective |
-| family_from_env | 0.117 | −0.002 | env | ~tied with a generic PE |
-| flowering_peak_month | 0.000 | — | pheno | mode returns 0 — under investigation |
-| species_from_spacetime · community_from_env · lfmc · mycorrhiza · pollinator · calibration · flowering_auc/fidelity · infer_* | — | — | — | not yet probed |
+| family_from_spacetime | 0.139 | **+0.042** vs RFF | fc_mlp | EARNING (low) — hash beats generic PE on the forecast objective |
+| family_from_env | 0.117 | +0.001 | env | ~tied with a generic PE |
+| flowering_peak_month | 0.003 | — | pheno | mode reports MAE not acc — metric extraction needs a fix |
+| species_from_spacetime · lfmc · mycorrhiza · pollinator · calibration · flowering_auc/fidelity · infer_* | — | — | — | not yet probed |
 
-**Headline so far:** SDM env→species is genuinely strong in isolation (**+0.41**); the hash encoder only beats a generic PE on the *temporal/forecast* objective — so the architectural direction is temporal state / propagation, not static hashing. (Records auto-tracked in `records.json`; the loop prints the full net card after every run.)
+**Headline so far:** env→biology at the cell level is genuinely strong in isolation — **community_from_env +0.45, species_from_env +0.41** — and the hash encoder beats a generic PE on the *temporal/forecast* objective. So the earning directions are (1) env→biology SDM/co-occurrence and (2) temporal state / propagation — not static coordinate hashing. (Records auto-tracked in `records.json`; the loop prints the full net card after every run.)
 
 ---
 
