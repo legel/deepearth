@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # <parent-of-deepearth> on path (mirror score.py)
@@ -64,6 +65,47 @@ def _run(config: str, tag: str, device: str, budget, steps, log_path: str) -> in
         return subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT, env=env, cwd=str(REPO.parent)).returncode
 
 
+def _ensue_token() -> str:
+    """Resolve the Ensue token WITHOUT ever committing it: env var first, then /workspace/.env."""
+    t = os.environ.get("ENSUE_API_TOKEN")
+    if t:
+        return t.strip()
+    envf = Path("/workspace/.env")
+    if envf.exists():
+        for line in envf.read_text(errors="ignore").splitlines():
+            if line.strip().startswith("ENSUE_API_TOKEN"):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
+def post_ensue(trace: dict) -> None:
+    """POST one experiment's trace to Ensue as a create_memory record. Never fails the run."""
+    token = _ensue_token()
+    if not token:
+        print("[trace] --ensue set but no ENSUE_API_TOKEN (env or /workspace/.env); skipping Ensue log", flush=True)
+        return
+    hs, obj = trace["high_signal"], trace["objective_result"]
+    per_row = ", ".join(f"{r['metric']}:{r['delta']}" for r in trace["rows"] if r["delta"] is not None)
+    bott = "; ".join(f"{b['metric']} {b['score']} [{b['class']}]" for b in trace["bottleneck"])
+    value = (f"Earth4D experiment '{trace['tag']}' | OBJECTIVE {trace['objective']}: "
+             f"{obj['before']} -> {obj['score']} (delta {obj['delta']}, spacetime_gain {obj['spacetime_gain']}) "
+             f"VERDICT {obj['verdict']}. mean16={hs['mean16']} counts={hs['counts']} "
+             f"sum_spacetime_gain={hs['sum_spacetime_gain']} full_suite_net={hs['full_suite_net']}. "
+             f"BOTTLENECK: {bott}. per-row delta-vs-champion: {per_row}. config={trace['config']}.")
+    desc = (f"Earth4D {trace['objective']} {obj['verdict']} via '{trace['tag']}' "
+            f"(mean16 {hs['mean16']}, Σst_gain {hs['sum_spacetime_gain']})")
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": "create_memory", "arguments": {"items": [
+                   {"key_name": f"earth4d_{trace['tag']}_{trace['objective']}", "value": value, "description": desc}]}}}
+    req = urllib.request.Request("https://api.ensue-network.ai/", data=json.dumps(payload).encode(),
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            print(f"[trace] Ensue logged ({r.status}): earth4d_{trace['tag']}_{trace['objective']}", flush=True)
+    except Exception as e:  # never let Ensue logging break a run
+        print(f"[trace] Ensue POST failed: {e}", flush=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Earth4D fixed trace harness — every experiment runs through here.")
     ap.add_argument("--config", required=True, help="full experiment yaml (champion.yaml + ONE lever change)")
@@ -74,6 +116,8 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--fresh-data", action="store_true",
                     help="rm data/deepcal/prepared_*.pt first — REQUIRED for any data-lever change (lossy cache)")
+    ap.add_argument("--ensue", action="store_true",
+                    help="POST the trace to Ensue (token from ENSUE_API_TOKEN env or /workspace/.env; never committed)")
     ap.add_argument("--log", default=None)
     a = ap.parse_args()
 
@@ -163,6 +207,9 @@ def main() -> None:
     out = Path(log_path).with_suffix(".trace.json")
     out.write_text(json.dumps(trace, indent=2))
     print(f"[trace] wrote {out}")
+
+    if a.ensue:
+        post_ensue(trace)
 
 
 if __name__ == "__main__":

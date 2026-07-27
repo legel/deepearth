@@ -5,10 +5,13 @@
 ## 1. Loop
 1. **Select the objective** — pick ONE of the 16 scorecard metrics (the worst row, or an operator-named target).
 2. **Choose one lever** (Preferences) — write a full experiment yaml = `champion.yaml` + that single change, save under `agents/earth4d/exp/<name>.yaml`.
-3. **Run through the fixed harness:** `python -m deepearth.agents.earth4d.trace --config agents/earth4d/exp/<name>.yaml --metric <Bxx> --device cuda:N --budget 4000 [--fresh-data]` (`--fresh-data` REQUIRED for any DATA-lever change). Every run produces the same trace.
+3. **Run through the fixed harness:** `python -m deepearth.agents.earth4d.trace --config agents/earth4d/exp/<name>.yaml --metric <Bxx> --device cuda:N --budget 4000 --ensue [--fresh-data]` (`--fresh-data` REQUIRED for any DATA-lever change). Every run produces the same trace **and `--ensue` auto-POSTs it to Ensue** (see §Ensue).
 4. **Assess the bottleneck from the trace:** read the objective verdict + the per-row `spacetime_gain` — *earth4d-limited* (gain≈0 → encoder/data is the ceiling → reach for DATA/CAPACITY) vs *earth4d-contributing* / *supervision-limited* (score low but gain present, or no probe → reach for SCIENCE/LOSS). Pick the next lever from that read.
 5. **Sweep in breadth** — keep both GPUs saturated with concurrent lever runs; bias toward the worst rows but cover widely.
-6. **Gate (loose):** any real improvement on the objective row with no `>0.02` regression across the 16 → update that row's `Record`/`Status` in `scorecard.md`, `champion_report.py --save`, and log the trace to Ensue. Reject → still log the trace + bottleneck read to Ensue (dead-ends steer the next sweep). Keep going broad.
+6. **Gate (loose):** any real improvement on the objective row with no `>0.02` regression across the 16 → update that row's `Record`/`Status` in `scorecard.md` + `champion_report.py --save`. Every run (win OR dead-end) is logged to Ensue by the harness's `--ensue` (dead-ends steer the next sweep). Keep going broad.
+
+### Ensue coordination
+Run the harness with **`--ensue`** — it POSTs each experiment's full trace (objective verdict, 16-row deltas, bottleneck read, high-signal metrics) to Ensue as a `create_memory` record, so every result is coordinated automatically. The token is read from `ENSUE_API_TOKEN` (env) or `/workspace/.env` and is **never committed to the repo**. If no token is present the harness prints a skip notice and the run still completes. (Endpoint: `https://api.ensue-network.ai/`, JSON-RPC `tools/call` → `create_memory`.)
 
 ## 2. Preferences
 - **GPU utilization + breadth first.** Single-seed (`seed 1337`, fixed per A/B). Noise is negligible — don't re-verify; don't stop at diminishing returns.
