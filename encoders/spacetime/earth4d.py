@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import warnings
+import math
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Optional, Literal, Tuple, Dict, Any
@@ -261,7 +262,9 @@ class Earth4D(nn.Module):
                  relative_levels: int = 24,
                  relative_log2_hashmap_size: int = 20,
                  relative_window: Tuple[float, float, float, float] = (8000.0, 8000.0, 300.0, 130.0),
-                 relative_finest: Tuple[float, float, float, float] = (15.0, 15.0, 3.0, 1.0)):
+                 relative_finest: Tuple[float, float, float, float] = (15.0, 15.0, 3.0, 1.0),
+                 fourier_features: int = 0,
+                 fourier_scale: float = 10.0):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -361,6 +364,15 @@ class Earth4D(nn.Module):
         self.freq_log_scale = nn.Parameter(torch.full((4,), float(freq_log_scale_init)))
         self.freq_center = nn.Parameter(torch.zeros(4))
 
+        # Optional random-Fourier-features branch (default OFF -> champion path byte-identical). sin/cos of a random
+        # linear projection of the normalized 4D coords: smooth GLOBAL features (Rahimi-Recht RFF) that complement
+        # the LOCAL multi-resolution hash, which underperforms a generic RFF PE on smooth/static signals. Concatenated
+        # onto the hash output; only the dense forward() path carries it (forward_precomputed stays hash-only).
+        self.fourier_features = int(fourier_features)
+        if self.fourier_features > 0:
+            self.register_buffer("_fourier_B", torch.randn(4, self.fourier_features) * float(fourier_scale))
+            self.output_dim = self.output_dim + 2 * self.fourier_features
+
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
         return self.xyz_encoder(xyz, size=1.0)
 
@@ -439,10 +451,18 @@ class Earth4D(nn.Module):
                 time_norm = time
         return torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
 
+    def _fourier(self, norm_coords: torch.Tensor) -> torch.Tensor:
+        """Random Fourier features of the normalized 4D coords: [sin(2π B x), cos(2π B x)]."""
+        proj = 2.0 * math.pi * (norm_coords @ self._fourier_B)
+        return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+
     def _forward_tensor(self, coords: torch.Tensor) -> torch.Tensor:
         norm_coords = self._normalize_coords(coords)
-        return torch.cat([self._encode_spatial(norm_coords[..., :3]),
-                          self._encode_spatiotemporal(norm_coords)], dim=-1)
+        feats = torch.cat([self._encode_spatial(norm_coords[..., :3]),
+                           self._encode_spatiotemporal(norm_coords)], dim=-1)
+        if self.fourier_features > 0:
+            feats = torch.cat([feats, self._fourier(norm_coords)], dim=-1)
+        return feats
 
     def get_output_dim(self) -> int:
         return self.output_dim
