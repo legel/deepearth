@@ -15,7 +15,7 @@ Same capabilities, **scoped to the fast Earth4D encoder probe** (`trace.py` → 
 |---|---|---|---|---|
 | community_from_env | **0.881** (micro-AP) | **+0.453** | cooccur_both | EARNING — strongest signal |
 | species_from_env | **0.634** (micro-AP) | **+0.407** | sdm_hard | EARNING — 7.5× over prevalence |
-| family_from_spacetime | 0.139 | **+0.042** vs RFF | fc_mlp | EARNING (low) — hash beats generic PE on the forecast objective |
+| family_from_spacetime | **0.153** | **+0.073** vs RFF | fc_hh256 | EARNING — improved overnight (wider readout head); the one genuine Earth4D-arch win, only on the forecast objective |
 | family_from_env | 0.117 | +0.001 | env | ~tied with a generic PE |
 | flowering_peak_month | 0.003 | — | pheno | mode reports MAE not acc — metric extraction needs a fix |
 | species_from_spacetime · lfmc · mycorrhiza · pollinator · calibration · flowering_auc/fidelity · infer_* | — | — | — | not yet probed |
