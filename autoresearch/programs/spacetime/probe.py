@@ -120,6 +120,27 @@ def load_env(cache: str, gid):
     return env
 
 
+def load_vision(cache: str, gid, feat: str = "dino", n_shards: int = 999):
+    """Per-obs PLANT vision (DINO/BioCLIP) joined by gbifID from gbif_tokens/ -- tests whether convergent
+    MORPHOLOGY carries family where environment does not (perception law). Leak-free per-obs image emb,
+    standardized; densify obs with zeroed vision impute to 0."""
+    import glob as _glob
+    cachep = Path(cache); dmap = {}
+    for f in sorted(_glob.glob(str(cachep / "gbif_tokens/*.npz")))[:n_shards]:
+        z = np.load(f); cols = []
+        if feat in ("dino", "both"): cols.append(z["dino"])
+        if feat in ("bio", "both"):  cols.append(z["bio"])
+        V = np.concatenate(cols, 1).astype(np.float32)
+        for g, v in zip(z["gbifID"].tolist(), V): dmap[int(g)] = v
+    D = len(next(iter(dmap.values())))
+    X = np.zeros((len(gid), D), np.float32)
+    for i, g in enumerate(gid):
+        v = dmap.get(int(g))
+        if v is not None: X[i] = v
+    mu = X.mean(0); sd = X.std(0); sd[sd < 1e-6] = 1.0
+    return ((X - mu) / sd).astype(np.float32)
+
+
 def load_env_species(cache: str, extra_channels: bool = True, temporal: bool = False):
     """Species-aggregated ENVIRONMENT features for ENV->NICHE-TRAIT routing (Ensue ROUTING-soil-ph/MAP-*).
 
@@ -368,6 +389,9 @@ def main(argv=None):
     ap.add_argument("--env_head", default="ridge", choices=["ridge", "mlp"])  # linear RidgeCV vs 1-hidden MLP niche head
     ap.add_argument("--env_mlp_hidden", type=int, default=128)
     ap.add_argument("--env_channels", default="all", choices=["all","worldclim","alphaearth"])  # channel-family ablation: which env source carries the niche-trait routing
+    ap.add_argument("--vision", action="store_true")             # DATA LEVER: family from per-obs PLANT vision (DINO/BioCLIP) instead of env -- perception-law test
+    ap.add_argument("--vision_feats", default="dino", choices=["dino","bio","both"])
+    ap.add_argument("--pheno_channel", action="store_true")      # DATA LEVER: join per-obs MODIS phenology (gbif_phenology_tokens, 12 feats) onto the phenology forecaster query features
     ap.add_argument("--env_spread", action="store_true")
     ap.add_argument("--env_quantiles", action="store_true")      # concat per-species p10/p90 env (explicit distribution EDGES) on top of mean(+std) -- most direct match to max/min niche-boundary traits         # concat per-species column STD (niche breadth) to the mean -- directly informs max/min envelope traits
     ap.add_argument("--env_extremes", action="store_true")      # concat per-species column MIN/MAX env (realized niche ENVELOPE boundaries) -- the most literal match to num_*_max / num_*_min niche-boundary traits
@@ -503,6 +527,8 @@ def main(argv=None):
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
         # follows. Real env covariates (worldclim+soil+elev) joined by gbifID -> the science-aligned question.
         env = load_env(a.cache_dir, gid)                         # [N, 29] standardized, NaN-imputed to 0
+        if a.vision:
+            env = load_vision(a.cache_dir, gid, a.vision_feats, a.n_shards)   # DATA LEVER: per-obs plant vision replaces env
         rn = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
         if a.forecast:
             rn = np.concatenate([rn, tnorm[:, None]], 1)
@@ -741,6 +767,20 @@ def main(argv=None):
         with torch.no_grad():
             e4d_sp = enc(coords_sp.to(dev)).cpu()
         fd = {"e4d": e4d_sp.shape[1], "rff": rff_sp.shape[1], "raw": raw_sp.shape[1]}
+        if a.pheno_channel:
+            _ph = np.load(Path(a.cache_dir) / "gbif_phenology_tokens.npz")
+            _pm = {int(g): i for i, g in enumerate(_ph["gbifID"])}; _PH = _ph["phenology"]
+            import glob as _g2
+            _gg=[np.load(_f)["gbifID"] for _f in sorted(_g2.glob(str(Path(a.cache_dir)/"gbif_tokens/*.npz")))[:a.n_shards]]
+            _gid=np.concatenate(_gg).astype(np.int64)
+            _px = np.zeros((len(lat), _PH.shape[1]), np.float32)
+            for _i, _g in enumerate(_gid):
+                _j = _pm.get(int(_g))
+                if _j is not None: _px[_i] = _PH[_j]
+            _mu = _px.mean(0); _sd = _px.std(0); _sd[_sd < 1e-6] = 1.0
+            _pt = torch.tensor(((_px - _mu) / _sd).astype(np.float32))
+            raw_sp = torch.cat([raw_sp, _pt], 1); e4d_sp = torch.cat([e4d_sp, _pt], 1)
+            fd = {"e4d": e4d_sp.shape[1], "rff": rff_sp.shape[1], "raw": raw_sp.shape[1]}
         sp_all = None
         if a.pheno_species:
             import glob as _glob
