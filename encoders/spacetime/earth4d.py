@@ -264,7 +264,8 @@ class Earth4D(nn.Module):
                  relative_window: Tuple[float, float, float, float] = (8000.0, 8000.0, 300.0, 130.0),
                  relative_finest: Tuple[float, float, float, float] = (15.0, 15.0, 3.0, 1.0),
                  fourier_features: int = 0,
-                 fourier_scale: float = 10.0):
+                 fourier_scale: float = 10.0,
+                 time_harmonics: int = 0):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -375,6 +376,17 @@ class Earth4D(nn.Module):
             self.register_buffer("_fourier_B", torch.randn(3, self.fourier_features) * float(fourier_scale))
             self.output_dim = self.output_dim + 2 * self.fourier_features
 
+        # Optional learnable temporal-harmonic path (default OFF -> champion byte-identical). The (xy·t / yz·t / xz·t)
+        # hash MEMORIZES discrete time cells and carries NO smooth/periodic temporal inductive bias; smooth_geo
+        # (fusion.py) is SPATIAL-only, so this is NOT redundant with it. A learnable multi-scale sin/cos basis over
+        # normalized time gives the encoder an internal seasonal/persistence prior (the forecast objective's actual
+        # signal is seasonal persistence). Appended to the dense forward() output; forward_precomputed stays hash-only.
+        self.time_harmonics = int(time_harmonics)
+        if self.time_harmonics > 0:
+            init = torch.tensor([2.0 ** k for k in range(self.time_harmonics)], dtype=torch.float32)
+            self.time_freqs = nn.Parameter(init)   # cycles over the normalized time span; learnable timescale
+            self.output_dim = self.output_dim + 2 * self.time_harmonics
+
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
         return self.xyz_encoder(xyz, size=1.0)
 
@@ -458,12 +470,21 @@ class Earth4D(nn.Module):
         proj = 2.0 * math.pi * (norm_coords[..., :3] @ self._fourier_B)
         return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
 
+    def _time_harmonics(self, norm_coords: torch.Tensor) -> torch.Tensor:
+        """Learnable multi-scale periodic time basis [sin(2π f t), cos(2π f t)] over normalized time -> a smooth
+        seasonal/persistence prior the discrete hash lacks (temporal analogue of the spatial RFF; not smooth_geo)."""
+        t = norm_coords[..., 3:]                          # (..., 1) normalized time in [0,1]
+        proj = 2.0 * math.pi * t * self.time_freqs        # (..., K) broadcast over learnable frequencies
+        return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+
     def _forward_tensor(self, coords: torch.Tensor) -> torch.Tensor:
         norm_coords = self._normalize_coords(coords)
         feats = torch.cat([self._encode_spatial(norm_coords[..., :3]),
                            self._encode_spatiotemporal(norm_coords)], dim=-1)
         if self.fourier_features > 0:
             feats = torch.cat([feats, self._fourier(norm_coords)], dim=-1)
+        if self.time_harmonics > 0:
+            feats = torch.cat([feats, self._time_harmonics(norm_coords)], dim=-1)
         return feats
 
     def get_output_dim(self) -> int:
