@@ -370,6 +370,7 @@ def main(argv=None):
     ap.add_argument("--topk", type=int, default=40)  # B53: number of pollinator classes (real regime)
     ap.add_argument("--regime", default="plant", choices=["plant", "pollinator"])  # B23 (many obs, separated niches) vs B53 (few obs, packed niches)
     ap.add_argument("--label", default="")
+    ap.add_argument("--device", default="cuda")   # accepted for harness compat; GPU selected via CUDA_VISIBLE_DEVICES
     a = ap.parse_args(argv)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     t0 = time.time()

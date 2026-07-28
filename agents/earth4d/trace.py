@@ -78,7 +78,7 @@ def _parse(text: str):
             if nums:
                 gains["prop_acc"] = max(nums)
     metrics = [l.strip() for l in text.splitlines()
-               if re.search(r"\b(acc|micro-AP|MAE|absR2|GAIN|Spearman|top5|prop)\b", l) and l.strip()]
+               if re.search(r"\b(acc|micro-AP|MAE|absR2|GAIN|Spearman|top5|prop|ECE|AUROC|Brier|SUMMARY)\b", l) and l.strip()]
     return header, gains, metrics[:24]
 
 
@@ -92,6 +92,9 @@ def _fair_gain(gains: dict):
 
 
 def _primary(text: str, cap: str):
+    if cap == "calibration":                              # calib_probe: AUROC of confidence->correctness (0.5=useless)
+        m = re.search(r"conf_auroc=([\d.]+)", text)
+        return float(m.group(1)) if m else None
     if cap.startswith("flowering"):                       # phenology modes report within-tol acc (0..1), take the best
         accs = [float(x) for x in re.findall(r"\bacc\s+([\d.]+)", text)]
         return max(accs) if accs else None
