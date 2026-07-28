@@ -1,30 +1,33 @@
 # Earth4D Agent — program
 
-**Objective:** break records on the scorecard capabilities (the SAME capabilities the science/`evaluate.py` measures — species/family from env & spacetime, phenology, env-decode, calibration) **but scoped to the encoder** and measured by the fast Earth4D **probe**, not full-model training. **Surface area = ONLY the spacetime encoder** (`encoders/spacetime/earth4d.py` + the probes in `autoresearch/programs/spacetime/`). Because the scope is bounded to the encoder, **take big architectural swings** — demanding redesigns are cheap here (a probe run is minutes) and that is the whole point.
+**Objective:** break records on the scorecard capabilities (species/family from env & spacetime, phenology, env-decode, calibration) **scoped to the encoder** and measured by the fast Earth4D **probe**, not full-model training. There are **two co-equal lever families**: **DATA** (what signal feeds the encoder) and **ARCHITECTURE** (how the encoder represents it). **Surface area** = `encoders/spacetime/earth4d.py` + the probes in `autoresearch/programs/spacetime/` **+ the data channels those probes feed** (`--env_channels`, `--sdm_channels`, `--vision`, `--pheno_channel`, densification). A probe run is minutes, so iterate fast and broad.
 
 ## 1. Loop
-1. **Pick the objective** — the loop decides: the worst / highest-leverage scorecard capability (measured via its probe mode). Declare it as `--metric`.
-2. **Make ONE big architectural change to the encoder** (Preferences) — a demanding jump, *not* a config tweak: a new propagator/forecaster, a field decoder, a new positional-encoding architecture, a new training objective. Edit `earth4d.py` or add a probe variant — encoder scope only.
-3. **Run through the harness:** `python -m deepearth.agents.earth4d.trace --metric <capability> --probe "<probe flags = the lever>" --tag <id> --device cuda:N --ensue`. The probe trains ONLY the encoder + a light head on ~65k obs in **minutes** and reports the encoder-isolated score — `st_gain` = Earth4D vs the fair coordinate / RFF / MLP baseline.
-4. **Read the trace:** the capability's probe score + `st_gain` (the encoder's marginal) + delta vs the probe baseline. `st_gain ≈ 0` → the architecture isn't earning it → **swing bigger**.
-5. **Sweep in breadth** — both GPUs saturated with many architectural variants at once (each run is minutes, so run lots).
-6. **Gate + record:** a real gain on the objective → update `scorecard.md` (probe-scoped Record/Status) + Ensue. Dead-ends Ensue'd too (they steer the next swing). Keep swinging.
+1. **Pick the objective** — the worst / highest-leverage scorecard capability. Declare it as `--metric`.
+2. **Diagnose the bottleneck from the trace's fair-gain** (encoder vs a generic trained PE/RFF), then pick the matching lever:
+   - **fair-gain ≈ 0 or negative → the INPUT is the bottleneck, not the encoder → DATA lever.** The coordinate/current channel lacks the signal; feed a different/richer channel. (e.g. `family_from_env` sat at 0.125 with gain ≈ 0 for *every* env channel → swapping to per-obs **vision** gave 0.945.)
+   - **fair-gain positive but score low → the ENCODER is the bottleneck → ARCHITECTURE lever.**
+3. **Run through the harness:** `python -m deepearth.agents.earth4d.trace --metric <capability> --probe "<flags = the lever>" --tag <id> --device cuda:N`. The probe trains ONLY the encoder + a light head in **minutes** and reports the encoder-isolated score + fair-gain.
+4. **Read the trace:** capability score + fair-gain + delta vs the probe baseline.
+5. **Sweep in breadth** — both GPUs saturated; cross DATA × ARCHITECTURE (e.g. each env channel × each encoder variant).
+6. **Gate + record:** a real gain → update `scorecard.md` + Ensue. Dead-ends Ensue'd too. Keep going.
 
 ## 2. Preferences
-- **Surface = the Earth4D encoder ONLY** (`encoders/spacetime/earth4d.py` + `autoresearch/programs/spacetime/*`). Never the full fusion model.
-- **Big architectural levers — take risks. NOT config knobs.** The general levers:
-  - **Propagation / forecasting:** Earth4D is a static hash lookup today. Give it temporal state — a causal auto-regressive forecaster / 4D-LSTM (`recurrence.py`, `--recurrence`), a GNN message-passing propagator (`gnn.py`, `--gnn`), causal future split (`--forecast`).
-  - **Field decode:** train the encoder end-to-end to decode the dense env / biology field (`env_field.py`, `--env_decode`, `--field_decode`) — represent the environment, don't index coordinates.
-  - **New encoding architecture:** replace/augment the hash grid — learned Fourier features, SIREN, attention-over-neighbours, a coordinate transformer. Demanding rewrites of `earth4d.py`.
-  - **New training objectives on the encoder:** cline-aware DOY loss, forecast reconstruction, contrastive env alignment, dense-field interpolation.
-  - Capacity knobs (`spatial_levels`, `log2_hashmap`, `head_hidden`) are the SMALL end — only to tune a *winning* architecture, never the main move.
-- **Measurement = the encoder probe, fast, native metrics** (never reimplemented). Same capabilities as the scorecard/science: env→species/family = `--sdm_presence`; phenology/timing = `--phenology`; env-vs-coord & field = `--env` / `--env_decode`; calibration = `calib_probe.py`. `st_gain` is the encoder's isolated marginal. Every run goes through `trace.py --ensue` (auto-logs to Ensue; token in `/workspace/.env`, never committed). Single-seed; noise negligible.
+- **Surface = the Earth4D encoder + its probes + the data channels they feed.** Never the full fusion model.
+- **DATA lever — first-class, NOT new.** The macro phase moved arith 0.446→0.6153 heavily on data (terrain, AlphaEarth, occurrence densification 207k→621k); data was always viable. For the probes it means: **which channel/modality feeds the encoder+head.**
+  - env channels: `--env` / `--env_channels {worldclim, alphaearth, all}`, `--env_extra` (soil+elev), `--sdm_channels`.
+  - vision: `--vision --vision_feats {dino, bio, both}` (per-obs DINO/BioCLIP) — carries morphology/family where env can't.
+  - phenology / remote-sensing: `--pheno_channel` (MODIS NDVI/EVI).
+  - occurrence densification, channel fusion (env+vision), per-species aggregation.
+  - When a fair-gain is flat across an input type, that input is signal-limited — **change the channel, don't just swing the architecture.**
+- **ARCHITECTURE lever — also first-class.** Propagation / forecasting (`--recurrence`, `--gnn`, `--forecast`, internal temporal-harmonic path), field-decode (`--env_decode`, `--field_decode`), new encoding (learned Fourier, SIREN, attention-over-neighbours — rewrites of `earth4d.py`), new training objectives (cline-aware DOY, contrastive env alignment). Capacity knobs (`spatial_levels`, `log2_hashmap`, `head_hidden`, `time_harmonics`) tune a *winning* config, not the main move.
+- **Diagnose before you swing:** the trace's fair-gain tells you whether the problem is input-limited (→ DATA) or encoder-limited (→ ARCHITECTURE). Don't default to one family.
+- **Measurement = the encoder probe, fast, native metrics** (never reimplemented). Single-seed; noise negligible. `rm -f`/rebuild the prepared cache (`--fresh-data`) whenever the DATA lever changes what's loaded — the cache is lossy across data changes.
 
 ## 3. Don'ts
-- **Don't train the full 799M fusion model** — confounded and slow. The surface is the encoder, measured by the probe.
-- **Don't make marginal config tweaks the main move** (hash levels, loss weights) — take big architectural swings; don't be timid.
+- **Don't train the full 799M fusion model** — confounded and slow. Encoder + probe only.
+- **Don't default to architecture-only.** DATA is co-equal; pick the lever the fair-gain points to. (This program used to say "architecture only, big swings" — that was wrong; the data lever was always live.)
 - No experiment without a declared `--metric`; no multi-seed / re-verification (GPU → breadth).
 - Native probe metrics only — no reimplemented scoring.
-- Don't game a capability via non-encoder signal; don't chase aggregate arith.
-- Don't declare a capability a ceiling / "done" / "exhausted" — swing bigger.
-- Don't leave the lossy prepared cache stale across data changes (`--fresh-data` when the probe rebuilds it).
+- **Attribute borrowed signal honestly** — a vision-channel win is *borrowed* DINO/BioCLIP, not a coordinate-encoder gain; label it (env=where, vision=which). Don't launder it as an Earth4D win, and don't chase the aggregate arith.
+- Don't declare a capability a ceiling / "done" / "exhausted" — change the lever family and keep going.
