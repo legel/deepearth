@@ -17,10 +17,13 @@ Same capabilities, **scoped to the fast Earth4D encoder probe** (`trace.py` → 
 | species_from_env | **0.634** (micro-AP) | **+0.407** | sdm_hard | EARNING — 7.5× over prevalence |
 | family_from_spacetime | **0.153** | **+0.073** vs RFF | fc_hh256 | EARNING — improved overnight (wider readout head); the one genuine Earth4D-arch win, only on the forecast objective |
 | family_from_env | **0.125** | +0.023 (ff1024) | env_ff256 | **Fourier branch flips gain POSITIVE** — Earth4D now *beats* the generic PE on env→identity (was architecture-limited) |
-| flowering_peak_month | 0.003 | — | pheno | mode reports MAE not acc — metric extraction needs a fix |
-| species_from_spacetime · lfmc · mycorrhiza · pollinator · calibration · flowering_auc/fidelity · infer_* | — | — | — | not yet probed |
+| flowering_peak_month | 0.066 | — | pheno | phenology within-tol acc |
+| calibration | 0.618 | — | cal_earth4d | conf→correct AUROC (0.5=useless); raw Earth4D overconfident (ECE 0.078→0.027 temp-scaled) |
+| species_from_spacetime · lfmc · mycorrhiza · pollinator · flowering_auc/fidelity · infer_* | — | — | — | not Earth4D-probeable (non-encoder heads) |
 
-**Headline so far:** env→biology at the cell level is genuinely strong in isolation — **community_from_env +0.45, species_from_env +0.41** — and the hash encoder beats a generic PE on the *temporal/forecast* objective. So the earning directions are (1) env→biology SDM/co-occurrence and (2) temporal state / propagation — not static coordinate hashing. (Records auto-tracked in `records.json`; the loop prints the full net card after every run.)
+**ARCHITECTURAL WIN (earth4d.py):** a gated **spatial-only random-Fourier-features branch** (default off, champion byte-identical) fixes the encoder's fundamental weakness — its local hash *loses* to a generic RFF PE on smooth/static tasks. On static family-from-coords it flips Earth4D from 0.069 (loses to RFF) to ~0.08–0.10 (beats RFF), and — after restricting the RFF to xyz only — it now also *helps* forecast (0.112→0.129, gain +0.11 vs RFF) instead of diluting it. Broad, non-harmful → **champion-graduation candidate** (needs a `fusion.py` fourier-projection wiring + `champion_report` before/after). Single-seed, noisy.
+
+**Earning directions:** (1) env→biology SDM/co-occurrence, (2) temporal state/propagation, (3) **the spatial-Fourier branch** (a real encoder edit). Records auto-tracked in `records.json`; net card printed after every run.
 
 ---
 
