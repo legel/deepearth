@@ -370,7 +370,9 @@ class Earth4D(nn.Module):
         # onto the hash output; only the dense forward() path carries it (forward_precomputed stays hash-only).
         self.fourier_features = int(fourier_features)
         if self.fourier_features > 0:
-            self.register_buffer("_fourier_B", torch.randn(4, self.fourier_features) * float(fourier_scale))
+            # SPATIAL-only RFF (projects xyz, NOT time) so the temporal projections stay undiluted -> fixes the
+            # hash's static/env weakness without hurting the forecast/temporal path.
+            self.register_buffer("_fourier_B", torch.randn(3, self.fourier_features) * float(fourier_scale))
             self.output_dim = self.output_dim + 2 * self.fourier_features
 
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
@@ -452,8 +454,8 @@ class Earth4D(nn.Module):
         return torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
 
     def _fourier(self, norm_coords: torch.Tensor) -> torch.Tensor:
-        """Random Fourier features of the normalized 4D coords: [sin(2π B x), cos(2π B x)]."""
-        proj = 2.0 * math.pi * (norm_coords @ self._fourier_B)
+        """Spatial-only random Fourier features (xyz, not time): [sin(2π B xyz), cos(2π B xyz)]."""
+        proj = 2.0 * math.pi * (norm_coords[..., :3] @ self._fourier_B)
         return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
 
     def _forward_tensor(self, coords: torch.Tensor) -> torch.Tensor:
