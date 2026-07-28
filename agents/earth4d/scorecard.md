@@ -13,17 +13,17 @@ Same capabilities, **scoped to the fast Earth4D encoder probe** (`trace.py` → 
 
 | Capability | Probe record | fair_gain | Best lever | Read |
 |---|---|---|---|---|
-| community_from_env | **0.881** (micro-AP) | **+0.453** | cooccur_both | EARNING — strongest signal |
+| community_from_env | **0.887** (micro-AP) | **+0.460** | cooccur_both | EARNING — strongest signal |
 | species_from_env | **0.634** (micro-AP) | **+0.407** | sdm_hard | EARNING — 7.5× over prevalence |
-| family_from_spacetime | **0.153** | **+0.073** vs RFF | fc_hh256 | EARNING — improved overnight (wider readout head); the one genuine Earth4D-arch win, only on the forecast objective |
-| family_from_env | **0.125** | +0.023 (ff1024) | env_ff256 | **Fourier branch flips gain POSITIVE** — Earth4D now *beats* the generic PE on env→identity (was architecture-limited) |
+| family_from_spacetime | **0.165** | **+0.096** vs RFF | fc_hh256_ff1024 | EARNING — the one genuine Earth4D-arch win, only on the forecast objective |
+| family_from_env | **0.125** | **−0.006** vs best-coord-PE | env_ff256 | still ~ties/loses to a generic PE on env→identity (Fourier does NOT flip it positive) |
 | flowering_peak_month | 0.066 | — | pheno | phenology within-tol acc |
-| calibration | 0.618 | — | cal_earth4d | conf→correct AUROC (0.5=useless); raw Earth4D overconfident (ECE 0.078→0.027 temp-scaled) |
+| calibration | 0.629 | — | cal_earth4d | conf→correct AUROC (0.5=useless); raw Earth4D overconfident (ECE 0.078→0.027 temp-scaled) |
 | species_from_spacetime · lfmc · mycorrhiza · pollinator · flowering_auc/fidelity · infer_* | — | — | — | not Earth4D-probeable (non-encoder heads) |
 
-**ARCHITECTURAL WIN (earth4d.py):** a gated **spatial-only random-Fourier-features branch** (default off, champion byte-identical) fixes the encoder's fundamental weakness — its local hash *loses* to a generic RFF PE on smooth/static tasks. On static family-from-coords it flips Earth4D from 0.069 (loses to RFF) to ~0.08–0.10 (beats RFF), and — after restricting the RFF to xyz only — it now also *helps* forecast (0.112→0.129, gain +0.11 vs RFF) instead of diluting it. Broad, non-harmful → **champion-graduation candidate** (needs a `fusion.py` fourier-projection wiring + `champion_report` before/after). Single-seed, noisy.
+**ARCHITECTURAL PROBE-WIN (earth4d.py), NOT a graduation candidate:** a gated **spatial-only random-Fourier-features branch** (default off, champion byte-identical) fixes the *bare probe's* weakness — a raw Earth4D hash grid loses to a generic RFF PE on smooth/static tasks (0.069→~0.08–0.10 static; forecast 0.153→0.165, +0.096 vs RFF). **BUT: the champion already carries this exact prior** — `core/fusion.py:311` wires `SmoothGeoField` (an RFF geo prior added to the hash position; `champion.yaml smooth_geo: true`). So the probe-win is the probe catching up to what the champion has, NOT a new champion lever. **Do NOT graduate** — verified redundant (Ensue `earth4d_FOURIER_redundant_with_smooth_geo_NO_graduation_2026_07_28`). Keep the branch default-off for probe-fairness only. Single-seed, noisy.
 
-**Earning directions:** (1) env→biology SDM/co-occurrence, (2) temporal state/propagation, (3) **the spatial-Fourier branch** (a real encoder edit). Records auto-tracked in `records.json`; net card printed after every run.
+**Earning directions:** (1) env→biology SDM/co-occurrence, (2) **temporal state/propagation INSIDE the encoder** — the genuine open champion gap: Earth4D has no causal temporal state (static hash + RFF geo prior); the forecast probe shows Earth4D+propagators earn. NOT the Fourier branch (redundant with the champion's `smooth_geo`). Records auto-tracked in `records.json`; net card printed after every run.
 
 ---
 
