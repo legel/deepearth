@@ -56,7 +56,7 @@ def poisson_deviance(y, lam):
 
 
 def fit_intensity(Ztr, Zte, Ytr, off_tr, off_te, d, steps, lr, dev, seed=0, use_feat=True, wd=1e-4,
-                  enc=None, coords_tr=None, coords_te=None):
+                  enc=None, coords_tr=None, coords_te=None, enc_lr_mult=0.05):
     """Fit log lambda[c,s] = <W z_c, e_s> + b_s + logE_c + g by Poisson NLL on the TRAIN period.
 
     Returns (lam_train, lam_test): the SAME fitted parameters applied to the train-period and test-period
@@ -92,9 +92,13 @@ def fit_intensity(Ztr, Zte, Ytr, off_tr, off_te, d, steps, lr, dev, seed=0, use_
     alpha = nn.Parameter(torch.ones((), device=dev))
     W = nn.Linear(Ztr_t.shape[1], d).to(dev)
     params = [E, b, g, alpha] + (list(W.parameters()) if use_feat else [])
+    groups = [{"params": params, "lr": lr, "weight_decay": wd}]
     if train_enc:
-        params = params + list(enc.parameters())
-    opt = torch.optim.Adam(params, lr=lr, weight_decay=wd)
+        # The hash table needs its OWN group: at the head's lr, with weight decay, on a Poisson (exp) loss it
+        # diverges -- identical configs came back +0.88 and -25.4 across runs because the hashgrid backward uses
+        # nondeterministic atomics, so an unstable optimization lands somewhere different each time.
+        groups.append({"params": list(enc.parameters()), "lr": lr * enc_lr_mult, "weight_decay": 0.0})
+    opt = torch.optim.Adam(groups)
 
     def loglam(Z, o):
         h = W(Z) @ E.T if use_feat else torch.zeros(Z.shape[0], S, device=dev)
@@ -104,6 +108,8 @@ def fit_intensity(Ztr, Zte, Ytr, off_tr, off_te, d, steps, lr, dev, seed=0, use_
         opt.zero_grad()
         ll = loglam((enc(Ctr_t) - mu) / sd if train_enc else Ztr_t, o_tr)
         (ll.exp() - Y * ll).mean().backward()              # Poisson NLL up to a constant
+        if train_enc:                                  # clip ONLY the encoder: clipping the head too changes
+            torch.nn.utils.clip_grad_norm_(enc.parameters(), 1.0)   # head optimization in every condition
         opt.step()
     with torch.no_grad():
         if train_enc:
@@ -124,6 +130,7 @@ def main(argv=None):
     ap.add_argument("--emb_dim", type=int, default=32)         # species embedding dim
     ap.add_argument("--steps", type=int, default=600)
     ap.add_argument("--lr", type=float, default=0.01)
+    ap.add_argument("--enc_lr_mult", type=float, default=0.05)  # encoder lr = lr * this (its own param group, wd=0)
     ap.add_argument("--train_encoder", action="store_true")    # backprop the Poisson loss INTO the hash table
     ap.add_argument("--no_effort", action="store_true")        # ABLATION: drop the effort offset
     ap.add_argument("--spatial_levels", type=int, default=24)
@@ -219,7 +226,8 @@ def main(argv=None):
         # fit on the TRAIN period, predict the TEST period with the SAME parameters (only time moves)
         _tenc = enc if (a.train_encoder and name == "earth4d") else None
         _, lam_te = fit_intensity(ftr, fte, Ytr, off_tr, off_te, a.emb_dim, a.steps, a.lr, dev,
-                                  a.seed, use_feat=True, enc=_tenc, coords_tr=rn_tr, coords_te=rn_te)
+                                  a.seed, use_feat=True, enc=_tenc, coords_tr=rn_tr, coords_te=rn_te,
+                                  enc_lr_mult=a.enc_lr_mult)
         D = poisson_deviance(Yte, lam_te)
         dev_expl = 1.0 - (D - D_sat) / max(D_null - D_sat, 1e-9)
         top1 = float((lam_te.argmax(1) == Yte.argmax(1))[Yte.sum(1) > 0].mean())
