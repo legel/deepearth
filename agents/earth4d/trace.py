@@ -86,6 +86,12 @@ def _mode(header: str):
     """The probe MODE from the run header, e.g. 'PHENOLOGY(...)' / 'ENV(spatial-block)' / 'FORECAST(past->future)'.
     Two runs in different modes are measuring different targets and their scores are not comparable."""
     m = re.search(r"mode=([A-Za-z_\-]+)", header or "")
+    if m:
+        return m.group(1)
+    # Some paths label the mode positionally instead (=== SPACETIME | SDM-HARD | ..., | ENV-CONSTRUCT | ...).
+    # Without this they all read mode=None and would be mutually comparable, which is exactly what the gate
+    # is meant to prevent between e.g. SDM-HARD and SDM-PRESENCE.
+    m = re.search(r"===\s*SPACETIME[^|]*\|\s*([A-Z][A-Z0-9\-]{2,})", header or "")
     return m.group(1) if m else None
 
 
@@ -100,12 +106,13 @@ def _fair_gain(gains: dict):
 
 def _primary(text: str, cap: str):
     if cap == "calibration":                              # calib_probe: AUROC of confidence->correctness (0.5=useless)
-        # Best available confidence SIGNAL, not just single-model max-softmax. conf_auroc is a rank statistic, so
-        # the probe's post-hoc mechanisms (temperature/isotonic) cannot move it — only a different uncertainty
-        # signal can, and until the ensemble signals were surfaced only softmax was ever scored. Records set
-        # before this read softmax-only (conf_auroc=), which is still included here.
-        aucs = [float(x) for x in re.findall(r"conf_auroc(?:_\w+)?=([\d.]+)", text)]
-        return max(aucs) if aucs else None
+        # LIKE-FOR-LIKE. An earlier edit made this the max over conf_auroc_ens/_ent/_bald/_ensvar too, so a run
+        # using a DIFFERENT uncertainty signal could "beat" a record set on max-softmax — the same cross-target
+        # error the mode gate exists to stop, and invisible to that gate because calib_probe prints no mode=.
+        # The record metric is the single-model softmax AUROC; the other signals are reported by the probe and
+        # compared there, never silently substituted here.
+        m = re.search(r"conf_auroc=([\d.]+)", text)
+        return float(m.group(1)) if m else None
     if cap.startswith("flowering"):                       # phenology modes report within-tol acc (0..1)
         # ONLY the Earth4D row counts. This used to max over EVERY acc in the output, so a run where the generic
         # RFF/raw control beat Earth4D recorded the CONTROL's accuracy as the Earth4D record (e.g. a run whose
