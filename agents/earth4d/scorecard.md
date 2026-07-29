@@ -17,7 +17,7 @@ Same capabilities, **scoped to the fast Earth4D encoder probe** (`trace.py` → 
 | community_from_env | **0.887** (micro-AP) | **+0.460** | cooccur_both | EARNING — strongest signal |
 | species_from_env | **0.634** (micro-AP) | **+0.407** | sdm_hard | EARNING — 7.5× over prevalence |
 | family_from_spacetime | **0.182** | **+0.132** vs RFF | th8_ff1024_hh512 | EARNING — genuine Earth4D-arch win; temporal-harmonic + wider head 0.165→0.171→0.182 (th32/recurrence HURT) |
-| family_from_env | **0.125** | **−0.006** vs best-coord-PE | env_ff256 | ENV data lever spent (worldclim/AlphaEarth/all all ~0.11-0.13, gain≈0) — clade wall (env=where); signal lives in vision |
+| family_from_env | **0.144** | **+0.034** vs best-coord-PE | famenv_alphaearth (real 64d AlphaEarth) | DATA LEVER, plumbing bug fixed: `load_env` was HARD-WIRED to 19wc+9soil+1elev and ignored `--env_channels`, so all 53 prior "channel swaps" fed the IDENTICAL 29 columns — AlphaEarth had never reached this path. Joining it for real: 0.125→0.144, gain −0.006→+0.034 (all=93d gives 0.141, pure AlphaEarth 64d wins). Satellite-embedding channel (env=where), not plant-photo vision |
 | flowering_peak_month | 0.0674 | — | pheno_none_env | env-conditioning nudge; MODIS phenology channel NEGATIVE (landscape greenness ≠ species flowering timing) |
 | calibration | 0.629 | — | cal_earth4d | conf→correct AUROC (0.5=useless); raw Earth4D overconfident (ECE 0.078→0.027 temp-scaled) |
 | species_from_spacetime · lfmc · mycorrhiza · pollinator · flowering_auc/fidelity · infer_* | — | — | — | not Earth4D-probeable (non-encoder heads) |

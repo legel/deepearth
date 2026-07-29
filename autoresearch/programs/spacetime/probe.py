@@ -93,12 +93,19 @@ def load_species(cache: str, n_shards: int):
     return np.concatenate(sp).astype(np.int64)
 
 
-def load_env(cache: str, gid):
+def load_env(cache: str, gid, channels: str = "wcsoil"):
     """Join real ENVIRONMENT covariates to each observation by gbifID (science.md rule 24: environment field).
 
     Returns env [N, D] float32, standardized (zero-mean/unit-std per column over the covered obs), missing
-    values imputed to 0 (= the column mean post-standardization). D = 19 worldclim + 9 soil + 1 elev = 29.
-    A per-column present-mask is folded in as the impute so absent env reads as neutral, never leaks NaN."""
+    values imputed to 0 (= the column mean post-standardization). A per-column present-mask is folded in as
+    the impute so absent env reads as neutral, never leaks NaN.
+
+    DATA LEVER (`channels`) -- this used to be hard-wired to worldclim+soil+elev, so `--env_channels` had NO
+    effect on the family_from_env path and every "channel swap" fed the identical 29 columns:
+      wcsoil (default, unchanged) = 19 worldclim + 9 soil + 1 elev  = 29
+      worldclim                   = 19 worldclim                    = 19
+      alphaearth                  = 64 AlphaEarth satellite embed   = 64  (learned, NOT physical climate)
+      all                         = wcsoil ++ alphaearth            = 93"""
     cachep = Path(cache)
     wc = np.load(cachep / "gbif_worldclim_tokens.npz")
     so = np.load(cachep / "gbif_soil_tokens.npz")
@@ -106,13 +113,26 @@ def load_env(cache: str, gid):
     wcmap = dict(zip(wc["gbifID"].tolist(), wc["worldclim"]))
     somap = dict(zip(so["gbifID"].tolist(), so["soil"]))
     elmap = dict(zip(el["gbifID"].tolist(), el["elev"].tolist()))
-    D = 19 + 9 + 1
+    aemap = AE = None
+    if channels in ("alphaearth", "all"):
+        _ae = np.load(cachep / "gbif_alphaearth_tokens.npz")
+        aemap = {int(g): i for i, g in enumerate(_ae["gbifID"])}; AE = _ae["ae"]
+    n_ae = 0 if AE is None else AE.shape[1]
+    D = (0 if channels == "alphaearth" else (19 if channels == "worldclim" else 29)) + n_ae
     env = np.full((len(gid), D), np.nan, np.float32)
     for i, g in enumerate(gid):
         g = int(g)
-        if g in wcmap: env[i, :19] = wcmap[g]
-        if g in somap: env[i, 19:28] = somap[g]
-        if g in elmap: env[i, 28] = elmap[g]
+        o = 0
+        if channels != "alphaearth":
+            if g in wcmap: env[i, :19] = wcmap[g]
+            o = 19
+            if channels != "worldclim":
+                if g in somap: env[i, 19:28] = somap[g]
+                if g in elmap: env[i, 28] = elmap[g]
+                o = 29
+        if aemap is not None:
+            j = aemap.get(g)
+            if j is not None: env[i, o:o + n_ae] = AE[j]
     # standardize per column over present values, then impute missing to the (post-standardization) mean = 0
     mu = np.nanmean(env, 0); sd = np.nanstd(env, 0); sd[sd < 1e-6] = 1.0
     env = (env - mu) / sd
@@ -349,7 +369,9 @@ def main(argv=None):
     ap.add_argument("--fourier", type=int, default=0)           # ARCH LEVER: add a random-Fourier-features branch of this width to Earth4D (0=off) -- tests hash+Fourier vs the pure-RFF baseline it currently loses to
     ap.add_argument("--fourier_scale", type=float, default=10.0)  # RFF bandwidth (freq scale) for the --fourier branch
     ap.add_argument("--time_harmonics", type=int, default=0)      # ARCH LEVER: internal learnable multi-scale sin/cos time basis (0=off) -- seasonal/persistence prior the discrete hash lacks; NOT redundant with spatial smooth_geo
-    ap.add_argument("--time_film", type=int, default=0)          # ARCH LEVER: gated space x time FiLM (0=off) -- modulate spatial hash by a learned time basis; explicit seasonal-spatial interaction the additive features cannot form
+    ap.add_argument("--spatial_cline", type=int, default=0)      # ARCH LEVER: gated smooth spatial-CLINE band (0=off) -- linear xyz + LEARNABLE low-freq sin/cos; the monotone spatial gradient (lat->flowering-DOY Hopkins cline) the hash memorizes away and the fixed high-freq --fourier cannot form
+    ap.add_argument("--cline_scale", type=float, default=1.0)     # init bandwidth of the learnable cline band (LOW by design; ~1 cycle over the domain)
+    ap.add_argument("--time_film", type=int, default=0)        # ARCH LEVER: gated space x time FiLM (0=off) -- modulate spatial hash by a learned time basis; explicit seasonal-spatial interaction the additive features cannot form
     ap.add_argument("--forecast", action="store_true")          # S1/rule1: causal past->future temporal split + live time coord
     ap.add_argument("--forecast_spatial", action="store_true")  # rule1 strict: future time AND held-out place (no location-recall shortcut)
     ap.add_argument("--recurrence", action="store_true")        # rule2b: 4D-LSTM rollout PROPAGATES past->future (replaces static lookup head)
@@ -389,7 +411,7 @@ def main(argv=None):
     ap.add_argument("--env_extra", action="store_true")         # add soil(9)+elev(1) channels on top of worldclim(19)+AlphaEarth(64)
     ap.add_argument("--env_head", default="ridge", choices=["ridge", "mlp"])  # linear RidgeCV vs 1-hidden MLP niche head
     ap.add_argument("--env_mlp_hidden", type=int, default=128)
-    ap.add_argument("--env_channels", default="all", choices=["all","worldclim","alphaearth"])  # channel-family ablation: which env source carries the niche-trait routing
+    ap.add_argument("--env_channels", default="all", choices=["all","worldclim","alphaearth","wcsoil"])  # ("wcsoil" = the legacy hard-wired 19wc+9soil+1elev stack the --env path used to force regardless of this flag) # channel-family ablation: which env source carries the niche-trait routing
     ap.add_argument("--vision", action="store_true")             # DATA LEVER: family from per-obs PLANT vision (DINO/BioCLIP) instead of env -- perception-law test
     ap.add_argument("--vision_feats", default="dino", choices=["dino","bio","both"])
     ap.add_argument("--pheno_channel", action="store_true")      # DATA LEVER: join per-obs MODIS phenology (gbif_phenology_tokens, 12 feats) onto the phenology forecaster query features
@@ -522,12 +544,13 @@ def main(argv=None):
     enc = Earth4D(verbose=False, spatial_levels=a.spatial_levels, temporal_levels=a.temporal_levels,   # S3: exposed capacity
                   spatial_log2_hashmap_size=a.log2_hashmap, temporal_log2_hashmap_size=a.log2_hashmap, freq_log_scale_init=-2.5,
                   fourier_features=a.fourier, fourier_scale=a.fourier_scale,
-                  time_harmonics=a.time_harmonics, time_film=a.time_film).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
+                  time_harmonics=a.time_harmonics, time_film=a.time_film,
+                  spatial_cline=a.spatial_cline, cline_scale=a.cline_scale).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
 
     if a.env or a.env_decode:
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
         # follows. Real env covariates (worldclim+soil+elev) joined by gbifID -> the science-aligned question.
-        env = load_env(a.cache_dir, gid)                         # [N, 29] standardized, NaN-imputed to 0
+        env = load_env(a.cache_dir, gid, channels=a.env_channels)  # DATA LEVER: wcsoil(29) | worldclim(19) | alphaearth(64) | all(93)
         if a.vision:
             env = load_vision(a.cache_dir, gid, a.vision_feats, a.n_shards)   # DATA LEVER: per-obs plant vision replaces env
         rn = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
