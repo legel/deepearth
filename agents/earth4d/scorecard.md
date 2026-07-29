@@ -16,7 +16,7 @@ Same capabilities, **scoped to the fast Earth4D encoder probe** (`trace.py` → 
 | family_from_vision | **0.945** (acc) | **+0.835** vs coord-PE | fam_vision_both(dino+bio) | DATA LEVER: family signal is in the PLANT IMAGE, not env (0.125→0.945). BORROWED vision (env=where, vision=which), not an Earth4D win |
 | community_from_env | **0.887** (micro-AP) | **+0.460** | cooccur_both | EARNING — strongest signal |
 | species_from_env | **0.634** (micro-AP) | **+0.407** | sdm_hard | EARNING — 7.5× over prevalence |
-| family_from_spacetime | **0.171** | **+0.116** vs RFF | fc_hh256_ff1024_th8 | EARNING — the genuine Earth4D-arch win; internal temporal-harmonic path lifts it 0.165→0.171 |
+| family_from_spacetime | **0.182** | **+0.132** vs RFF | th8_ff1024_hh512 | EARNING — genuine Earth4D-arch win; temporal-harmonic + wider head 0.165→0.171→0.182 (th32/recurrence HURT) |
 | family_from_env | **0.125** | **−0.006** vs best-coord-PE | env_ff256 | ENV data lever spent (worldclim/AlphaEarth/all all ~0.11-0.13, gain≈0) — clade wall (env=where); signal lives in vision |
 | flowering_peak_month | 0.0674 | — | pheno_none_env | env-conditioning nudge; MODIS phenology channel NEGATIVE (landscape greenness ≠ species flowering timing) |
 | calibration | 0.629 | — | cal_earth4d | conf→correct AUROC (0.5=useless); raw Earth4D overconfident (ECE 0.078→0.027 temp-scaled) |
