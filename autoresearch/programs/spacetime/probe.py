@@ -388,6 +388,7 @@ def main(argv=None):
     ap.add_argument("--pheno_species", action="store_true")     # ROUND-2: species-conditioned LSTM propagator (neighbour species emb + query species + match bit)
     ap.add_argument("--rec_block_deg", type=float, default=2.0)  # ROUND-3: spatial neighbour-search block width (deg); widen with large K to feed more past-DOY samples
     ap.add_argument("--rec_fast", action="store_true")           # ROUND-4: vectorized cKDTree causal-window builder (true K-nearest, no block-ring cap, no per-query loop) -- decouples receptive-field breadth from O(block_area) cost so large K is affordable
+    ap.add_argument("--pheno_nofair", action="store_true")   # opt OUT of auto-training the RFF fair control alongside Earth4D (default: always train it, so no phenology record is set without a fair baseline)
     ap.add_argument("--pheno_feats", default="e4d,rff,raw")  # HARD-RULE fast path: comma list subset of e4d,rff,raw to TRAIN (isolate ONE feature-type per run)
     # ---- LOOP-spacetime NEW DIRECTIONS on the mean-DOY graduation target (additive, default-off) ----
     ap.add_argument("--pheno_spatial", action="store_true")     # (1) SPATIAL generalization: query set = held-out 0.5deg BLOCKS (unseen geography), neighbours from train blocks; MAE-gain over static floor in new places
@@ -813,11 +814,17 @@ def main(argv=None):
             for _f in sorted(_glob.glob(str(_Path(a.cache_dir) / "gbif_tokens/*.npz")))[:a.n_shards]:
                 _sp.append(np.load(_f)["species_local"])
             sp_all = np.concatenate(_sp).astype(np.int64)
+        _feats = [x for x in a.pheno_feats.split(",") if x]
+        # FAIR-BASELINE GUARD: a single-feature run (e.g. --pheno_feats e4d) left the RFF control untrained, so the
+        # trace could report NO fair gain at all and still set a record -- this capability's records were being
+        # gated on nothing. Whenever Earth4D is trained, train the generic-PE control too (opt out: --pheno_nofair).
+        if "e4d" in _feats and "rff" not in _feats and not a.pheno_nofair:
+            _feats.append("rff")
         r = run_phenology_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, test, dev,
                               K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol,
                               attn=a.pheno_attn, attn_heads=a.attn_heads, attn_layers=a.attn_layers, sp=sp_all,
                               block_deg=a.rec_block_deg, fast=a.rec_fast,
-                              feats=tuple(x for x in a.pheno_feats.split(",") if x))
+                              feats=tuple(_feats))
         dt = time.time() - t0
         n_te = r["raw"]["n_te"]
         def pg(ft, prop):
@@ -844,6 +851,18 @@ def main(argv=None):
         print(f"  BEST propagator_gain (raw features, MAE reduction in days; POSITIVE=propagation helps) GNN {pg_raw_gnn_mae:+.2f}d  LSTM {pg_raw_lstm_mae:+.2f}d  ATTN {pg_raw_attn_mae:+.2f}d  SP {pg_raw_sp_mae:+.2f}d  best {best_prop_raw_mae:+.2f}d")
         print(f"  propagator_gain(within-tol acc, raw) GNN {pg_raw_gnn_acc:+.4f}  LSTM {pg_raw_lstm_acc:+.4f}  ATTN {pg_raw_attn_acc:+.4f}  SP {pg_raw_sp_acc:+.4f}")
         print(f"  ENCODER control (GNN MAE reduction vs static, per PE): raw {pg_raw_gnn_mae:+.2f}d | RFF {pg_rff_gnn_mae:+.2f}d | Earth4D {pg_e4d_gnn_mae:+.2f}d  (Earth4D-vs-raw GNN MAE {r['raw']['gnn_mae']-r['e4d']['gnn_mae']:+.2f}d: +=E4D better)")
+        # THE fair gain for this capability: Earth4D's best head vs the GENERIC TRAINED PE's best head, on the
+        # native within-tol acc. What used to be reported as the "fair gain" here was propagator_gain (propagation
+        # vs static, on RAW features) -- a propagator quantity, not an encoder-vs-PE one, so it never gated the
+        # encoder at all. Printed in the st_gain(...) form the trace's fair-baseline parser prefers.
+        def _best_acc(ft):
+            d = r[ft]
+            vs = [d.get(k) for k in ("static_acc", "gnn_acc", "lstm_acc", "attn_acc", "sp_acc")]
+            vs = [v for v in vs if v is not None and v == v]
+            return max(vs) if vs else float("nan")
+        _e4d_best, _rff_best = _best_acc("e4d"), _best_acc("rff")
+        if _e4d_best == _e4d_best and _rff_best == _rff_best:
+            print(f"  st_gain(Earth4D vs RFF, best-head within-tol acc) {_e4d_best - _rff_best:+.4f}   (Earth4D {_e4d_best:.4f}  RFF {_rff_best:.4f})")
         print(f"  [profile] forecast_queries={n_te} K={a.rec_k} hidden={a.rec_hidden} hops={a.gnn_hops} steps={a.steps}")
         print(f"  {len(lat)} obs, {a.steps}-step phenology in {dt:.1f}s")
         return {"static_mae_raw": r["raw"]["static_mae"], "gnn_mae_raw": r["raw"]["gnn_mae"], "lstm_mae_raw": r["raw"]["lstm_mae"],

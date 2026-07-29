@@ -95,8 +95,16 @@ def _primary(text: str, cap: str):
     if cap == "calibration":                              # calib_probe: AUROC of confidence->correctness (0.5=useless)
         m = re.search(r"conf_auroc=([\d.]+)", text)
         return float(m.group(1)) if m else None
-    if cap.startswith("flowering"):                       # phenology modes report within-tol acc (0..1), take the best
-        accs = [float(x) for x in re.findall(r"\bacc\s+([\d.]+)", text)]
+    if cap.startswith("flowering"):                       # phenology modes report within-tol acc (0..1)
+        # ONLY the Earth4D row counts. This used to max over EVERY acc in the output, so a run where the generic
+        # RFF/raw control beat Earth4D recorded the CONTROL's accuracy as the Earth4D record (e.g. a run whose
+        # e4d head scored 0.0488 was logged as 0.0571 = the RFF row). Fall back to the old scan only if no
+        # per-feature rows are present (other flowering modes that report a single acc).
+        e4d_rows = [l for l in text.splitlines() if re.match(r"\s*e4d\s*\|", l)]
+        accs = [float(x) for row in e4d_rows for x in re.findall(r"\bacc\s+([\d.]+)", row)]
+        if not accs:
+            accs = [float(x) for l in text.splitlines() if not re.match(r"\s*(rff|raw)\s*\|", l)
+                    for x in re.findall(r"\bacc\s+([\d.]+)", l)]
         return max(accs) if accs else None
     for p in PRIMARY_RE.get(cap, [r"\bEarth4D\s+([\d.]+)"]):
         m = re.search(p, text)
