@@ -55,7 +55,8 @@ def poisson_deviance(y, lam):
     return float(2.0 * (t - (y - lam)).sum())
 
 
-def fit_intensity(Ztr, Zte, Ytr, off_tr, off_te, d, steps, lr, dev, seed=0, use_feat=True, wd=1e-4):
+def fit_intensity(Ztr, Zte, Ytr, off_tr, off_te, d, steps, lr, dev, seed=0, use_feat=True, wd=1e-4,
+                  enc=None, coords_tr=None, coords_te=None):
     """Fit log lambda[c,s] = <W z_c, e_s> + b_s + logE_c + g by Poisson NLL on the TRAIN period.
 
     Returns (lam_train, lam_test): the SAME fitted parameters applied to the train-period and test-period
@@ -63,8 +64,19 @@ def fit_intensity(Ztr, Zte, Ytr, off_tr, off_te, d, steps, lr, dev, seed=0, use_
     extrapolating forward in time -- never a refit on test features. use_feat=False -> intercept-only null."""
     torch.manual_seed(seed)
     C, S = Ytr.shape
-    Ztr_t = torch.as_tensor(Ztr, dtype=torch.float32, device=dev)
-    Zte_t = torch.as_tensor(Zte, dtype=torch.float32, device=dev)
+    # TRAINED-ENCODER mode: gradients flow into the hash table. Every probe in this repo evaluates the encoder
+    # under no_grad with a randomly-initialized table, i.e. as a FIXED RANDOM feature map -- which is the worst
+    # case for a hash grid, whose whole premise is a LEARNED table. enc!=None trains it end-to-end on the
+    # Poisson objective; the features are then recomputed each step instead of precomputed.
+    train_enc = enc is not None
+    if train_enc:
+        Ctr_t = torch.as_tensor(coords_tr, dtype=torch.float32, device=dev)
+        Cte_t = torch.as_tensor(coords_te, dtype=torch.float32, device=dev)
+        with torch.no_grad():
+            Ztr_t, Zte_t = enc(Ctr_t), enc(Cte_t)
+    else:
+        Ztr_t = torch.as_tensor(Ztr, dtype=torch.float32, device=dev)
+        Zte_t = torch.as_tensor(Zte, dtype=torch.float32, device=dev)
     Y = torch.as_tensor(Ytr, dtype=torch.float32, device=dev)
     # feature standardization on TRAIN stats (an unnormalized 256-d RFF diverges at any usable lr)
     mu, sd = Ztr_t.mean(0, keepdim=True), Ztr_t.std(0, keepdim=True).clamp_min(1e-6)
@@ -80,6 +92,8 @@ def fit_intensity(Ztr, Zte, Ytr, off_tr, off_te, d, steps, lr, dev, seed=0, use_
     alpha = nn.Parameter(torch.ones((), device=dev))
     W = nn.Linear(Ztr_t.shape[1], d).to(dev)
     params = [E, b, g, alpha] + (list(W.parameters()) if use_feat else [])
+    if train_enc:
+        params = params + list(enc.parameters())
     opt = torch.optim.Adam(params, lr=lr, weight_decay=wd)
 
     def loglam(Z, o):
@@ -88,10 +102,12 @@ def fit_intensity(Ztr, Zte, Ytr, off_tr, off_te, d, steps, lr, dev, seed=0, use_
 
     for _ in range(steps):
         opt.zero_grad()
-        ll = loglam(Ztr_t, o_tr)
+        ll = loglam((enc(Ctr_t) - mu) / sd if train_enc else Ztr_t, o_tr)
         (ll.exp() - Y * ll).mean().backward()              # Poisson NLL up to a constant
         opt.step()
     with torch.no_grad():
+        if train_enc:
+            Ztr_t, Zte_t = (enc(Ctr_t) - mu) / sd, (enc(Cte_t) - mu) / sd
         print(f"      [effort exponent alpha={float(alpha):.3f}]" if use_feat else
               f"      [null effort exponent alpha={float(alpha):.3f}]")
         return loglam(Ztr_t, o_tr).exp().cpu().numpy(), loglam(Zte_t, o_te).exp().cpu().numpy()
@@ -108,6 +124,7 @@ def main(argv=None):
     ap.add_argument("--emb_dim", type=int, default=32)         # species embedding dim
     ap.add_argument("--steps", type=int, default=600)
     ap.add_argument("--lr", type=float, default=0.01)
+    ap.add_argument("--train_encoder", action="store_true")    # backprop the Poisson loss INTO the hash table
     ap.add_argument("--no_effort", action="store_true")        # ABLATION: drop the effort offset
     ap.add_argument("--spatial_levels", type=int, default=24)
     ap.add_argument("--temporal_levels", type=int, default=24)
@@ -200,8 +217,9 @@ def main(argv=None):
     for name in want:
         ftr, fte = feats[name]
         # fit on the TRAIN period, predict the TEST period with the SAME parameters (only time moves)
+        _tenc = enc if (a.train_encoder and name == "earth4d") else None
         _, lam_te = fit_intensity(ftr, fte, Ytr, off_tr, off_te, a.emb_dim, a.steps, a.lr, dev,
-                                  a.seed, use_feat=True)
+                                  a.seed, use_feat=True, enc=_tenc, coords_tr=rn_tr, coords_te=rn_te)
         D = poisson_deviance(Yte, lam_te)
         dev_expl = 1.0 - (D - D_sat) / max(D_null - D_sat, 1e-9)
         top1 = float((lam_te.argmax(1) == Yte.argmax(1))[Yte.sum(1) > 0].mean())
