@@ -7,25 +7,25 @@
 
 ---
 
-## 🔬 Encoder-probe records (LIVE — the overnight loop fills these)
+## 🔬 Encoder-probe records (exploratory; not scientific confirmation)
 
 Same capabilities, **scoped to the fast Earth4D encoder probe** (`trace.py` → `probe.py`, minutes, encoder-only). `fair_gain` = Earth4D vs a generic *trained* PE (RFF/MLP) — the honest "does the encoder earn it." These are encoder-probe numbers, distinct from the full-model baselines below.
 
 | Capability | Probe record | fair_gain | Best lever | Read |
 |---|---|---|---|---|
-| family_from_vision | **0.945** (acc) | **+0.835** vs coord-PE | fam_vision_both(dino+bio) | DATA LEVER: family signal is in the PLANT IMAGE, not env (0.125→0.945). BORROWED vision (env=where, vision=which), not an Earth4D win |
+| family_from_vision | **0.945** (acc) | **+0.835** vs coord-PE | fam_vision_both(dino+bio) | ⚠️ **IMPORTED, NOT A PROBE RECORD** — no probe string, no `n_shards`, `runs=0`: never produced by a `trace.py` run in this ledger, so its provenance cannot be checked here. Also BORROWED frozen vision (env=where, vision=which), not an Earth4D result. Reproduce through the harness or drop the row |
 | community_from_env | **0.887** (micro-AP) | **+0.460** | cooccur_both | EARNING — strongest signal |
 | species_from_env | **0.634** (micro-AP) | **+0.407** | sdm_hard | EARNING — 7.5× over prevalence |
-| family_from_spacetime | **0.182** | **+0.132** vs RFF | th8_ff1024_hh512 | EARNING — genuine Earth4D-arch win; temporal-harmonic + wider head 0.165→0.171→0.182 (th32/recurrence HURT) |
-| family_from_env | **0.144** | **+0.034** vs best-coord-PE | famenv_alphaearth (real 64d AlphaEarth) | DATA LEVER, plumbing bug fixed: `load_env` was HARD-WIRED to 19wc+9soil+1elev and ignored `--env_channels`, so all 53 prior "channel swaps" fed the IDENTICAL 29 columns — AlphaEarth had never reached this path. Joining it for real: 0.125→0.144, gain −0.006→+0.034 (all=93d gives 0.141, pure AlphaEarth 64d wins). Satellite-embedding channel (env=where), not plant-photo vision |
-| species_from_spacetime | **0.047** (acc) | **+0.035** vs RFF | spst_species_target | FIRST PROBE of this capability — the classification paths only ever predicted FAMILY, so the species rows were unprobeable until `--target species` (2141-vocab, 1364 species present at 12 shards). Earth4D 0.0474 vs raw-coords 0.0232 vs RFF 0.0123 = the encoder earns ~3.9x over a generic trained PE on the harder target |
+| family_from_spacetime | **0.182** | **+0.132** vs RFF | th8_ff1024_hh512 | DISCOVERY CANDIDATE only; max-selected, frozen-random, and not a causal state forecast |
+| family_from_env | **0.146** | **+0.031** vs best-coord-PE | famenv_alphaearth (real 64d AlphaEarth) | ⚠️ **FUSED score, not encoder-alone** — `_primary` reads the `Earth4D+ENV` column, and `fair_gain` is ENV-vs-coord-PE, so this row scores the ENV CHANNEL plus the encoder. What moved it was a data channel, not the encoder: `load_env` was hard-wired to 19wc+9soil+1elev and ignored `--env_channels`, so all 53 prior "channel swaps" fed the IDENTICAL 29 columns and AlphaEarth had never reached this path. Joining it for real: 0.125→0.146. Encoder-alone on this task is 0.074–0.101, BELOW a generic RFF (0.107–0.116) |
+| species_from_spacetime | **0.047** (acc) | **+0.035** vs RFF | spst_species_target | DISCOVERY CANDIDATE only; this frozen-random coordinate classification is not learned dynamics |
 | flowering_peak_month | 0.0674 | — | pheno_none_env | env-conditioning nudge; MODIS phenology channel NEGATIVE (landscape greenness ≠ species flowering timing) |
 | calibration | 0.629 | — | cal_earth4d | conf→correct AUROC (0.5=useless); raw Earth4D overconfident (ECE 0.078→0.027 temp-scaled) |
 | lfmc · mycorrhiza · pollinator · flowering_auc/fidelity · infer_* | — | — | — | not Earth4D-probeable (non-encoder heads) |
 
 **ARCHITECTURAL PROBE-WIN (earth4d.py), NOT a graduation candidate:** a gated **spatial-only random-Fourier-features branch** (default off, champion byte-identical) fixes the *bare probe's* weakness — a raw Earth4D hash grid loses to a generic RFF PE on smooth/static tasks (0.069→~0.08–0.10 static; forecast 0.153→0.165, +0.096 vs RFF). **BUT: the champion already carries this exact prior** — `core/fusion.py:311` wires `SmoothGeoField` (an RFF geo prior added to the hash position; `champion.yaml smooth_geo: true`). So the probe-win is the probe catching up to what the champion has, NOT a new champion lever. **Do NOT graduate** — verified redundant (Ensue `earth4d_FOURIER_redundant_with_smooth_geo_NO_graduation_2026_07_28`). Keep the branch default-off for probe-fairness only. Single-seed, noisy.
 
-**Earning directions:** (1) env→biology SDM/co-occurrence, (2) **temporal state/propagation INSIDE the encoder** — the genuine open champion gap: Earth4D has no causal temporal state (static hash + RFF geo prior); the forecast probe shows Earth4D+propagators earn. NOT the Fourier branch (redundant with the champion's `smooth_geo`). Records auto-tracked in `records.json`; net card printed after every run.
+**Candidate directions:** (1) env→biology SDM/co-occurrence, (2) **observed temporal state/propagation** — the genuine open champion gap. Only the LFMC evidence gate can graduate either direction. The Fourier branch remains redundant with the champion's `smooth_geo`.
 
 ---
 

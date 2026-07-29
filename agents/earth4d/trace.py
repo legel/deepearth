@@ -82,6 +82,14 @@ def _parse(text: str):
     return header, gains, metrics[:24]
 
 
+def _shards(probe_args: str):
+    """--n_shards from the probe flags. Data SIZE is part of a record's identity: a record set on 12 shards is
+    not comparable to a run on 8 or 27, and the gate used to ignore this entirely (a smoke run at 8 shards was
+    scored straight against a 12-shard record and could have taken it)."""
+    m = re.search(r"--n_shards\s+(\d+)", probe_args or "")
+    return int(m.group(1)) if m else None
+
+
 def _mode(header: str):
     """The probe MODE from the run header, e.g. 'PHENOLOGY(...)' / 'ENV(spatial-block)' / 'FORECAST(past->future)'.
     Two runs in different modes are measuring different targets and their scores are not comparable."""
@@ -241,6 +249,7 @@ def main() -> None:
     fair, fair_base = _fair_gain(gains)
     bottleneck = _bottleneck(fair, primary)
     mode = _mode(header)
+    shards = _shards(a.probe)
 
     # RECORD tracking + full run LEDGER (taxonomy: never lose a run's result; publish win OR dead-end w/ reason) --
     recs = json.loads(RECORDS.read_text()) if RECORDS.exists() else {}
@@ -251,27 +260,30 @@ def main() -> None:
     # measured the SAME THING. That is how --pheno_disttarget peak_week (a different target, and a leaked one)
     # took flowering_peak_month 0.067 -> 0.683 and published it. A capability's record may only be beaten by a
     # run in the SAME probe mode; a different mode is a different target and gets flagged for review instead.
-    prev_mode = cur.get("mode")
+    prev_mode, prev_shards = cur.get("mode"), cur.get("n_shards")
     # An UNSTAMPED record (pre-gate, or hand-restored) is treated as unknown-mode and does NOT auto-pass:
     # that is exactly how the leaked peak-week run slipped through on its second attempt.
-    mode_ok = (prev is None) or (mode == prev_mode)   # both-absent is consistent; a MISMATCH is not
+    mode_ok = (prev is None) or (mode == prev_mode)      # both-absent is consistent; a MISMATCH is not
+    shards_ok = (prev is None) or (shards == prev_shards)
     beats = key_val is not None and (prev is None or key_val > prev)
-    is_record = beats and mode_ok
-    if beats and not mode_ok:
-        print(f"[trace] *** RECORD WITHHELD: this run's mode {mode!r} != the record's mode {prev_mode!r}.\n"
-              f"[trace]     {key_val} vs {prev} is a cross-TARGET comparison, not a record. Verify the target is\n"
-              f"[trace]     leak-free and comparable, then set the record deliberately.", flush=True)
+    is_record = beats and mode_ok and shards_ok
+    if beats and not (mode_ok and shards_ok):
+        why = ("mode %r != record mode %r" % (mode, prev_mode) if not mode_ok
+               else "n_shards %r != record n_shards %r" % (shards, prev_shards))
+        print(f"[trace] *** RECORD WITHHELD: {why}.\n"
+              f"[trace]     {key_val} vs {prev} is not a like-for-like comparison. Match the record's protocol,\n"
+              f"[trace]     or verify the new one is sound and set the record deliberately.", flush=True)
     ledger = cur.get("ledger", {"runs": 0, "records": [], "deadends": {}})
     ledger["runs"] = ledger.get("runs", 0) + 1
     if is_record:
         cur = {"score": key_val, "primary": primary, "fair_st_gain": fair,
-               "fair_baseline": fair_base, "tag": tag, "probe": a.probe, "mode": mode}
+               "fair_baseline": fair_base, "tag": tag, "probe": a.probe, "mode": mode, "n_shards": shards}
         ledger["records"] = (ledger.get("records", []) + [{"tag": tag, "score": key_val, "gain": fair}])[-20:]
-    elif beats and not mode_ok:
+    elif beats and not (mode_ok and shards_ok):
         ledger.setdefault("deadends", {})[tag] = {
             "score": key_val, "gain": fair,
-            "why": f"RECORD WITHHELD (mode {mode!r} != record mode {prev_mode!r}) -- cross-target comparison, "
-                   f"needs a deliberate leak check before it can count"}
+            "why": (f"RECORD WITHHELD (mode {mode!r} vs {prev_mode!r}, n_shards {shards!r} vs {prev_shards!r}) "
+                    f"-- not like-for-like; needs a deliberate check before it can count")}
     elif key_val is not None:
         # dead-end: a lever below record — kept WITH its reason, deduped by tag (no noise-floor spam)
         ledger.setdefault("deadends", {})[tag] = {"score": key_val, "gain": fair, "why": bottleneck}
