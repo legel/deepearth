@@ -2,16 +2,7 @@
 
 **Objective:** break records on the scorecard capabilities (species/family from env & spacetime, phenology, env-decode, calibration) **scoped to the encoder** and measured by the fast Earth4D **probe**, not full-model training. There are **two co-equal lever families**: **DATA** (what signal feeds the encoder) and **ARCHITECTURE** (how the encoder represents it). **Surface area** = `encoders/spacetime/earth4d.py` + the probes in `autoresearch/programs/spacetime/` **+ the data channels those probes feed** (`--env_channels`, `--sdm_channels`, `--vision`, `--pheno_channel`, densification). A probe run is minutes, so iterate fast and broad.
 
-## 0. Box & operations (do this first, every session)
-- **GPU box:** `ssh newbox` = `root@222.228.49.105 -p 30474` (key `~/.ssh/id_ed25519`; `StrictHostKeyChecking accept-new`). Strip the login banner with `grep -vE "vast.ai|Welcome|Have fun|AI agents|READ /etc"`. It is a **vast.ai container** — a "reboot" is a container restart, NOT a host GPU reset.
-- **Paths:** run on the box under `/workspace/deepearth` with `PYTHONPATH=/workspace`. Make edits + commits in the **local clone** `/Users/andromeda/deepcal-archive/deepearth`, then `scp` changed files to the box (repo also at `origin/deepcal-ensue-autoresearch`).
-- **Reboot recovery:** the container restart drops the cache symlink → restore it or every probe dies with `gbif_vocab.npz not found`: `[ -e /workspace/data ] || ln -s /workspace/deepearth/data /workspace/data` (`start.sh` does this).
-- **GPU health = a LIVE CUDA op, never the `nvidia-smi` util counter** (it shows phantom 100% that does NOT mean wedged): `CUDA_VISIBLE_DEVICES=<i> timeout 10 python3.12 -c "import torch;print((torch.randn(999,999,device='cuda')@torch.randn(999,999,device='cuda')).sum().item())"` — returns a number ⇒ usable; hangs/errors ⇒ genuinely wedged, skip that GPU (needs a host reset, which a container reboot won't give).
-- **Launch:** `bash agents/earth4d/start.sh <gpu>` (2 tracks, one GPU) — or split across GPUs with `nohup setsid bash agents/earth4d/loop.sh 0 spatial </dev/null >/tmp/loop0.log 2>&1 &` and `loop.sh 1 temporal >/tmp/loop1.log`. `loop.sh` is robust: fast modes only (no GNN/field-decode that wedge the GPU), 240s per-probe timeout, `--ensue` every run.
-- **Self-heal (every check-in):** `a=$(grep -cE "=== \[" /tmp/loop0.log); sleep 40; b=$(grep -cE "=== \[" /tmp/loop0.log)` — if `b==a` (stalled) or `pgrep -f "earth4d.*loop.sh" | grep -v pgrep | wc -l` < 2, relaunch via `start.sh`.
-- **Ensue token:** `/workspace/.env` (`ENSUE_API_TOKEN`); `trace.py` reads it. NEVER commit it.
-- **Commit identity:** `Sai Vegasena <saidcooldude@gmail.com>`, **no co-author**.
-- **Report each check-in:** iterations since last, any new records (old→new + receipt), the full current-best scorecard (`python3 -c` over `records.json`).
+**Box & ops (read first):** the box connection, repo paths, reboot recovery, GPU health check, launch + self-heal commands, Ensue token location, and commit identity are in **`agents/earth4d/box-operations.md`** (gitignored — it holds box connection details).
 
 ## 1. Loop
 1. **Pick the objective** — the worst / highest-leverage scorecard capability. Declare it as `--metric`.
