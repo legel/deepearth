@@ -577,6 +577,18 @@ def main(argv=None):
                   spatial_siren=a.spatial_siren, siren_layers=a.siren_layers, siren_w0=a.siren_w0,
                   causal_lags=a.causal_lags, causal_lag_span=a.causal_lag_span).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
 
+    # These flags only ever reached the env->TRAIT routing path. On the --env classification path they were
+    # silently inert, so a "DATA lever" run changed nothing while still reporting a score -- which is how
+    # family_from_env read data-limited for 53 runs. Fail loudly instead of lying.
+    _inert = [n for n, v in (("--env_extra", a.env_extra), ("--env_temporal", a.env_temporal),
+                             ("--env_perobs", a.env_perobs), ("--env_quantiles", a.env_quantiles),
+                             ("--env_extremes", a.env_extremes), ("--env_spread", a.env_spread))
+              if v and not a.env_trait]
+    if _inert and (a.env or a.env_decode):
+        raise SystemExit(f"[probe] {' '.join(_inert)} has NO effect on the --env/--env_decode path "
+                         f"(it only applies to --env_trait). Use --env_channels to change what --env loads, "
+                         f"or add --env_trait. Refusing to run a lever that would silently do nothing.")
+
     if a.env or a.env_decode:
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
         # follows. Real env covariates (worldclim+soil+elev) joined by gbifID -> the science-aligned question.

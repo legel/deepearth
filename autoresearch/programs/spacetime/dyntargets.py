@@ -506,26 +506,39 @@ def run_pheno_env(qfeat_all, feat_dim, days, coords_ll, env, test, dev,
 
 
 # ------- (3) DISTRIBUTIONAL-TIMING TARGET CLASS: distributional (phase centroid / peak week) vs mean-DOY -------
-def _phase_centroid_doy(lat, lon, days, block=0.5):
-    """Per-obs target = circular-mean DOY of ALL obs in the query's 0.5deg cell (community phase centroid)."""
+def _phase_centroid_doy(lat, lon, days, block=0.5, train_mask=None):
+    """Per-obs target = circular-mean DOY of the query's 0.5deg cell (community phase centroid).
+
+    LEAK GUARD (train_mask): the cell statistic is built ONLY from train rows. Aggregating over ALL obs put
+    each test row's own DOY into its own label, and since every row in a cell then shares one label and the
+    split is temporal (train/test share cells), a spatial feature could memorize cell->label. Cells with no
+    train rows return NaN and the caller drops them."""
     doy = doy_of(days); ang = 2.0 * np.pi * doy / _DOY
     ci = np.floor(lat / block).astype(np.int64); cj = np.floor(lon / block).astype(np.int64)
     from collections import defaultdict
     acc = defaultdict(lambda: [0.0, 0.0]); keys = list(zip(ci.tolist(), cj.tolist()))
-    for kk, a in zip(keys, ang):
-        acc[kk][0] += np.cos(a); acc[kk][1] += np.sin(a)
+    src = np.ones(len(doy), bool) if train_mask is None else np.asarray(train_mask, bool)
+    for kk, a, ok in zip(keys, ang, src):
+        if ok:
+            acc[kk][0] += np.cos(a); acc[kk][1] += np.sin(a)
     cen = {kk: (np.arctan2(s, c) % (2 * np.pi)) / (2 * np.pi) * _DOY for kk, (c, s) in acc.items()}
-    return np.array([cen[kk] for kk in keys], dtype=np.float32)
+    return np.array([cen.get(kk, np.nan) for kk in keys], dtype=np.float32)
 
 
-def _peak_week_doy(lat, lon, days, block=0.5, win=14.0):
-    """Per-obs target = DOY of the densest `win`-day activity window in the query cell (the seasonal PEAK)."""
+def _peak_week_doy(lat, lon, days, block=0.5, win=14.0, train_mask=None):
+    """Per-obs target = DOY of the densest `win`-day activity window in the query cell (the seasonal PEAK).
+
+    LEAK GUARD (train_mask): built ONLY from train rows -- see _phase_centroid_doy. Aggregating over ALL obs
+    made this a cell->label lookup that scored 0.68 vs a 0.067 record (static field 26.5d MAE with propagation
+    adding +1.6d, the tell). Cells with no train rows return NaN and the caller drops them."""
     doy = doy_of(days)
     ci = np.floor(lat / block).astype(np.int64); cj = np.floor(lon / block).astype(np.int64)
     from collections import defaultdict
     by = defaultdict(list); keys = list(zip(ci.tolist(), cj.tolist()))
-    for kk, d in zip(keys, doy):
-        by[kk].append(float(d))
+    src = np.ones(len(doy), bool) if train_mask is None else np.asarray(train_mask, bool)
+    for kk, d, ok in zip(keys, doy, src):
+        if ok:
+            by[kk].append(float(d))
     grid = np.arange(0, 365, 7.0); peak = {}
     for kk, ds in by.items():
         arr = np.asarray(ds); best_c, best_g = -1, 0.0
@@ -535,19 +548,42 @@ def _peak_week_doy(lat, lon, days, block=0.5, win=14.0):
             if c > best_c:
                 best_c, best_g = c, g
         peak[kk] = best_g
-    return np.array([peak[kk] for kk in keys], dtype=np.float32)
+    return np.array([peak.get(kk, np.nan) for kk in keys], dtype=np.float32)
 
 
 def run_pheno_disttarget(qfeat_all, feat_dim, days, coords_ll, test, dev, target="phase_centroid",
                          K=16, steps=4000, lr=3e-3, hidden=256, hops=2, tol_days=15.0):
     """Distributional-timing target class: static floor vs GNN vs LSTM on phase_centroid / peak_week / mean_doy."""
     lat = coords_ll[:, 0].numpy(); lon = coords_ll[:, 1].numpy()
+    # HARD LEAK GUARD for CELL-AGGREGATE targets. phase_centroid / peak_week assign ONE value per 0.5deg cell,
+    # so if any cell contains both train and test rows the label is directly readable from the train rows in
+    # that cell and a spatial feature just memorizes cell->label. Building the statistic from train rows only
+    # does NOT fix this (verified: it scored 0.672 with static MAE 17.6d, propagation NEGATIVE). The only sound
+    # split for these targets is SPATIAL -- test cells disjoint from train cells.
+    if target in ("phase_centroid", "peak_week"):
+        _tst = np.asarray(test, bool)
+        _cid = np.floor(lat / 0.5).astype(np.int64) * 100000 + np.floor(lon / 0.5).astype(np.int64)
+        _shared = np.intersect1d(np.unique(_cid[_tst]), np.unique(_cid[~_tst]))
+        if len(_shared):
+            raise SystemExit(
+                f"[dyntargets] --pheno_disttarget {target} is a CELL-AGGREGATE target and {len(_shared)} cells "
+                f"contain both train and test rows -> every test label is readable off the train rows in its own "
+                f"cell (cell->label lookup, not a forecast). Re-run with a SPATIAL holdout (--pheno_spatial) so "
+                f"test cells are disjoint from train cells, or use --pheno_disttarget mean_doy (per-obs target).")
+    train_mask = ~np.asarray(test, bool)                     # LEAK GUARD: cell stats from TRAIN rows only
     if target == "phase_centroid":
-        tgt = _phase_centroid_doy(lat, lon, days)
+        tgt = _phase_centroid_doy(lat, lon, days, train_mask=train_mask)
     elif target == "peak_week":
-        tgt = _peak_week_doy(lat, lon, days)
+        tgt = _peak_week_doy(lat, lon, days, train_mask=train_mask)
     else:
         tgt = doy_of(days)
+    valid = ~np.isnan(tgt)                                   # drop rows whose cell has no train support
+    if not valid.all():
+        import torch as _t
+        vt = _t.as_tensor(valid)
+        qfeat_all = qfeat_all[vt]; coords_ll = coords_ll[vt]
+        days = days[valid]; lat = lat[valid]; lon = lon[valid]
+        test = np.asarray(test, bool)[valid]; tgt = tgt[valid]
     nstate = doy_to_vec(doy_of(days))
     skill = lambda p, yv, yt: _circ_skill(p, yv, yt, tol_days)
     loss = lambda pred, tgt_: (1.0 - (pred * tgt_).sum(-1)).mean()
