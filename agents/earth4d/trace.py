@@ -93,8 +93,12 @@ def _fair_gain(gains: dict):
 
 def _primary(text: str, cap: str):
     if cap == "calibration":                              # calib_probe: AUROC of confidence->correctness (0.5=useless)
-        m = re.search(r"conf_auroc=([\d.]+)", text)
-        return float(m.group(1)) if m else None
+        # Best available confidence SIGNAL, not just single-model max-softmax. conf_auroc is a rank statistic, so
+        # the probe's post-hoc mechanisms (temperature/isotonic) cannot move it — only a different uncertainty
+        # signal can, and until the ensemble signals were surfaced only softmax was ever scored. Records set
+        # before this read softmax-only (conf_auroc=), which is still included here.
+        aucs = [float(x) for x in re.findall(r"conf_auroc(?:_\w+)?=([\d.]+)", text)]
+        return max(aucs) if aucs else None
     if cap.startswith("flowering"):                       # phenology modes report within-tol acc (0..1)
         # ONLY the Earth4D row counts. This used to max over EVERY acc in the output, so a run where the generic
         # RFF/raw control beat Earth4D recorded the CONTROL's accuracy as the Earth4D record (e.g. a run whose

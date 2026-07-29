@@ -482,6 +482,20 @@ def main(argv=None):
           f"ECE={eceE:.4f}(d{eceE - ece0:+.4f})  Brier={brE:.4f}(d{brE - br0:+.4f})  "
           f"NLL={nllE:.4f}  ECE+temp={eceET:.4f}(T={Te:.2f})")
     print(f"           ens-variance -> correctness AUROC={_var_auroc(ens_var, correct_e):.4f}")
+    # MECHANISM LEVER (confidence SIGNAL, not post-hoc scaling): conf_auroc is a RANK statistic, so temperature
+    # and isotonic scaling leave it invariant BY CONSTRUCTION -- the only way to move it is a better uncertainty
+    # signal. Single-model max-softmax (auc0) was the only one ever scored. These are the ensemble's epistemic
+    # signals: the ensemble-mean confidence, predictive ENTROPY (total uncertainty), and MUTUAL INFORMATION /
+    # BALD (epistemic only = total minus mean member entropy, the part that reflects model disagreement).
+    _P = np.stack(ens_probs, 0)
+    auc_ens_conf = conf_error_auroc(Pe, yt)
+    _ent = -(Pe * np.log(np.clip(Pe, 1e-12, 1))).sum(1)                       # H[E[p]] = total
+    _mean_ent = -(_P * np.log(np.clip(_P, 1e-12, 1))).sum(2).mean(0)          # E[H[p]] = aleatoric
+    auc_ent = _var_auroc(_ent, correct_e)
+    auc_bald = _var_auroc(_ent - _mean_ent, correct_e)                        # mutual information = epistemic
+    auc_ensvar = _var_auroc(ens_var, correct_e)
+    print(f"           [SIGNAL SWAP] conf_auroc: softmax={auc0:.4f} | ens-mean-conf={auc_ens_conf:.4f} | "
+          f"pred-entropy={auc_ent:.4f} | BALD/MI={auc_bald:.4f} | ens-var={auc_ensvar:.4f}")
 
     # ---- (3d) MC-DROPOUT (epistemic) ----
     if mc_var is not None:
@@ -494,7 +508,9 @@ def main(argv=None):
     print(f"\nSUMMARY {src} feat={a.feature} seed={a.seed} "
           f"acc={acc0:.4f} ECE_raw={ece0:.4f} ECE_temp={eceT:.4f} ECE_iso={eceI:.4f} "
           f"ECE_ens={eceE:.4f} Brier_raw={br0:.4f} Brier_temp={brT:.4f} "
-          f"conf_auroc={auc0:.4f} conformal_cov={cov:.4f} setsize={sz:.3f} T={T:.3f} "
+          f"conf_auroc={auc0:.4f} conf_auroc_ens={auc_ens_conf:.4f} conf_auroc_ent={auc_ent:.4f} "
+          f"conf_auroc_bald={auc_bald:.4f} conf_auroc_ensvar={auc_ensvar:.4f} "
+          f"conformal_cov={cov:.4f} setsize={sz:.3f} T={T:.3f} "
           f"t={time.time() - t0:.1f}s")
 
 
