@@ -349,6 +349,7 @@ def main(argv=None):
     ap.add_argument("--fourier", type=int, default=0)           # ARCH LEVER: add a random-Fourier-features branch of this width to Earth4D (0=off) -- tests hash+Fourier vs the pure-RFF baseline it currently loses to
     ap.add_argument("--fourier_scale", type=float, default=10.0)  # RFF bandwidth (freq scale) for the --fourier branch
     ap.add_argument("--time_harmonics", type=int, default=0)      # ARCH LEVER: internal learnable multi-scale sin/cos time basis (0=off) -- seasonal/persistence prior the discrete hash lacks; NOT redundant with spatial smooth_geo
+    ap.add_argument("--time_film", type=int, default=0)          # ARCH LEVER: gated space x time FiLM (0=off) -- modulate spatial hash by a learned time basis; explicit seasonal-spatial interaction the additive features cannot form
     ap.add_argument("--forecast", action="store_true")          # S1/rule1: causal past->future temporal split + live time coord
     ap.add_argument("--forecast_spatial", action="store_true")  # rule1 strict: future time AND held-out place (no location-recall shortcut)
     ap.add_argument("--recurrence", action="store_true")        # rule2b: 4D-LSTM rollout PROPAGATES past->future (replaces static lookup head)
@@ -521,7 +522,7 @@ def main(argv=None):
     enc = Earth4D(verbose=False, spatial_levels=a.spatial_levels, temporal_levels=a.temporal_levels,   # S3: exposed capacity
                   spatial_log2_hashmap_size=a.log2_hashmap, temporal_log2_hashmap_size=a.log2_hashmap, freq_log_scale_init=-2.5,
                   fourier_features=a.fourier, fourier_scale=a.fourier_scale,
-                  time_harmonics=a.time_harmonics).to(dev)   # optional RFF branch + internal temporal-harmonic path (arch levers)
+                  time_harmonics=a.time_harmonics, time_film=a.time_film).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
 
     if a.env or a.env_decode:
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology

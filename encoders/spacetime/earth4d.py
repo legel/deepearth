@@ -265,7 +265,8 @@ class Earth4D(nn.Module):
                  relative_finest: Tuple[float, float, float, float] = (15.0, 15.0, 3.0, 1.0),
                  fourier_features: int = 0,
                  fourier_scale: float = 10.0,
-                 time_harmonics: int = 0):
+                 time_harmonics: int = 0,
+                 time_film: int = 0):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -387,6 +388,16 @@ class Earth4D(nn.Module):
             self.time_freqs = nn.Parameter(init)   # cycles over the normalized time span; learnable timescale
             self.output_dim = self.output_dim + 2 * self.time_harmonics
 
+        # Optional gated space x time FiLM (default OFF -> champion byte-identical). The concatenated spatial-hash +
+        # time-harmonic features are ADDITIVE; a linear head cannot form space*time PRODUCTS. This modulates the
+        # spatial-hash block by a learned function of a multi-scale time basis -> explicit seasonal-spatial interaction
+        # (species range shifts with season). Zero-init W/b -> gate = 1 + tanh(0) = 1 -> identity at start.
+        self.time_film = int(time_film)
+        if self.time_film > 0:
+            self.register_buffer("_film_freqs", torch.tensor([2.0 ** k for k in range(self.time_film)], dtype=torch.float32))
+            self._film_W = nn.Parameter(torch.zeros(2 * self.time_film, self.spatial_dim))
+            self._film_b = nn.Parameter(torch.zeros(self.spatial_dim))
+
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
         return self.xyz_encoder(xyz, size=1.0)
 
@@ -470,6 +481,11 @@ class Earth4D(nn.Module):
         proj = 2.0 * math.pi * (norm_coords[..., :3] @ self._fourier_B)
         return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
 
+    def _film_harmonics(self, norm_coords: torch.Tensor) -> torch.Tensor:
+        t = norm_coords[..., 3:]
+        proj = 2.0 * math.pi * t * self._film_freqs
+        return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+
     def _time_harmonics(self, norm_coords: torch.Tensor) -> torch.Tensor:
         """Learnable multi-scale periodic time basis [sin(2π f t), cos(2π f t)] over normalized time -> a smooth
         seasonal/persistence prior the discrete hash lacks (temporal analogue of the spatial RFF; not smooth_geo)."""
@@ -479,8 +495,11 @@ class Earth4D(nn.Module):
 
     def _forward_tensor(self, coords: torch.Tensor) -> torch.Tensor:
         norm_coords = self._normalize_coords(coords)
-        feats = torch.cat([self._encode_spatial(norm_coords[..., :3]),
-                           self._encode_spatiotemporal(norm_coords)], dim=-1)
+        spatial = self._encode_spatial(norm_coords[..., :3])
+        if self.time_film > 0:
+            gate = 1.0 + torch.tanh(self._film_harmonics(norm_coords) @ self._film_W + self._film_b)
+            spatial = spatial * gate                             # space x time interaction (FiLM)
+        feats = torch.cat([spatial, self._encode_spatiotemporal(norm_coords)], dim=-1)
         if self.fourier_features > 0:
             feats = torch.cat([feats, self._fourier(norm_coords)], dim=-1)
         if self.time_harmonics > 0:
