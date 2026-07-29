@@ -258,7 +258,7 @@ def _real_features(cache, feature, n_shards, dev, seed):
     """Reuse probe.py loaders for genuine encoder/env features. Returns (feats, fam, n_fam, lat, lon)."""
     from deepearth.autoresearch.programs.spacetime import probe as P
     from deepearth.encoders.spacetime.earth4d import Earth4D
-    lat, lon, fam, n_fam, _, gid = P.load_obs(cache, n_shards, with_gid=(feature == "env"))
+    lat, lon, fam, n_fam, _, gid, _sp = P.load_obs(cache, n_shards, with_gid=(feature == "env"))
     if feature == "raw":
         feats = np.stack([lat, lon], 1).astype(np.float32)
         feats = (feats - feats.mean(0)) / (feats.std(0) + 1e-6)
@@ -288,7 +288,7 @@ def _real_pollinator(cache, feature, n_shards, dev, seed, topk=40):
     B53 regime -- fewer obs, pollinator (not plant-family) classes -- measured on real data."""
     from deepearth.autoresearch.programs.spacetime import probe as P
     from deepearth.encoders.spacetime.earth4d import Earth4D
-    lat, lon, fam, n_fam0, _, gid = P.load_obs(cache, n_shards, with_gid=True)
+    lat, lon, fam, n_fam0, _, gid, _sp = P.load_obs(cache, n_shards, with_gid=True)
     sp = P.load_species(cache, n_shards)                       # plant species_local per obs
     d = np.load(f"{cache}/gbif_pollinator_dist.npz", allow_pickle=True)
     mpi, mpf, npoll = d["marg_poll_idx"], d["marg_poll_frq"], d["marg_npoll"]

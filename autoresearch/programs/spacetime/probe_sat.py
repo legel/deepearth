@@ -101,7 +101,7 @@ def main(argv=None):
     torch.manual_seed(a.seed); np.random.seed(a.seed)
 
     t0 = time.time()
-    lat, lon, fam, n_fam, days, gid = load_obs(a.cache_dir, a.n_shards, with_time=a.forecast, with_gid=True)
+    lat, lon, fam, n_fam, days, gid, _sp = load_obs(a.cache_dir, a.n_shards, with_time=a.forecast, with_gid=True)
     fam_t = torch.tensor(fam)
 
     if a.forecast:

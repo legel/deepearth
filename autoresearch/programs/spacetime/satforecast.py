@@ -94,7 +94,7 @@ def main(argv=None):
     t0 = time.time()
 
     # ---- obs + gbifID + event-time ----
-    lat, lon, fam, n_fam, days, gid = load_obs(a.cache_dir, a.n_shards, with_time=True, with_gid=True)
+    lat, lon, fam, n_fam, days, gid, _sp = load_obs(a.cache_dir, a.n_shards, with_time=True, with_gid=True)
 
     # ---- join AlphaEarth (and CLAY) by gbifID; restrict to intersection so all variants share the SAME obs ----
     AE, keep_ae = join_sat(a.cache_dir, gid, "gbif_alphaearth_tokens.npz", "ae")

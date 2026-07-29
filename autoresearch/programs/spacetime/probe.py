@@ -78,7 +78,7 @@ def load_obs(cache: str, n_shards: int, with_time: bool = False, with_gid: bool 
     n_fam = int(fam_id.max()) + 1
     days = np.concatenate(day).astype(np.float32) if with_time else None
     gids = np.concatenate(gid).astype(np.int64) if with_gid else None
-    return lat, lon, fam, n_fam, days, gids
+    return lat, lon, fam, n_fam, days, gids, sp
 
 
 def load_species(cache: str, n_shards: int):
@@ -384,6 +384,9 @@ def main(argv=None):
     ap.add_argument("--fourier", type=int, default=0)           # ARCH LEVER: add a random-Fourier-features branch of this width to Earth4D (0=off) -- tests hash+Fourier vs the pure-RFF baseline it currently loses to
     ap.add_argument("--fourier_scale", type=float, default=10.0)  # RFF bandwidth (freq scale) for the --fourier branch
     ap.add_argument("--time_harmonics", type=int, default=0)      # ARCH LEVER: internal learnable multi-scale sin/cos time basis (0=off) -- seasonal/persistence prior the discrete hash lacks; NOT redundant with spatial smooth_geo
+    ap.add_argument("--target", default="family", choices=["family", "species"])  # CAPABILITY LEVER: classification target. The paths only ever predicted family (166-way); "species" switches to the 2141-way species vocab, which is what species_from_spacetime / species_from_env actually name
+    ap.add_argument("--causal_lags", type=int, default=0)         # ARCH LEVER: gated CAUSAL TEMPORAL STATE (K learned backward lags; 0=off) -- the encoder re-reads its own spatiotemporal field at t-lag_k and softmax-combines, giving it memory instead of a pointwise read of the cell at t
+    ap.add_argument("--causal_lag_span", type=float, default=0.25)  # max lag as a fraction of the normalized time span
     ap.add_argument("--spatial_siren", type=int, default=0)      # ARCH LEVER: gated SIREN spatial branch (width; 0=off) -- sinusoidal-activation MLP over xyz, smooth+extrapolative BY CONSTRUCTION with LEARNED per-layer frequencies; aimed at the hash's held-out-spatial-block weakness (loses to a fixed RFF on static tasks)
     ap.add_argument("--siren_layers", type=int, default=2)
     ap.add_argument("--siren_w0", type=float, default=30.0)       # SIREN frequency scale (Sitzmann et al. default)
@@ -537,7 +540,13 @@ def main(argv=None):
 
     t0 = time.time()
     need_gid = a.env or a.env_decode or a.pheno_env
-    lat, lon, fam, n_fam, days, gid = load_obs(a.cache_dir, a.n_shards, with_time=a.forecast, with_gid=need_gid)
+    lat, lon, fam, n_fam, days, gid, sp_obs = load_obs(a.cache_dir, a.n_shards, with_time=a.forecast, with_gid=need_gid)
+    if a.target == "species":
+        # CAPABILITY LEVER: the classification paths only ever predicted FAMILY, which is why
+        # species_from_spacetime / species_from_env were never probeable from this probe at all. Species is a
+        # strictly harder target (2141-way vocab vs 166 families) and is the capability the scorecard names.
+        _u, fam = np.unique(sp_obs, return_inverse=True)         # compact the species ids actually present
+        fam = fam.astype(np.int64); n_fam = int(fam.max()) + 1
     fam_t = torch.tensor(fam)
 
     if a.forecast:
@@ -565,7 +574,8 @@ def main(argv=None):
                   fourier_features=a.fourier, fourier_scale=a.fourier_scale,
                   time_harmonics=a.time_harmonics, time_film=a.time_film,
                   spatial_cline=a.spatial_cline, cline_scale=a.cline_scale,
-                  spatial_siren=a.spatial_siren, siren_layers=a.siren_layers, siren_w0=a.siren_w0).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
+                  spatial_siren=a.spatial_siren, siren_layers=a.siren_layers, siren_w0=a.siren_w0,
+                  causal_lags=a.causal_lags, causal_lag_span=a.causal_lag_span).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
 
     if a.env or a.env_decode:
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
