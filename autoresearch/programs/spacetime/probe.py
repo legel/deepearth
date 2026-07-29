@@ -369,6 +369,61 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0):
     return acc, top5
 
 
+def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0,
+                       enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0):
+    """Train the ENCODER end-to-end with the head, instead of reading a frozen random hash table.
+
+    Every other probe path calls enc(coords) under no_grad on a freshly-initialized Earth4D, so its hash table
+    stays RANDOM: the reported fair-gains compare architectural priors as fixed random feature maps, not a
+    trained encoder. For an architecture whose premise is a LEARNED table that is close to its worst case.
+
+    A hash grid does not train stably by default here (a bare table on a Poisson objective returned +0.88 /
+    +0.44 / +0.35 across seeds), so three standard stabilizers are on:
+      * the encoder gets its OWN param group at lr*enc_lr_mult with no weight decay,
+      * linear LR WARMUP over the first `warmup` fraction of steps (project memory: off-champion configs
+        NaN/collapse without it),
+      * COARSE-TO-FINE level unmasking -- fine hash levels are zeroed early and released over the first `c2f`
+        fraction, the standard remedy for hash-grid overfitting/instability.
+    Returns (acc, top5) with the SAME protocol as evaluate() so the numbers stay comparable."""
+    torch.manual_seed(seed)
+    train = ~test
+    Ctr, ytr = coords[train].to(dev), fam[train].to(dev)
+    Cte, yte = coords[test].to(dev), fam[test].to(dev)
+    with torch.no_grad():
+        fdim = enc(Ctr[:8]).shape[1]
+    head = (nn.Sequential(nn.Linear(fdim, head_hidden), nn.ReLU(), nn.Linear(head_hidden, n_fam))
+            if head_hidden > 0 else nn.Linear(fdim, n_fam)).to(dev)
+    opt = torch.optim.Adam([{"params": head.parameters(), "lr": lr},
+                            {"params": list(enc.parameters()), "lr": lr * enc_lr_mult, "weight_decay": 0.0}])
+    # per-level feature mask over the SPATIAL block (levels are contiguous, features_per_level each)
+    fpl = getattr(enc, "features_per_level", 2); sdim = getattr(enc, "spatial_dim", fdim)
+    n_lv = max(int(sdim // max(fpl, 1)), 1)
+    lvl_of = (torch.arange(fdim, device=dev) // max(fpl, 1)).clamp(max=n_lv - 1)
+    warm_n, c2f_n = max(int(steps * warmup), 1), max(int(steps * c2f), 1)
+    _p0 = {n: q.detach().clone() for n, q in enc.named_parameters()}   # sanity: did the encoder ACTUALLY move?
+    for it in range(steps):
+        for gi, base in enumerate((lr, lr * enc_lr_mult)):
+            opt.param_groups[gi]["lr"] = base * min(1.0, (it + 1) / warm_n)      # linear warmup
+        keep = n_lv if it >= c2f_n else max(1, int(n_lv * (it + 1) / c2f_n))     # coarse-to-fine
+        idx = torch.randint(0, Ctr.shape[0], (4096,), device=dev)
+        f = enc(Ctr[idx])
+        if keep < n_lv:
+            f = f * (lvl_of < keep).to(f.dtype)
+        loss = F.cross_entropy(head(f), ytr[idx])
+        opt.zero_grad(); loss.backward()
+        torch.nn.utils.clip_grad_norm_(enc.parameters(), clip)
+        opt.step()
+    with torch.no_grad():
+        moved = {n: (q - _p0[n]).norm().item() / max(_p0[n].norm().item(), 1e-9) for n, q in enc.named_parameters()}
+        tot = sum(1 for v in moved.values() if v > 1e-6)
+        print(f"  [train_encoder] {tot}/{len(moved)} encoder tensors moved; "
+              f"rel-delta " + ", ".join(f"{n.split('.')[-1]}={v:.3g}" for n, v in list(moved.items())[:6]), flush=True)
+        logits = torch.cat([head(enc(Cte[i:i + 8192])) for i in range(0, Cte.shape[0], 8192)])
+        acc = (logits.argmax(-1) == yte).float().mean().item()
+        top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
+    return acc, top5
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache_dir", default="data/deepcal")
@@ -384,6 +439,10 @@ def main(argv=None):
     ap.add_argument("--fourier", type=int, default=0)           # ARCH LEVER: add a random-Fourier-features branch of this width to Earth4D (0=off) -- tests hash+Fourier vs the pure-RFF baseline it currently loses to
     ap.add_argument("--fourier_scale", type=float, default=10.0)  # RFF bandwidth (freq scale) for the --fourier branch
     ap.add_argument("--time_harmonics", type=int, default=0)      # ARCH LEVER: internal learnable multi-scale sin/cos time basis (0=off) -- seasonal/persistence prior the discrete hash lacks; NOT redundant with spatial smooth_geo
+    ap.add_argument("--train_encoder", action="store_true")   # TRAIN the encoder end-to-end instead of reading a frozen RANDOM hash table (every other path is frozen -- see evaluate_trainable)
+    ap.add_argument("--enc_lr_mult", type=float, default=0.05)  # encoder lr = lr * this (own param group, wd=0)
+    ap.add_argument("--enc_warmup", type=float, default=0.15)   # fraction of steps for linear LR warmup
+    ap.add_argument("--enc_c2f", type=float, default=0.5)       # fraction of steps to fully unmask hash levels
     ap.add_argument("--target", default="family", choices=["family", "species"])  # CAPABILITY LEVER: classification target. The paths only ever predicted family (166-way); "species" switches to the 2141-way species vocab, which is what species_from_spacetime / species_from_env actually name
     ap.add_argument("--causal_lags", type=int, default=0)         # ARCH LEVER: gated CAUSAL TEMPORAL STATE (K learned backward lags; 0=off) -- the encoder re-reads its own spatiotemporal field at t-lag_k and softmax-combines, giving it memory instead of a pointwise read of the cell at t
     ap.add_argument("--causal_lag_span", type=float, default=0.25)  # max lag as a fraction of the normalized time span
@@ -720,7 +779,10 @@ def main(argv=None):
         fused = torch.cat([e4d, env_t], 1)                       # Earth4D coords ++ real environment
         raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden)
         rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden)
-        e4d_acc, e4d_t5 = evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden)
+        e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d",
+                                              a.head_hidden, a.enc_lr_mult, a.enc_warmup, a.enc_c2f, seed=a.seed)
+                           if a.train_encoder else
+                           evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden))
         env_acc, env_t5 = evaluate(env_t, fam_t, test, n_fam, dev, a.steps, a.lr, "env", a.head_hidden)
         fus_acc, fus_t5 = evaluate(fused, fam_t, test, n_fam, dev, a.steps, a.lr, "fused", a.head_hidden)
         dt = time.time() - t0
@@ -1696,7 +1758,10 @@ def main(argv=None):
 
     raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden)
     rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden)
-    e4d_acc, e4d_t5 = evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden)
+    e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d",
+                                          a.head_hidden, a.enc_lr_mult, a.enc_warmup, a.enc_c2f, seed=a.seed)
+                       if a.train_encoder else
+                       evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden))
     dt = time.time() - t0
     mode = ("FORECAST(future+newplace)" if a.forecast_spatial else "FORECAST(past->future)") if a.forecast else "spatial-block"
     print(f"=== SPACETIME encoder (standalone) | mode={mode} obs={len(lat)} held-out={int(test.sum())} families={n_fam} ===")
