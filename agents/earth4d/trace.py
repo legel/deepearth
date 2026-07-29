@@ -158,19 +158,28 @@ def post_ensue(trace: dict) -> None:
         print("[trace] --ensue set but no ENSUE_API_TOKEN (env or /workspace/.env); skipping", flush=True)
         return
     o = trace["objective"]
-    val = (f"Earth4D ENCODER-PROBE '{trace['tag']}' | capability {trace['metric']} | probe='{trace['probe']}'. "
-           f"primary={o['primary']} fair_st_gain={o['fair_st_gain']} ({o['fair_baseline']}) RECORD={o['record']} "
-           f"(prev {o['prev_record']}). BOTTLENECK: {trace['bottleneck']}. all_gains={trace['gains']}. "
-           f"{trace['header']}. metrics: {' || '.join(trace['metrics'][:6])}")
+    led = trace.get("ledger", {}) or {}
+    hist = led.get("records", [])
+    best = hist[-1] if hist else {"tag": trace["tag"], "score": o.get("record_value"), "gain": o.get("fair_st_gain")}
+    dead = led.get("deadends", {})
+    rec_str = " -> ".join(f"{r['tag']}:{r['score']}" for r in hist[-8:]) or "(none)"
+    dead_str = "; ".join(f"{t}={d['score']}({(d.get('why') or '')[:34]})" for t, d in list(dead.items())[-12:]) or "(none)"
+    # ONE upserted key per capability (LOOP-<program>-<capability> taxonomy): running best + record history +
+    # this run's outcome + deduped dead-ends WITH their bottleneck reason. Win or dead-end, every run captured.
+    val = (f"LOOP-earth4d {trace['metric']}: BEST {best.get('score')} (gain {best.get('gain')}, {o.get('fair_baseline')}) "
+           f"via '{best.get('tag')}'. runs={led.get('runs')}. record-history: {rec_str}. "
+           f"THIS RUN '{trace['tag']}': primary={o['primary']} gain={o['fair_st_gain']} RECORD={o['record']} "
+           f"bottleneck={trace['bottleneck']}. dead-ends-tried: {dead_str}.")
     payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "create_memory", "arguments": {
-        "items": [{"key_name": f"earth4d_probe_{trace['tag']}_{trace['metric']}", "value": val,
-                   "description": f"Earth4D probe {trace['metric']} '{trace['tag']}': primary {o['primary']} "
-                                  f"fair_st_gain {o['fair_st_gain']} record={o['record']}"}]}}}
+        "items": [{"key_name": f"LOOP-earth4d-{trace['metric']}", "value": val,
+                   "description": f"Earth4D encoder-probe loop {trace['metric']}: best {best.get('score')} "
+                                  f"gain {best.get('gain')} over {led.get('runs')} runs"}]}}}
     req = urllib.request.Request("https://api.ensue-network.ai/", data=json.dumps(payload).encode(),
-                                 headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
+                                 headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json",
+                                          "Accept": "application/json, text/event-stream"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            print(f"[trace] Ensue logged ({r.status})", flush=True)
+            print(f"[trace] Ensue logged LOOP-earth4d-{trace['metric']} ({r.status})", flush=True)
     except Exception as e:
         print(f"[trace] Ensue POST failed: {e}", flush=True)
 
@@ -206,21 +215,32 @@ def main() -> None:
     fair, fair_base = _fair_gain(gains)
     bottleneck = _bottleneck(fair, primary)
 
-    # RECORD tracking (the fill-the-scorecard-by-breaking-records mechanism) -----------------------------
+    # RECORD tracking + full run LEDGER (taxonomy: never lose a run's result; publish win OR dead-end w/ reason) --
     recs = json.loads(RECORDS.read_text()) if RECORDS.exists() else {}
     key_val = primary if primary is not None else fair
-    prev = recs.get(a.metric, {}).get("score")
+    cur = recs.get(a.metric, {})
+    prev = cur.get("score")
     is_record = key_val is not None and (prev is None or key_val > prev)
+    ledger = cur.get("ledger", {"runs": 0, "records": [], "deadends": {}})
+    ledger["runs"] = ledger.get("runs", 0) + 1
     if is_record:
-        recs[a.metric] = {"score": key_val, "primary": primary, "fair_st_gain": fair,
-                          "fair_baseline": fair_base, "tag": tag, "probe": a.probe}
-        RECORDS.write_text(json.dumps(recs, indent=2, sort_keys=True))
+        cur = {"score": key_val, "primary": primary, "fair_st_gain": fair,
+               "fair_baseline": fair_base, "tag": tag, "probe": a.probe}
+        ledger["records"] = (ledger.get("records", []) + [{"tag": tag, "score": key_val, "gain": fair}])[-20:]
+    elif key_val is not None:
+        # dead-end: a lever below record — kept WITH its reason, deduped by tag (no noise-floor spam)
+        ledger.setdefault("deadends", {})[tag] = {"score": key_val, "gain": fair, "why": bottleneck}
+        if len(ledger["deadends"]) > 40:
+            ledger["deadends"] = dict(list(ledger["deadends"].items())[-40:])
+    cur["ledger"] = ledger
+    recs[a.metric] = cur
+    RECORDS.write_text(json.dumps(recs, indent=2, sort_keys=True))
 
     objective = {"primary": primary, "fair_st_gain": fair, "fair_baseline": fair_base,
                  "record": bool(is_record), "prev_record": prev, "record_value": key_val}
     trace = {"metric": a.metric, "tag": tag, "probe": a.probe, "probe_module": a.probe_module,
              "objective": objective, "gains": gains, "header": header, "metrics": metrics,
-             "bottleneck": bottleneck, "rc": rc}
+             "bottleneck": bottleneck, "rc": rc, "ledger": ledger}
 
     # one-screen consistent summary ---------------------------------------------------------------------
     print("\n" + "=" * 76)
