@@ -271,7 +271,9 @@ class Earth4D(nn.Module):
                  cline_scale: float = 1.0,
                  spatial_siren: int = 0,
                  siren_layers: int = 2,
-                 siren_w0: float = 30.0):
+                 siren_w0: float = 30.0,
+                 causal_lags: int = 0,
+                 causal_lag_span: float = 0.25):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -423,6 +425,23 @@ class Earth4D(nn.Module):
                     lin.weight.uniform_(-b, b); lin.bias.zero_()
             self.output_dim = self.output_dim + self.spatial_siren
 
+        # Optional gated CAUSAL TEMPORAL STATE (default OFF -> champion byte-identical). The encoder is evaluated
+        # POINTWISE: the (xy.t / yz.t / xz.t) hash reads the cell AT time t and carries NO history, so the
+        # representation at t knows nothing about what happened before t -- every temporal structure the probes
+        # exploit has had to be rebuilt OUTSIDE the encoder by a propagator (GNN/LSTM/attention over neighbours).
+        # This gives the encoder its own causal memory: the spatiotemporal features are ALSO evaluated at K learned
+        # causal LAGS (t - lag_k, strictly backward, clamped at the domain start) and combined by learned softmax
+        # weights, so the output at t is a function of the field's own past. Lags are sigmoid-bounded to
+        # [0, causal_lag_span] of the normalized time span and are learned, not fixed. Costs K extra hash lookups.
+        self.causal_lags = int(causal_lags)
+        if self.causal_lags > 0:
+            self.causal_lag_span = float(causal_lag_span)
+            # init lags spread across the span (inverse-sigmoid of evenly spaced fractions)
+            fr = torch.linspace(0.25, 0.9, self.causal_lags)
+            self._lag_raw = nn.Parameter(torch.log(fr / (1.0 - fr)))
+            self._lag_w = nn.Parameter(torch.zeros(self.causal_lags))    # softmax -> uniform at init
+            self.output_dim = self.output_dim + self.spatiotemporal_dim
+
         # Optional gated space x time FiLM (default OFF -> champion byte-identical). The concatenated spatial-hash +
         # time-harmonic features are ADDITIVE; a linear head cannot form space*time PRODUCTS. This modulates the
         # spatial-hash block by a learned function of a multi-scale time basis -> explicit seasonal-spatial interaction
@@ -523,6 +542,19 @@ class Earth4D(nn.Module):
         proj = 2.0 * math.pi * (xyz @ self._cline_B)
         return torch.cat([xyz, torch.sin(proj), torch.cos(proj)], dim=-1)
 
+    def _causal_state(self, norm_coords: torch.Tensor) -> torch.Tensor:
+        """Causal memory: the spatiotemporal field re-read at K learned BACKWARD lags, softmax-combined.
+        Strictly causal (t - lag, lag >= 0) and clamped to the domain start, so no future information enters."""
+        lags = torch.sigmoid(self._lag_raw) * self.causal_lag_span      # (K,) in [0, span]
+        w = torch.softmax(self._lag_w, dim=0)
+        out = None
+        for k in range(self.causal_lags):
+            shifted = norm_coords.clone()
+            shifted[..., 3] = torch.clamp(shifted[..., 3] - lags[k], min=0.0)
+            fk = self._encode_spatiotemporal(shifted) * w[k]
+            out = fk if out is None else out + fk
+        return out
+
     def _siren(self, norm_coords: torch.Tensor) -> torch.Tensor:
         """Sinusoidal-activation MLP over normalized xyz: sin(w0 * W_k ... sin(w0 * W_1 xyz)).
         Smooth and globally extrapolative by construction, with LEARNED per-layer frequencies."""
@@ -558,6 +590,8 @@ class Earth4D(nn.Module):
             feats = torch.cat([feats, self._cline(norm_coords)], dim=-1)
         if self.spatial_siren > 0:
             feats = torch.cat([feats, self._siren(norm_coords)], dim=-1)
+        if self.causal_lags > 0:
+            feats = torch.cat([feats, self._causal_state(norm_coords)], dim=-1)
         return feats
 
     def get_output_dim(self) -> int:
