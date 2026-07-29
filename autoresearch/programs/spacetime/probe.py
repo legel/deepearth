@@ -105,7 +105,12 @@ def load_env(cache: str, gid, channels: str = "wcsoil"):
       wcsoil (default, unchanged) = 19 worldclim + 9 soil + 1 elev  = 29
       worldclim                   = 19 worldclim                    = 19
       alphaearth                  = 64 AlphaEarth satellite embed   = 64  (learned, NOT physical climate)
-      all                         = wcsoil ++ alphaearth            = 93"""
+      all                         = wcsoil ++ alphaearth            = 93
+      modis                       = 12 MODIS phenology bands        = 12  (per-obs SEASONAL greenness time-series)
+      all+modis                   = wcsoil ++ alphaearth ++ modis   = 105
+    MODIS is a genuinely different modality from AlphaEarth: a within-year greenness TRAJECTORY (vegetation
+    seasonality at the observation) rather than a static annual scene embedding. It has only ever fed the
+    phenology probe, never the env->biology path."""
     cachep = Path(cache)
     wc = np.load(cachep / "gbif_worldclim_tokens.npz")
     so = np.load(cachep / "gbif_soil_tokens.npz")
@@ -114,16 +119,22 @@ def load_env(cache: str, gid, channels: str = "wcsoil"):
     somap = dict(zip(so["gbifID"].tolist(), so["soil"]))
     elmap = dict(zip(el["gbifID"].tolist(), el["elev"].tolist()))
     aemap = AE = None
-    if channels in ("alphaearth", "all"):
+    if channels in ("alphaearth", "all", "all+modis"):
         _ae = np.load(cachep / "gbif_alphaearth_tokens.npz")
         aemap = {int(g): i for i, g in enumerate(_ae["gbifID"])}; AE = _ae["ae"]
+    phmap = PH = None
+    if channels in ("modis", "all+modis"):
+        _ph = np.load(cachep / "gbif_phenology_tokens.npz")
+        phmap = {int(g): i for i, g in enumerate(_ph["gbifID"])}; PH = _ph["phenology"]
     n_ae = 0 if AE is None else AE.shape[1]
-    D = (0 if channels == "alphaearth" else (19 if channels == "worldclim" else 29)) + n_ae
+    n_ph = 0 if PH is None else PH.shape[1]
+    _base = 0 if channels in ("alphaearth", "modis") else (19 if channels == "worldclim" else 29)
+    D = _base + n_ae + n_ph
     env = np.full((len(gid), D), np.nan, np.float32)
     for i, g in enumerate(gid):
         g = int(g)
         o = 0
-        if channels != "alphaearth":
+        if channels not in ("alphaearth", "modis"):
             if g in wcmap: env[i, :19] = wcmap[g]
             o = 19
             if channels != "worldclim":
@@ -133,6 +144,10 @@ def load_env(cache: str, gid, channels: str = "wcsoil"):
         if aemap is not None:
             j = aemap.get(g)
             if j is not None: env[i, o:o + n_ae] = AE[j]
+            o += n_ae
+        if phmap is not None:
+            j = phmap.get(g)
+            if j is not None: env[i, o:o + n_ph] = PH[j]
     # standardize per column over present values, then impute missing to the (post-standardization) mean = 0
     mu = np.nanmean(env, 0); sd = np.nanstd(env, 0); sd[sd < 1e-6] = 1.0
     env = (env - mu) / sd
@@ -415,7 +430,7 @@ def main(argv=None):
     ap.add_argument("--env_extra", action="store_true")         # add soil(9)+elev(1) channels on top of worldclim(19)+AlphaEarth(64)
     ap.add_argument("--env_head", default="ridge", choices=["ridge", "mlp"])  # linear RidgeCV vs 1-hidden MLP niche head
     ap.add_argument("--env_mlp_hidden", type=int, default=128)
-    ap.add_argument("--env_channels", default="all", choices=["all","worldclim","alphaearth","wcsoil"])  # ("wcsoil" = the legacy hard-wired 19wc+9soil+1elev stack the --env path used to force regardless of this flag) # channel-family ablation: which env source carries the niche-trait routing
+    ap.add_argument("--env_channels", default="all", choices=["all","worldclim","alphaearth","wcsoil","modis","all+modis"])  # ("wcsoil" = the legacy hard-wired 19wc+9soil+1elev stack the --env path used to force regardless of this flag) # channel-family ablation: which env source carries the niche-trait routing
     ap.add_argument("--vision", action="store_true")             # DATA LEVER: family from per-obs PLANT vision (DINO/BioCLIP) instead of env -- perception-law test
     ap.add_argument("--vision_feats", default="dino", choices=["dino","bio","both"])
     ap.add_argument("--pheno_channel", action="store_true")      # DATA LEVER: join per-obs MODIS phenology (gbif_phenology_tokens, 12 feats) onto the phenology forecaster query features
