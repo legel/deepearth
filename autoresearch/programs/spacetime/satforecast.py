@@ -1,4 +1,9 @@
-"""SATELLITE-in-the-spacetime-encoder compound probe (additive, flag-gated, commits nothing).
+"""RETIRED satellite compound probe.
+
+This historical module fit satellite transforms over all rows and represented a
+future+new-place test as ``future & held`` followed by ``train = ~test``. That is
+not a valid scientific split. Use ``probe_sat.py`` instead; it embargoes the two
+cross-quadrants and fits transforms on training rows only.
 
 Two established wins to COMPOUND (Ensue tag spacetime):
   (1) AlphaEarth satellite (ae 64d, join by gbifID) BEATS coordinate-PE on held-out-block family.
@@ -89,6 +94,11 @@ def main(argv=None):
     ap.add_argument("--spatial_levels", type=int, default=12)
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
+    raise SystemExit(
+        "satforecast.py is retired because its per-seed transforms and joint "
+        "split leak test information. Use probe_sat.py, whose strict split "
+        "embargoes cross-quadrants and fits transforms on train only."
+    )
     dev = a.device if torch.cuda.is_available() else "cpu"
     seeds = [int(s) for s in a.seeds.split(",")]
     t0 = time.time()

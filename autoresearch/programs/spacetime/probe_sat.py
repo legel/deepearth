@@ -12,10 +12,10 @@ location. The MISSING channel is high-resolution remote-sensing embeddings AT ea
 Q1 (--sat, spatial-block held-out): family acc from raw / RFF / Earth4D (coordinate-PE controls) vs AlphaEarth
     vs CLAY (has_clay subset) vs Earth4D+AlphaEarth fused. Does satellite >> any coordinate PE at held-out
     LOCATIONS? st_gain = satellite MINUS best coord-PE.
-Q2 (--sat --phenology --forecast --forecast_spatial): add the satellite channel to the day-of-year phenology
-    propagator. Leak-guards intact: query features are SPACE+SATELLITE only (the satellite embedding is a static
+Q2 (--sat --phenology --forecast --forecast_spatial): exploratory GBIF collection-day prediction with a
+    satellite channel. This is a sampling-process target, not biological phenology. Leak-guards: query features are SPACE+SATELLITE only (the satellite embedding is a static
     land-cover code, no query timestamp), neighbours carry only their observed past DOY, edges spatial-only (no
-    dt-to-query). Does AlphaEarth at the query improve forecast over coords-only, and does Earth4D+satellite beat
+    dt-to-query). Does AlphaEarth at the query improve later-observation prediction over coords-only, and does Earth4D+satellite beat
     satellite-alone? Reports forecast MAE + within-tol delta vs the best coordinate-PE.
 
   python -m deepearth.autoresearch.programs.spacetime.probe_sat --sat --sat_clay --cache_dir data/deepcal
@@ -30,11 +30,12 @@ import torch
 
 from deepearth.encoders.spacetime.earth4d import Earth4D
 from deepearth.autoresearch.programs.spacetime.probe import (
-    load_obs, evaluate, spatial_holdout, temporal_holdout,
+    load_obs, evaluate, spatial_holdout, temporal_holdout, strict_spatiotemporal_holdout,
 )
+from deepearth.autoresearch.programs.spacetime.recurrence import normalize_time_from_train
 
 
-def load_sat(cache: str, gid, want_clay: bool = False):
+def load_sat(cache: str, gid, want_clay: bool = False, fit_mask=None):
     """Join high-resolution REMOTE-SENSING embeddings to each observation by gbifID.
 
     Returns (ae, clay, has_clay):
@@ -52,7 +53,8 @@ def load_sat(cache: str, gid, want_clay: bool = False):
         j = ae_map.get(int(g))
         if j is not None:
             ae[i] = ae_src[j]
-    mu = np.nanmean(ae, 0); sd = np.nanstd(ae, 0); sd[sd < 1e-6] = 1.0
+    fit = ae if fit_mask is None else ae[np.asarray(fit_mask, dtype=bool)]
+    mu = np.nanmean(fit, 0); sd = np.nanstd(fit, 0); sd[sd < 1e-6] = 1.0
     ae = np.nan_to_num((ae - mu) / sd, nan=0.0).astype(np.float32)
 
     clay = has_clay = None
@@ -66,7 +68,8 @@ def load_sat(cache: str, gid, want_clay: bool = False):
             k = clay_map.get(int(g))
             if k is not None:
                 clay[i] = csrc[k]; has_clay[i] = True
-        cmu = np.nanmean(clay, 0); csd = np.nanstd(clay, 0); csd[csd < 1e-6] = 1.0
+        cfit = clay if fit_mask is None else clay[np.asarray(fit_mask, dtype=bool)]
+        cmu = np.nanmean(cfit, 0); csd = np.nanstd(cfit, 0); csd[csd < 1e-6] = 1.0
         clay = np.nan_to_num((clay - cmu) / csd, nan=0.0).astype(np.float32)
     return ae, clay, has_clay
 
@@ -99,21 +102,33 @@ def main(argv=None):
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
     torch.manual_seed(a.seed); np.random.seed(a.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(a.seed)
 
     t0 = time.time()
     lat, lon, fam, n_fam, days, gid, _sp = load_obs(a.cache_dir, a.n_shards, with_time=a.forecast, with_gid=True)
-    fam_t = torch.tensor(fam)
-
     if a.forecast:
+        valid_time = np.isfinite(days)
+        if not valid_time.all():
+            lat, lon, fam, days, gid = (
+                x[valid_time] for x in (lat, lon, fam, days, gid)
+            )
         test = temporal_holdout(days, a.holdout)
         if a.forecast_spatial:
-            test = test & spatial_holdout(lat, lon, a.holdout, seed=a.seed)
-        tmin, tspan = np.nanmin(days), max(np.nanmax(days) - np.nanmin(days), 1e-6)
-        tnorm = ((days - tmin) / tspan).astype(np.float32)
+            train, test, _embargo = strict_spatiotemporal_holdout(
+                lat, lon, days, a.holdout, seed=a.seed
+            )
+            keep = train | test
+            lat, lon, fam, days, gid = (
+                x[keep] for x in (lat, lon, fam, days, gid)
+            )
+            test = test[keep]
+        tnorm, _tmin, _tspan = normalize_time_from_train(days, ~test)
         coords = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), tnorm], 1))
     else:
         test = spatial_holdout(lat, lon, a.holdout, seed=a.seed)
         coords = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), np.zeros_like(lat)], 1))
+    fam_t = torch.tensor(fam)
 
     enc = Earth4D(verbose=False, spatial_levels=a.spatial_levels, temporal_levels=a.temporal_levels,
                   spatial_log2_hashmap_size=a.log2_hashmap, temporal_log2_hashmap_size=a.log2_hashmap,
@@ -123,7 +138,7 @@ def main(argv=None):
     if a.forecast:
         rn = np.concatenate([rn, tnorm[:, None]], 1)
 
-    ae, clay, has_clay = load_sat(a.cache_dir, gid, want_clay=a.sat_clay)
+    ae, clay, has_clay = load_sat(a.cache_dir, gid, want_clay=a.sat_clay, fit_mask=~test)
 
     # ================= Q2: FORECAST phenology + satellite propagator =================
     if a.phenology:
@@ -178,11 +193,11 @@ def main(argv=None):
     rff = torch.tensor(np.concatenate([np.sin(proj), np.cos(proj)], 1).astype(np.float32))
     ae_t = torch.tensor(ae)
     fused = torch.cat([e4d, ae_t], 1)
-    raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden)
-    rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden)
-    e4d_acc, e4d_t5 = evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden)
-    ae_acc, ae_t5 = evaluate(ae_t, fam_t, test, n_fam, dev, a.steps, a.lr, "alphaearth", a.head_hidden)
-    fus_acc, fus_t5 = evaluate(fused, fam_t, test, n_fam, dev, a.steps, a.lr, "fused", a.head_hidden)
+    raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden, a.seed)
+    rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden, a.seed)
+    e4d_acc, e4d_t5 = evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden, a.seed)
+    ae_acc, ae_t5 = evaluate(ae_t, fam_t, test, n_fam, dev, a.steps, a.lr, "alphaearth", a.head_hidden, a.seed)
+    fus_acc, fus_t5 = evaluate(fused, fam_t, test, n_fam, dev, a.steps, a.lr, "fused", a.head_hidden, a.seed)
     best_coord = max(raw_acc, rff_acc, e4d_acc)
 
     clay_line = ""; clay_res = {}
@@ -192,9 +207,9 @@ def main(argv=None):
         fam_sub = fam_t[sub]
         if int((~test_sub).sum()) > 0 and int(test_sub.sum()) > 0:
             clay_t = torch.tensor(clay[has_clay]); e4d_sub = e4d[sub]; ae_sub = ae_t[sub]
-            c_clay, _ = evaluate(clay_t, fam_sub, test_sub, n_fam, dev, a.steps, a.lr, "clay", a.head_hidden)
-            c_e4d, _ = evaluate(e4d_sub, fam_sub, test_sub, n_fam, dev, a.steps, a.lr, "e4d_sub", a.head_hidden)
-            c_ae, _ = evaluate(ae_sub, fam_sub, test_sub, n_fam, dev, a.steps, a.lr, "ae_sub", a.head_hidden)
+            c_clay, _ = evaluate(clay_t, fam_sub, test_sub, n_fam, dev, a.steps, a.lr, "clay", a.head_hidden, a.seed)
+            c_e4d, _ = evaluate(e4d_sub, fam_sub, test_sub, n_fam, dev, a.steps, a.lr, "e4d_sub", a.head_hidden, a.seed)
+            c_ae, _ = evaluate(ae_sub, fam_sub, test_sub, n_fam, dev, a.steps, a.lr, "ae_sub", a.head_hidden, a.seed)
             clay_line = (f"  [CLAY subset] obs={int(has_clay.sum())} held={int(test_sub.sum())} | Earth4D {c_e4d:.4f} | AlphaEarth {c_ae:.4f} || CLAY {c_clay:.4f}"
                          f"   st_gain(CLAY vs E4D) {c_clay-c_e4d:+.4f}  (AE vs E4D) {c_ae-c_e4d:+.4f}")
             clay_res = {"clay_acc": c_clay, "clay_e4d_acc": c_e4d, "clay_ae_acc": c_ae,

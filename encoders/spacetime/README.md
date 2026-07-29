@@ -6,10 +6,10 @@ Built on NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/inst
 
 ## Core Innovation
 
-Earth4D combines decomposed hash encoding with learned hash probing for state-of-the-art accuracy. Using separate spatial (xyz) and spatio-temporal (xyt, yzt, xzt) grids with learned probe selection, it achieves:
+Earth4D combines decomposed hash encoding with learned hash probing. Using separate spatial (xyz) and spatio-temporal (xyt, yzt, xzt) grids with learned probe selection, it targets:
 
-- **State-of-the-Art Accuracy**: Surpasses pre-trained foundation models on ecological forecasting benchmarks using only coordinates
-- **Learned Hash Probing**: 25% MAE reduction and 28% R² improvement over baseline hash encoding
+- **Testable ecological representation**: to be evaluated against matched generic encoders on future and held-site data
+- **Learned Hash Probing**: a historical exploratory run reported lower error than baseline hashing; confirmation is pending
 - **Planetary Coverage**: Multi-resolution encoding from continental scale to sub-meter precision
 - **Temporal Dynamics**: Flexible temporal encoding from years to sub-second precision
 - **GPU Acceleration**: Custom CUDA kernels with learned probe selection, parallelizable across levels and spatio-temporal boundaries
@@ -18,14 +18,17 @@ Earth4D combines decomposed hash encoding with learned hash probing for state-of
 
 **Globe-LFMC 2.0** (Live Fuel Moisture Content Prediction, AI2 official train/test split: 76,467/13,297):
 
-### State-of-the-Art Results
+### Historical exploratory result — not confirmed
 
 | Model | Data Inputs | MAE (pp) | RMSE (pp) | R² |
 |-------|-------------|----------|-----------|-----|
-| **Earth4D** (Learned Hashing) | (x,y,z,t) + Species | **11.7** | **18.7** | **0.783** |
+| Earth4D (historical learned-hashing run) | (x,y,z,t) + Species | 11.7 | 18.7 | 0.783 |
 | Galileo (Pre-Trained) | (x,y,z,t) + Species + Remote Sensing | 12.6 | 18.9 | 0.72 |
 
-*Earth4D surpasses Allen Institute for AI's Galileo foundation model in MAE and R², without access to pre-trained data or weights from Sentinel-2 optical imagery, Sentinel-1 SAR, VIIRS night lights, ERA-5 weather, TerraClimate soil/water, and SRTM topography. Earth4D only inputs (x,y,z,t) coordinates and learns species embeddings from scratch.*
+These numbers are retained for provenance, not as a scientific headline. The historical search selected
+configurations by test R², evaluated test during training, and fit geographic range on all coordinates. The
+runnable LFMC harness is also absent from this checkout. Earth4D has not yet passed the preregistered temporal
+and held-site gate in `autoresearch/programs/spacetime/program.md`.
 
 ## Quick Start
 
@@ -40,14 +43,15 @@ cd deepearth/encoders/spacetime
 bash install.sh
 ```
 
-### Run LFMC Benchmark
+### Run the LFMC data/split gate
 
 ```bash
-# Train on Globe-LFMC 2.0 benchmark (achieves SoTA in ~5 hours)
-python -m benchmarks.lfmc.train --epochs 10000 --output-dir ./outputs
+# From the repository root: pinned real data, strict split audit, train-only baselines
+python3 -m autoresearch.programs.spacetime.science_gate \
+  --download --json-out data/lfmc/earth4d_science_gate_dev.json
 ```
 
-See [benchmarks/lfmc/README.md](benchmarks/lfmc/README.md) for full benchmark documentation.
+This command does not train Earth4D; its artifact explicitly records `earth4d_evaluated=false`.
 
 ### Basic Usage
 
@@ -58,7 +62,7 @@ import torch
 # Check device availability
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# Learned hash probing enabled by default with optimal settings (N_p=32, entropy=0.5)
+# Historical learned-probing defaults (not yet confirmed optimal under the current gate)
 encoder = Earth4D(
     spatial_levels=24,
     temporal_levels=24,
@@ -248,12 +252,8 @@ encoders/spacetime/
 ├── hashencoder/        # CUDA hash encoding kernels
 │   ├── hashgrid.py     # PyTorch interface
 │   └── src/            # CUDA source files
-└── benchmarks/
-    └── lfmc/           # Globe-LFMC 2.0 benchmark
-        ├── train.py    # Training script
-        ├── model.py    # SpeciesAwareLFMCModel
-        ├── data.py     # Dataset and data loading
-        └── README.md   # Benchmark documentation
+└── ../../autoresearch/programs/spacetime/
+    └── science_gate.py # Pinned Globe-LFMC split/baseline audit
 ```
 
 ## Key Technical Foundations

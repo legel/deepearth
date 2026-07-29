@@ -52,6 +52,18 @@ PRIMARY_RE = {
     "flowering_peak_month": [r"acc\s+([\d.]+)"],
     "flowering_auc": [r"acc\s+([\d.]+)"],
 }
+# PROTOCOL VERSION. Bump this whenever a change alters what a run MEASURES rather than how well it does:
+# a leak fix, a split change, a target/normalization change. Records carry the protocol they were set under,
+# and a run under a different protocol RE-BASELINES the capability instead of "beating" it -- mode and shard
+# count both match across such a change, so neither of those gates catches it.
+#   v1-prefix     : everything up to 2026-07-29. Leaked in three ways (train mask admitted future-at-seen-place
+#                   and past-at-held-place rows; time normalization fitted its span on test dates; env/vision
+#                   standardization fitted mu/sd over test rows) and normalized time so the held-out future
+#                   landed where the hash grid saturates.
+#   v2-leakfix    : strict spatiotemporal split, train-only time normalization with horizon headroom,
+#                   train-only feature standardization, deterministic seeding.
+PROTOCOL = "v2-leakfix"
+
 # Fair-baseline preference: Earth4D must beat a TRAINED generic PE, not just raw coords.
 FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "prop_acc", "best-coord", "raw"]
 
@@ -261,12 +273,19 @@ def main() -> None:
     # took flowering_peak_month 0.067 -> 0.683 and published it. A capability's record may only be beaten by a
     # run in the SAME probe mode; a different mode is a different target and gets flagged for review instead.
     prev_mode, prev_shards = cur.get("mode"), cur.get("n_shards")
+    prev_proto = cur.get("protocol")
+    rebaseline = prev is not None and prev_proto != PROTOCOL
     # An UNSTAMPED record (pre-gate, or hand-restored) is treated as unknown-mode and does NOT auto-pass:
     # that is exactly how the leaked peak-week run slipped through on its second attempt.
     mode_ok = (prev is None) or (mode == prev_mode)      # both-absent is consistent; a MISMATCH is not
     shards_ok = (prev is None) or (shards == prev_shards)
     beats = key_val is not None and (prev is None or key_val > prev)
-    is_record = beats and mode_ok and shards_ok
+    is_record = (beats and mode_ok and shards_ok) or (rebaseline and key_val is not None)
+    if rebaseline and key_val is not None:
+        print(f"[trace] *** RE-BASELINE: record was set under protocol {prev_proto!r}, this run is {PROTOCOL!r}.\n"
+              f"[trace]     {prev} and {key_val} measure different things, so this is not a comparison —\n"
+              f"[trace]     the capability's baseline is being RESET to {key_val}. Prior record archived in the ledger.",
+              flush=True)
     if beats and not (mode_ok and shards_ok):
         why = ("mode %r != record mode %r" % (mode, prev_mode) if not mode_ok
                else "n_shards %r != record n_shards %r" % (shards, prev_shards))
@@ -277,8 +296,11 @@ def main() -> None:
     ledger["runs"] = ledger.get("runs", 0) + 1
     if is_record:
         cur = {"score": key_val, "primary": primary, "fair_st_gain": fair,
-               "fair_baseline": fair_base, "tag": tag, "probe": a.probe, "mode": mode, "n_shards": shards}
-        ledger["records"] = (ledger.get("records", []) + [{"tag": tag, "score": key_val, "gain": fair}])[-20:]
+               "fair_baseline": fair_base, "tag": tag, "probe": a.probe, "mode": mode, "n_shards": shards,
+               "protocol": PROTOCOL}
+        ledger["records"] = (ledger.get("records", []) + [{"tag": tag, "score": key_val, "gain": fair,
+                                                           "protocol": PROTOCOL,
+                                                           "rebaseline_from": prev if rebaseline else None}])[-20:]
     elif beats and not (mode_ok and shards_ok):
         ledger.setdefault("deadends", {})[tag] = {
             "score": key_val, "gain": fair,

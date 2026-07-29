@@ -425,13 +425,13 @@ class Earth4D(nn.Module):
                     lin.weight.uniform_(-b, b); lin.bias.zero_()
             self.output_dim = self.output_dim + self.spatial_siren
 
-        # Optional gated CAUSAL TEMPORAL STATE (default OFF -> champion byte-identical). The encoder is evaluated
+        # Optional gated LAGGED TEMPORAL BASIS (default OFF -> champion byte-identical). The encoder is evaluated
         # POINTWISE: the (xy.t / yz.t / xz.t) hash reads the cell AT time t and carries NO history, so the
         # representation at t knows nothing about what happened before t -- every temporal structure the probes
         # exploit has had to be rebuilt OUTSIDE the encoder by a propagator (GNN/LSTM/attention over neighbours).
-        # This gives the encoder its own causal memory: the spatiotemporal features are ALSO evaluated at K learned
-        # causal LAGS (t - lag_k, strictly backward, clamped at the domain start) and combined by learned softmax
-        # weights, so the output at t is a function of the field's own past. Lags are sigmoid-bounded to
+        # This adds K backward coordinate queries (t - lag_k, clamped at the domain start), combined by learned
+        # softmax weights. It is a strictly backward positional basis, not memory or autoregression: no observed
+        # state is supplied. Lags are sigmoid-bounded to
         # [0, causal_lag_span] of the normalized time span and are learned, not fixed. Costs K extra hash lookups.
         self.causal_lags = int(causal_lags)
         if self.causal_lags > 0:
@@ -543,8 +543,12 @@ class Earth4D(nn.Module):
         return torch.cat([xyz, torch.sin(proj), torch.cos(proj)], dim=-1)
 
     def _causal_state(self, norm_coords: torch.Tensor) -> torch.Tensor:
-        """Causal memory: the spatiotemporal field re-read at K learned BACKWARD lags, softmax-combined.
-        Strictly causal (t - lag, lag >= 0) and clamped to the domain start, so no future information enters."""
+        """Lagged positional basis: re-read the field at learned backward coordinate offsets.
+
+        The lookup is strictly backward in coordinate time, but it does not
+        consume observed history and therefore is not state memory or an
+        autoregressive mechanism.
+        """
         lags = torch.sigmoid(self._lag_raw) * self.causal_lag_span      # (K,) in [0, span]
         w = torch.softmax(self._lag_w, dim=0)
         out = None

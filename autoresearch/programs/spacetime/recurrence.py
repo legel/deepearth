@@ -25,57 +25,188 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def normalize_time_from_train(days, train_mask, horizon=1.0):
+    """Normalize event time using training rows only.
+
+    Fitting the origin or span on validation/test dates would leak the evaluation period's extent into every
+    coordinate feature, so both come from train rows alone.
+
+    ``horizon`` reserves headroom for the held-out future INSIDE the encoder's representable time range.
+    Without it, train occupies [0,1] and held-out rows land above 1.0 -- which is leak-free but hits a hard
+    encoder limit: Earth4D's hash grid SATURATES past t~1.1 (measured: t=1.2, 1.5, 2.0 and 3.0 all return a
+    byte-identical feature vector), so every test row becomes temporally indistinguishable and the forecast
+    probe silently loses its time axis. Dividing the span by ``horizon`` compresses train into [0, 1/horizon]
+    and leaves the remainder for the future. ``horizon`` must be a DESIGN constant (e.g. 1/(1-holdout)) --
+    deriving it from test dates would reintroduce exactly the leak this function exists to remove.
+    """
+    days = np.asarray(days)
+    train_mask = np.asarray(train_mask, dtype=bool)
+    if days.ndim != 1 or train_mask.ndim != 1 or len(days) != len(train_mask):
+        raise ValueError("days and train_mask must be aligned 1D arrays")
+    if not np.isfinite(days).all():
+        raise ValueError("event days must be finite before time normalization")
+    if not train_mask.any():
+        raise ValueError("time normalization needs at least one training row")
+    if not np.isfinite(horizon) or horizon < 1.0:
+        raise ValueError("horizon must be a finite design constant >= 1.0")
+    train_days = days[train_mask]
+    origin = float(train_days.min())
+    span = max(float(train_days.max()) - origin, 1e-6) * float(horizon)
+    normalized = ((days - origin) / span).astype(np.float32)
+    return normalized, origin, span
+
+
+def strict_spatiotemporal_masks(lat, lon, days, future, held_place, block=0.5):
+    """Construct and validate past+seen train / future+held test masks.
+
+    The remaining past+held and future+seen quadrants are embargoed. ``held_place``
+    must hold complete spatial blocks, not selected rows within a block.
+    """
+    arrays = tuple(np.asarray(x) for x in (lat, lon, days, future, held_place))
+    if any(x.ndim != 1 for x in arrays) or len({len(x) for x in arrays}) != 1:
+        raise ValueError("space-time split inputs must be aligned 1D arrays")
+    lat, lon, days = arrays[:3]
+    future, held_place = (arrays[3].astype(bool), arrays[4].astype(bool))
+    if not np.isfinite(lat).all() or not np.isfinite(lon).all() or not np.isfinite(days).all():
+        raise ValueError("space-time split coordinates and days must be finite")
+    if not np.isfinite(block) or block <= 0:
+        raise ValueError("spatial block size must be positive and finite")
+
+    train = ~future & ~held_place
+    test = future & held_place
+    embargo = ~(train | test)
+    if not train.any() or not test.any():
+        raise ValueError("strict space-time split produced an empty train or test set")
+    if not days[train].max() < days[test].min():
+        raise ValueError("strict space-time split is not chronological")
+
+    blocks = np.stack(
+        [np.floor(lat / block), np.floor(lon / block)], axis=1
+    ).astype(np.int64)
+    train_blocks = set(map(tuple, blocks[train].tolist()))
+    test_blocks = set(map(tuple, blocks[test].tolist()))
+    if train_blocks & test_blocks:
+        raise ValueError("strict space-time split reuses a held-out spatial block")
+    return train, test, embargo
+
+
 def build_causal_windows_kdtree(q_lat, q_lon, q_day, p_lat, p_lon, p_day, K, over=8):
-    """VECTORIZED causal-window builder (cKDTree) -- same contract as build_causal_windows.
+    """Exact causal-window builder backed by a cKDTree.
 
     The bucketed builder searches a FIXED 3x3 ring of `block_deg` cells; to widen the receptive field you must
     grow block_deg, whose candidate count -- and per-query Python cost -- scales with the block AREA (K128 at
     block 5deg took 2271s, CPU-bound on the neighbour loop, per LOOP-spacetime-window-breadth-K128-push). This
     builder replaces the ring scan with a single cKDTree over the pool's (lat,lon): it returns the TRUE K
     spatial-nearest CAUSAL (strictly-earlier-day) neighbours directly, with NO ring-boundary truncation and NO
-    per-query Python loop, so receptive-field breadth (K) is decoupled from an O(block_area) cost.
+    block-area scan.
 
-    Because ~half the spatial-nearest neighbours may be non-causal (later day), we over-query K*over candidates
-    from the tree, drop the future ones, then keep the K spatially-closest survivors and order them past->present
-    in time -- identical output semantics to the bucketed builder (K nearest-in-space among strictly-earlier
-    obs). Leak-safe: the causal filter uses ONLY p_day<q_day; no dt is emitted here (edges add spatial offset
-    only downstream). Returns index array [Nq,K] into the pool (padded with -1) and a valid mask [Nq,K]."""
+    ``K*over`` is only the initial query breadth. Rows that do not yet contain all of their required causal
+    neighbours are re-queried with a geometrically increasing breadth until the answer is exact. Resolved rows
+    leave the active batch, so the full pool is queried only for rows whose causal history actually requires
+    it. This matters when more than ``K*over`` spatially closer observations are future or simultaneous: a
+    fixed over-query would silently return padding instead of the true past neighbours.
+
+    Leak-safe: the causal filter is strictly ``p_day < q_day``. The selected K-nearest-in-space set is ordered
+    past-to-present, with deterministic spatial-distance/pool-index tie breaking. Returns an index array
+    ``[Nq,K]`` into the pool (padded with -1) and a matching valid mask."""
     from scipy.spatial import cKDTree
-    q_lat = np.asarray(q_lat); q_lon = np.asarray(q_lon); q_day = np.asarray(q_day)
-    p_lat = np.asarray(p_lat); p_lon = np.asarray(p_lon); p_day = np.asarray(p_day)
-    Nq = len(q_lat); Np = len(p_lat)
+    q_lat = np.asarray(q_lat)
+    q_lon = np.asarray(q_lon)
+    q_day = np.asarray(q_day)
+    p_lat = np.asarray(p_lat)
+    p_lon = np.asarray(p_lon)
+    p_day = np.asarray(p_day)
+    query_arrays = (q_lat, q_lon, q_day)
+    pool_arrays = (p_lat, p_lon, p_day)
+    if any(array.ndim != 1 for array in query_arrays + pool_arrays):
+        raise ValueError("causal-window coordinates and days must be 1D arrays")
+    if len({len(array) for array in query_arrays}) != 1:
+        raise ValueError("query latitude, longitude, and day lengths differ")
+    if len({len(array) for array in pool_arrays}) != 1:
+        raise ValueError("pool latitude, longitude, and day lengths differ")
+    if any(not np.isfinite(array).all() for array in query_arrays + pool_arrays):
+        raise ValueError("causal-window coordinates and days must be finite")
+    Nq = len(q_lat)
+    Np = len(p_lat)
+    K = int(K)
+    if K < 0:
+        raise ValueError("K must be non-negative")
     idx = np.full((Nq, K), -1, dtype=np.int64)
-    if Np == 0 or Nq == 0:
+    if Np == 0 or Nq == 0 or K == 0:
         return idx, idx >= 0
-    tree = cKDTree(np.stack([p_lat, p_lon], -1))
-    kq = min(Np, K * over)                                        # over-query so enough survive the causal filter
-    dist, nn_idx = tree.query(np.stack([q_lat, q_lon], -1), k=kq, workers=-1)
-    if kq == 1:                                                   # cKDTree squeezes the last axis when k==1
-        dist = dist[:, None]; nn_idx = nn_idx[:, None]
-    # nn_idx[Nq,kq] already sorted by increasing spatial distance. Mask the non-causal (future/simultaneous)
-    # neighbours, then take the first K valid per row (still nearest-first), preserving the K-nearest-in-space set.
-    causal = p_day[nn_idx] < q_day[:, None]                       # [Nq,kq] True where neighbour strictly earlier
-    order_in_row = np.argsort(~causal, axis=1, kind="stable")     # valid (causal) entries float to the front, nearest-first
-    nn_sorted = np.take_along_axis(nn_idx, order_in_row, axis=1)
-    causal_sorted = np.take_along_axis(causal, order_in_row, axis=1)
-    take = min(K, nn_sorted.shape[1])
-    sel = nn_sorted[:, :take]                                     # [Nq,take] K spatial-nearest causal (padded logically by mask)
-    selc = causal_sorted[:, :take]
-    kept = np.where(selc, sel, -1)                               # [Nq,take], -1 = pad
-    # order each kept window past->present in time (match the bucketed builder). Vectorized: pad rows get +inf
-    # day so they sort to the end; argsort by day keeps valid neighbours contiguous at the front, earliest-first.
-    key = np.where(kept >= 0, p_day[np.clip(kept, 0, None)], np.inf)   # [Nq,take]
-    torder = np.argsort(key, axis=1, kind="stable")
-    kept = np.take_along_axis(kept, torder, axis=1)
-    idx[:, :take] = kept
+
+    query_xy = np.stack([q_lat, q_lon], axis=-1)
+    pool_xy = np.stack([p_lat, p_lon], axis=-1)
+    tree = cKDTree(pool_xy)
+
+    # Knowing the total available history lets rows with no history terminate without a tree query and lets
+    # rows with fewer than K past observations terminate as soon as every one of those observations is found.
+    sorted_pool_days = np.sort(p_day)
+    causal_total = np.searchsorted(sorted_pool_days, q_day, side="left")
+    need = np.minimum(K, causal_total).astype(np.int64, copy=False)
+    pending = np.flatnonzero(need > 0)
+    if len(pending) == 0:
+        return idx, idx >= 0
+
+    initial_breadth = max(K, int(np.ceil(K * max(float(over), 1.0))))
+    breadth = min(Np, initial_breadth)
+
+    def spatial_order(query_i, candidates):
+        """Sort pool indices by exact squared distance, then pool index for deterministic ties."""
+        d2 = ((p_lat[candidates] - q_lat[query_i]) ** 2
+              + (p_lon[candidates] - q_lon[query_i]) ** 2)
+        order = np.lexsort((candidates, d2))
+        return candidates[order], d2[order]
+
+    while len(pending):
+        dist, nn_idx = tree.query(query_xy[pending], k=breadth, workers=-1)
+        if breadth == 1:                                          # cKDTree squeezes the k axis for k=1
+            dist = dist[:, None]
+            nn_idx = nn_idx[:, None]
+        causal = p_day[nn_idx] < q_day[pending, None]
+        ready = causal.sum(axis=1) >= need[pending]
+
+        for local_i in np.flatnonzero(ready):
+            query_i = pending[local_i]
+            candidates = nn_idx[local_i, causal[local_i]]
+            candidates, candidate_d2 = spatial_order(query_i, candidates)
+            target = int(need[query_i])
+            cutoff_d2 = candidate_d2[target - 1]
+
+            # If the causal cutoff coincides with the outer edge of this k-NN query, cKDTree may have omitted
+            # other points at exactly the same distance. Pull that radius once so pool-index tie breaking is
+            # exact and independent of cKDTree's internal ordering.
+            furthest_d2 = float(dist[local_i, -1]) ** 2
+            edge_tol = 1e-12 * max(1.0, abs(furthest_d2))
+            if breadth < Np and cutoff_d2 >= furthest_d2 - edge_tol:
+                radius = np.nextafter(np.sqrt(cutoff_d2), np.inf)
+                tied = np.asarray(tree.query_ball_point(query_xy[query_i], radius), dtype=np.int64)
+                tied = tied[p_day[tied] < q_day[query_i]]
+                candidates, candidate_d2 = spatial_order(query_i, tied)
+
+            selected = candidates[:target]
+            selected_d2 = candidate_d2[:target]
+            # Stable past-to-present order. Same-day neighbours retain spatial-distance/pool-index ordering.
+            temporal_order = np.lexsort((selected, selected_d2, p_day[selected]))
+            idx[query_i, :target] = selected[temporal_order]
+
+        pending = pending[~ready]
+        if len(pending) == 0:
+            break
+        if breadth == Np:
+            # ``causal_total`` and the strict filter should make this unreachable unless the day values have
+            # unsupported ordering semantics (for example NaN query days).
+            raise RuntimeError("failed to resolve causal neighbours after querying the full pool")
+        breadth = min(Np, max(breadth + 1, breadth * 2))
+
     return idx, idx >= 0
 
 
 def build_causal_windows(q_lat, q_lon, q_day, p_lat, p_lon, p_day, K, block_deg=2.0, fast=False):
     """For each query, K nearest PAST train obs (strictly earlier day), ordered past->present.
 
-    fast=True dispatches to the vectorized cKDTree builder (build_causal_windows_kdtree) -- same output
-    contract, receptive field NOT limited to the 3x3 block ring, and no per-query Python neighbour loop.
+    fast=True dispatches to the adaptive cKDTree builder (build_causal_windows_kdtree) -- same output
+    contract and a receptive field NOT limited to the 3x3 block ring.
     Neighbour search is bucketed into coarse `block_deg` spatial cells (query cell + 8 ring) so it is O(N)
     not O(Nq*Np). Returns index array [Nq, K] into the pool (padded with -1) and a valid mask [Nq, K]."""
     if fast:

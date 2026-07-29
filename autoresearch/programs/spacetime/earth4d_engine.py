@@ -1,17 +1,19 @@
-"""ADDITIVE probe (H1 crux): train the Earth4D hash END-TO-END through the LSTM propagator on a CAUSAL
-forecast objective, and compare to the fair coordinate baselines. NOTHING here edits core/fusion.py,
+"""EXPLORATORY probe: train the Earth4D hash end-to-end through an LSTM propagator and compare controls.
+
+This is not confirmatory ecological evidence: its DOY target is the GBIF collection timestamp and its
+abundance target is occurrence effort.  Use ``science_gate.py`` and a measured state such as LFMC for the
+science gate.  NOTHING here edits core/fusion.py,
 evaluate.py, encoders/*, earth4d.py, or existing probe default paths. Scratch-only, flag-gated.
 
 THE GAP THIS FILLS
 ------------------
 Every existing propagator path (recurrence.run_recurrence, dyntargets.run_pheno_*, run_abundance) takes a
 PRECOMPUTED positional featurization `qfeat_all` -- Earth4D is only ever a FROZEN lookup. The one end-to-end
-trainer (recurrence.run_field_decode) is a STATIC per-point decode with NO propagator. So the science.md
-rule-1 object -- "train the 4D field JOINTLY with a causal auto-regressive forecaster" -- has never been run.
-This probe runs it.
+trainer (recurrence.run_field_decode) is a STATIC per-point decode with NO propagator. This probe prototypes
+the end-to-end wiring, but its sampling-process targets cannot satisfy science.md rule 1.
 
-TASK (real non-stationary signal, +52d propagator gain known): phenology mean-DOY forecast.
-  * split: temporal (train = past, test = latest `holdout` frac by event day) -- causal, rule 1.
+TASK (exploratory sampling-process signal): GBIF collection day-of-year prediction.
+  * split: temporal (train = past, test = latest `holdout` frac by event day) -- chronological.
     optional --forecast_spatial: test must ALSO be a held-out 0.5deg block (new place AND future time).
   * per query q (a held-out future obs): gather its K spatial-nearest CAUSAL (strictly-earlier-day) train
     neighbours (recurrence.build_causal_windows, leak-safe: p_day<q_day only), order past->present, run an
@@ -51,7 +53,11 @@ import torch.nn.functional as F
 import sys
 sys.path.insert(0, "/workspace")
 from deepearth.encoders.spacetime.earth4d import Earth4D
-from deepearth.autoresearch.programs.spacetime.recurrence import build_causal_windows
+from deepearth.autoresearch.programs.spacetime.recurrence import (
+    build_causal_windows,
+    normalize_time_from_train,
+    strict_spatiotemporal_masks,
+)
 
 
 # ----- data (mirror probe.load_obs with_time; no import to avoid pulling probe's heavy argparse) -----
@@ -146,8 +152,8 @@ def circ_err_days(pred_doy, true_doy):
 
 def abundance_target(lat, lon, days, block=0.5, win=90.0, lead=180.0, delta=True):
     """Per-obs FUTURE log-activity (delta): log1p(#obs in query's cell in [d+lead-win, d+lead]) minus trailing
-    past log1p(#obs in [d-win, d]). A genuine forward FORECAST (lead>0) of a NON-stationary activity change --
-    a static climatology cannot represent it. Neighbours (causal, day<d) carry only their OWN trailing-past
+    past log1p(#obs in [d-win, d]). This is a forward target for observation effort, not biological abundance.
+    Neighbours (past-only, day<d) carry only their OWN trailing-past
     log-activity as node state (never anything about the future). Mirrors dyntargets._abundance_target."""
     ci = np.floor(lat / block).astype(np.int64); cj = np.floor(lon / block).astype(np.int64)
     from collections import defaultdict
@@ -799,13 +805,16 @@ def run_arm_phys(arm, tgt_doy, lat, lon, days, q_tr, g_tr, v_tr, q_te, g_te, v_t
     return dict(mae=float(np.mean(err)), acc=float(np.mean(err <= tol_days)), n_te=int(len(err)))
 
 
-def run_physprop(a, lat, lon, days, tgt_doy, q_tr, g_tr, v_tr, te_idx, g_te, v_te, dev, split, floor_mae, floor_acc):
+def run_physprop(a, lat, lon, days, tgt_doy, q_tr, g_tr, v_tr, te_idx, g_te, v_te, dev, split, floor_mae, floor_acc,
+                 obs_index=None):
     import json as _json
     K = a.rec_k
     arms = [x for x in a.arms.split(",") if x]
     elev = None
     if any(("clines" in ar) or ("ecogradient" in ar) for ar in arms):
         elev = load_elev(a.cache_dir, a.n_shards)
+        if obs_index is not None:
+            elev = elev[obs_index]
         _fin = np.isfinite(elev)
         print(f"  ELEV loaded: {int(_fin.sum())}/{len(elev)} obs have elevation "
               f"(range {np.nanmin(elev[_fin]):.0f}..{np.nanmax(elev[_fin]):.0f} m)")
@@ -865,12 +874,26 @@ def main(argv=None):
     a = ap.parse_args(argv)
     t0 = time.time()
     dev = a.device
+    np.random.seed(a.seed)
+    torch.manual_seed(a.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(a.seed)
+    print("[exploratory] GBIF collection-time/count targets do not establish ecological forecasting.")
 
     lat, lon, days = load_obs_time(a.cache_dir, a.n_shards)
-    test = temporal_holdout(days, a.holdout)
+    obs_index = np.arange(len(lat), dtype=np.int64)
+    future = temporal_holdout(days, a.holdout)
+    test = future
     split = "future"
     if a.forecast_spatial:
-        test = test & spatial_holdout(lat, lon, a.holdout, seed=a.seed)
+        held_place = spatial_holdout(lat, lon, a.holdout, seed=a.seed)
+        train, test, _embargo = strict_spatiotemporal_masks(
+            lat, lon, days, future, held_place, block=0.5
+        )
+        keep = train | test
+        lat, lon, days = lat[keep], lon[keep], days[keep]
+        obs_index = obs_index[keep]
+        test = test[keep]
         split = "future+newplace"
     tr_idx = np.where(~test)[0]; te_idx = np.where(test)[0]
     K = a.rec_k
@@ -908,7 +931,7 @@ def main(argv=None):
             res[arm] = run_arm_abund(arm, tgt, past_act, lat, lon, q_tr, g_tr, v_tr, te_idx, g_te, v_te, dev,
                                      enc=mk_enc(arm), steps=a.steps, lr=a.lr, hidden=a.rec_hidden, K=K, seed=a.seed)
         dt = time.time() - t0; n_te = res[arms[0]]["n_te"]
-        print(f"=== EARTH4D-ENGINE H1 | causal end-to-end ABUNDANCE forecast (lead={a.abund_lead:.0f}d win={a.abund_win:.0f}d delta={a.abund_delta}) ===")
+        print(f"=== EARTH4D-ENGINE H1 | exploratory occurrence-count forecast (lead={a.abund_lead:.0f}d win={a.abund_win:.0f}d delta={a.abund_delta}) ===")
         print(f"  split={split} obs={len(days)} q_te={n_te} K={K} steps={a.steps} seed={a.seed}  {dt:.0f}s")
         print(f"  STATIC FLOOR (neighbour past-activity mean, no propagation): R2 {floor_r2:+.4f}  MAE {floor_mae:.3f}")
         for arm in arms:
@@ -930,8 +953,9 @@ def main(argv=None):
         tgt_doy = doy_of(days)                                  # per-obs mean-DOY
     floor_mae, floor_acc = _static_floor(tgt_doy, days, lat, lon, te_idx, g_te, v_te, a.tol_days)
     if a.mode == "physprop":
-        return run_physprop(a, lat, lon, days, tgt_doy, q_tr, g_tr, v_tr, te_idx, g_te, v_te, dev, split, floor_mae, floor_acc)
-    tmin = float(np.nanmin(days)); tspan = max(float(np.nanmax(days) - np.nanmin(days)), 1e-6)
+        return run_physprop(a, lat, lon, days, tgt_doy, q_tr, g_tr, v_tr, te_idx, g_te, v_te, dev, split,
+                            floor_mae, floor_acc, obs_index=obs_index)
+    _tnorm, tmin, tspan = normalize_time_from_train(days, ~test)
     res = {}
     for arm in arms:
         if arm == "e4d_e2e_tc":                                 # H2: time-conditioned end-to-end (rule 2b + rule 1)
@@ -946,7 +970,7 @@ def main(argv=None):
                            steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.tol_days, K=K, seed=a.seed)
     dt = time.time() - t0
     n_te = res[arms[0]]["n_te"]
-    print(f"=== EARTH4D-ENGINE H1 | causal end-to-end forecast | target={a.target} ===")
+    print(f"=== EARTH4D-ENGINE H1 | exploratory collection-DOY prediction | target={a.target} ===")
     print(f"  split={split} obs={len(days)} q_te={n_te} K={K} steps={a.steps} seed={a.seed} tol=+/-{a.tol_days:.0f}d  {dt:.0f}s")
     print(f"  STATIC FLOOR (neighbour circular-mean, no propagation): MAE {floor_mae:.1f}d  acc {floor_acc:.4f}")
     for arm in arms:

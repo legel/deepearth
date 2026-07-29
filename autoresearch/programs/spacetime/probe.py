@@ -11,12 +11,13 @@ coordinate cannot. Reuses Earth4D unchanged (no core edit).
 
   python -m deepearth.autoresearch.programs.spacetime.probe --cache_dir data/deepcal --steps 800
 
-FORECAST mode (--forecast, science.md rule 1: causal auto-regressive):
+FORECAST mode (--forecast, chronological discovery probe):
   Real event-time (gbif_eventtime.npz, joined by gbifID) is placed into Earth4D coord slot 3 (t), which the
   default path leaves at 0. The held-out set becomes the LATEST `holdout` fraction of observations BY TIME
   (train on the past, forecast the future) instead of held-out spatial blocks. The raw-coords and RFF
   baselines receive the identical normalized-time feature, so the st_gain isolates whether Earth4D's 4D
-  multi-resolution field forecasts biology forward better than a plain space-time code. Default path
+  multi-resolution field predicts later observations better than a plain space-time code. This is not
+  autoregression unless a separate mechanism consumes observed past state and rolls it forward. Default path
   (no --forecast) is byte-identical to before: t=0, spatial-block holdout.
 
 ENVIRONMENT modes (science.md rules 1-6, 24 done right -- the positional field should represent the ENVIRONMENT,
@@ -45,6 +46,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.encoders.spacetime.earth4d import Earth4D
+from deepearth.autoresearch.programs.spacetime.recurrence import (
+    normalize_time_from_train,
+    strict_spatiotemporal_masks,
+)
 
 
 def load_obs(cache: str, n_shards: int, with_time: bool = False, with_gid: bool = False):
@@ -93,7 +98,7 @@ def load_species(cache: str, n_shards: int):
     return np.concatenate(sp).astype(np.int64)
 
 
-def load_env(cache: str, gid, channels: str = "wcsoil"):
+def load_env(cache: str, gid, channels: str = "wcsoil", fit_mask=None):
     """Join real ENVIRONMENT covariates to each observation by gbifID (science.md rule 24: environment field).
 
     Returns env [N, D] float32, standardized (zero-mean/unit-std per column over the covered obs), missing
@@ -148,14 +153,15 @@ def load_env(cache: str, gid, channels: str = "wcsoil"):
         if phmap is not None:
             j = phmap.get(g)
             if j is not None: env[i, o:o + n_ph] = PH[j]
-    # standardize per column over present values, then impute missing to the (post-standardization) mean = 0
-    mu = np.nanmean(env, 0); sd = np.nanstd(env, 0); sd[sd < 1e-6] = 1.0
+    # Fit transforms on train only when a split mask is supplied.
+    fit = env if fit_mask is None else env[np.asarray(fit_mask, dtype=bool)]
+    mu = np.nanmean(fit, 0); sd = np.nanstd(fit, 0); sd[sd < 1e-6] = 1.0
     env = (env - mu) / sd
     env = np.nan_to_num(env, nan=0.0).astype(np.float32)
     return env
 
 
-def load_vision(cache: str, gid, feat: str = "dino", n_shards: int = 999):
+def load_vision(cache: str, gid, feat: str = "dino", n_shards: int = 999, fit_mask=None):
     """Per-obs PLANT vision (DINO/BioCLIP) joined by gbifID from gbif_tokens/ -- tests whether convergent
     MORPHOLOGY carries family where environment does not (perception law). Leak-free per-obs image emb,
     standardized; densify obs with zeroed vision impute to 0."""
@@ -172,7 +178,8 @@ def load_vision(cache: str, gid, feat: str = "dino", n_shards: int = 999):
     for i, g in enumerate(gid):
         v = dmap.get(int(g))
         if v is not None: X[i] = v
-    mu = X.mean(0); sd = X.std(0); sd[sd < 1e-6] = 1.0
+    fit = X if fit_mask is None else X[np.asarray(fit_mask, dtype=bool)]
+    mu = fit.mean(0); sd = fit.std(0); sd[sd < 1e-6] = 1.0
     return ((X - mu) / sd).astype(np.float32)
 
 
@@ -331,6 +338,13 @@ def _mlp_spearman(X, y, tr, te, dev, hidden=128, steps=1500, lr=3e-3):
 
 def spatial_holdout(lat, lon, frac=0.2, block=0.5, seed=0):
     """Hold out whole 0.5-degree spatial blocks (tests generalization to UNSEEN locations, not memorization)."""
+    lat, lon = np.asarray(lat), np.asarray(lon)
+    if lat.ndim != 1 or lon.ndim != 1 or len(lat) != len(lon):
+        raise ValueError("latitude and longitude must be aligned 1D arrays")
+    if not np.isfinite(lat).all() or not np.isfinite(lon).all():
+        raise ValueError("spatial holdout coordinates must be finite")
+    if not 0.0 < frac < 1.0 or not np.isfinite(block) or block <= 0:
+        raise ValueError("holdout fraction and block size must be valid")
     blk = (np.floor(lat / block).astype(np.int64) * 100000 + np.floor(lon / block).astype(np.int64))
     ublk = np.unique(blk)
     rng = np.random.default_rng(seed); rng.shuffle(ublk)
@@ -341,14 +355,38 @@ def spatial_holdout(lat, lon, frac=0.2, block=0.5, seed=0):
 def temporal_holdout(days, frac=0.2):
     """Hold out the LATEST `frac` of observations by event time (train past -> forecast future).
 
-    Causal split (science.md rule 1): the test set is strictly in the future of the train set, so a passing
-    st_gain means Earth4D forecasts forward, it does not interpolate a location it has already seen."""
-    thr = np.nanquantile(days, 1.0 - frac)
+    The split is chronological, but that alone does not make a pointwise model
+    causal or autoregressive; those claims additionally require observed history
+    and a rollout."""
+    days = np.asarray(days)
+    if days.ndim != 1 or not np.isfinite(days).all():
+        raise ValueError("temporal holdout days must be a finite 1D array")
+    if not 0.0 < frac < 1.0:
+        raise ValueError("holdout fraction must be between zero and one")
+    thr = np.quantile(days, 1.0 - frac)
     return days >= thr                                          # bool [N_obs], True = future (held out)
 
 
-def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0):
+def strict_spatiotemporal_holdout(lat, lon, days, frac=0.2, block=0.5, seed=0):
+    """Return disjoint train/test/embargo masks for a future-at-unseen-place test.
+
+    ``~(future & held_place)`` is not a valid training mask: it admits future rows
+    from seen places and past rows from held places.  A confirmatory partition
+    trains only on past rows at seen places, tests only on future rows at held
+    places, and excludes the two cross-quadrants.
+    """
+    future = temporal_holdout(days, frac)
+    held_place = spatial_holdout(lat, lon, frac, block=block, seed=seed)
+    return strict_spatiotemporal_masks(
+        lat, lon, days, future, held_place, block=block
+    )
+
+
+def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0):
     """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy."""
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
     train = ~test
     Xtr, ytr = feats[train].to(dev), fam[train].to(dev)
     Xte, yte = feats[test].to(dev), fam[test].to(dev)
@@ -444,7 +482,8 @@ def main(argv=None):
     ap.add_argument("--enc_warmup", type=float, default=0.15)   # fraction of steps for linear LR warmup
     ap.add_argument("--enc_c2f", type=float, default=0.5)       # fraction of steps to fully unmask hash levels
     ap.add_argument("--target", default="family", choices=["family", "species"])  # CAPABILITY LEVER: classification target. The paths only ever predicted family (166-way); "species" switches to the 2141-way species vocab, which is what species_from_spacetime / species_from_env actually name
-    ap.add_argument("--causal_lags", type=int, default=0)         # ARCH LEVER: gated CAUSAL TEMPORAL STATE (K learned backward lags; 0=off) -- the encoder re-reads its own spatiotemporal field at t-lag_k and softmax-combines, giving it memory instead of a pointwise read of the cell at t
+    ap.add_argument("--time_horizon", type=float, default=2.0)   # train time compressed into [0,1/h] so the held-out FUTURE stays inside the encoder's representable range (it saturates past t~1.1). Design constant; never derived from test dates
+    ap.add_argument("--causal_lags", type=int, default=0)         # ARCH LEVER: delayed positional basis (K learned backward coordinate reads; 0=off). It consumes no observed state, so it is not memory or autoregression
     ap.add_argument("--causal_lag_span", type=float, default=0.25)  # max lag as a fraction of the normalized time span
     ap.add_argument("--spatial_siren", type=int, default=0)      # ARCH LEVER: gated SIREN spatial branch (width; 0=off) -- sinusoidal-activation MLP over xyz, smooth+extrapolative BY CONSTRUCTION with LEARNED per-layer frequencies; aimed at the hash's held-out-spatial-block weakness (loses to a fixed RFF on static tasks)
     ap.add_argument("--siren_layers", type=int, default=2)
@@ -541,6 +580,10 @@ def main(argv=None):
     ap.add_argument("--construct_only", default="")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
+    np.random.seed(a.seed)
+    torch.manual_seed(a.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(a.seed)
 
     if a.env_construct:
         r = env_construct(a.cache_dir, seed=a.seed, construct=a.construct,
@@ -600,16 +643,25 @@ def main(argv=None):
     t0 = time.time()
     need_gid = a.env or a.env_decode or a.pheno_env
     lat, lon, fam, n_fam, days, gid, sp_obs = load_obs(a.cache_dir, a.n_shards, with_time=a.forecast, with_gid=need_gid)
+    obs_index = np.arange(len(lat), dtype=np.int64)
+    if a.forecast:
+        valid_time = np.isfinite(days)
+        if not valid_time.all():
+            lat, lon, fam, days, sp_obs = (
+                x[valid_time] for x in (lat, lon, fam, days, sp_obs)
+            )
+            if gid is not None:
+                gid = gid[valid_time]
+            obs_index = obs_index[valid_time]
     if a.target == "species":
         # CAPABILITY LEVER: the classification paths only ever predicted FAMILY, which is why
         # species_from_spacetime / species_from_env were never probeable from this probe at all. Species is a
         # strictly harder target (2141-way vocab vs 166 families) and is the capability the scorecard names.
         _u, fam = np.unique(sp_obs, return_inverse=True)         # compact the species ids actually present
         fam = fam.astype(np.int64); n_fam = int(fam.max()) + 1
-    fam_t = torch.tensor(fam)
-
     if a.forecast:
-        # science.md rule 1: causal auto-regressive -- test = future, train = past; time is a LIVE coordinate.
+        # Temporal holdout is a forecast split, but direct coordinate classification is
+        # still a static forecast probe, not an autoregressive model.
         test = temporal_holdout(days, a.holdout)
         if a.pheno_spatial:
             # LOOP-spacetime (1) SPATIAL generalization: the mean-DOY graduation head must forecast timing in
@@ -617,16 +669,31 @@ def main(argv=None):
             # neighbours are drawn from TRAIN (seen) blocks. Tests generalization to new places, not memorization.
             test = spatial_holdout(lat, lon, a.holdout, seed=a.seed)
         if a.forecast_spatial:
-            # Remove the same-location recall shortcut: future test set must ALSO be a held-out spatial block,
-            # so raw lat/lon cannot memorize place->family. This is the true rule-1 forecast: new place, future time.
-            sp_held = spatial_holdout(lat, lon, a.holdout, seed=a.seed)
-            test = test & sp_held
-        tmin, tspan = np.nanmin(days), max(np.nanmax(days) - np.nanmin(days), 1e-6)
-        tnorm = ((days - tmin) / tspan).astype(np.float32)      # [0,1] event time
+            # Keep only the two valid quadrants.  The old ``test=future&held; train=~test``
+            # leaked future-seen-place and past-held-place rows into training.
+            train, test, _embargo = strict_spatiotemporal_holdout(
+                lat, lon, days, a.holdout, seed=a.seed
+            )
+            keep = train | test
+            lat, lon, fam, days, sp_obs = (
+                x[keep] for x in (lat, lon, fam, days, sp_obs)
+            )
+            if gid is not None:
+                gid = gid[keep]
+            obs_index = obs_index[keep]
+            test = test[keep]  # complement is now exactly past + seen-place
+        # Reserve room for the held-out future inside the encoder's [0,1] time grid. Without it the future
+        # lands above t=1.0, where the hash grid SATURATES (t=1.2/1.5/2.0/3.0 all return identical features),
+        # so every test row would be temporally indistinguishable and the forecast probe would lose its time
+        # axis. A DESIGN constant -- no test date is consulted, so the train-only fit stays leak-free.
+        # 1/(1-holdout) is NOT enough: temporal_holdout splits by row COUNT and observations are denser in the
+        # past, so the last 20% of rows spans ~52% of the calendar range (measured test t max 1.52 at h=1.0).
+        tnorm, tmin, tspan = normalize_time_from_train(days, ~test, horizon=a.time_horizon)
         coords = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), tnorm], 1))  # [N,4]=(lat,lon,elev=0,t=REAL)
     else:
         test = spatial_holdout(lat, lon, a.holdout, seed=a.seed)
         coords = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), np.zeros_like(lat)], 1))  # [N,4] t=0
+    fam_t = torch.tensor(fam)
 
     enc = Earth4D(verbose=False, spatial_levels=a.spatial_levels, temporal_levels=a.temporal_levels,   # S3: exposed capacity
                   spatial_log2_hashmap_size=a.log2_hashmap, temporal_log2_hashmap_size=a.log2_hashmap, freq_log_scale_init=-2.5,
@@ -651,9 +718,9 @@ def main(argv=None):
     if a.env or a.env_decode:
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
         # follows. Real env covariates (worldclim+soil+elev) joined by gbifID -> the science-aligned question.
-        env = load_env(a.cache_dir, gid, channels=a.env_channels)  # DATA LEVER: wcsoil(29) | worldclim(19) | alphaearth(64) | all(93)
+        env = load_env(a.cache_dir, gid, channels=a.env_channels, fit_mask=~test)  # train-fit transform
         if a.vision:
-            env = load_vision(a.cache_dir, gid, a.vision_feats, a.n_shards)   # DATA LEVER: per-obs plant vision replaces env
+            env = load_vision(a.cache_dir, gid, a.vision_feats, a.n_shards, fit_mask=~test)
         rn = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
         if a.forecast:
             rn = np.concatenate([rn, tnorm[:, None]], 1)
@@ -777,14 +844,14 @@ def main(argv=None):
         proj = rn @ (rff_rng.normal(0, 8.0, (rn.shape[1], e4d.shape[1] // 2)).astype(np.float32))
         rff = torch.tensor(np.concatenate([np.sin(proj), np.cos(proj)], 1).astype(np.float32))
         fused = torch.cat([e4d, env_t], 1)                       # Earth4D coords ++ real environment
-        raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden)
-        rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden)
+        raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden, a.seed)
+        rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden, a.seed)
         e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d",
                                               a.head_hidden, a.enc_lr_mult, a.enc_warmup, a.enc_c2f, seed=a.seed)
                            if a.train_encoder else
-                           evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden))
-        env_acc, env_t5 = evaluate(env_t, fam_t, test, n_fam, dev, a.steps, a.lr, "env", a.head_hidden)
-        fus_acc, fus_t5 = evaluate(fused, fam_t, test, n_fam, dev, a.steps, a.lr, "fused", a.head_hidden)
+                           evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden, a.seed))
+        env_acc, env_t5 = evaluate(env_t, fam_t, test, n_fam, dev, a.steps, a.lr, "env", a.head_hidden, a.seed)
+        fus_acc, fus_t5 = evaluate(fused, fam_t, test, n_fam, dev, a.steps, a.lr, "fused", a.head_hidden, a.seed)
         dt = time.time() - t0
         best_coord = max(raw_acc, rff_acc, e4d_acc)              # best coordinate-only PE
         mode = ("FORECAST(future+newplace)" if a.forecast_spatial else "FORECAST(past->future)") if a.forecast else "spatial-block"
@@ -900,12 +967,13 @@ def main(argv=None):
             _pm = {int(g): i for i, g in enumerate(_ph["gbifID"])}; _PH = _ph["phenology"]
             import glob as _g2
             _gg=[np.load(_f)["gbifID"] for _f in sorted(_g2.glob(str(Path(a.cache_dir)/"gbif_tokens/*.npz")))[:a.n_shards]]
-            _gid=np.concatenate(_gg).astype(np.int64)
+            _gid=np.concatenate(_gg).astype(np.int64)[obs_index]
             _px = np.zeros((len(lat), _PH.shape[1]), np.float32)
             for _i, _g in enumerate(_gid):
                 _j = _pm.get(int(_g))
                 if _j is not None: _px[_i] = _PH[_j]
-            _mu = _px.mean(0); _sd = _px.std(0); _sd[_sd < 1e-6] = 1.0
+            _fit = _px[~test]
+            _mu = _fit.mean(0); _sd = _fit.std(0); _sd[_sd < 1e-6] = 1.0
             _pt = torch.tensor(((_px - _mu) / _sd).astype(np.float32))
             raw_sp = torch.cat([raw_sp, _pt], 1); e4d_sp = torch.cat([e4d_sp, _pt], 1)
             fd = {"e4d": e4d_sp.shape[1], "rff": rff_sp.shape[1], "raw": raw_sp.shape[1]}
@@ -916,7 +984,7 @@ def main(argv=None):
             _sp = []
             for _f in sorted(_glob.glob(str(_Path(a.cache_dir) / "gbif_tokens/*.npz")))[:a.n_shards]:
                 _sp.append(np.load(_f)["species_local"])
-            sp_all = np.concatenate(_sp).astype(np.int64)
+            sp_all = np.concatenate(_sp).astype(np.int64)[obs_index]
         _feats = [x for x in a.pheno_feats.split(",") if x]
         # FAIR-BASELINE GUARD: a single-feature run (e.g. --pheno_feats e4d) left the RFF control untrained, so the
         # trace could report NO fair gain at all and still set a record -- this capability's records were being
@@ -1018,7 +1086,7 @@ def main(argv=None):
 
         if a.pheno_env:
             from deepearth.autoresearch.programs.spacetime.dyntargets import run_pheno_env
-            env = load_env(a.cache_dir, gid)
+            env = load_env(a.cache_dir, gid, fit_mask=~test)
             r = run_pheno_env(raw_sp, fdim, days, coords_ll, env, test, dev,
                               K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.pheno_tol)
             dt = time.time() - t0
@@ -1062,7 +1130,7 @@ def main(argv=None):
             col = a.pheno_taxon
             taxon_str = _np.array([rows[i][col] for i in vocab])
             names, gid_of_species = _np.unique(taxon_str, return_inverse=True)
-            sp_all = load_species(a.cache_dir, a.n_shards)
+            sp_all = load_species(a.cache_dir, a.n_shards)[obs_index]
             group = gid_of_species[sp_all].astype(_np.int64)
             r = run_pheno_by_taxon(raw_sp, fdim, days, coords_ll, group, test, dev,
                                    K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.pheno_tol)
@@ -1103,7 +1171,7 @@ def main(argv=None):
         n_steps = max(1, int(round(a.ar_final / a.ar_step)))
         leads = [float(j * a.ar_step) for j in range(1, n_steps + 1)]  # intermediate + final leads
         assert abs(leads[-1] - a.ar_final) < 1e-6, f"ar_final {a.ar_final} not a multiple of ar_step {a.ar_step}"
-        _sp_arr = load_species(a.cache_dir, a.n_shards) if a.ar_target == "richness" else None
+        _sp_arr = load_species(a.cache_dir, a.n_shards)[obs_index] if a.ar_target == "richness" else None
 
         def _tgt_at(lead):
             if a.ar_target == "abundance":
@@ -1366,7 +1434,7 @@ def main(argv=None):
         rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
         raw_feat = torch.tensor(rn_sp)                                 # SPACE-ONLY query feature (t stripped)
         fdim = raw_feat.shape[1]
-        sp_arr = load_species(a.cache_dir, a.n_shards)
+        sp_arr = load_species(a.cache_dir, a.n_shards)[obs_index]
         win, lead = a.abund_win, a.abund_lead
         if a.breadth_target == "occupancy":
             tgt, past = _occupancy_target(lat_a, lon_a, days, sp_arr, win=win, lead=lead, sub=a.breadth_sub)
@@ -1641,7 +1709,7 @@ def main(argv=None):
             _sp = []
             for _f in sorted(_glob.glob(str(_Path(a.cache_dir) / "gbif_tokens/*.npz")))[:a.n_shards]:
                 _sp.append(np.load(_f)["species_local"])
-            sp_all = np.concatenate(_sp).astype(np.int64)
+            sp_all = np.concatenate(_sp).astype(np.int64)[obs_index]
             from deepearth.autoresearch.programs.spacetime.dyntargets import run_first_arrival_all
             r = run_first_arrival_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, sp_all, test, dev,
                                       feats=tuple(x for x in a.pheno_feats.split(",") if x),
@@ -1756,12 +1824,12 @@ def main(argv=None):
         return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc,
                 "raw_acc": raw_acc, "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "recurrence": True}
 
-    raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden)
-    rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden)
+    raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden, a.seed)
+    rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden, a.seed)
     e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d",
                                           a.head_hidden, a.enc_lr_mult, a.enc_warmup, a.enc_c2f, seed=a.seed)
                        if a.train_encoder else
-                       evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden))
+                       evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden, a.seed))
     dt = time.time() - t0
     mode = ("FORECAST(future+newplace)" if a.forecast_spatial else "FORECAST(past->future)") if a.forecast else "spatial-block"
     print(f"=== SPACETIME encoder (standalone) | mode={mode} obs={len(lat)} held-out={int(test.sum())} families={n_fam} ===")
