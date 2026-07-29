@@ -369,6 +369,9 @@ def main(argv=None):
     ap.add_argument("--fourier", type=int, default=0)           # ARCH LEVER: add a random-Fourier-features branch of this width to Earth4D (0=off) -- tests hash+Fourier vs the pure-RFF baseline it currently loses to
     ap.add_argument("--fourier_scale", type=float, default=10.0)  # RFF bandwidth (freq scale) for the --fourier branch
     ap.add_argument("--time_harmonics", type=int, default=0)      # ARCH LEVER: internal learnable multi-scale sin/cos time basis (0=off) -- seasonal/persistence prior the discrete hash lacks; NOT redundant with spatial smooth_geo
+    ap.add_argument("--spatial_siren", type=int, default=0)      # ARCH LEVER: gated SIREN spatial branch (width; 0=off) -- sinusoidal-activation MLP over xyz, smooth+extrapolative BY CONSTRUCTION with LEARNED per-layer frequencies; aimed at the hash's held-out-spatial-block weakness (loses to a fixed RFF on static tasks)
+    ap.add_argument("--siren_layers", type=int, default=2)
+    ap.add_argument("--siren_w0", type=float, default=30.0)       # SIREN frequency scale (Sitzmann et al. default)
     ap.add_argument("--spatial_cline", type=int, default=0)      # ARCH LEVER: gated smooth spatial-CLINE band (0=off) -- linear xyz + LEARNABLE low-freq sin/cos; the monotone spatial gradient (lat->flowering-DOY Hopkins cline) the hash memorizes away and the fixed high-freq --fourier cannot form
     ap.add_argument("--cline_scale", type=float, default=1.0)     # init bandwidth of the learnable cline band (LOW by design; ~1 cycle over the domain)
     ap.add_argument("--time_film", type=int, default=0)        # ARCH LEVER: gated space x time FiLM (0=off) -- modulate spatial hash by a learned time basis; explicit seasonal-spatial interaction the additive features cannot form
@@ -546,7 +549,8 @@ def main(argv=None):
                   spatial_log2_hashmap_size=a.log2_hashmap, temporal_log2_hashmap_size=a.log2_hashmap, freq_log_scale_init=-2.5,
                   fourier_features=a.fourier, fourier_scale=a.fourier_scale,
                   time_harmonics=a.time_harmonics, time_film=a.time_film,
-                  spatial_cline=a.spatial_cline, cline_scale=a.cline_scale).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
+                  spatial_cline=a.spatial_cline, cline_scale=a.cline_scale,
+                  spatial_siren=a.spatial_siren, siren_layers=a.siren_layers, siren_w0=a.siren_w0).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
 
     if a.env or a.env_decode:
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology

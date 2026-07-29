@@ -266,7 +266,12 @@ class Earth4D(nn.Module):
                  fourier_features: int = 0,
                  fourier_scale: float = 10.0,
                  time_harmonics: int = 0,
-                 time_film: int = 0):
+                 time_film: int = 0,
+                 spatial_cline: int = 0,
+                 cline_scale: float = 1.0,
+                 spatial_siren: int = 0,
+                 siren_layers: int = 2,
+                 siren_w0: float = 30.0):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -388,6 +393,36 @@ class Earth4D(nn.Module):
             self.time_freqs = nn.Parameter(init)   # cycles over the normalized time span; learnable timescale
             self.output_dim = self.output_dim + 2 * self.time_harmonics
 
+        # Optional gated SPATIAL-CLINE branch (default OFF -> champion byte-identical). Diagnosis: the multiresolution
+        # hash MEMORIZES position and carries no monotone spatial GRADIENT (the lat->flowering-DOY Hopkins cline is
+        # measurably absent from pos_s), and --fourier is a FIXED HIGH-frequency (scale 10) random projection, which
+        # cannot represent a degree-1 cline either. This branch adds (a) the normalized xyz themselves = the explicit
+        # linear/cline term, and (b) a LEARNABLE LOW-frequency sin/cos band (init scale ~1 cycle over the domain, and
+        # B is a Parameter so training can shrink it toward a pure gradient). Spatial-only; dense forward() path only.
+        self.spatial_cline = int(spatial_cline)
+        if self.spatial_cline > 0:
+            self._cline_B = nn.Parameter(torch.randn(3, self.spatial_cline) * float(cline_scale))
+            self.output_dim = self.output_dim + 3 + 2 * self.spatial_cline
+
+        # Optional gated SIREN spatial branch (default OFF -> champion byte-identical). Diagnosis: on STATIC/spatial
+        # held-out-BLOCK tasks the multiresolution hash LOSES to a plain RFF (family_from_env: Earth4D 0.074-0.083 vs
+        # RFF 0.113-0.116) because it memorizes position locally and has nothing to say across a block boundary,
+        # while RFF's smooth global basis extrapolates. --fourier is a FIXED random projection (one bandwidth, not
+        # trained) and an env-reconstruction objective did not fix it either. A SIREN (sinusoidal-activation MLP,
+        # Sitzmann et al.) is smooth and extrapolative BY CONSTRUCTION and its frequencies are LEARNED at every
+        # layer -- a genuinely different spatial representation rather than another fixed basis. Spatial-only
+        # (xyz, not time) so the temporal projections that already win stay untouched. Dense forward() path only.
+        self.spatial_siren = int(spatial_siren)
+        if self.spatial_siren > 0:
+            self.siren_w0 = float(siren_w0)
+            dims = [3] + [self.spatial_siren] * int(siren_layers)
+            self.siren = nn.ModuleList(nn.Linear(dims[i], dims[i + 1]) for i in range(len(dims) - 1))
+            with torch.no_grad():   # SIREN init: first layer U(-1/in, 1/in), rest U(-sqrt(6/in)/w0, +same)
+                for i, lin in enumerate(self.siren):
+                    b = 1.0 / lin.in_features if i == 0 else math.sqrt(6.0 / lin.in_features) / self.siren_w0
+                    lin.weight.uniform_(-b, b); lin.bias.zero_()
+            self.output_dim = self.output_dim + self.spatial_siren
+
         # Optional gated space x time FiLM (default OFF -> champion byte-identical). The concatenated spatial-hash +
         # time-harmonic features are ADDITIVE; a linear head cannot form space*time PRODUCTS. This modulates the
         # spatial-hash block by a learned function of a multi-scale time basis -> explicit seasonal-spatial interaction
@@ -481,6 +516,21 @@ class Earth4D(nn.Module):
         proj = 2.0 * math.pi * (norm_coords[..., :3] @ self._fourier_B)
         return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
 
+    def _cline(self, norm_coords: torch.Tensor) -> torch.Tensor:
+        """Smooth spatial-gradient band: [xyz, sin(2π B xyz), cos(2π B xyz)] with LEARNABLE low-frequency B.
+        The linear xyz term is the cline (degree-1 gradient) the hash and the fixed high-freq RFF both destroy."""
+        xyz = norm_coords[..., :3]
+        proj = 2.0 * math.pi * (xyz @ self._cline_B)
+        return torch.cat([xyz, torch.sin(proj), torch.cos(proj)], dim=-1)
+
+    def _siren(self, norm_coords: torch.Tensor) -> torch.Tensor:
+        """Sinusoidal-activation MLP over normalized xyz: sin(w0 * W_k ... sin(w0 * W_1 xyz)).
+        Smooth and globally extrapolative by construction, with LEARNED per-layer frequencies."""
+        h = norm_coords[..., :3]
+        for lin in self.siren:
+            h = torch.sin(self.siren_w0 * lin(h))
+        return h
+
     def _film_harmonics(self, norm_coords: torch.Tensor) -> torch.Tensor:
         t = norm_coords[..., 3:]
         proj = 2.0 * math.pi * t * self._film_freqs
@@ -504,6 +554,10 @@ class Earth4D(nn.Module):
             feats = torch.cat([feats, self._fourier(norm_coords)], dim=-1)
         if self.time_harmonics > 0:
             feats = torch.cat([feats, self._time_harmonics(norm_coords)], dim=-1)
+        if self.spatial_cline > 0:
+            feats = torch.cat([feats, self._cline(norm_coords)], dim=-1)
+        if self.spatial_siren > 0:
+            feats = torch.cat([feats, self._siren(norm_coords)], dim=-1)
         return feats
 
     def get_output_dim(self) -> int:
