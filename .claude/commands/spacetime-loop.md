@@ -36,7 +36,7 @@ and stop — do not change it yourself.
               EARNING (share ≥ 25%)         → the mechanism carries signal, push it further
 ③ HYPOTHESIZE  one change, stated as a falsifiable claim before you run it
 ④ EDIT      git worktree add ../e4d-<tag> -b exp/<tag>; edit earth4d.py / probe.py IN PLACE
-⑤ RUN       5 matched seeds, through the harness, on the box
+⑤ RUN       ONE seed, through the harness, on the box — breadth over depth
 ⑥ DECIDE    the harness applies the noise barrier — do not argue with it
 ⑦ PUBLISH   --ensue on EVERY run, win or dead-end, with its bottleneck reason
 ```
@@ -45,8 +45,13 @@ and stop — do not change it yourself.
 
 - **An experiment is an EDIT on a BRANCH, not a new flag.** A flag is what a change earns when it
   graduates. Do not add a flag to try an idea. Do not copy a file to try an idea.
-- **5 matched seeds, always.** The harness scores the MEAN, never the max of reruns. A single-seed
-  result is not a result; two agents have already manufactured records from noise here.
+- **Screen at ONE seed. Go broad.** GPU is precious and the goal is breakthroughs, so spend it on many
+  different hypotheses, not on measuring one hypothesis five times. The noise barrier already refuses
+  noise — that is its job — so a screening run needs no repeats. Flat at one seed IS your answer:
+  publish the dead-end and move to the next idea.
+- **Escalate to `--seeds 5` only for a candidate that CLEARED the barrier.** Confirmation is where seeds
+  earn their cost: there the barrier also becomes 2σ of the measured spread, and only then does the
+  record stop being PROVISIONAL. Never use seeds to convince yourself a flat arm was really flat.
 - **Never edit `editable_files/harness.py` to make a run look better.** It decides what a number
   means. If the harness is genuinely wrong, fix it as its own commit with a test that fails before and
   passes after, and say so explicitly — never inside an experiment.
@@ -73,9 +78,13 @@ cd /workspace/deepearth && export PYTHONPATH=/workspace
 python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness \
     --list-modes --capability <metric>
 
-# one experiment, 5 seeds, recorded and published
+# SCREEN one idea (default 1 seed), recorded and published
 python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness \
-    --metric <metric> --probe "<flags>" --seeds 5 --tag <tag> --device cuda:0 --ensue
+    --metric <metric> --probe "<flags>" --tag <tag> --device cuda:0 --ensue
+
+# CONFIRM a candidate that cleared the barrier — only then is 5x the compute justified
+python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness \
+    --metric <metric> --probe "<flags>" --seeds 5 --tag <tag>_confirm --device cuda:0 --ensue
 
 # measure WITHOUT recording (parity checks, smoke tests)
 EARTH4D_ALLOW_UNRECORDED=1 python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.probe \
@@ -87,6 +96,6 @@ first. Disk is shared and finite — never `cp` the corpus, and clean up `/tmp` 
 
 ## What to report back
 
-The hypothesis, the arms you ran with their 5-seed means and standard deviations, the barrier they had
-to clear, whether each cleared it, and what you published. One paragraph. If nothing cleared the
+The hypothesis, the arms you screened with their scores, the barrier they had to clear, whether each
+cleared it, and what you published. One paragraph. If nothing cleared the
 barrier, that is a complete and useful answer — say it plainly and state what you ruled out.

@@ -38,7 +38,7 @@ represents it).
 | ① READ | pull Ensue keys + `records.json` from disk | never reason from a cached board; skip logged dead-ends |
 | ② PICK | one capability from `scorecard.md` Layer 1, **with intention** | no run without a declared `--metric` |
 | ③ DIAGNOSE | fair-gain → lever family | diagnose before you swing |
-| ④ RUN | `trace.py --metric <cap> --probe "<flags>" --tag <id> --device cuda:N --ensue` | **change whatever the hypothesis needs**; one variable per run, fixed budget; sweep across both GPUs |
+| ④ RUN | `harness.py --metric <cap> --probe "<flags>" --tag <id> --device cuda:N --ensue` | **change whatever the hypothesis needs**; one variable per run; SCREEN at one seed and go broad — the barrier refuses noise, so repeats buy nothing at this stage |
 | ⑤ MEASURE | score · fair-gain · Δ vs baseline | native probe metrics only |
 | ⑥ DECIDE | keep if beyond noise with no registered regression | probe = discovery; science needs the gate |
 | ⑦ WRITE | `--ensue` on **every** run — win or dead-end | a run that isn't published didn't happen |
@@ -181,6 +181,19 @@ modes require `--forecast` through bare `assert`s buried mid-function.
 | 4 | **Fair controls.** Persistence · climatology · raw coordinates · RFF/SIREN · matched-capacity MLP · the same propagator without Earth4D · shuffled-history · time-reversal · future-sentinel. Paired arms get identical data, seeds, wall time, tuning budget, and asserted-matched head params. |
 | 5 | **Predeclared statistics.** Endpoints declared before running. ≥5 matched seeds, block bootstrap over the relevant unit. Pass only if the lower 95% bound of improvement over the **strongest fair baseline** > 0 and the point estimate clears the declared margin, with no regression. |
 | 6 | **Fixed budget, immutable record.** Equal declared wall-clock per arm. Append-only hash-chained ledger: code/data/split/config/seed hashes, signed per-arm outcomes, every attempted variant. Freeze before opening test; replicate on a second region or later period before a headline. |
+
+### Screen wide at one seed; spend seeds only on a candidate
+
+```
+   MANY hypotheses ──► 1 seed each ──► barrier (2% of record, floor 0.002) ──┬─ flat → dead-end, publish, next
+                                                                             └─ clears → --seeds 5 CONFIRM
+                                                                                          barrier also 2σ
+                                                                                          record stops being PROVISIONAL
+```
+
+Seeds are for **confirming** a candidate, never for finding one. Measuring one idea five times costs the
+same as screening five ideas once, and only the second finds a breakthrough. A flat arm at one seed is a
+complete answer — publish it and move on rather than re-running to be sure.
 
 **Quarantine:** any lever whose neighbour state or target window can cross the forecast origin is
 unusable until future-sentinel, horizon-purge, and right-censoring tests pass. Log it against the lever
