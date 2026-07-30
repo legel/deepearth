@@ -385,7 +385,11 @@ def main(argv=None):
     ap.add_argument("--topk", type=int, default=40)  # B53: number of pollinator classes (real regime)
     ap.add_argument("--regime", default="plant", choices=["plant", "pollinator"])  # B23 (many obs, separated niches) vs B53 (few obs, packed niches)
     ap.add_argument("--label", default="")
-    ap.add_argument("--device", default="cuda")   # accepted for harness compat; GPU selected via CUDA_VISIBLE_DEVICES
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--result-json", dest="result_json", default="",
+                    help="write a ProbeResult here; the harness reads this instead of parsing stdout")
+    ap.add_argument("--capability", default="",
+                    help="the capability the harness declared as its objective")   # accepted for harness compat; GPU selected via CUDA_VISIBLE_DEVICES
     a = ap.parse_args(argv)
     require_recorded_entrypoint("calib_probe.py", module=_MODULE_NAME,
                                argv=(argv if argv is not None else sys.argv[1:]))
@@ -529,6 +533,32 @@ def main(argv=None):
           f"conf_auroc_bald={auc_bald:.4f} conf_auroc_ensvar={auc_ensvar:.4f} "
           f"conformal_cov={cov:.4f} setsize={sz:.3f} T={T:.3f} "
           f"t={time.time() - t0:.1f}s")
+
+    # The result contract. calibration was the one capability the harness could not run: this module
+    # never emitted a contract, so trace.py refused it and the live 0.5910 record was unreproducible.
+    #
+    # The record metric is the SINGLE-MODEL softmax AUROC of confidence -> correctness. The other four
+    # signals (ens / ent / bald / ensvar) are reported above and compared THERE; they must never be
+    # substituted here, because a run using a different uncertainty signal beating a record set on
+    # max-softmax is a cross-target comparison, which is exactly what the old max-over-signals scan did.
+    #
+    # 0.5 is the useless floor for a rank statistic, so that -- not zero -- is the fair baseline: a
+    # gain of +0.09 on 0.59 means the confidence signal is barely better than coin-flipping.
+    from deepearth.autoresearch.probes.spacetime.editable_files.harness import declare, _set_result_sink
+    _set_result_sink(getattr(a, "result_json", ""), getattr(a, "capability", ""), "v2-leakfix", a)
+    declare(
+        capability="calibration",
+        mode=f"CALIBRATION({src},feat={a.feature})",
+        metric="conf_auroc_softmax",
+        value=auc0,
+        split=src,
+        gains={"vs chance (0.5)": auc0 - 0.5},
+        baselines={"chance": 0.5, "ens_mean_conf": auc_ens_conf, "entropy": auc_ent,
+                   "bald": auc_bald, "ens_var": auc_ensvar},
+        accuracy=acc0, ece_raw=ece0, ece_temp=eceT, ece_iso=eceI, brier_raw=br0,
+        conformal_cov=cov, set_size=sz, temperature=T, ensemble=getattr(a, "ensemble", None),
+        seconds=time.time() - t0,
+    )
 
 
 def _softmax(z):

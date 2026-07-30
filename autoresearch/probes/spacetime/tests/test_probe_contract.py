@@ -180,3 +180,60 @@ class DiagnosticTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoiseBarrierTests(unittest.TestCase):
+    """A record must beat the standing one by more than the noise.
+
+    Calibrated against noise actually observed in this probe: a second agent walked
+    family_from_spacetime 0.1769 -> 0.19143 in seven accepted single-seed steps
+    (+0.0007/+0.0008/+0.0112/+0.0005/+0.0002/+0.0006/+0.0006), and a verification run here took
+    flowering_peak_month 0.0521 -> 0.052131 — a delta of +0.000031. Both were accepted because the gate
+    asked only "is this float larger".
+    """
+
+    def setUp(self):
+        from autoresearch.probes.spacetime.editable_files.harness import _record_gate, noise_barrier
+        self.gate, self.barrier = _record_gate, noise_barrier
+
+    def test_the_flowering_noise_record_would_now_be_refused(self):
+        beats = self.gate(0.052131012, 0.0521, "v2-leakfix", "PHENOLOGY-FUTURE", "PHENOLOGY-FUTURE",
+                          12, 12)[2]
+        self.assertFalse(beats, "+0.000031 on one seed must not be a record")
+
+    def test_the_overnight_walk_can_no_longer_accumulate(self):
+        """Replay the seven observed steps through the gate.
+
+        Six are refused outright. The one that passes (+0.0112, a 6.3% relative jump) is a plausible
+        single-seed improvement and refusing it would mean the loop can never progress at all — but it
+        lands marked provisional (n_seeds < 5), which under the evidence standard is discovery, not a
+        claim. What the barrier kills is the ACCUMULATION: a refused step does not move the baseline, so
+        the six noise steps can no longer stack on top of each other to manufacture a headline.
+        """
+        prev, accepted = 0.1769, []
+        for step in (0.0007, 0.0008, 0.0112, 0.0005, 0.0002, 0.0006, 0.0006):
+            beats = self.gate(prev + step, prev, "v2-leakfix", "FORECAST", "FORECAST", 12, 12)[2]
+            if beats:
+                accepted.append(step)
+                prev = prev + step
+        self.assertEqual(accepted, [0.0112], "only the 6.3% step should survive the barrier")
+        self.assertLess(prev, 0.19143524765968323,
+                        "the walk must not be able to reach the score it originally published")
+
+    def test_a_real_improvement_still_passes(self):
+        beats = self.gate(0.1769 * 1.10, 0.1769, "v2-leakfix", "FORECAST", "FORECAST", 12, 12)[2]
+        self.assertTrue(beats, "a 10% improvement must still be recordable")
+
+    def test_barrier_is_relative_with_an_absolute_floor(self):
+        self.assertAlmostEqual(self.barrier(0.5), 0.01)        # 2% dominates
+        self.assertAlmostEqual(self.barrier(0.01), 0.002)      # absolute floor dominates
+        self.assertEqual(self.barrier(None), 0.0)              # nothing to beat yet
+
+    def test_measured_spread_raises_the_barrier_above_the_floor(self):
+        """With >=3 seeds the spread is real, so the run must clear its OWN noise."""
+        self.assertAlmostEqual(self.barrier(0.5, seed_std=0.02, n_seeds=5), 0.04)   # 2 sigma > floor
+        self.assertAlmostEqual(self.barrier(0.5, seed_std=0.001, n_seeds=5), 0.01)  # floor > 2 sigma
+
+    def test_two_seeds_cannot_claim_a_measured_spread(self):
+        """A standard deviation from two points is not a spread; fall back to the floor."""
+        self.assertAlmostEqual(self.barrier(0.5, seed_std=0.02, n_seeds=2), 0.01)

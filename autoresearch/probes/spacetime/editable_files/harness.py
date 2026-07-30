@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import shlex
+import statistics
 import subprocess
 import sys
 import urllib.request
@@ -442,11 +443,13 @@ MODES: Tuple[Mode, ...] = (
                "NOT propagator_gain, which measures propagation vs static on raw features."),
 
     # ---- calibration -----------------------------------------------------------------------------
-    Mode("CALIBRATION", "--feature earth4d --ensemble N   (module: calib_probe, not probe)",
+    Mode("CALIBRATION(<src>,feat=<feat>)",
+         "--probe-module ...lib.calib_probe --probe '--feature earth4d --ensemble N'",
          capability="calibration", lever=ARCH,
-         notes="Lives in calib_probe.py and reports conf_auroc (0.5 = useless). The live 0.591 "
-               "record has NO fair baseline, so its bottleneck is undiagnosable. Not yet on the "
-               "result contract."),
+         notes="Lives in lib/calib_probe.py. Metric is the SINGLE-MODEL softmax AUROC of "
+               "confidence->correctness; 0.5 is the useless floor, so chance is the fair baseline. The "
+               "other uncertainty signals (ens/ent/bald/ensvar) are reported as baselines and must "
+               "never be substituted for the record metric."),
 
 )
 
@@ -674,6 +677,39 @@ def _evict_oldest_deadends(ledger, cap=DEADEND_CAP):
     ledger["deadends"] = dict(ranked[-cap:])
 
 
+# ---------------------------------------------------------------------------------------------------
+# The noise barrier — what a record must actually beat
+# ---------------------------------------------------------------------------------------------------
+# Calibrated against noise observed in THIS probe, not invented:
+#
+#   * a second agent walked family_from_spacetime 0.1769 -> 0.19143 in seven accepted single-seed steps
+#     of +0.0007 / +0.0008 / +0.0112 / +0.0005 / +0.0002 / +0.0006 / +0.0006;
+#   * a verification run here took flowering_peak_month 0.0521 -> 0.052131, a delta of +0.000031;
+#   * ENV-DECODE and FIELD-DECODE train the encoder end-to-end and move ~0.005 between identical
+#     invocations at the same seed.
+#
+# So: a delta below a few tenths of a percent is indistinguishable from re-running the same command.
+MIN_REL_IMPROVEMENT = 0.02      # 2% of the standing record
+MIN_ABS_IMPROVEMENT = 0.002     # ...and never less than this in absolute terms
+SEED_SIGMA_MULTIPLE = 2.0       # with >=3 seeds, must also clear 2 sigma of the seed spread
+
+
+def noise_barrier(prev, seed_std=None, n_seeds=1):
+    """How much a new score must exceed the standing record by to count.
+
+    Two regimes. With enough seeds the spread is measurable, so the barrier is the larger of the fixed
+    floor and 2 sigma -- the run has to be outside its own noise. With a single seed there IS no spread
+    to measure, so only the fixed floor applies and the result stays provisional: a single seed can
+    never be confirmatory under the evidence standard, whatever it scores.
+    """
+    if prev is None:
+        return 0.0
+    floor = max(abs(prev) * MIN_REL_IMPROVEMENT, MIN_ABS_IMPROVEMENT)
+    if seed_std is not None and n_seeds >= 3:
+        return max(floor, SEED_SIGMA_MULTIPLE * float(seed_std))
+    return floor
+
+
 def _record_gate(
     key_val,
     prev,
@@ -684,11 +720,18 @@ def _record_gate(
     prev_shards,
     probe=None,
     prev_probe=None,
+    seed_std=None,
+    n_seeds=1,
 ):
-    """Return the like-for-like record decision and its component checks."""
+    """Return the like-for-like record decision and its component checks.
+
+    `beats` now means "beats the standing record BY MORE THAN THE NOISE", not "is a larger float".
+    The old meaning is why seven consecutive +0.0006 steps could each be accepted as a new best.
+    """
     mode_ok = (prev is None) or (mode == prev_mode)
     shards_ok = (prev is None) or (shards == prev_shards)
-    beats = key_val is not None and (prev is None or key_val > prev)
+    barrier = noise_barrier(prev, seed_std, n_seeds)
+    beats = key_val is not None and (prev is None or key_val > prev + barrier)
     rebaseline = (
         prev is not None
         and prev_proto in REBASELINE_PROTOCOLS
@@ -802,24 +845,25 @@ def write_scorecard(recs: dict, path: Path = SCORECARD_TXT) -> Path:
             str(r.get("n_shards") or "—"),
             _read_of(r, gain, score),
             (r.get("ledger") or {}).get("runs", "—"),
+            (f"{r['n_seeds']} seed" + ("s" if r.get("n_seeds", 1) != 1 else "")) if r.get("n_seeds")
+            else "1 seed?",
         ))
-    w = [max(len(str(r[i])) for r in rows + [("capability", "record", "metric", "fair-gain",
-                                              "vs baseline", "mode", "shards", "read", "runs")])
-         for i in range(9)]
-    head = ("capability", "record", "metric", "fair-gain", "vs baseline", "mode", "shards", "read", "runs")
+    head = ("capability", "record", "metric", "fair-gain", "vs baseline", "mode", "shards", "read",
+            "runs", "evidence")
+    w = [max(len(str(r[i])) for r in rows + [head]) for i in range(len(head))]
     lines = [
         "EARTH4D SPACETIME PROBE — SCORECARD",
         f"protocol {PROTOCOL}   ·   generated from records.json by harness.py   ·   DO NOT HAND-EDIT",
         "",
         "  ".join(h.ljust(w[i]) for i, h in enumerate(head)).rstrip(),
-        "  ".join("-" * w[i] for i in range(9)),
+        "  ".join("-" * w[i] for i in range(len(head))),
     ]
     for r in sorted(rows, key=lambda x: (x[1] == "—", -float(x[1]) if x[1] != "—" else 0)):
         lines.append("  ".join(str(c).ljust(w[i]) for i, c in enumerate(r)).rstrip())
     earning = sum(1 for r in rows if r[3] != "—" and float(r[3]) > 0)
     probed = sum(1 for r in rows if r[1] != "—")
     lines += [
-        "  ".join("-" * w[i] for i in range(9)),
+        "  ".join("-" * w[i] for i in range(len(head))),
         f"probed {probed}/{len(CAPABILITIES)}   ·   earning (fair-gain > 0): {earning}",
         "",
         "READ:  INPUT-LIMITED     Earth4D does not beat a generic trained PE -> DATA lever, change the channel",
@@ -828,6 +872,12 @@ def write_scorecard(recs: dict, path: Path = SCORECARD_TXT) -> Path:
         "       STALE-GAIN        the stored gain is a CHANNEL advantage, not encoder-vs-PE. Re-measure",
         "                         before trusting the read (family_from_env: board +0.0411, live -0.0072)",
         "       pre-contract      record predates the result contract, so its metric name was never stored",
+        "",
+        "EVIDENCE:  a record set on fewer than 5 matched seeds is PROVISIONAL — discovery, not a claim.",
+        f"           A new record must beat the standing one by more than the noise barrier: "
+        f"{MIN_REL_IMPROVEMENT:.0%} of the record,",
+        f"           never less than {MIN_ABS_IMPROVEMENT}, and with >=3 seeds also "
+        f"{SEED_SIGMA_MULTIPLE:.0f} sigma of the measured spread.",
         "",
         "A record here is a PROBE record: discovery, not science. It becomes a claim only by clearing the",
         "evidence standard in program.md (>=5 matched seeds, block bootstrap, no regression, reproducible",
@@ -943,6 +993,9 @@ def main() -> None:
     ap.add_argument("--probe-module", default=DEFAULT_PROBE_MODULE)
     ap.add_argument("--tag", default=None)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--seeds", type=int, default=1,
+                    help="run the probe this many times with matched seeds; >=3 makes the seed spread "
+                         "measurable, so the noise barrier becomes 2 sigma instead of a fixed floor")
     ap.add_argument("--ensue", action="store_true")
     ap.add_argument("--log", default=None)
     a = ap.parse_args()
@@ -967,20 +1020,38 @@ def main() -> None:
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
 
     print(f"[trace] OBJECTIVE={a.metric}  probe='{a.probe}'  tag={tag}", flush=True)
+    # One run per seed. Seeds are matched across arms by construction: the probe seeds numpy and torch
+    # from --seed, so seed k is the same initialization for every configuration compared here.
+    seed_results, seed_values = [], []
+    for k in range(max(1, a.seeds)):
+        seed_probe = a.probe if a.seeds == 1 else f"{a.probe} --seed {k}"
+        seed_log = log_path if a.seeds == 1 else str(Path(log_path).with_suffix(f".seed{k}.log"))
+        result_path = str(Path(seed_log).with_suffix(".result.json"))
+        rc = _run(a.probe_module, seed_probe, a.device, seed_log, result_path, a.metric)
+        text = Path(seed_log).read_text(errors="ignore")
+        if rc != 0:
+            print(text[-1800:])
+            sys.exit(f"[trace] probe FAILED on seed {k} (rc={rc}); see {seed_log}")
+        try:
+            seed_results.append(ProbeResult.read(result_path))
+        except (ContractError, OSError) as exc:
+            sys.exit(f"[trace] seed {k} emitted no usable result contract: {exc}")
+        seed_values.append(seed_results[-1].primary.value)
+        if a.seeds > 1:
+            print(f"[trace] seed {k}: {seed_results[-1].primary.name} = {seed_values[-1]:.6f}", flush=True)
+
+    log_path = str(Path(log_path).with_suffix(".seed0.log")) if a.seeds > 1 else log_path
     result_path = str(Path(log_path).with_suffix(".result.json"))
-    rc = _run(a.probe_module, a.probe, a.device, log_path, result_path, a.metric)
+    seed_std = (statistics.pstdev(seed_values) if len(seed_values) > 2 else None)
+    seed_mean = sum(seed_values) / len(seed_values)
+    if a.seeds > 1:
+        print(f"[trace] {a.seeds} seeds: mean {seed_mean:.6f}"
+              + (f"  sd {seed_std:.6f}" if seed_std is not None else "  (sd needs >=3 seeds)"), flush=True)
     text = Path(log_path).read_text(errors="ignore")
-    if rc != 0:
-        print(text[-1800:])
-        sys.exit(f"[trace] probe FAILED (rc={rc}); see {log_path}")
 
     # The probe DECLARES what it measured. Nothing here parses stdout: a mode that does not emit a
     # contract cannot set a record, which is the point -- the old parser always produced *something*.
-    try:
-        result = ProbeResult.read(result_path)
-    except (ContractError, OSError) as exc:
-        sys.exit(f"[trace] probe emitted no usable result contract: {exc}\n"
-                 f"        log preserved at {log_path}; no record was written")
+    result = seed_results[0]
     if result.diagnostic:
         sys.exit(f"[trace] {result.mode} is a DIAGNOSTIC and cannot set a record: "
                  f"{result.diagnostic_reason}\n        log preserved at {log_path}")
@@ -994,7 +1065,7 @@ def main() -> None:
               f"{sorted(known)}. Recording it, but add it to MODES in this file so the next agent can "
               f"find it.", flush=True)
 
-    primary = result.primary.value
+    primary = seed_mean          # the mean across seeds — never the max of reruns
     fair, fair_base = result.fair_gain(FAIR_ORDER)
     bottleneck = _bottleneck(fair, primary)
     mode = result.mode
@@ -1026,7 +1097,17 @@ def main() -> None:
         prev_shards,
         a.probe,
         cur.get("probe"),
+        seed_std=seed_std,
+        n_seeds=len(seed_values),
     )
+    _barrier = noise_barrier(prev, seed_std, len(seed_values))
+    if prev is not None and key_val is not None and key_val > prev and not beats:
+        print(f"[trace] *** WITHIN NOISE: {key_val:.6f} beats {prev} by {key_val - prev:+.6f}, under the "
+              f"barrier of {_barrier:.6f}"
+              + (f" (2 sd of {len(seed_values)} seeds)" if seed_std is not None and len(seed_values) >= 3
+                 else " (fixed floor; run --seeds 5 to measure the spread instead)") +
+              ".\n[trace]     Not a record. Seven steps of this size are how a record was walked "
+              "0.1769 -> 0.1914 overnight.", flush=True)
     migration_withheld = prev is not None and prev_proto != PROTOCOL and not rebaseline
     if rebaseline and key_val is not None:
         print(f"[trace] *** RE-BASELINE: record was set under protocol {prev_proto!r}, this run is {PROTOCOL!r}.\n"
@@ -1054,6 +1135,9 @@ def main() -> None:
     ledger["runs"] = ledger.get("runs", 0) + 1
     if is_record:
         cur = {"score": key_val, "primary": primary, "fair_st_gain": fair,
+               "n_seeds": len(seed_values), "seed_values": [float(v) for v in seed_values],
+               "seed_std": (float(seed_std) if seed_std is not None else None),
+               "provisional": len(seed_values) < 5,
                "fair_baseline": fair_base, "tag": tag, "probe": a.probe, "mode": mode, "n_shards": shards,
                "probe_module": a.probe_module, "protocol": PROTOCOL}
         ledger["records"] = (ledger.get("records", []) + [{"tag": tag, "score": key_val, "gain": fair,
