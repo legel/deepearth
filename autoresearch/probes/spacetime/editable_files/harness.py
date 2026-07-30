@@ -1069,18 +1069,46 @@ def post_ensue(trace: dict) -> None:
            f"THIS RUN '{trace['tag']}': primary={o['primary']} gain={o['fair_st_gain']} "
            f"decision={o.get('decision', 'legacy')} evidence={ev_str} code={prov_str} "
            f"bottleneck={trace['bottleneck']}. dead-ends-tried: {dead_str}.")
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "create_memory", "arguments": {
-        "items": [{"key_name": f"LOOP-earth4d-{trace['metric']}", "value": val,
-                   "description": f"Earth4D encoder-probe loop {trace['metric']}: best {best.get('score')} "
-                                  f"gain {best.get('gain')} over {led.get('runs')} runs"}]}}}
-    req = urllib.request.Request("https://api.ensue-network.ai/", data=json.dumps(payload).encode(),
-                                 headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json",
-                                          "Accept": "application/json, text/event-stream"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            print(f"[trace] Ensue logged LOOP-earth4d-{trace['metric']} ({r.status})", flush=True)
-    except Exception as e:
-        print(f"[trace] Ensue POST failed: {e}", flush=True)
+    # create_memory does NOT overwrite an existing key -- the API has a separate update_memory. This
+    # loop upserts ONE key per capability, so every run after the first was a silent no-op: the server
+    # returned 200, the harness printed "Ensue logged", and the stored value stayed at whatever the
+    # first run wrote. Checked directly: the key still read "BEST 0.0474 ... runs=1" from 2026-07-29
+    # while the local board had moved to 0.0787 over ~30 runs. The swarm was reading a stale board and
+    # would have re-bought every dead-end published since.
+    #
+    # Update first, create only if the key does not exist yet.
+    def _call(tool: str) -> tuple:
+        # The two tools take DIFFERENT argument shapes: create_memory batches under "items", while
+        # update_memory takes one flat object. Sending the batch form to update_memory fails, which is
+        # why the earlier fallback still ended at create_memory's duplicate-key error.
+        args = ({"items": [{"key_name": key, "value": val, "description": desc}]} if tool == "create_memory"
+                else {"key_name": key, "value": val, "description": desc})
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                   "params": {"name": tool, "arguments": args}}
+        req = urllib.request.Request("https://api.ensue-network.ai/", data=json.dumps(payload).encode(),
+                                     headers={"Authorization": f"Bearer {tok}",
+                                              "Content-Type": "application/json",
+                                              "Accept": "application/json, text/event-stream"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                body = r.read().decode()
+            failed = '"failed":1' in body or '"error"' in body
+            return (not failed), body
+        except Exception as exc:
+            return False, str(exc)
+
+    key = f"LOOP-earth4d-{trace['metric']}"
+    desc = (f"Earth4D encoder-probe loop {trace['metric']}: best {best.get('score')} "
+            f"gain {best.get('gain')} over {led.get('runs')} runs")
+    ok, body = _call("update_memory")
+    if not ok:
+        ok, body = _call("create_memory")
+    if ok:
+        print(f"[trace] Ensue upserted {key}", flush=True)
+    else:
+        # A silent failure here is how the swarm went stale for a whole session.
+        sys.exit(f"[trace] ENSUE WRITE FAILED for {key}: {body[:300]}\n"
+                 f"        The local board is correct but the swarm was NOT updated. Fix and re-publish.")
 
 
 def main() -> None:
