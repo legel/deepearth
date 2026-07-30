@@ -28,7 +28,7 @@ Earth4D combines decomposed hash encoding with learned hash probing. Using separ
 These numbers are retained for provenance, not as a scientific headline. The historical search selected
 configurations by test R², evaluated test during training, and fit geographic range on all coordinates. The
 runnable LFMC harness is also absent from this checkout. Earth4D has not yet passed the preregistered temporal
-and held-site gate in `autoresearch/spacetime/program/program.md`.
+and held-site gate in `autoresearch/probes/spacetime/program/program.md`.
 
 ## Quick Start
 
@@ -47,8 +47,8 @@ bash install.sh
 
 ```bash
 # From the repository root: pinned real data, strict split audit, train-only baselines
-python3 -m autoresearch.spacetime.editable_files.lib.science_gate \
-  --download --json-out autoresearch/spacetime/editable_files/data/lfmc/earth4d_science_gate_dev.json
+python3 -m autoresearch.probes.spacetime.editable_files.lib.science_gate \
+  --download --json-out autoresearch/probes/spacetime/editable_files/data/lfmc/earth4d_science_gate_dev.json
 ```
 
 This command does not train Earth4D; its artifact explicitly records `earth4d_evaluated=false`.
@@ -252,7 +252,7 @@ encoders/spacetime/
 ├── hashencoder/        # CUDA hash encoding kernels
 │   ├── hashgrid.py     # PyTorch interface
 │   └── src/            # CUDA source files
-└── ../../autoresearch/spacetime/
+└── ../../autoresearch/probes/spacetime/
     └── science_gate.py # Pinned Globe-LFMC split/baseline audit
 ```
 

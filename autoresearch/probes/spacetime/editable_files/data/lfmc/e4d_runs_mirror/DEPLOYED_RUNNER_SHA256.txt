@@ -1,0 +1,8 @@
+05d66053f5ae4657866e074fbc46c05489a952bed5bf75646c9f8b4193ddab13  /workspace/deepearth/autoresearch/probes/spacetime/lfmc_recurrent.py
+mirrored_at_utc=2026-07-29T19:45:45Z
+shardA: supervisor 421386 / child 421400, stem shardA_20260729T194121Z_pid421386, started 19:41:21Z (post-clamp runner 05d66053)
+shardB: supervisor 419871 / child 419882, stem shardB_20260729T192052Z_pid419871, started 19:20:52Z
+NOTE: shardB child holds the PRE-CLAMP module (f39c8c12) in memory. SAFE: its arms
+      (raw/generic_pe/matched_mlp/propagator_no_earth4d) map to raw/rff in _arm_encoder_kind
+      and never instantiate Earth4D, so the hash-scale clamp defect cannot reach them.
+QUARANTINED: no_history, shuffled_history -- null estimand under review; excluded from shardA; DO NOT REPORT.

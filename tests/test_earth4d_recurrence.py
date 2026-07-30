@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from autoresearch.spacetime.editable_files.lib.recurrence import (
+from autoresearch.probes.spacetime.editable_files.lib.recurrence import (
     build_causal_windows_kdtree,
     normalize_time_from_train,
     strict_spatiotemporal_masks,

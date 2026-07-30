@@ -12,7 +12,7 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 > **Science status (2026-07-29):** historical Earth4D LFMC numbers below are exploratory, not confirmed
 > state of the art. The old search reused the test set and its benchmark harness is absent. New Earth4D claims
 > must pass the pinned temporal + held-site protocol in
-> [`autoresearch/spacetime/program/program.md`](autoresearch/spacetime/program/program.md).
+> [`autoresearch/probes/spacetime/program/program.md`](autoresearch/probes/spacetime/program/program.md).
 
 ## How research runs here: granular probe loops first, fusion last
 
@@ -21,18 +21,31 @@ signal for one part of the science in [`autoresearch/science.md`](autoresearch/s
 those signals are established do they get plugged into the fusion layer — the full model comes last.
 
 ```
-   probe loop              probe loop              probe loop
-   ─────────────           ─────────────           ─────────────
-   one probe               one probe               one probe
-   own data                own data                own data
-   own metric + evals      own metric + evals      own metric + evals
-   independent code        independent code        independent code
-        │                       │                       │
-        └────────── recovered, validated signal ────────┘
-                              ▼
-                    FUSION  (autoresearch/main/)
-                    integrates — only after the science is filled out
+                          ┌──────────────────────────────────────────┐
+   APEX                   │  autoresearch/main/       FUSION         │  runs LAST
+   consumes probe results │  integrates finished encoders            │
+                          └───────────────▲──────────────────────────┘
+                                          │ depends on (later, once the science is in)
+            ┌─────────────────────────────┴─────────────────────────────┐
+   PROBE    │ autoresearch/probes/spacetime/   autoresearch/probes/biological/ │
+   LOOPS    │ one probe · own data · own metric · own evals · independent code │
+            └─────────────────────────────▲─────────────────────────────┘
+                                          │ develops
+                          ┌───────────────┴──────────────────────────┐
+   LEAVES                 │  encoders/spacetime/   encoders/biological/ │
+   the artifacts          │  the thing each probe loop is researching   │
+                          └──────────────────────────────────────────┘
 ```
+
+Read it bottom-up: an **encoder is a leaf** — the artifact under development. A **probe loop** sits above
+its encoder and is the only thing that changes it. **`main` is the apex**: it will consume each probe's
+finished encoder, and it runs last. Dependencies point *upward only*. A probe importing a sibling probe,
+or a probe importing `main`, is a cycle or a hidden coupling, and
+[`tests/test_loop_independence.py`](tests/test_loop_independence.py) fails on both.
+
+`encoders/` is still top-level rather than inside its probe loop. That consolidation waits until the
+scientific performance is filled out — moving a CUDA build and its ABI-specific `.so` mid-campaign buys
+nothing. The dependency direction is already correct; only the file location is provisional.
 
 A fusion model trained before its constituent signals are established cannot tell you which part
 works: it is confounded and slow, and every number it produces is a joint claim about everything at

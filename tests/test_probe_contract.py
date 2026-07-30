@@ -12,7 +12,7 @@ REPO_PARENT = str(Path(__file__).resolve().parents[2])
 if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
-from autoresearch.spacetime.editable_files.harness import (
+from autoresearch.probes.spacetime.editable_files.harness import (
     CONTRACT_VERSION,
     ContractError,
     Primary,

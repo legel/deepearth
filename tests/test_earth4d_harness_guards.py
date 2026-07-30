@@ -13,7 +13,7 @@ REPO_PARENT = str(Path(__file__).resolve().parents[2])
 if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
-from autoresearch.spacetime.editable_files.harness import (
+from autoresearch.probes.spacetime.editable_files.harness import (
     CAPABILITIES,
     DEFAULT_PROBE_MODULE,
     EXCLUDED_CAPABILITIES,
@@ -24,7 +24,7 @@ from autoresearch.spacetime.editable_files.harness import (
     _record_gate,
 )
 from autoresearch.main.editable_files.harness.perception_diag import _macro_accuracy, probe_genus_from_semantic
-from autoresearch.spacetime.editable_files.lib.recurrence import (
+from autoresearch.probes.spacetime.editable_files.lib.recurrence import (
     TRACE_AUTH_FD_ENV,
     normalize_forecast_time,
     phenology_feature_set,
@@ -286,7 +286,7 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
 
     def test_canonical_probe_rejects_unrecorded_direct_call(self):
         result = self.run_module(
-            "deepearth.autoresearch.spacetime.editable_files.probe"
+            "deepearth.autoresearch.probes.spacetime.editable_files.probe"
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("would never be recorded", result.stdout)
@@ -304,7 +304,7 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
         for name in modules:
             with self.subTest(module=name):
                 result = self.run_module(
-                    f"deepearth.autoresearch.spacetime.{name}",
+                    f"deepearth.autoresearch.probes.spacetime.{name}",
                     "--help",
                     env_extra={ALLOW_UNRECORDED_ENV: "1"},
                 )
@@ -313,7 +313,7 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
 
     def test_lfmc_science_gate_remains_runnable(self):
         result = self.run_module(
-            "deepearth.autoresearch.spacetime.editable_files.lib.science_gate",
+            "deepearth.autoresearch.probes.spacetime.editable_files.lib.science_gate",
             "--help",
         )
         self.assertEqual(result.returncode, 0, result.stdout)

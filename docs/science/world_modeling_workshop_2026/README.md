@@ -9,7 +9,7 @@ We present **DeepEarth**, a self-supervised multi-modal world model with **Earth
 **Historical exploratory result (not confirmatory evidence):**
 - The workshop submission reported MAE 12.1pp and R² 0.755 on Globe-LFMC 2.0
 - That experiment used test-set feedback during development and did not test causal future rollout, so it does not establish state of the art or prove Earth4D forecasting skill
-- The current preregistered evidence gate is documented in `autoresearch/spacetime/program/program.md`
+- The current preregistered evidence gate is documented in `autoresearch/probes/spacetime/program/program.md`
 
 ## Directory Structure
 

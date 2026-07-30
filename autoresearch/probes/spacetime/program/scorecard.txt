@@ -1,0 +1,37 @@
+EARTH4D SPACETIME PROBE — SCORECARD
+protocol v2-leakfix   ·   generated from records.json by harness.py   ·   DO NOT HAND-EDIT
+
+capability              record  metric                fair-gain  vs baseline                               mode                    shards  read                 runs
+----------------------  ------  --------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----
+community_from_env      0.8845  pre-contract          +0.4570    GAIN                                      COOCCUR-ROUTING         12      EARNING              90
+species_from_env        0.6275  pre-contract          +0.4000    GAIN                                      SDM-PRESENCE            16      EARNING              478
+calibration             0.5910  pre-contract          —          —                                         —                       8       NO-FAIR-BASELINE     91
+family_from_spacetime   0.1769  family_top1_accuracy  +0.0772    vs RFF                                    FORECAST(past->future)  12      ENCODER-LIMITED      1230
+family_from_env         0.1423  pre-contract          +0.0411    ENV vs best-coord-PE                      ENV                     12      STALE-GAIN(channel)  491
+flowering_peak_month    0.0521  pre-contract          +0.0087    Earth4D vs RFF, best-head within-tol acc  PHENOLOGY-FUTURE        12      ENCODER-LIMITED      107
+species_from_spacetime  0.0512  pre-contract          +0.0432    vs RFF                                    FORECAST                12      ENCODER-LIMITED      7
+----------------------  ------  --------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----
+probed 7/7   ·   earning (fair-gain > 0): 6
+
+READ:  INPUT-LIMITED     Earth4D does not beat a generic trained PE -> DATA lever, change the channel
+       ENCODER-LIMITED   beats the PE but the absolute score is low -> ARCHITECTURE lever
+       EARNING           the architecture is carrying real signal -> push it further
+       STALE-GAIN        the stored gain is a CHANNEL advantage, not encoder-vs-PE. Re-measure
+                         before trusting the read (family_from_env: board +0.0411, live -0.0072)
+       pre-contract      record predates the result contract, so its metric name was never stored
+
+A record here is a PROBE record: discovery, not science. It becomes a claim only by clearing the
+evidence standard in program.md (>=5 matched seeds, block bootstrap, no regression, reproducible
+from a committed tree). See scorecard.md for what each row means and what is excluded.
+
+EXCLUDED — real on the full-model board, not reachable through this probe:
+  family_from_vision       borrowed frozen DINO/BioCLIP, and the stored record has no mode or shard identity; it is not an Earth4D probe record
+  flowering_auc            measured on the fusion model's flowering head, not the encoder
+  flowering_fidelity       measured on the fusion model's flowering head, not the encoder
+  infer_clay               env->env reconstruction runs through the field decoder, not the encoder probe
+  infer_climate            env->env reconstruction runs through the field decoder, not the encoder probe
+  infer_hydro              env->env reconstruction runs through the field decoder, not the encoder probe
+  infer_soil               env->env reconstruction runs through the field decoder, not the encoder probe
+  lfmc_from_env            non-encoder head: the capability lives in a downstream head
+  mycorrhiza_from_env      non-encoder head: the capability lives in a downstream head
+  pollinator_from_env      non-encoder head: the capability lives in a downstream head

@@ -12,7 +12,9 @@ import unittest
 from pathlib import Path
 
 AUTORESEARCH = Path(__file__).resolve().parents[1] / "autoresearch"
-LOOPS = ("main", "biological", "spacetime")
+PROBES = ("probes/biological", "probes/spacetime")     # leaves: independent, siblings
+FUSION = "main"                                        # apex: consumes probe results, runs last
+LOOPS = PROBES + (FUSION,)
 
 
 def imported_modules(path):
@@ -30,6 +32,22 @@ def imported_modules(path):
 
 
 class LoopIndependenceTests(unittest.TestCase):
+    def test_the_dependency_graph_is_a_dag_leaves_to_apex(self):
+        """encoders are leaves, probe loops sit above them, `main` (fusion) is the apex.
+
+        Only one direction is legitimate: fusion will eventually consume each probe's finished encoder.
+        A probe importing a SIBLING probe, or a probe importing fusion, is a cycle or a hidden coupling.
+        The consolidation of encoders into their probe loops is deferred until the science is filled out;
+        until then encoders/ is shared downward, which no rule here forbids.
+        """
+        for probe in PROBES:
+            for path in (AUTORESEARCH / probe).rglob("*.py"):
+                if "__pycache__" in str(path):
+                    continue
+                for module in imported_modules(path):
+                    self.assertNotIn("autoresearch.main", module,
+                                     f"{path.name}: a probe must not depend on the fusion loop it feeds")
+
     def test_no_loop_imports_another_loops_code(self):
         offenders = []
         for loop in LOOPS:
@@ -41,7 +59,8 @@ class LoopIndependenceTests(unittest.TestCase):
                     continue
                 for module in imported_modules(path):
                     for other in LOOPS:
-                        if other != loop and f"autoresearch.{other}." in module:
+                        mod_other = "autoresearch." + other.replace("/", ".") + "."
+                        if other != loop and mod_other in module:
                             offenders.append(f"{path.relative_to(AUTORESEARCH)} imports {module}")
         self.assertEqual(offenders, [], "cross-loop imports break loop independence:\n  "
                                        + "\n  ".join(offenders))
@@ -77,7 +96,8 @@ class LoopIndependenceTests(unittest.TestCase):
                             f"{loop}/ has no harness")
 
     def test_every_loop_states_its_own_program(self):
-        programs = {"main": "autoresearch.md", "biological": "program.md", "spacetime": "program.md"}
+        programs = {"main": "autoresearch.md", "probes/biological": "program.md",
+                    "probes/spacetime": "program.md"}
         for loop, name in programs.items():
             self.assertTrue((AUTORESEARCH / loop / "program" / name).is_file(),
                             f"{loop}/program/{name} is missing — a loop without a program has no objective")
@@ -91,7 +111,7 @@ class RecordPathTests(unittest.TestCase):
     """The board must resolve inside its own loop.
 
     A parents[] off-by-one once pointed RECORDS at `autoresearch/records/records.json` instead of
-    `autoresearch/spacetime/records/records.json`. trace.py then created a fresh empty board, found no
+    `autoresearch/probes/spacetime/records/records.json`. trace.py then created a fresh empty board, found no
     prior record, and reported "RECORD = YES (new best!) prev_record = None" for a run that had beaten
     nothing. A path bug that silently mints records is worth a test.
     """
@@ -99,7 +119,7 @@ class RecordPathTests(unittest.TestCase):
     def test_spacetime_board_resolves_inside_its_loop(self):
         import importlib
         module = importlib.import_module(
-            "deepearth.autoresearch.spacetime.editable_files.harness")
-        expected = AUTORESEARCH / "spacetime" / "records" / "records.json"
+            "deepearth.autoresearch.probes.spacetime.editable_files.harness")
+        expected = AUTORESEARCH / "probes" / "spacetime" / "records" / "records.json"
         self.assertEqual(module.RECORDS.resolve(), expected.resolve(),
                          f"board resolved to {module.RECORDS} — outside its loop")

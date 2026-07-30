@@ -5,15 +5,31 @@ for one part of the science. Only when the science in `science.md` is actually f
 recovered signals get plugged into the fusion layer — the full model comes last, not first.
 
 ```
-   probe loop            probe loop            probe loop
-   one probe             one probe             one probe
-   own data              own data              own data
-   own validation        own validation        own validation
-        │                     │                     │
-        └──────── recovered signal ─────────────────┘
-                          ▼
-                    FUSION  (main/)   ← integrates, and only after the science is filled out
+                          ┌──────────────────────────────────────────┐
+   APEX                   │  autoresearch/main/       FUSION         │  runs LAST
+   consumes probe results │  integrates finished encoders            │
+                          └───────────────▲──────────────────────────┘
+                                          │ depends on (later, once the science is in)
+            ┌─────────────────────────────┴─────────────────────────────┐
+   PROBE    │ autoresearch/probes/spacetime/   autoresearch/probes/biological/ │
+   LOOPS    │ one probe · own data · own metric · own evals · independent code │
+            └─────────────────────────────▲─────────────────────────────┘
+                                          │ develops
+                          ┌───────────────┴──────────────────────────┐
+   LEAVES                 │  encoders/spacetime/   encoders/biological/ │
+   the artifacts          │  the thing each probe loop is researching   │
+                          └──────────────────────────────────────────┘
 ```
+
+Read it bottom-up: an **encoder is a leaf** — the artifact under development. A **probe loop** sits above
+its encoder and is the only thing that changes it. **`main` is the apex**: it will consume each probe's
+finished encoder, and it runs last. Dependencies point *upward only*. A probe importing a sibling probe,
+or a probe importing `main`, is a cycle or a hidden coupling, and
+[`tests/test_loop_independence.py`](../tests/test_loop_independence.py) fails on both.
+
+`encoders/` is still top-level rather than inside its probe loop. That consolidation waits until the
+scientific performance is filled out — moving a CUDA build and its ABI-specific `.so` mid-campaign buys
+nothing. The dependency direction is already correct; only the file location is provisional.
 
 Why this way round: a fusion model trained before its constituent signals are established cannot tell
 you which part works. It is confounded and slow, and every result it produces is a joint claim about
@@ -33,9 +49,10 @@ autoresearch/
   scorecard.md        INDEX of every loop's scorecard — start here to read progress
   science.md          binding research rules — all three loops obey them
   bibliography.md     references
-  main/               full-model DeepCal, the whole B1..B60 suite
-  biological/         biological encoder probe
-  spacetime/          Earth4D spacetime encoder probe
+  probes/             the leaves' loops — independent, siblings, one probe each
+    spacetime/          Earth4D space-time encoder
+    biological/         biological encoder
+  main/               the apex — fusion over the whole B1..B60 suite, runs last
         │
         ├── program/           the contract. Read first; change only when doctrine changes.
         ├── editable_files/    ← THE ONLY CODE AN EXPERIMENT MAY EDIT
@@ -79,16 +96,16 @@ own commit with its own tests, separate from any result.
 | loop | program/ | editable_files/harness/ | editable_files/lib/ | records/ |
 |---|---|---|---|---|
 | `main/` | `autoresearch.md`, `BENCHMARKS.md`, `CHAMPION_REPORT.md`, `audit.md`, `GRADUATION_BLUEPRINT.md` | `train.py`, `run_experiment.py`, `evaluate.py`, `score.py`, `score_encoders.py`, `champion_report.py`, `hooks.py`, `perception_diag.py`, `deepcal.yaml`, `champion.yaml` | `data.py`, `prepare.py`, `recipes/` | `champion_scores.json` |
-| `biological/` | `program.md` | `probe.py`, `stage1…stage4`, `ensue_log.py` | `traitprobe.py` | — |
-| `spacetime/` | `program.md`, `scorecard.md`, `lfmc_gate.md`, `box-operations.md` | `probe.py`, `probe_modes_tables.py`, `trace.py`, `probe_contract.py`, `probe_emit.py`, `probe_registry.py` | `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py`, `lfmc_recurrent.py`, `science_gate.py` | `records.json`, `traces/` |
+| `probes/biological/` | `program.md` | `probe.py`, `stage1…stage4`, `ensue_log.py` | `traitprobe.py` | — |
+| `probes/spacetime/` | `program.md`, `scorecard.md`, `lfmc_gate.md`, `box-operations.md` | `probe.py`, `probe_modes_tables.py`, `trace.py`, `probe_contract.py`, `probe_emit.py`, `probe_registry.py` | `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py`, `lfmc_recurrent.py`, `science_gate.py` | `records.json`, `traces/` |
 
 ## Boundaries between the loops
 
 | loop | objective | instrument | state it owns |
 |---|---|---|---|
 | `main/` | integrate established signals; B1..B60 means, no metric regressing | full 799M fusion model | `main/records/champion_scores.json`, `champion.yaml` |
-| `biological/` | recover signal on the biological capabilities | biological probe pipeline | its own logs |
-| `spacetime/` | recover signal on one capability at a time (`spacetime/program/scorecard.md`) | Earth4D + light head, minutes per run | `spacetime/records/records.json`, Ensue `LOOP-earth4d-<capability>` |
+| `probes/biological/` | recover signal on the biological capabilities | biological probe pipeline | its own logs |
+| `probes/spacetime/` | recover signal on one capability at a time (`spacetime/program/scorecard.md`) | Earth4D + light head, minutes per run | `spacetime/records/records.json`, Ensue `LOOP-earth4d-<capability>` |
 
 - **Only `main/` trains the full fusion model, and it runs LAST.** A probe loop trains a light head on
   encoder features in minutes. A probe record is not a champion result; it is a candidate signal that
