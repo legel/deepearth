@@ -283,7 +283,10 @@ class Earth4D(nn.Module):
                  elm: int = 0,
                  elm_scale: float = 1.0,
                  stencil: int = 0,
-                 stencil_radius: float = 0.002):
+                 stencil_radius: float = 0.002,
+                 coord_shrink: float = 1.0,
+                 spatial_ensemble: int = 0,
+                 whiten: bool = False):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -372,6 +375,15 @@ class Earth4D(nn.Module):
             base_resolution=temporal_base_res, log2_hashmap_size=temporal_log2_hashmap_size,
             desired_resolution=xzt_max_res, enable_learned_probing=enable_learned_probing,
             probing_range=probing_range, index_codebook_size=index_codebook_size)
+        if spatial_ensemble:
+            # same three tables, same budget -- but purely spatial, at coarse/medium/fine base resolutions
+            self.xyt_encoder, self.yzt_encoder, self.xzt_encoder = (
+                HashEncoder(input_dim=3, num_levels=temporal_levels, level_dim=features_per_level,
+                            per_level_scale=growth_factor, base_resolution=br,
+                            log2_hashmap_size=temporal_log2_hashmap_size,
+                            enable_learned_probing=enable_learned_probing, probing_range=probing_range,
+                            index_codebook_size=index_codebook_size)
+                for br in (8, 128, 1024))
         # a relative-only field never reads the four absolute projections, so it can opt out of carrying them
         self.enable_absolute = enable_absolute
         if not enable_absolute:
@@ -517,6 +529,22 @@ class Earth4D(nn.Module):
         # domain, so the coarse levels are constant across every observation and only the finest levels
         # vary at all.
         self._ext_lo = None; self._ext_hi = None
+        # COORD SHRINK -- the directed follow-up to extent_fit. Spreading the corpus across the whole hash
+        # domain (extent_fit) cost -0.0199, i.e. finer effective cells are much WORSE, so the hash is
+        # earning through COARSE structure, not through memorizing exact positions. Shrinking the
+        # coordinates coarsens every level at once.
+        self.coord_shrink = float(coord_shrink)
+        # SPATIAL ENSEMBLE -- deleting the whole space-time tri-plane costs only 0.0021 (arm stdrop), so a
+        # third of the encoder's output is nearly dead weight. This spends that identical budget on SPACE:
+        # the three planes become three independent PURELY SPATIAL hash tables at different base
+        # resolutions, an explicit coarse/medium/fine spatial ensemble instead of three space-time marginals.
+        self.spatial_ensemble = int(spatial_ensemble)
+        # WHITEN -- every additive arm so far LOST ~0.002-0.005, which is what feature dilution looks like:
+        # the blocks the encoder concatenates have wildly different norms, and 800 Adam steps on the raw
+        # concatenation are dominated by whichever block is largest. A frozen PCA whitening fit on TRAIN
+        # rows makes the output isotropic, changing the geometry the head actually sees.
+        self.whiten = bool(whiten)
+        self._wh_mean = None; self._wh_W = None
 
         self.time_film = int(time_film)
         if self.time_film > 0:
@@ -574,6 +602,9 @@ class Earth4D(nn.Module):
 
     def _encode_spatiotemporal(self, xyzt: torch.Tensor) -> torch.Tensor:
         xyz = xyzt[..., :3]
+        if self.spatial_ensemble:
+            return torch.cat([self.xyt_encoder(xyz, size=1.0), self.yzt_encoder(xyz, size=1.0),
+                              self.xzt_encoder(xyz, size=1.0)], dim=-1)
         abs_t = (xyzt[..., 3:] * 2 - 1) * 0.9
         if self.seasonal_time == 1:
             return self._triplane(xyz, self._seasonal_t(xyzt[..., 3:]))
@@ -650,6 +681,8 @@ class Earth4D(nn.Module):
         if self._ext_lo is not None:
             lo, hi = self._ext_lo.to(out.device), self._ext_hi.to(out.device)
             out = torch.cat([((out[..., :3] - lo) / (hi - lo) * 2.0 - 1.0) * 0.9, out[..., 3:]], dim=-1)
+        if self.coord_shrink != 1.0:
+            out = torch.cat([out[..., :3] * self.coord_shrink, out[..., 3:]], dim=-1)
         return out
 
     def _fourier(self, norm_coords: torch.Tensor) -> torch.Tensor:
@@ -728,7 +761,27 @@ class Earth4D(nn.Module):
         if self.elm > 0:
             z = feats / feats.detach().std().clamp_min(1e-6)
             feats = torch.cat([feats, torch.sin(self.elm_scale * (z @ self._elm_W) / math.sqrt(self._elm_in))], dim=-1)
+        if self._wh_W is not None:
+            feats = (feats - self._wh_mean.to(feats.device)) @ self._wh_W.to(feats.device)
         return feats
+
+    def fit_whiten(self, coords: torch.Tensor, chunk: int = 16384, eps: float = 1e-4) -> 'Earth4D':
+        """Fit a PCA whitening of the encoder output on TRAIN rows only."""
+        with torch.no_grad():
+            cols = None; n = 0; mean = None; cov = None
+            for i in range(0, coords.shape[0], chunk):
+                f = self._forward_tensor(coords[i:i + chunk]).double()
+                if cols is None:
+                    cols = f.shape[1]
+                    mean = torch.zeros(cols, dtype=torch.float64, device=f.device)
+                    cov = torch.zeros(cols, cols, dtype=torch.float64, device=f.device)
+                mean += f.sum(0); cov += f.T @ f; n += f.shape[0]
+            mean /= n
+            cov = cov / n - torch.outer(mean, mean)
+            evals, evecs = torch.linalg.eigh(cov)
+            W = evecs @ torch.diag((evals.clamp_min(0) + eps).rsqrt())
+            self._wh_mean = mean.float(); self._wh_W = W.float()
+        return self
 
     def get_output_dim(self) -> int:
         return self.output_dim

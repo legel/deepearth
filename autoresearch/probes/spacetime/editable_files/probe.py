@@ -188,6 +188,10 @@ CONFIG = {
     "elm_scale": 1.0,
     "stencil": 0,              # local field average of the spatial lookup instead of a point sample
     "stencil_radius": 0.002,
+    "coord_shrink": 1.0,       # <1 coarsens every hash level at once (directed follow-up to extent_fit)
+    "spatial_ensemble": 0,     # spend the space-time budget on three purely SPATIAL tables instead
+    "whiten": False,           # PCA-whiten the encoder output (fit on train rows)
+    "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
 }
 @dataclass
 class _DynamicsCtx:
@@ -818,7 +822,12 @@ def main(argv=None):
                   # one year in normalized-time units. tspan is fit on TRAIN rows only (see
                   # normalize_time_from_train), so the seasonal period carries no test information.
                   time_period=(365.25 / tspan if CONFIG["forecast"] and CONFIG["seasonal_time"] else 0.0),
+                  coord_shrink=CONFIG["coord_shrink"], spatial_ensemble=CONFIG["spatial_ensemble"],
+                  whiten=CONFIG["whiten"],
+                  coordinate_system=("geographic" if CONFIG["geographic"] else "ecef"),
                   ).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
+    if CONFIG["whiten"]:
+        enc.fit_whiten(coords[torch.tensor(~test)].to(dev))
     if CONFIG["extent_fit"] or CONFIG["nystrom"] > 0:
         # Fit on TRAIN rows only. Using every row would leak the evaluation period's extent (and, for the
         # anchors, its actual coordinates) into the feature map.
