@@ -1,76 +1,121 @@
 # Earth4D Scorecard
 
-**Base:** `origin/deepcal-ensue-autoresearch @ 0a643fc` (contains `e016af6`) · champion **arith 0.6153** · source `autoresearch/champion_scores.json`
-**Purpose:** the requirements Earth4D must EARN from environment / spacetime coordinates alone. Every ≥0.90 row elsewhere in the suite is **borrowed frozen vision** (photo→X); these rows are the actual DeepEarth innovation and are where it currently fails.
-**How to use:** `Record` starts = `Baseline`. Update `Record`/`Status` **only** on a genuine improvement measured by the native `autoresearch/evaluate.py` (no reimplemented metrics), gated by `champion_report` before→after. `Target` is a proposed bar — adjust freely.
-**Status key:** ❌ <0.45 · ⚠️ 0.45–0.70 · ✅ ≥0.70
+The agent picks **one capability from Layer 1, with intention**, declares it as `--metric`, and is then
+free to change anything — data channel, probe mode, encoder internals, objective. What the harness
+enforces is not *which edits are allowed*, it is that the run still measures **the same thing**:
+
+```
+   measurement identity = capability · mode · split · n_shards · protocol · code hash
+   two runs are comparable  ⇔  their identities match
+```
+
+A different mode or shard count is a different target, not a better score.
+
+| source of truth | holds |
+|---|---|
+| `autoresearch/champion_scores.json` | Layer 1 champion scores (full model) |
+| `agents/earth4d/records.json` | Layer 2 probe records (gitignored, lives on the box) |
+| `autoresearch/BENCHMARKS.md` | committed reference baseline, reproduction command |
+| this file | the canonical registry — capability ⇄ bench ⇄ probe mode ⇄ probeability |
+
+**Base:** champion `arithmetic 0.6153` · `harmonic 0.348744` · label `latent_diffusion:true`.
+**Never compare Layer 1 to Layer 2.** They are different instruments on different metrics: B20
+`community_from_env` is recall@10 from the full 799M fusion model; the probe's `community_from_env`
+0.8845 is micro-AP from a light head on frozen encoder features. Neither bounds the other.
 
 ---
 
-## 🔬 Encoder-probe records (exploratory; not scientific confirmation)
+## Layer 1 — the board (what Earth4D must EARN from coordinates + environment)
 
-Same capabilities, **scoped to the fast Earth4D encoder probe** (`trace.py` → `probe.py`, minutes, encoder-only). `fair_gain` = Earth4D vs a generic *trained* PE (RFF/MLP) — the honest "does the encoder earn it." These are encoder-probe numbers, distinct from the full-model baselines below.
+Every ≥0.90 row elsewhere in the suite is **borrowed frozen vision** (photo→X). These 16 rows are the
+actual DeepEarth innovation and where it currently fails. Scores are champion, full-model.
+**Status:** ❌ <0.45 · ⚠️ 0.45–0.70 · ✅ ≥0.70
 
-| Capability | Probe record | fair_gain | Best lever | Read |
-|---|---|---|---|---|
-| family_from_vision | **0.945** (acc) | **+0.835** vs coord-PE | fam_vision_both(dino+bio) | ⚠️ **IMPORTED, NOT A PROBE RECORD** — no probe string, no `n_shards`, `runs=0`: never produced by a `trace.py` run in this ledger, so its provenance cannot be checked here. Also BORROWED frozen vision (env=where, vision=which), not an Earth4D result. Reproduce through the harness or drop the row |
-| community_from_env | **0.887** (micro-AP) | **+0.460** | cooccur_both | EARNING — strongest signal |
-| species_from_env | **0.634** (micro-AP) | **+0.407** | sdm_hard | EARNING — 7.5× over prevalence |
-| family_from_spacetime | **0.182** | **+0.132** vs RFF | th8_ff1024_hh512 | DISCOVERY CANDIDATE only; max-selected, frozen-random, and not a causal state forecast |
-| family_from_env | **0.146** | **+0.031** vs best-coord-PE | famenv_alphaearth (real 64d AlphaEarth) | ⚠️ **FUSED score, not encoder-alone** — `_primary` reads the `Earth4D+ENV` column, and `fair_gain` is ENV-vs-coord-PE, so this row scores the ENV CHANNEL plus the encoder. What moved it was a data channel, not the encoder: `load_env` was hard-wired to 19wc+9soil+1elev and ignored `--env_channels`, so all 53 prior "channel swaps" fed the IDENTICAL 29 columns and AlphaEarth had never reached this path. Joining it for real: 0.125→0.146. Encoder-alone on this task is 0.074–0.101, BELOW a generic RFF (0.107–0.116) |
-| species_from_spacetime | **0.047** (acc) | **+0.035** vs RFF | spst_species_target | DISCOVERY CANDIDATE only; this frozen-random coordinate classification is not learned dynamics |
-| flowering_peak_month | 0.0674 | — | pheno_none_env | env-conditioning nudge; MODIS phenology channel NEGATIVE (landscape greenness ≠ species flowering timing) |
-| calibration | 0.629 | — | cal_earth4d | conf→correct AUROC (0.5=useless); raw Earth4D overconfident (ECE 0.078→0.027 temp-scaled) |
-| lfmc · mycorrhiza · pollinator · flowering_auc/fidelity · infer_* | — | — | — | not Earth4D-probeable (non-encoder heads) |
+### A. Env → identity (SDM)
+| # | requirement | bench | metric | champion | target | status |
+|---|---|---|---|---|---|---|
+| 1 | species from environment | B1 | top-10 acc | 0.323 | 0.90 | ❌ |
+| 2 | species from spacetime | B5 | top-10 acc | 0.399 | 0.70 | ❌ |
+| 3 | family from environment | B6 | acc | 0.103 | 0.90 | ❌ |
+| 4 | family from spacetime | B8 | acc | 0.127 | 0.70 | ❌ |
+| 5 | community from environment | B20 | recall@10 | 0.309 | 0.70 | ❌ |
 
-**ARCHITECTURAL PROBE-WIN (earth4d.py), NOT a graduation candidate:** a gated **spatial-only random-Fourier-features branch** (default off, champion byte-identical) fixes the *bare probe's* weakness — a raw Earth4D hash grid loses to a generic RFF PE on smooth/static tasks (0.069→~0.08–0.10 static; forecast 0.153→0.165, +0.096 vs RFF). **BUT: the champion already carries this exact prior** — `core/fusion.py:311` wires `SmoothGeoField` (an RFF geo prior added to the hash position; `champion.yaml smooth_geo: true`). So the probe-win is the probe catching up to what the champion has, NOT a new champion lever. **Do NOT graduate** — verified redundant (Ensue `earth4d_FOURIER_redundant_with_smooth_geo_NO_graduation_2026_07_28`). Keep the branch default-off for probe-fairness only. Single-seed, noisy.
+### B. Env → ecology
+| # | requirement | bench | metric | champion | target | status |
+|---|---|---|---|---|---|---|
+| 6 | live fuel moisture from env | B34 | Pearson r | 0.433 | 0.70 | ❌ |
+| 7 | mycorrhiza type from env | B42 | macro-F1 | 0.268 | 0.70 | ❌ |
+| 8 | pollinators from env | B51 | recall@10 | 0.174 | 0.70 | ❌ |
 
-**Candidate directions:** (1) env→biology SDM/co-occurrence, (2) **observed temporal state/propagation** — the genuine open champion gap. Only the LFMC evidence gate can graduate either direction. The Fourier branch remains redundant with the champion's `smooth_geo`.
+### C. Calibration
+| # | requirement | bench | metric | champion | target | status |
+|---|---|---|---|---|---|---|
+| 9 | species posterior calibration | B23 | MRR | 0.143 | 0.70 | ❌ |
 
----
+### D. Phenology
+| # | requirement | bench | metric | champion | target | status |
+|---|---|---|---|---|---|---|
+| 10 | flowering presence | B26 | ROC-AUC | 0.740 | 0.85 | ✅ |
+| 11 | flowering fidelity (env vs env+photo) | B27 | 1−MAD | 0.702 | 0.85 | ✅ |
+| 12 | flowering peak month | B28 | MRR | 0.451 | 0.85 | ⚠️ |
 
-## A. Env → identity (SDM) — the core failures
+### E. Env → env reconstruction
+| # | requirement | bench | metric | champion | target | status |
+|---|---|---|---|---|---|---|
+| 13 | infer clay (held-out) | B16 | cosine | 0.426 | 0.85 | ❌ |
+| 14 | infer soil (held-out) | B17 | cosine | 0.643 | 0.85 | ⚠️ |
+| 15 | infer hydro (held-out) | B43 | cosine | 0.720 | 0.85 | ✅ |
+| 16 | infer climate (held-out) | B18 | cosine | 0.875 | 0.90 | ✅ |
 
-| # | Requirement | Bench | Metric | Baseline | Record | Target | Status |
-|---|---|---|---|---|---|---|---|
-| 1 | species from environment | B1 | top-10 acc | 0.323 | 0.323 | 0.90 | ❌ |
-| 2 | species from spacetime | B5 | top-10 acc | 0.399 | 0.399 | 0.70 | ❌ |
-| 3 | family from environment | B6 | acc | 0.103 | 0.103 | 0.90 | ❌ |
-| 4 | family from spacetime | B8 | acc | 0.127 | 0.127 | 0.70 | ❌ |
-| 5 | community from environment | B20 | recall@10 | 0.309 | 0.309 | 0.70 | ❌ |
-
-## B. Env → ecology
-
-| # | Requirement | Bench | Metric | Baseline | Record | Target | Status |
-|---|---|---|---|---|---|---|---|
-| 6 | live fuel moisture from env | B34 | Pearson r | 0.433 | 0.433 | 0.70 | ❌ |
-| 7 | mycorrhiza type from env | B42 | macro-F1 | 0.268 | 0.268 | 0.70 | ❌ |
-| 8 | pollinators from env | B51 | recall@10 | 0.174 | 0.174 | 0.70 | ❌ |
-
-## C. Calibration — worst in suite
-
-| # | Requirement | Bench | Metric | Baseline | Record | Target | Status |
-|---|---|---|---|---|---|---|---|
-| 9 | species posterior calibration | B23 | MRR | 0.143 | 0.143 | 0.70 | ❌ |
-
-## D. Phenology
-
-| # | Requirement | Bench | Metric | Baseline | Record | Target | Status |
-|---|---|---|---|---|---|---|---|
-| 10 | flowering presence | B26 | ROC-AUC | 0.740 | 0.740 | 0.85 | ✅ |
-| 11 | flowering fidelity (env vs env+photo) | B27 | 1−MAD | 0.702 | 0.702 | 0.85 | ✅ |
-| 12 | flowering peak month | B28 | MRR | 0.451 | 0.451 | 0.85 | ⚠️ |
-
-## E. Env → env reconstruction
-
-| # | Requirement | Bench | Metric | Baseline | Record | Target | Status |
-|---|---|---|---|---|---|---|---|
-| 13 | infer clay (held-out) | B16 | cosine | 0.426 | 0.426 | 0.85 | ❌ |
-| 14 | infer soil (held-out) | B17 | cosine | 0.643 | 0.643 | 0.85 | ⚠️ |
-| 15 | infer hydro (held-out) | B43 | cosine | 0.720 | 0.720 | 0.85 | ✅ |
-| 16 | infer climate (held-out) | B18 | cosine | 0.875 | 0.875 | 0.90 | ✅ |
+**Snapshot:** 10 ❌ · 2 ⚠️ · 4 ✅ (of 16) · **mean = 0.4272**
+**Priority (worst first):** B6 0.103 · B8 0.127 · B23 0.143 · B51 0.174 · B42 0.268 · B20 0.309 ·
+B1 0.323 · B5 0.399 · B16 0.426 · B34 0.433 · B28 0.451
 
 ---
 
-**Snapshot @ 0a643fc:** 9 ❌ · 2 ⚠️ · 5 ✅ (of 16). Mean baseline over these 16 = 0.409.
-**Priority order (worst first):** B6 0.103 · B8 0.127 · B23 0.143 · B51 0.174 · B42 0.268 · B20 0.309 · B1 0.323 · B5 0.399 · B16 0.426 · B34 0.433 · B28 0.451.
+## Layer 2 — encoder-probe records (exploratory)
+
+Fast frozen-encoder probes. `fair_gain` = Earth4D − the strongest fair baseline on the same probe.
+**Discovery instruments: a probe record is never science** — it must clear the evidence standard in
+`program.md` first. Records below are the live board; a record may only be beaten like-for-like.
+
+| capability | record | metric | fair_gain | vs baseline | mode | shards | protocol |
+|---|---|---|---|---|---|---|---|
+| community_from_env | **0.8845** | micro-AP | **+0.4570** | GAIN | COOCCUR-ROUTING | 12 | v2-leakfix |
+| species_from_env | **0.6275** | micro-AP | **+0.4000** | GAIN | SDM-PRESENCE | 16 | v2-leakfix |
+| calibration | **0.5910** | AUROC conf→correct | — | *none reported* | *none* | 8 | v2-leakfix |
+| family_from_spacetime | **0.1914** | acc | **+0.0917** | trained_rff | FORECAST(past→future) | 12 | v2-leakfix |
+| family_from_env | **0.1423** | acc | **+0.0411** | best-coord-PE | ENV | 12 | v2-leakfix |
+| flowering_peak_month | **0.0521** | within-tol acc | **+0.0087** | RFF | PHENOLOGY-FUTURE | 12 | v2-leakfix |
+| species_from_spacetime | **0.0512** | acc | **+0.0432** | RFF | FORECAST | 12 | v2-leakfix |
+
+Reads:
+- **calibration** reports no fair baseline, so its bottleneck is undiagnosable and 0.5910 is barely
+  above the 0.5 useless floor. Its stored probe uses `--feature/--ensemble`, which belong to
+  `calib_probe.py`, not `probe.py` — the record cannot currently be reproduced through the harness.
+- **family_from_spacetime** 0.1914 was set by an automated run (`exp58_..._causal_clock_second_jet`,
+  2026-07-30T06:34), not a deliberate swing. Treat as unconfirmed until re-run with intent.
+- **community_from_env / species_from_env** carry large fair-gains on *fused env channels*, not on the
+  coordinate encoder alone. Label them as such.
+
+## Layer 3 — excluded, with reason
+
+| capability | why excluded |
+|---|---|
+| family_from_vision (0.9445) | **Borrowed frozen DINO/BioCLIP**, no trace provenance or shard identity. Not an Earth4D probe record and not a legal `--metric`. Kept visible only so nobody re-publishes it as a win. |
+| lfmc_from_env · mycorrhiza_from_env · pollinator_from_env | non-encoder heads: the capability lives in a downstream head, not in the positional encoding |
+| flowering_auc · flowering_fidelity | same — measured on the fusion model's flowering head |
+| infer_clay · infer_soil · infer_climate · infer_hydro | env→env reconstruction runs through the field decoder, not the encoder probe |
+
+These 9 are **not** legal `--metric` values. They remain on Layer 1 because the full model is still
+scored on them; they are simply not reachable by the encoder probe.
+
+## Architectural note — a probe-win that must NOT graduate
+
+A gated **spatial-only random-Fourier-features branch** (default off) fixes the bare probe's weakness:
+a raw Earth4D hash grid loses to a generic RFF PE on smooth/static tasks (0.069→~0.08–0.10 static;
+forecast 0.153→0.165, +0.096 vs RFF). **But the champion already carries this exact prior** —
+`core/fusion.py:311` wires `SmoothGeoField` (an RFF geo prior added to the hash position;
+`champion.yaml smooth_geo: true`). The probe-win is the probe catching up to the champion, not a new
+lever. **Do not graduate** (Ensue `earth4d_FOURIER_redundant_with_smooth_geo_NO_graduation_2026_07_28`).
+Keep the branch default-off for probe fairness only. Single-seed, noisy.

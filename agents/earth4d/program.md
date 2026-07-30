@@ -1,36 +1,156 @@
 # Earth4D Agent — program
 
-**Objective:** use the fast Earth4D probes to discover candidates for the scorecard capabilities, then confirm them through the binding scientific-evidence gate in `autoresearch/programs/spacetime/program.md` before graduation or scale. Probe records are exploratory. There are **two co-equal lever families**: **DATA** (what signal feeds the encoder) and **ARCHITECTURE** (how the encoder represents it). **Surface area** = `encoders/spacetime/earth4d.py` + the probes in `autoresearch/programs/spacetime/` **+ the data channels those probes feed** (`--env_channels`, `--sdm_channels`, `--vision`, `--pheno_channel`, densification). A probe run is minutes, so iterate fast and broad.
+Discover, then confirm, what Earth4D earns from space-time coordinates and environmental channels.
+Two co-equal lever families: **DATA** (what signal feeds the encoder) · **ARCHITECTURE** (how it
+represents it).
 
-**Box & ops (read first):** the box connection, repo paths, reboot recovery, GPU health check, launch + self-heal commands, Ensue token location, and commit identity are in **`agents/earth4d/box-operations.md`** (gitignored — it holds box connection details).
+| | |
+|---|---|
+| **Surface** | `encoders/spacetime/earth4d.py` + `autoresearch/programs/spacetime/` probes + the channels they feed. Never the fusion model. |
+| **Shared state** | **Ensue** (swarm-wide) ⇄ `records.json` (per-run ledger) ⇄ `scorecard.md` (the board) |
+| **Ops** | box, GPUs, token, commit identity → `agents/earth4d/box-operations.md` |
 
-## 1. Loop
-1. **Pick the objective** — the worst / highest-leverage scorecard capability. Declare it as `--metric`.
-2. **Diagnose the bottleneck from the trace's fair-gain** (encoder vs a generic trained PE/RFF), then pick the matching lever:
-   - **fair-gain ≈ 0 or negative → the INPUT is the bottleneck, not the encoder → DATA lever.** The coordinate/current channel lacks the signal; feed a different/richer channel. (e.g. `family_from_env` sat at 0.125 with gain ≈ 0 for *every* env channel → swapping to per-obs **vision** gave 0.945.)
-   - **fair-gain positive but score low → the ENCODER is the bottleneck → ARCHITECTURE lever.**
-3. **Run through the harness:** `python -m deepearth.agents.earth4d.trace --metric <capability> --probe "<flags = the lever>" --tag <id> --device cuda:N`. The probe trains a light head on **frozen** encoder features in **minutes** (the encoder is constructed fresh and read under `no_grad`, so its hash table stays RANDOM — fair-gain therefore compares architectural priors as fixed feature maps, not learned Earth4D science). `--train_encoder` trains the encoder end-to-end. State which protocol produced every number; only the trained protocol can test a claim about learned hash state.
-4. **Read the trace:** capability score + fair-gain + delta vs the probe baseline.
-5. **Sweep in breadth** — both GPUs saturated; cross DATA × ARCHITECTURE (e.g. each env channel × each encoder variant).
-6. **Gate + record (taxonomy):** every run through `trace.py --ensue` upserts one key per capability, **`LOOP-earth4d-<capability>`**, holding record-history + this run's outcome + deduped dead-ends *with their bottleneck reason*. The full per-run ledger lives in `records.json`. Pass `--ensue` on every run, but never treat a max-of-reruns probe record as an estimate. A candidate updates the scientific scorecard only after matched-seed validation and the real-data evidence gate passes.
+## Loop
 
-## 2. Preferences
-- **Surface = the Earth4D encoder + its probes + the data channels they feed.** Never the full fusion model.
-- **DATA lever — first-class, NOT new.** The macro phase moved arith 0.446→0.6153 heavily on data (terrain, AlphaEarth, occurrence densification 207k→621k); data was always viable. For the probes it means: **which channel/modality feeds the encoder+head.**
-  - env channels: `--env` / `--env_channels {worldclim, alphaearth, all}`, `--env_extra` (soil+elev), `--sdm_channels`.
-  - vision: `--vision --vision_feats {dino, bio, both}` (per-obs DINO/BioCLIP) — carries morphology/family where env can't.
-  - phenology / remote-sensing: `--pheno_channel` (MODIS NDVI/EVI).
-  - occurrence densification, channel fusion (env+vision), per-species aggregation.
-  - When a fair-gain is flat across an input type, that input is signal-limited — **change the channel, don't just swing the architecture.**
-- **ARCHITECTURE lever — also first-class. YOU CAN AND SHOULD EDIT `encoders/spacetime/earth4d.py` ITSELF** — the encoder's `__init__`, forward pass, and training objective are all in scope, not just probe flags. Add new internal structure to the encoder (done already: the gated temporal-harmonic path `6a02ef0`, the spatial-Fourier branch `7d44651`). Levers: propagation / forecasting (`--recurrence`, `--gnn`, `--forecast`, internal temporal-harmonic path), field-decode (`--env_decode`, `--field_decode`), **new encoding architecture inside `earth4d.py`** (learned Fourier, SIREN, attention-over-neighbours, causal temporal state — demanding rewrites), new training objectives (cline-aware DOY, contrastive env alignment). Capacity knobs (`spatial_levels`, `log2_hashmap`, `head_hidden`, `time_harmonics`) tune a *winning* config, not the main move.
-  - **Safe encoder-edit workflow:** back up `earth4d.py` → make the edit **gated + default-off** (new constructor arg defaulting to 0/False so the champion path is byte-identical) → `py_compile` → wire a matching probe flag in `probe.py` → `scp` to newbox → sweep via `trace.py`. Only a positive probe result graduates; the edit stays reversible.
-- **Diagnose before you swing:** the trace's fair-gain tells you whether the problem is input-limited (→ DATA) or encoder-limited (→ ARCHITECTURE). Don't default to one family.
-- **Measurement = the encoder probe for discovery; the LFMC gate for evidence.** A single seed is a screening result only. Confirmation uses at least five matched seeds plus site×year bootstrap intervals. `rm -f`/rebuild the prepared cache (`--fresh-data`) whenever the DATA lever changes what's loaded — the cache is lossy across data changes.
+```
+        ┌───────────────────────── bottleneck reason ─────────────────────────┐
+        │                                                                     │
+        ▼                                                                     │
+   ① READ ──► ② PICK ──► ③ DIAGNOSE ──► ④ RUN ──► ⑤ MEASURE ──► ⑥ DECIDE ────┤
+        │                                                                     │
+   Ensue +   worst /      fair-gain     trace.py    score        beyond        │
+   records   highest-     → lever       1 variable  fair-gain    noise?        │
+   dead-ends leverage     family        fixed       Δ baseline   no regress?   │
+        ▲    row                        budget                                 │
+        │    --metric                                                          ▼
+        └───────────────── ⑦ WRITE ──► Ensue + records.json ◄────────── keep ──┘
+                                                                     else ─► ③
+```
 
-## 3. Don'ts
-- **Don't train the full 799M fusion model** — confounded and slow. Encoder + probe only.
-- **Don't default to architecture-only.** DATA is co-equal; pick the lever the fair-gain points to. (This program used to say "architecture only, big swings" — that was wrong; the data lever was always live.)
-- No experiment without a declared `--metric`; do not publish without multi-seed re-verification.
-- Native probe metrics only — no reimplemented scoring.
-- **Attribute borrowed signal honestly** — a vision-channel win is *borrowed* DINO/BioCLIP, not a coordinate-encoder gain; label it (env=where, vision=which). Don't launder it as an Earth4D win, and don't chase the aggregate arith.
-- Don't declare a capability a ceiling / "done" / "exhausted" — change the lever family and keep going.
+| step | do | rule |
+|---|---|---|
+| ① READ | pull Ensue keys + `records.json` from disk | never reason from a cached board; skip logged dead-ends |
+| ② PICK | one capability from `scorecard.md` Layer 1, **with intention** | no run without a declared `--metric` |
+| ③ DIAGNOSE | fair-gain → lever family | diagnose before you swing |
+| ④ RUN | `trace.py --metric <cap> --probe "<flags>" --tag <id> --device cuda:N --ensue` | **change whatever the hypothesis needs**; one variable per run, fixed budget; sweep across both GPUs |
+| ⑤ MEASURE | score · fair-gain · Δ vs baseline | native probe metrics only |
+| ⑥ DECIDE | keep if beyond noise with no registered regression | probe = discovery; science needs the gate |
+| ⑦ WRITE | `--ensue` on **every** run — win or dead-end | a run that isn't published didn't happen |
+
+Default protocol trains a head on **frozen random-hash** features — fair-gain compares priors as fixed
+feature maps, not learned Earth4D. `--train_encoder` trains end-to-end. State the protocol behind every
+number.
+
+### What constrains a run — identity, not permitted edits
+
+You may change anything the hypothesis needs: data channel, probe mode, encoder internals, objective.
+Nothing is gated behind a menu of approved flags. What the harness enforces is that the run still
+measures the capability you declared:
+
+```
+   measurement identity = capability · mode · split · n_shards · protocol · code hash
+   comparable  ⇔  identities match        different mode/shards = a DIFFERENT TARGET, not a better score
+```
+
+A run whose identity differs from the record's is recorded as a re-baseline or withheld — never as a
+win. That is the whole guardrail; within it, swing as hard as the hypothesis demands.
+
+## Ensue — the swarm's shared memory
+
+Every agent in the swarm reads the same keys before picking and writes back after measuring. That is the
+only thing keeping parallel workers from re-running each other's dead-ends.
+
+```
+   agent A ─┐                                    ┌─► agent A picks next lever
+   agent B ─┼──► ① READ ── Ensue ── ⑦ WRITE ──┼─► agent B skips A's dead-end
+   agent C ─┘        keys      (upsert)         └─► agent C sees the new record
+                       │
+        LOOP-earth4d-<capability>   ← ONE key per capability, upserted, never appended blindly
+        ├─ BEST  score (fair-gain, fair baseline)   ← the running record
+        ├─ records[]   last 20 {tag, score, gain, protocol, rebaseline_from}
+        └─ deadends{}  last 40 {tag: {score, gain, why}}   ← deduped BY TAG, each with its reason
+```
+
+| | |
+|---|---|
+| **Transport** | `trace.py --ensue` → POST `https://api.ensue-network.ai/`, `{"items":[{"key_name": ...}]}` |
+| **Auth** | `ENSUE_API_TOKEN` from env or `/workspace/.env`; `trace.py` finds it. **Never commit it.** |
+| **Key taxonomy** | `LOOP-earth4d-<capability>` — one per capability, so the board is readable at a glance |
+| **Local mirror** | `records.json` holds the same ledger plus the full per-run trace; `<tag>.trace.json` per run |
+
+Rules:
+- Pass `--ensue` on **every** run. A lever that failed is information; publish it with its bottleneck
+  reason or the swarm pays to rediscover it.
+- **Read before you pick, re-read after you write.** Another agent may have taken your capability or
+  killed your lever mid-cycle.
+- A record is only beaten **like-for-like** — same probe mode, same shard count, same protocol. A
+  different mode is a different target; it is withheld and flagged, not published as a win.
+- Never publish a max-of-reruns as an estimate.
+
+## ③ Diagnose
+
+```
+              fair-gain  =  Earth4D  −  generic trained PE / RFF
+                                  │
+             ┌────────────────────┴────────────────────┐
+        ≈ 0 or negative                        positive but score low
+             │                                          │
+      INPUT-limited                             ENCODER-limited
+             ▼                                          ▼
+        DATA lever                             ARCHITECTURE lever
+      change the channel                       change the mechanism
+```
+
+Flat fair-gain across a whole input type = signal-limited. Change the channel; don't swing the
+architecture.
+
+## Levers
+
+| DATA | ARCHITECTURE |
+|---|---|
+| `--env_channels {worldclim, alphaearth, all}` · `--env_extra` · `--sdm_channels` | edit `earth4d.py`: `__init__`, forward, objective |
+| `--vision --vision_feats {dino, bio, both}` | propagation / forecasting: `--recurrence` `--gnn` `--forecast` |
+| `--pheno_channel` | field decode: `--env_decode` `--field_decode` |
+| densification · channel fusion · per-entity aggregation | new structure: learned Fourier, SIREN, attention-over-neighbours, causal temporal state |
+| | new objectives |
+
+Capacity knobs (`spatial_levels`, `log2_hashmap`, `head_hidden`, `time_harmonics`) tune a winner — they
+are not the move.
+
+```
+   encoder edit:  back up ─► gate DEFAULT-OFF (champion byte-identical) ─► py_compile
+                          ─► wire the probe flag ─► scp ─► sweep ─► only a positive probe graduates
+```
+Before graduating an architectural win, confirm the champion doesn't already carry that prior.
+
+## Evidence standard — binding before any claim or scale-up
+
+```
+   probe record ──► ranks hypotheses                      ✗ not science
+                     │
+                     └─ passes ALL SIX ──► confirmable claim ──► scale
+```
+
+| # | requirement |
+|---|---|
+| 1 | **Measured state, not a proxy of the query.** A target derived from the sampling process measures the observer, not the system. |
+| 2 | **Three-way split.** Search on train, select once on validation, evaluate once after freezing. Future+new-place test = `train: past & seen`, `test: future & held`; other quadrants embargoed, never folded into `~test`. Fit every range, normalizer, aggregate, imputer on train alone. |
+| 3 | **Real autoregression for a causal claim.** Consume observed past state; roll your own predictions forward. A positional lookup at `t-lag` is a delayed basis, not memory. |
+| 4 | **Fair controls.** Persistence · climatology · raw coordinates · RFF/SIREN · matched-capacity MLP · the same propagator without Earth4D · shuffled-history · time-reversal · future-sentinel. Paired arms get identical data, seeds, wall time, tuning budget, and asserted-matched head params. |
+| 5 | **Predeclared statistics.** Endpoints declared before running. ≥5 matched seeds, block bootstrap over the relevant unit. Pass only if the lower 95% bound of improvement over the **strongest fair baseline** > 0 and the point estimate clears the declared margin, with no regression. |
+| 6 | **Fixed budget, immutable record.** Equal declared wall-clock per arm. Append-only hash-chained ledger: code/data/split/config/seed hashes, signed per-arm outcomes, every attempted variant. Freeze before opening test; replicate on a second region or later period before a headline. |
+
+**Quarantine:** any lever whose neighbour state or target window can cross the forecast origin is
+unusable until future-sentinel, horizon-purge, and right-censoring tests pass. Log it against the lever
+in Ensue so the whole swarm inherits the block.
+
+## Don'ts
+
+- Don't train the full fusion model — confounded and slow.
+- Don't default to architecture. DATA is co-equal; follow the fair-gain.
+- No reimplemented metrics. No publication without multi-seed re-verification.
+- Attribute borrowed signal: a vision win is frozen DINO/BioCLIP (env = *where*, vision = *which*), not
+  a coordinate-encoder gain. Don't launder it; don't chase an aggregate mean.
+- Never call a capability done or exhausted — switch lever family and continue.
+- Keep specific experiments, datasets, and campaign directives out of this file. They belong in Ensue
+  and `records.json`, where the swarm can update them.
