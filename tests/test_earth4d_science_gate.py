@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from autoresearch.programs.spacetime.science_gate import (
+from autoresearch.spacetime.harness.science_gate import (
     ScienceGateError,
     assert_split_integrity,
     audit_rolling_origin_pairs,

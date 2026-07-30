@@ -6,10 +6,10 @@ This directory contains the LaTeX source files for the DeepEarth paper accepted 
 
 We present **DeepEarth**, a self-supervised multi-modal world model with **Earth4D**, a novel planetary-scale 4D space-time positional encoder. Earth4D extends 3D multi-resolution hash encoding to include time, efficiently scaling across the planet over centuries with sub-meter, sub-second precision.
 
-**Key Results:**
-- Earth4D achieves state-of-the-art performance on the Globe-LFMC 2.0 ecological forecasting benchmark
-- MAE 12.1pp and R² 0.755, surpassing pre-trained foundation models
-- Uses only (x,y,z,t) coordinates and species embeddings—no satellite imagery, weather data, or topography required
+**Historical exploratory result (not confirmatory evidence):**
+- The workshop submission reported MAE 12.1pp and R² 0.755 on Globe-LFMC 2.0
+- That experiment used test-set feedback during development and did not test causal future rollout, so it does not establish state of the art or prove Earth4D forecasting skill
+- The current preregistered evidence gate is documented in `autoresearch/spacetime/program/program.md`
 
 ## Directory Structure
 

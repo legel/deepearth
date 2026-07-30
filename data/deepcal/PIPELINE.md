@@ -16,10 +16,10 @@ Bulk transfer via **Globus** (the directed path for large files; ~2 min for 6.6 
 Alternative: `python -m deepearth.data.deepcal.package nersc_upload` (SFAPI, 150 MB resumable chunks; needs iris.nersc.gov creds).
 
 ## 3. Prepare + run  (any collaborator, any machine)
-    python -m deepearth.autoresearch.prepare        # downloads the zip from the portal (HTTPS, no auth),
+    python -m deepearth.autoresearch.main.prepare        # downloads the zip from the portal (HTTPS, no auth),
                                                     # extracts, compiles the Earth4D CUDA kernel (install.sh
                                                     # auto-installs ninja), builds the prepared cache + test I/O
-    python -m deepearth.autoresearch.train autoresearch/deepcal.yaml --device cuda:1
+    python -m deepearth.autoresearch.main.train autoresearch/main/deepcal.yaml --device cuda:1
 Override the source with `DEEPCAL_DATA_URL`. Run from the parent of the `deepearth/` package dir.
 
 ## Status (2026-07-14)

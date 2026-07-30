@@ -1,0 +1,114 @@
+# autoresearch
+
+Autonomous research on DeepEarth: improve the model, train for a fixed budget, score the full benchmark suite, keep
+gains, repeat indefinitely. DeepCal is the first instance (California plant ecology).
+
+**Objective:** maximize the **harmonic mean of the CAPABILITY benchmarks** (`net_score` in `evaluate.py`) — the suite
+is B1..B60 and climbing, each natively in [0,1] (accuracy/F1/cosine/recall/AUC/skill/calibration). Report the harmonic
+mean (headline: no metric may be sacrificed — lift the weakest) AND the arithmetic mean. **No individual metric may
+regress** to raise it.
+
+**Selection signal (operator-authorized 2026-07-15): you MAY optimize and select on the ARITHMETIC mean.** The
+harmonic net is dominated by a few near-zero benchmarks (community recall B20-B22) whose single-seed variance
+(0.003<->0.016) swings it 0.02<->0.13, so it is noise for single-seed A/B. The arithmetic mean is the stable
+discovery signal: keep/promote candidates on arithmetic mean. Still report BOTH means, and no individual metric
+may regress to raise it.
+
+**Scoring integrity (metrics are gaming-proof, audited 2026-07-13):** every benchmark's metric is chosen so a
+no-information baseline scores ~0 and there is no artificial ceiling. (a) Community/species-distribution benchmarks use
+a KL SKILL score `1 - KL(p‖q)/KL(p‖uniform)` (raw exp(-KL) had a 0.83-0.95 uniform floor — a broad guess won). (b)
+Reconstruction benchmarks use CENTERED (anomaly) cosine — the modality's train-mean is subtracted so a constant
+mean-prediction scores ~0 (raw cosine floors were 0.35-0.95 because embeddings share a mean direction). (c) The
+ablation-delta / information-gain benchmarks (`*_gain`: B24, B56-B60) are DERIVED differences that isolate a mechanism's
+contribution; they are reported as DIAGNOSTICS but EXCLUDED from the net (`is_diagnostic()`) — folding a small
+difference into a harmonic mean double-counts its constituents and pins the north star near 0. Characterize any new
+metric's floor on real data before trusting it.
+
+**Conditional Bayesian queries (core capability):** DeepEarth must answer masked queries at any constraint level and
+return calibrated posteriors that tighten as evidence is added. Canonical case = plant-pollinator (B41,B51-B54): given
+a plant with everything masked → the marginal pollinator distribution across all spacetime; add geography → pollinators
+at that location across all time; add time → only pollinators present then (out-of-season migrants vanish); given plant
++ pollinator + location, query TIME → a (start,stop) interaction-phenology interval (mixture-of-Gaussians, multi-modal
+per year). Priors/posteriors must map to data. This rides the mask-anything `infer(given,targets)` PerceiverIO core;
+distribution heads (species/pollinator distributions, temporal-interval posteriors) are the refinements. Modifying
+core architecture (fusion, encoders, Perceiver core, heads, posteriors) to achieve this is fair game and expected.
+
+**Benchmark heads (paradigm, 2026-07-11):** a benchmark may have a small supervised **head** trained JOINTLY with the
+self-supervised masked-reconstruction objective on the TRAIN split. Head losses carry a **small total weight** so SSL
+stays dominant (with dozens of benchmarks each head is tiny — no domination). At **test time there is NO fine-tuning**:
+heads run immediate inference on the model's (real or *imagined*) embeddings. Capabilities still emerge organically —
+SSL shapes the representation; the head only reads it, and imagined-vs-real tests (e.g. flowering B27) measure whether
+the representation itself carries the signal. Keep head grad light (small weight, optionally stop-grad) so it never
+hard-codes a supervised shortcut into the shared representation.
+
+**Fair game (edit + commit):** `core/fusion.py` (main target), `encoders/spacetime/earth4d.py`,
+`encoders/biological/phylogenomic.py`, `deepcal.yaml`, `evaluate.py` (benchmark definitions + heads),
+`data.py`/`prepare.py` (integrate new datasets). Architecture, encoders, fusion, operators, Bayesian priors/posteriors,
+GNN autoregressive rollout (GraphCast/GenCast), diffusion/recurrent decoding, optimizer, schedule, hyperparameters, and
+the DATA itself are all in scope. Never tune a scoring definition to inflate a result — improve the model.
+
+**Rules of the science:** every change respects `science.md`. Realize 100% of its principles; shortcomings are the
+focus, opportunities the inspiration.
+
+## The loop
+1. Read `results.tsv` + the per-benchmark profile; form a hypothesis grounded in `science.md`.
+2. Edit a model/config/data file; `git commit` (report every benchmark score in order + the means).
+3. Train (`python -m deepearth.autoresearch.main.train`); budget is set in `deepcal.yaml` (`time_budget_s`).
+4. Read `grep "^net_score:" run.log`; empty ⇒ crash (`tail -50`), fix at the root or revert.
+5. Append to `results.tsv`. Keep the commit if the mean rose with no metric regressed; else revert.
+
+**Simplicity wins** (science.md rule 19 — DeepSeek parsimony: terse code, minimal comments). **Never stop**: think
+harder, read the papers, combine near-misses, try radical architecture. Launch dataset downloads/preprocessing when
+they lift induction. New datasets must be >= US-national in extent (DeepCal then crops to California).
+
+## Architecture search surface — go the whole nine yards (swarm addendum, permanent)
+
+Do not settle for tuning mechanism knobs. Search the ENTIRE architecture — tokenizers, embeddings, encodings,
+fusion, operators, heads — to find the absolutely best model. The surface, grouped (config = a key in
+`deepcal.yaml` `model:`; code = edit `core/fusion.py` / `encoders/*`):
+
+- **Embeddings & latent capacity** (config): `d_model` (token/latent width), `n_latents` (Perceiver latent bank
+  size), `manifolds` (phylo/biological subspace width), `decoder_hidden`. Wider is not free under a fixed step
+  budget (fewer steps) — sweep, don't assume.
+- **Positional / space-time encodings**: config — `capacity` (Earth4D relative hash levels), `relative_window`
+  (4D neighbor half-window N/E/up/days), `time_km`, `time_axis`. Code (not yet config) — absolute Earth4D
+  `spatial_levels` / `temporal_levels` / `log2_hashmap_size`, relative `finest` resolution, `smooth_geo`
+  `per_scale` width + sigma bank. This is the raw "encoding" surface.
+- **Modality tokenizers / encoders** (code, `fusion.py` `self.encoders`): each variable is currently a bare
+  `nn.Linear(dim, d_model)` (continuous) or `nn.Embedding(num_classes, d_model)` (categorical). Deeper/normalized
+  encoders (MLP depth, LayerNorm, per-modality frequency features, learned/patch/set tokenization for the
+  vision & NAIP embeddings) are wide-open architecture — a primary lever, not yet exposed as config.
+- **Fusion / processor depth & operators**: config — `n_layers` (processor depth), `heads`, `rounds` +
+  `revise`/`round_loss`/`write_back` (iterative refinement), `species_graph` operator/`layers`/`heads`,
+  `flex_attention`. Code — cross-attention topology, latent routing/allocation, decoder families
+  (diffusion/recurrent), autoregressive GNN rollout.
+- **Mechanisms & heads** (config): `sdist_weight`, `comm_attached`, `poll_weight`, `contrastive_*`,
+  `smooth_geo*`, `feedback_detach`, `learned_mask`, `loss_weights`, per-benchmark head weights.
+
+### Reproducibility across the swarm (MANDATORY — this is the forever rule)
+Every box shares one leaderboard, so a result is only trustworthy if any box can reproduce it. If you try
+something the other boxes do NOT have natively (i.e. it needs a code change, not just a config value):
+1. **Make it a config toggle that DEFAULTS to current behaviour** — `m.get("<key>", <current_default>)` — so
+   pulling the code changes nothing until a config sets the key. Never a bare hardcoded edit.
+2. **Commit the toggle** to `core/fusion.py` / `encoders/*` and **sync the changed files to every box** (all
+   boxes must run byte-identical code — verify with `md5sum`).
+3. **Document the new lever in the registry below** (key, file, default, effect) so any box can drive it from
+   config alone and the candidate generators can sweep it.
+
+Never run a code-level experiment that exists only in one box's working tree — it is unreproducible and pollutes
+the shared leaderboard. Un-toggled code patches still under development run in an ISOLATED repo copy / git
+worktree, not the shared loop repo, so concurrent candidate runs are never contaminated.
+
+### Registry of added config toggles (append one line per new lever)
+| key | file | default | effect |
+|---|---|---|---|
+| `comm_attached` | `core/fusion.py` | `false` | let the community-head loss shape the backbone (un-detached) |
+| `mod_encoder` | `core/fusion.py` | `"linear"` | modality tokenizer for continuous vars: `"linear"` (bare Linear) / `"mlp2"` (2-layer MLP) / `"mlp2ln"` (+LayerNorm) |
+| `read_op` | `core/fusion.py` | `"mha"` | Perceiver READ operator: `mha`(stock) / `slot`(competitive slot-attn) / `typed`(variable-vs-context split, gated) / `crossself`(latents co-attend field+selves). All tested NEUTRAL vs champion. |
+| `neighbor_op` | `core/fusion.py` | `"add"` | neighbor token value×position combine: `add` / `film` / `gate` / `bind`(Hadamard value⊙pos term). **bind PROMOTED** (+0.0013). film NaN-collapses. |
+| `token_op` | `core/fusion.py` | `"add"` | query variable-token value×position combine: `add` / `bind` / `film`(FiLM by pos) / `filmbind`. **film PROMOTED** (+0.0034). |
+| `read_cond` | `core/fusion.py` | `false` | location-aware read: FiLM the read query by the query GLOBAL position. Tested NEGATIVE (-0.0033). |
+| `joint_decode` | `core/fusion.py` | `false` | cross-variable joint decoder: variables attend to each other (self-attn over pooled beliefs) before decoding. Tested NEGATIVE (-0.0042). |
+| `grad_checkpoint` | `core/fusion.py` | `false` | recompute read+processor-block activations in backward (memory<->compute). NOTE: torch.compile largely overrides it; latent blocks are tiny anyway, so limited effect. |
+| `diffusion` | `core/fusion.py` | `false` | Rule-22 diffusion decode: masked states init as NOISE, denoised over rounds on a decreasing schedule (needs rounds>=3, round_loss=final to fit). |
+| _(add new tokenizer/embedding/encoding toggles here as they are introduced)_ | | | |

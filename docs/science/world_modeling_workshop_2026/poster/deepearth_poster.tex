@@ -27,28 +27,19 @@
 \definecolor{ghconstant}{HTML}{79c0ff}  % Constants (True, False)
 
 % Monospace font for code (Menlo - similar to GitHub's SF Mono)
-\newfontfamily\ghcodefont{Menlo}[Scale=0.9]
+\IfFontExistsTF{Menlo}{\newfontfamily\ghcodefont{Menlo}[Scale=0.9]}
+  {\newfontfamily\ghcodefont{Courier New}[Scale=0.9]}
 
-% Oxygen font family (ligatures disabled to fix Ghostscript compression issues)
-\setmainfont{Oxygen}[
-    Path = /Users/lancelegel/Library/Fonts/,
-    Extension = .ttf,
-    UprightFont = *-Regular,
-    BoldFont = *-Bold,
-    Ligatures = {NoRequired, NoCommon, NoContextual},
-    ItalicFont = *-Regular,
-    BoldItalicFont = *-Bold,
-]
-\newfontfamily\oxygenlight{Oxygen-Light}[
-    Path = /Users/lancelegel/Library/Fonts/,
-    Extension = .ttf,
-    Ligatures = {NoRequired, NoCommon, NoContextual}
-]
-\newfontfamily\oxygenbold{Oxygen-Bold}[
-    Path = /Users/lancelegel/Library/Fonts/,
-    Extension = .ttf,
-    Ligatures = {NoRequired, NoCommon, NoContextual}
-]
+% Prefer the original Oxygen family, with a portable Arial fallback.
+\IfFontExistsTF{Oxygen}{
+  \setmainfont{Oxygen}[Ligatures={NoRequired,NoCommon,NoContextual}]
+  \newfontfamily\oxygenlight{Oxygen Light}[Ligatures={NoRequired,NoCommon,NoContextual}]
+  \newfontfamily\oxygenbold{Oxygen}[BoldFont=Oxygen Bold,Ligatures={NoRequired,NoCommon,NoContextual}]
+}{
+  \setmainfont{Arial}
+  \newfontfamily\oxygenlight{Arial}
+  \newfontfamily\oxygenbold{Arial}[BoldFont=Arial Bold]
+}
 
 \graphicspath{{../figures/}{logos/}{renders/}{./}}
 
@@ -164,11 +155,11 @@
 }
 
 %-----------------------------------------------------------------------
-\block{State-of-the-Art Ecological Prediction Benchmark}{
+\block{Historical Exploratory Ecological Benchmark}{
 \vspace{1mm}
 Live Fuel Moisture Content (LFMC) measures vegetation water for wildf{}ire risk.\\
 {\oxygenbold Training:} Earth4D encodes ($x$, $y$, $z$, $t$) coordinates of LFMC metrics to 192D, concatenates with learnable plant species embeddings, MLP predicts LFMC.\\
-{\oxygenbold Result:} Earth4D outperforms pre-trained Vision Transformer with less input data.
+{\oxygenbold Historical result:} A development run reported lower error than a pre-trained Vision Transformer with less input data. This comparison is hypothesis-generating, not confirmatory.
 
 \vspace{4mm}
 \centering
@@ -196,7 +187,7 @@ AI2 (Pre-trained ViT) & ($x$,$y$,$z$,$t$) + Species + Vision (Remote Sensing) & 
 
 \vspace{10mm}
 \raggedright
-{\oxygenbold Key Finding:} Earth4D surpasses AI2's foundation model without satellite, weather, or topography data. Only coordinates and species names are used.
+{\oxygenbold Evidence status:} These historical figures used test-set feedback during development and did not evaluate causal future rollout; they do not establish state of the art. Only coordinates and species names were used.
 \vspace{1mm}
 }
 
@@ -241,7 +232,7 @@ Earth4D: {\oxygenbold multi-resolution hash encoder} with four parallel 3D grids
 Hash encoding compresses features into f{}ixed memory, but collisions hurt accuracy. {\oxygenbold Learned hash probing} optimizes memory allocation end-to-end.
 
 \vspace{3mm}
-{\oxygenbold Performance:} 33\% fewer collisions; MAE improved 27\%; R² improved 30\%.
+{\oxygenbold Historical exploratory figures:} 33\% fewer collisions; reported MAE 27\% lower and R² 30\% higher. Confirmation is pending.
 \vspace{1mm}
 }
 

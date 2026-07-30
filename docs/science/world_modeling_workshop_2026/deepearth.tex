@@ -76,7 +76,7 @@ University of Illinois Urbana-Champaign \\
 \maketitle
 
 \begin{abstract}
-We present \textit{DeepEarth}, a self-supervised multi-modal world model with \textit{Earth4D}, a novel planetary-scale 4D space-time positional encoder. Earth4D extends 3D multi-resolution hash encoding to include time, efficiently scaling across the planet over centuries with sub-meter, sub-second precision. Multi-modal encoders (\textit{e.g.} vision-language models) are fused with Earth4D embeddings and trained via masked reconstruction. We demonstrate Earth4D's expressive power by achieving state-of-the-art performance on an ecological forecasting benchmark. Earth4D with learnable hash probing surpasses a multi-modal foundation model pre-trained on substantially more data. Access open source code and download models at: \\
+We present \textit{DeepEarth}, a self-supervised multi-modal world model with \textit{Earth4D}, a novel planetary-scale 4D space-time positional encoder. Earth4D extends 3D multi-resolution hash encoding to include time, efficiently scaling across the planet over centuries with sub-meter, sub-second precision. Multi-modal encoders (\textit{e.g.} vision-language models) are fused with Earth4D embeddings and trained via masked reconstruction. We report a historical exploratory LFMC benchmark fit that motivated confirmatory causal forecasting experiments. Because that experiment used test-set feedback during development and did not evaluate future rollout from observed past state, it is not evidence of state-of-the-art forecasting performance. Access open source code and download models at: \\
 \url{https://github.com/legel/deepearth}.
 \end{abstract}
 
@@ -126,7 +126,7 @@ Earth4D's hash encoding compresses spatial features into a fixed memory budget, 
 \label{fig:error_dist}
 \end{figure}
 
-\noindent\textbf{\textit{Results.}} Earth4D achieves MAE 12.1pp and R² 0.755, surpassing Galileo (MAE 12.6pp, R² 0.72) using only (\textit{x,y,z,t}) coordinates and species embeddings (Table~\ref{tab:lfmc_results}).
+\noindent\textbf{\textit{Historical exploratory result.}} The original development run reported MAE 12.1pp and R² 0.755 versus Galileo (MAE 12.6pp, R² 0.72) using only (\textit{x,y,z,t}) coordinates and species embeddings (Table~\ref{tab:lfmc_results}). These figures are hypothesis-generating: test-set feedback was used during development and the task did not evaluate causal future rollout.
 
 \begin{table}[h]
 \centering
@@ -139,7 +139,7 @@ Earth4D's hash encoding compresses spatial features into a fixed memory budget, 
 \textbf{\textit{Earth4D}} (Learned Hashing) & (\textit{x,y,z,t}) + Species Name & \textbf{12.1} & 19.9 & \textbf{0.755} \\
 \bottomrule
 \end{tabular}
-\caption{\textbf{State-of-the-Art Ecological Forecasting Benchmark.} Earth4D surpasses the pre-trained Galileo foundation model without satellite imagery, weather data, or topography.}
+\caption{\textbf{Historical exploratory ecological benchmark.} Development-run figures are shown for provenance; they are not confirmatory state-of-the-art or causal forecasting evidence.}
 \label{tab:lfmc_results}
 \end{table}
 
@@ -215,7 +215,7 @@ We evaluate Earth4D's ability to infer RGB pixels from (\textit{x,y,z,t}) inputs
 \subsection{Performance Improvements}
 \label{appendix:baseline_results}
 
-Standard multi-resolution hash encoding without learned probing obtains RMSE 26.0pp, MAE 16.6pp, and R² 0.58 (800M parameters, $2^{22}$ hash capacity). Integrating learned hash probing \citep{takikawa2023compactneuralgraphicsprimitives}, which learns to select optimal hash table indices from a candidate set, yields RMSE 19.9pp, MAE 12.1pp, and R² 0.755—a 27.1\% MAE reduction and 30.2\% R² improvement. Extreme compression to 5M parameters (99.3\% reduction, $2^{14}$ hash capacity) achieves MAE 15.0pp/R² 0.668, outperforming the 800M baseline by 14.7\% in R² with 4$\times$ training speedup and 93\% memory reduction. On RGB reconstruction, learned probing reduces validation loss by 18\%. These gains result from collision reduction (33\% at 1M points) and learned shared features across memory indices, allowing the model to discover meaningful spatio-temporal patterns.
+\textbf{Historical exploratory figures.} Standard multi-resolution hash encoding without learned probing reported RMSE 26.0pp, MAE 16.6pp, and R² 0.58 (800M parameters, $2^{22}$ hash capacity). A development search with learned hash probing \citep{takikawa2023compactneuralgraphicsprimitives} reported RMSE 19.9pp, MAE 12.1pp, and R² 0.755; a 5M-parameter configuration reported MAE 15.0pp/R² 0.668, 4$\times$ training speed, and 93\% lower memory. On RGB reconstruction, the same search reported 18\% lower validation loss. Because configurations were selected with test feedback and exact per-step equivalence was not established for the speed comparison, these deltas and their proposed collision-sharing mechanism remain hypotheses for preregistered confirmation.
 
 \newpage
 

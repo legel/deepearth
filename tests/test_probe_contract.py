@@ -12,7 +12,7 @@ REPO_PARENT = str(Path(__file__).resolve().parents[2])
 if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
-from autoresearch.programs.spacetime.probe_contract import (
+from autoresearch.spacetime.harness.probe_contract import (
     CONTRACT_VERSION,
     ContractError,
     Primary,
