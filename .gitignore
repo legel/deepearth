@@ -10,8 +10,13 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# NOTE: these are PYTHON BUILD artifacts and must be anchored to the repo root. As a bare `lib/` the
+# rule matched at ANY depth, so every NEW file added to a loop's editable_files/lib/ was silently
+# ignored -- species_priors.py (the copy that makes the spacetime loop independent of biological) and
+# fair_baseline.py (which defines what every fair-gain on the board MEANS) were both untracked and would
+# have been lost. Files already moved in with `git mv` stayed tracked, which is why it went unnoticed.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
