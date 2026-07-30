@@ -195,7 +195,7 @@ CONFIG = {
     "tile": 64,                 # sparse tile coding: per-level one-hot cell code of this width
     "tile_replace": False,     # tile coding REPLACES the hash blocks instead of joining them
     "tile_time": False,        # tile the SPACE-TIME cell rather than the spatial cell
-    "tile_offsets": 1,         # CMAC-style overlapping tilings per level
+    "tile_offsets": 4,         # CMAC-style overlapping tilings per level
     "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
 }
 @dataclass
