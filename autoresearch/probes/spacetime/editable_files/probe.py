@@ -103,7 +103,7 @@ from deepearth.autoresearch.probes.spacetime.editable_files.harness import (
 # The identity carries config_digest (see harness.py), so two runs with different CONFIG are never
 # treated as the same measurement even though their command lines are identical.
 CONFIG = {
-    # Starts at the STANDING CHAMPION for species_from_spacetime (0.0691). A run with no edits must
+    # Starts at the STANDING CHAMPION for species_from_spacetime (0.0787, tag tilecode_cmac4). A run with no edits must
     # reproduce the record; if the defaults measured some other mode, every experiment would silently be
     # compared against a different measurement.
     "lr": 3e-3,
@@ -196,7 +196,7 @@ CONFIG = {
     "tile_replace": False,     # tile coding REPLACES the hash blocks instead of joining them
     "tile_time": False,        # tile the SPACE-TIME cell rather than the spatial cell
     "tile_offsets": 4,         # CMAC-style overlapping tilings per level
-    "tile_quantile": True,    # equal-occupancy tiles (train empirical CDF warp)
+    "tile_quantile": False,    # equal-occupancy tiles (train empirical CDF warp)
     "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
 }
 @dataclass
