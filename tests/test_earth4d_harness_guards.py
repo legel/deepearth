@@ -17,7 +17,6 @@ from agents.earth4d.trace import (
     CAPABILITIES,
     DEFAULT_PROBE_MODULE,
     EXCLUDED_CAPABILITIES,
-    PRIMARY_RE,
     PROTOCOL,
     _bottleneck,
     _commit_records_if_unchanged,
@@ -96,11 +95,8 @@ class TraceProtocolGateTests(unittest.TestCase):
         for capability in ("lfmc_from_env", "infer_clay", "flowering_auc", "family_from_vision"):
             self.assertIn(capability, EXCLUDED_CAPABILITIES)
             self.assertTrue(EXCLUDED_CAPABILITIES[capability].strip())
-        # calibration is read by a dedicated branch in _primary, not by PRIMARY_RE
-        for capability in CAPABILITIES:
-            self.assertTrue(capability in PRIMARY_RE or capability == "calibration", capability)
-        for capability in PRIMARY_RE:
-            self.assertIn(capability, CAPABILITIES, f"{capability} has a parser but is not legal")
+        # There is no longer a regex table to keep in sync: the probe declares its own metric via the
+        # result contract, so a capability is parseable iff some mode declares it.
 
     def test_bottleneck_diagnosis_agrees_with_the_program(self):
         """A flat/negative fair-gain is INPUT-limited (DATA lever), not architecture-limited.

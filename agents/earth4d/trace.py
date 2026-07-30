@@ -34,6 +34,12 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from deepearth.autoresearch.programs.spacetime.probe_contract import (  # noqa: E402
+    ContractError,
+    ProbeResult,
+)
+
 REPO = Path(__file__).resolve().parents[2]                 # .../deepearth
 RECORDS = Path(__file__).resolve().parent / "records.json"  # the machine record (fill scorecard by breaking these)
 DEFAULT_PROBE_MODULE = "deepearth.autoresearch.programs.spacetime.probe"
@@ -66,15 +72,6 @@ EXCLUDED_CAPABILITIES = {
     "infer_hydro": "env->env reconstruction runs through the field decoder, not the encoder probe",
 }
 
-# How to read the capability's PRIMARY absolute score from the probe output (native metric, first match wins).
-PRIMARY_RE = {
-    "species_from_env": [r"micro-AP\(feat\)\s+([\d.]+)"],
-    "community_from_env": [r"micro-AP\(feat\)\s+([\d.]+)"],
-    "family_from_env": [r"Earth4D\+ENV\s+([\d.]+)", r"\bEarth4D\s+([\d.]+)"],
-    "family_from_spacetime": [r"\bEarth4D\s+([\d.]+)"],
-    "species_from_spacetime": [r"\bEarth4D\s+([\d.]+)"],
-    "flowering_peak_month": [r"acc\s+([\d.]+)"],
-}
 # PROTOCOL VERSION. Bump this whenever a change alters what a run MEASURES rather than how well it does:
 # a leak fix, a split change, a target/normalization change. Records carry the protocol they were set under,
 # and a run under a different protocol RE-BASELINES the capability instead of "beating" it -- mode and shard
@@ -95,8 +92,11 @@ REBASELINE_PROTOCOLS = frozenset({"v1-prefix"})
 FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "prop_acc", "best-coord", "raw"]
 
 
-def _run(module: str, probe_args: str, device: str, log_path: str) -> int:
-    probe_argv = shlex.split(probe_args) + ["--device", device]
+def _run(module: str, probe_args: str, device: str, log_path: str, result_path: str,
+         capability: str) -> int:
+    probe_argv = shlex.split(probe_args) + ["--device", device,
+                                            "--result-json", result_path,
+                                            "--capability", capability]
     cmd = [sys.executable, "-m", module] + probe_argv
     env = dict(os.environ)
     env["PYTHONPATH"] = str(REPO.parent) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
@@ -130,51 +130,12 @@ def _run(module: str, probe_args: str, device: str, log_path: str) -> int:
         os.close(read_fd)
 
 
-def _parse(text: str):
-    header = next((l.strip() for l in text.splitlines() if l.strip().startswith("=== SPACETIME")), "")
-    gains = {}
-    for m in re.finditer(r"st_gain(?:\(([^)]*)\))?\s*([+\-]?\d+\.\d+)", text):   # coord/env/forecast modes
-        gains[(m.group(1) or "default").strip()] = float(m.group(2))
-    for m in re.finditer(r"\bGAIN\s+([+\-]?\d+\.\d+)", text):                    # sdm / cooccur modes report GAIN
-        gains["GAIN"] = float(m.group(1))
-    for line in text.splitlines():                                              # phenology: within-tol-acc propagator gain
-        if "propagator_gain(within-tol acc" in line:
-            nums = [float(x) for x in re.findall(r"([+\-]\d+\.\d+)", line)]
-            if nums:
-                gains["prop_acc"] = max(nums)
-    metrics = [l.strip() for l in text.splitlines()
-               if re.search(r"\b(acc|micro-AP|MAE|absR2|GAIN|Spearman|top5|prop|ECE|AUROC|Brier|SUMMARY)\b", l) and l.strip()]
-    return header, gains, metrics[:24]
 
 
-def _shards(probe_args: str):
-    """--n_shards from the probe flags. Data SIZE is part of a record's identity: a record set on 12 shards is
-    not comparable to a run on 8 or 27, and the gate used to ignore this entirely (a smoke run at 8 shards was
-    scored straight against a 12-shard record and could have taken it)."""
-    m = re.search(r"--n_shards\s+(\d+)", probe_args or "")
-    return int(m.group(1)) if m else None
 
 
-def _mode(header: str):
-    """The probe MODE from the run header, e.g. 'PHENOLOGY(...)' / 'ENV(spatial-block)' / 'FORECAST(past->future)'.
-    Two runs in different modes are measuring different targets and their scores are not comparable."""
-    m = re.search(r"mode=([A-Za-z_\-]+)", header or "")
-    if m:
-        return m.group(1)
-    # Some paths label the mode positionally instead (=== SPACETIME | SDM-HARD | ..., | ENV-CONSTRUCT | ...).
-    # Without this they all read mode=None and would be mutually comparable, which is exactly what the gate
-    # is meant to prevent between e.g. SDM-HARD and SDM-PRESENCE.
-    m = re.search(r"===\s*SPACETIME[^|]*\|\s*([A-Z][A-Z0-9\-]{2,})", header or "")
-    return m.group(1) if m else None
 
 
-def _fair_gain(gains: dict):
-    """The honest encoder marginal = gain vs the strongest fair baseline present (best-ctrl > RFF > mlp > ...)."""
-    for pref in FAIR_ORDER:
-        for k, v in gains.items():
-            if pref.lower() in k.lower():
-                return v, k
-    return (None, None)
 
 
 def _same_probe(probe, prev_probe):
@@ -245,31 +206,6 @@ def _commit_records_if_unchanged(expected_raw, records, path=RECORDS):
     return True
 
 
-def _primary(text: str, cap: str):
-    if cap == "calibration":                              # calib_probe: AUROC of confidence->correctness (0.5=useless)
-        # LIKE-FOR-LIKE. An earlier edit made this the max over conf_auroc_ens/_ent/_bald/_ensvar too, so a run
-        # using a DIFFERENT uncertainty signal could "beat" a record set on max-softmax — the same cross-target
-        # error the mode gate exists to stop, and invisible to that gate because calib_probe prints no mode=.
-        # The record metric is the single-model softmax AUROC; the other signals are reported by the probe and
-        # compared there, never silently substituted here.
-        m = re.search(r"conf_auroc=([\d.]+)", text)
-        return float(m.group(1)) if m else None
-    if cap.startswith("flowering"):                       # phenology modes report within-tol acc (0..1)
-        # ONLY the Earth4D row counts. This used to max over EVERY acc in the output, so a run where the generic
-        # RFF/raw control beat Earth4D recorded the CONTROL's accuracy as the Earth4D record (e.g. a run whose
-        # e4d head scored 0.0488 was logged as 0.0571 = the RFF row). Fall back to the old scan only if no
-        # per-feature rows are present (other flowering modes that report a single acc).
-        e4d_rows = [l for l in text.splitlines() if re.match(r"\s*e4d\s*\|", l)]
-        accs = [float(x) for row in e4d_rows for x in re.findall(r"\bacc\s+([\d.]+)", row)]
-        if not accs:
-            accs = [float(x) for l in text.splitlines() if not re.match(r"\s*(rff|raw)\s*\|", l)
-                    for x in re.findall(r"\bacc\s+([\d.]+)", l)]
-        return max(accs) if accs else None
-    for p in PRIMARY_RE.get(cap, [r"\bEarth4D\s+([\d.]+)"]):
-        m = re.search(p, text)
-        if m:
-            return float(m.group(1))
-    return None
 
 
 def _bottleneck(fair, primary) -> str:
@@ -392,18 +328,35 @@ def main() -> None:
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
 
     print(f"[trace] OBJECTIVE={a.metric}  probe='{a.probe}'  tag={tag}", flush=True)
-    rc = _run(a.probe_module, a.probe, a.device, log_path)
+    result_path = str(Path(log_path).with_suffix(".result.json"))
+    rc = _run(a.probe_module, a.probe, a.device, log_path, result_path, a.metric)
     text = Path(log_path).read_text(errors="ignore")
-    header, gains, metrics = _parse(text)
     if rc != 0:
         print(text[-1800:])
         sys.exit(f"[trace] probe FAILED (rc={rc}); see {log_path}")
 
-    primary = _primary(text, a.metric)
-    fair, fair_base = _fair_gain(gains)
+    # The probe DECLARES what it measured. Nothing here parses stdout: a mode that does not emit a
+    # contract cannot set a record, which is the point -- the old parser always produced *something*.
+    try:
+        result = ProbeResult.read(result_path)
+    except (ContractError, OSError) as exc:
+        sys.exit(f"[trace] probe emitted no usable result contract: {exc}\n"
+                 f"        log preserved at {log_path}; no record was written")
+    if result.diagnostic:
+        sys.exit(f"[trace] {result.mode} is a DIAGNOSTIC and cannot set a record: "
+                 f"{result.diagnostic_reason}\n        log preserved at {log_path}")
+    if result.capability != a.metric:
+        sys.exit(f"[trace] probe measured {result.capability!r} but --metric declared {a.metric!r}; "
+                 f"refusing to record a different question's answer")
+
+    primary = result.primary.value
+    fair, fair_base = result.fair_gain(FAIR_ORDER)
     bottleneck = _bottleneck(fair, primary)
-    mode = _mode(header)
-    shards = _shards(a.probe)
+    mode = result.mode
+    shards = result.n_shards
+    header = result.render()
+    gains = dict(result.gains)
+    metrics = [f"{k} = {v}" for k, v in sorted(result.baselines.items())]
 
     # RECORD tracking + full run LEDGER (taxonomy: never lose a run's result; publish win OR dead-end w/ reason) --
     recs = preflight_records

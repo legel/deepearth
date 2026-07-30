@@ -1033,7 +1033,13 @@ def main(argv=None):
             metric="family_top1_accuracy",
             value=fus_acc,
             split=mode,
-            gains={"ENV vs best-coord-PE": env_acc - best_coord,
+            # "ENV vs best-coord-PE" is the CHANNEL's advantage over coordinates, not the encoder's.
+            # Without an explicit Earth4D-vs-generic-PE entry the harness's fair-baseline preference
+            # matched "best-coord" and read +0.0411 as an encoder gain -- diagnosing ENCODER-LIMITED
+            # when Earth4D alone (0.0938) actually LOSES to RFF (0.1010) and the true read is
+            # INPUT-LIMITED. The encoder-vs-PE gain has to be stated for the diagnosis to be right.
+            gains={"Earth4D vs RFF": e4d_acc - rff_acc,
+                   "ENV vs best-coord-PE": env_acc - best_coord,
                    "fused vs best-coord-PE": fus_acc - best_coord},
             baselines={"raw": raw_acc, "RFF": rff_acc, "earth4d": e4d_acc, "env": env_acc,
                        "best-coord-PE": best_coord},
