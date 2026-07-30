@@ -35,6 +35,8 @@ biology follows; a coordinate is not the science, the environment at that coordi
 Both default-off; the no-flag path is byte-identical.
 """
 PROBE_MODULE = "deepearth.autoresearch.programs.spacetime.probe"
+# Must match agents/earth4d/trace.py PROTOCOL. Bump both when a change alters what a run MEASURES.
+PROTOCOL_VERSION = "v2-leakfix"
 _TRACE_AUTHORIZED = False
 if __name__ == "__main__":
     import sys as _entry_sys
@@ -72,6 +74,54 @@ from deepearth.autoresearch.programs.spacetime.recurrence import (
     validate_dynamic_target_causality,
     require_recorded_entrypoint,
 )
+
+
+_RESULT_SINK = {"path": "", "capability": "", "protocol": "", "flags": "", "seed": None,
+                "steps": None, "n_shards": None, "trained_encoder": False}
+
+
+def _set_result_sink(path, capability, protocol, args):
+    """Arm the result contract for this run. Called once, right after parse_args."""
+    _RESULT_SINK.update({
+        "path": path or "", "capability": capability or "", "protocol": protocol,
+        "flags": " ".join(sys.argv[1:]), "seed": getattr(args, "seed", None),
+        "steps": getattr(args, "steps", None), "n_shards": getattr(args, "n_shards", None),
+        "trained_encoder": bool(getattr(args, "train_encoder", False)),
+    })
+
+
+def declare(capability, mode, metric, value, gains=None, baselines=None, split="", **extras):
+    """Declare WHAT this run measured, in the contract's terms.
+
+    A mode calls this immediately before returning. Fields the run already knows (seed, steps, shard
+    count, protocol, whether the encoder was trained) come from the armed sink rather than being
+    re-derived, so they cannot drift from the actual invocation.
+
+    `--capability` from the harness wins over the mode's natural default when both are present: the
+    harness declared the objective, and any mismatch is the harness's to detect.
+    """
+    from deepearth.autoresearch.programs.spacetime.probe_contract import Primary, ProbeResult
+
+    result = ProbeResult(
+        capability=_RESULT_SINK["capability"] or capability,
+        mode=mode,
+        primary=Primary(metric, float(value)),
+        protocol=_RESULT_SINK["protocol"],
+        split=split,
+        n_shards=_RESULT_SINK["n_shards"],
+        seed=_RESULT_SINK["seed"],
+        steps=_RESULT_SINK["steps"],
+        trained_encoder=_RESULT_SINK["trained_encoder"],
+        gains=dict(gains or {}),
+        baselines=dict(baselines or {}),
+        flags=_RESULT_SINK["flags"],
+        extras=dict(extras),
+    ).validate()
+    if _RESULT_SINK["path"]:
+        result.write(_RESULT_SINK["path"])
+        print(f"[probe] result -> {_RESULT_SINK['path']}  identity={result.identity_digest()}",
+              flush=True)
+    return result
 
 
 def load_obs(cache: str, n_shards: int, with_time: bool = False, with_gid: bool = False):
@@ -600,7 +650,15 @@ def main(argv=None):
     ap.add_argument("--construct_feature", default="range", choices=["range","breadth","both","nichebreadth","nichebreadth_env","allbreadth"])
     ap.add_argument("--construct_shuffle", action="store_true")
     ap.add_argument("--construct_only", default="")
+    # The result contract (probe_contract.py). --capability is what the harness DECLARED as its
+    # objective; a mode supplies its own natural capability when the probe is run standalone. The
+    # harness asserts the two agree, so a probe cannot quietly answer a different question.
+    ap.add_argument("--result-json", dest="result_json", default="",
+                    help="write a ProbeResult here; the harness reads this instead of parsing stdout")
+    ap.add_argument("--capability", default="",
+                    help="the capability the harness declared as its objective")
     a = ap.parse_args(argv)
+    _set_result_sink(a.result_json, a.capability, PROTOCOL_VERSION, a)
     if not _TRACE_AUTHORIZED:
         authorization_argv = sys.argv[1:] if argv is None else list(argv)
         require_recorded_entrypoint(
@@ -898,6 +956,23 @@ def main(argv=None):
         print(f"  held-out top5 acc   | raw {raw_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f} || ENV {env_t5:.4f} | Earth4D+ENV {fus_t5:.4f}")
         print(f"  [profile] earth4d_dim={e4d.shape[1]} env_dim={env.shape[1]} frac_held={test.mean():.3f} head_hidden={a.head_hidden} steps={a.steps} forecast={a.forecast}")
         print(f"  {len(lat)} obs in {dt:.1f}s")
+        # The record's primary for family_from_env is the FUSED Earth4D+ENV accuracy; the old harness
+        # recovered it by matching r"Earth4D\+ENV\s+([\d.]+)" against the first line that happened to
+        # contain it, which is the top1 row only because top1 prints before top5.
+        declare(
+            capability="family_from_env",
+            mode=f"ENV({mode})",
+            metric="family_top1_accuracy",
+            value=fus_acc,
+            split=mode,
+            gains={"ENV vs best-coord-PE": env_acc - best_coord,
+                   "fused vs best-coord-PE": fus_acc - best_coord},
+            baselines={"raw": raw_acc, "RFF": rff_acc, "earth4d": e4d_acc, "env": env_acc,
+                       "best-coord-PE": best_coord},
+            obs=len(lat), held_out=int(test.sum()), families=n_fam, env_dim=int(env.shape[1]),
+            earth4d_dim=int(e4d.shape[1]), seconds=dt,
+            top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5, "env": env_t5, "fused": fus_t5},
+        )
         return {"st_gain": env_acc - best_coord, "st_gain_fused": fus_acc - best_coord,
                 "env_acc": env_acc, "fused_acc": fus_acc, "earth4d_acc": e4d_acc, "rff_acc": rff_acc,
                 "raw_acc": raw_acc, "best_coord_pe": best_coord, "obs": len(lat), "seconds": dt, "env": True}
