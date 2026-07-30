@@ -294,7 +294,7 @@ class Earth4D(nn.Module):
             raise ImportError("HashEncoder is required for Earth4D. Please install the hash encoding library.")
         self.spatial_log2_hashmap_size = spatial_log2_hashmap_size; self.temporal_log2_hashmap_size = temporal_log2_hashmap_size
         self.spatial_dim = spatial_levels * features_per_level
-        self.spatiotemporal_dim = temporal_levels * features_per_level        # one joint 4D field
+        self.spatiotemporal_dim = temporal_levels * features_per_level * 3    # 3 projections
         self.output_dim = self.spatial_dim + self.spatiotemporal_dim
 
         spatial_max_res = int(base_spatial_resolution * (growth_factor ** (spatial_levels - 1)))
@@ -331,23 +331,17 @@ class Earth4D(nn.Module):
             base_resolution=int(base_spatial_resolution), log2_hashmap_size=spatial_log2_hashmap_size,
             desired_resolution=xyz_max_res, enable_learned_probing=enable_learned_probing,
             probing_range=probing_range, index_codebook_size=index_codebook_size)
-        self._unused_xyt = HashEncoder(
+        self.xyt_encoder = HashEncoder(
             input_dim=3, num_levels=temporal_levels, level_dim=features_per_level, per_level_scale=xyt_scale,
             base_resolution=temporal_base_res, log2_hashmap_size=temporal_log2_hashmap_size,
             desired_resolution=xyt_max_res, enable_learned_probing=enable_learned_probing,
             probing_range=probing_range, index_codebook_size=index_codebook_size)
-        self.xyzt_encoder = HashEncoder(
-            input_dim=4, num_levels=temporal_levels, level_dim=features_per_level,
-            per_level_scale=2.0, base_resolution=16,
-            log2_hashmap_size=temporal_log2_hashmap_size,
-            enable_learned_probing=enable_learned_probing,
-            probing_range=probing_range, index_codebook_size=index_codebook_size)
-        self._unused_yzt = HashEncoder(
+        self.yzt_encoder = HashEncoder(
             input_dim=3, num_levels=temporal_levels, level_dim=features_per_level, per_level_scale=yzt_scale,
             base_resolution=temporal_base_res, log2_hashmap_size=temporal_log2_hashmap_size,
             desired_resolution=yzt_max_res, enable_learned_probing=enable_learned_probing,
             probing_range=probing_range, index_codebook_size=index_codebook_size)
-        self._unused_xzt = HashEncoder(
+        self.xzt_encoder = HashEncoder(
             input_dim=3, num_levels=temporal_levels, level_dim=features_per_level, per_level_scale=xzt_scale,
             base_resolution=temporal_base_res, log2_hashmap_size=temporal_log2_hashmap_size,
             desired_resolution=xzt_max_res, enable_learned_probing=enable_learned_probing,
@@ -355,7 +349,7 @@ class Earth4D(nn.Module):
         # a relative-only field never reads the four absolute projections, so it can opt out of carrying them
         self.enable_absolute = enable_absolute
         if not enable_absolute:
-            self.xyz_encoder = self.xyzt_encoder = None
+            self.xyz_encoder = self.xyt_encoder = self.yzt_encoder = self.xzt_encoder = None
 
         # Relative (translation-equivariant) channel: encode the OFFSET between two observations so a learned
         # pattern transfers across absolute position/time. Window fits the offset distribution; four 3D projections.
@@ -462,22 +456,13 @@ class Earth4D(nn.Module):
         return self.xyz_encoder(xyz, size=1.0)
 
     def _encode_spatiotemporal(self, xyzt: torch.Tensor) -> torch.Tensor:
-        """ONE joint 4D hash lookup, replacing three 3D marginals.
-
-        The tri-plane (xyt, yzt, xzt) is a FACTORIZATION: it stores 4D structure as three 3D marginals
-        and hands them to a head that can only take a weighted sum of them. Anything the joint contains
-        but the marginals do not is unrepresentable, however the head is trained. For
-        species-from-spacetime the label is exactly such a term — a species is present at this place AND
-        in this season, and neither marginal implies it. Multiplying the planes was tried
-        (exp/triplane-conjunction, -0.0001), which is what you would expect if the missing structure is
-        not a product of marginals either.
-
-        HashEncoder is already parameterized by input_dim, so the joint costs one lookup: hash
-        (x, y, z, t) directly. Same table budget, same level count, more collisions — which is what a
-        hash is for. The joint is represented rather than approximated.
-        """
         t_scaled = (xyzt[..., 3:] * 2 - 1) * 0.9
-        return self.xyzt_encoder(torch.cat([xyzt[..., :3], t_scaled], dim=-1), size=1.0)
+        xyzt_scaled = torch.cat([xyzt[..., :3], t_scaled], dim=-1)
+        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
+        yzt = xyzt_scaled[..., 1:]
+        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
+        return torch.cat([self.xyt_encoder(xyt, size=1.0), self.yzt_encoder(yzt, size=1.0),
+                          self.xzt_encoder(xzt, size=1.0)], dim=-1)
 
     def _learnable_freq(self, norm: torch.Tensor) -> torch.Tensor:
         """Learnable per-axis frequency (scale + center), bounded to [-0.9, 0.9] by tanh."""
@@ -504,7 +489,7 @@ class Earth4D(nn.Module):
                        torch.cat([norm[..., :2], t], dim=-1),
                        torch.cat([norm[..., 1:3], t], dim=-1),
                        torch.cat([norm[..., :1], norm[..., 2:3], t], dim=-1)]
-        encoders = [self.xyz_encoder, self.xyzt_encoder]
+        encoders = [self.xyz_encoder, self.xyt_encoder, self.yzt_encoder, self.xzt_encoder]
         feats = [enc(proj, size=1.0).reshape(*proj.shape[:-1], L, F) for enc, proj in zip(encoders, projections)]
         return torch.stack(feats, dim=-3)
 
