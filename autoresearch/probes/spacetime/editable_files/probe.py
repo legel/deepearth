@@ -193,8 +193,8 @@ CONFIG = {
     "whiten": False,           # PCA-whiten the encoder output (fit on train rows)
     "standardize": False,      # per-dimension mean/std of the encoder output (fit on train rows)
     "tile": 64,                 # sparse tile coding: per-level one-hot cell code of this width
-    "tile_replace": True,     # tile coding REPLACES the hash blocks instead of joining them
-    "tile_time": False,        # tile the SPACE-TIME cell rather than the spatial cell
+    "tile_replace": False,     # tile coding REPLACES the hash blocks instead of joining them
+    "tile_time": True,        # tile the SPACE-TIME cell rather than the spatial cell
     "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
 }
 @dataclass
