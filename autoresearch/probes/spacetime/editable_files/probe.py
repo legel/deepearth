@@ -188,8 +188,8 @@ CONFIG = {
     "elm_scale": 1.0,
     "stencil": 0,              # local field average of the spatial lookup instead of a point sample
     "stencil_radius": 0.002,
-    "coord_shrink": 0.25,       # <1 coarsens every hash level at once (directed follow-up to extent_fit)
-    "spatial_ensemble": 0,     # spend the space-time budget on three purely SPATIAL tables instead
+    "coord_shrink": 1.0,       # <1 coarsens every hash level at once (directed follow-up to extent_fit)
+    "spatial_ensemble": 1,     # spend the space-time budget on three purely SPATIAL tables instead
     "whiten": False,           # PCA-whiten the encoder output (fit on train rows)
     "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
 }
