@@ -292,7 +292,8 @@ class Earth4D(nn.Module):
                  tile_levels: int = 18,
                  tile_replace: bool = False,
                  tile_time: bool = False,
-                 tile_offsets: int = 1):
+                 tile_offsets: int = 1,
+                 tile_quantile: bool = False):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -560,6 +561,12 @@ class Earth4D(nn.Module):
         # displaced tilings of the same resolution vote instead, so the code degrades smoothly
         # across a boundary rather than switching discontinuously.
         self.tile_offsets = max(int(tile_offsets), 1)
+        # tile_quantile: EQUAL-OCCUPANCY tiles. A uniform grid over a corpus this clustered spends
+        # most of its indicators on cells no observation ever falls in, and lumps the dense areas
+        # together. Warping each axis through its TRAIN empirical CDF first makes every tile carry
+        # about the same number of observations, which is the most informative a categorical code
+        # can be. (This is NOT extent_fit, which rescaled the axes linearly and cost -0.0199.)
+        self.tile_quantile = bool(tile_quantile); self._q_knots = None
         if self.tile > 0 and self.tile_offsets > 1:
             g = torch.Generator().manual_seed(1234)
             self.register_buffer('_tile_off', torch.rand(self.tile_offsets, 3, generator=g))
@@ -648,6 +655,11 @@ class Earth4D(nn.Module):
         occur in this cell". Same multi-resolution ladder, categorical instead of interpolated.
         """
         xyz = norm_coords[..., :3]
+        if self.tile_quantile and self._q_knots is not None:
+            k = self._q_knots.to(xyz.device)                       # (3, K) sorted train quantiles per axis
+            r = torch.stack([torch.searchsorted(k[d].contiguous(), xyz[..., d].contiguous())
+                             for d in range(3)], dim=-1).float()
+            xyz = (r / k.shape[1]) * 2.0 - 1.0                     # rank -> uniform on [-1, 1]
         out = []
         for lvl in range(self.tile_levels):
           res = self.base_spatial_resolution * (self.growth_factor ** lvl)
@@ -662,6 +674,14 @@ class Earth4D(nn.Module):
             out.append(torch.nn.functional.one_hot(
                 (h + (lvl * self.tile_offsets + off) * 2654435761) % self.tile, num_classes=self.tile).float())
         return torch.cat(out, dim=-1)
+
+    def fit_tile_quantiles(self, coords: torch.Tensor, knots: int = 512) -> 'Earth4D':
+        """Per-axis empirical quantiles of the TRAIN coordinates, for equal-occupancy tiles."""
+        with torch.no_grad():
+            n = self._normalize_coords(coords)[..., :3]
+            qs = torch.linspace(0.0, 1.0, knots, device=n.device)
+            self._q_knots = torch.stack([torch.quantile(n[..., d], qs) for d in range(3)], dim=0)
+        return self
 
     def _learnable_freq(self, norm: torch.Tensor) -> torch.Tensor:
         """Learnable per-axis frequency (scale + center), bounded to [-0.9, 0.9] by tanh."""
