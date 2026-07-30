@@ -194,6 +194,7 @@ CONFIG = {
     "standardize": False,      # per-dimension mean/std of the encoder output (fit on train rows)
     "tile": 64,                 # sparse tile coding: per-level one-hot cell code of this width
     "tile_replace": False,     # tile coding REPLACES the hash blocks instead of joining them
+    "tile_time": False,        # tile the SPACE-TIME cell rather than the spatial cell
     "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
 }
 @dataclass
@@ -827,7 +828,7 @@ def main(argv=None):
                   time_period=(365.25 / tspan if CONFIG["forecast"] and CONFIG["seasonal_time"] else 0.0),
                   coord_shrink=CONFIG["coord_shrink"], spatial_ensemble=CONFIG["spatial_ensemble"],
                   whiten=CONFIG["whiten"], standardize=CONFIG["standardize"],
-                  tile=CONFIG["tile"], tile_replace=CONFIG["tile_replace"],
+                  tile=CONFIG["tile"], tile_replace=CONFIG["tile_replace"], tile_time=CONFIG["tile_time"],
                   coordinate_system=("geographic" if CONFIG["geographic"] else "ecef"),
                   ).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
     if CONFIG["whiten"]:

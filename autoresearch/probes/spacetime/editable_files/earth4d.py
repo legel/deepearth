@@ -290,7 +290,8 @@ class Earth4D(nn.Module):
                  standardize: bool = False,
                  tile: int = 0,
                  tile_levels: int = 18,
-                 tile_replace: bool = False):
+                 tile_replace: bool = False,
+                 tile_time: bool = False):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -549,6 +550,10 @@ class Earth4D(nn.Module):
         # rows makes the output isotropic, changing the geometry the head actually sees.
         self.whiten = bool(whiten); self.standardize = bool(standardize)
         self.tile = int(tile); self.tile_levels = int(tile_levels); self.tile_replace = bool(tile_replace)
+        # tile_time: the SPACE-TIME cell, categorically. The space-time planes failed as interpolated
+        # embeddings (dropping them entirely costs 0.0021); the same conjunction as a sparse cell
+        # indicator is a different representation of the same structure.
+        self.tile_time = bool(tile_time)
         if self.tile > 0:
             if self.tile_replace:
                 self.output_dim = self.output_dim - self.spatial_dim - self.spatiotemporal_dim
@@ -639,6 +644,10 @@ class Earth4D(nn.Module):
             res = self.base_spatial_resolution * (self.growth_factor ** lvl)
             cell = torch.floor((xyz + 1.0) * 0.5 * res).long()
             h = (cell[..., 0] * 73856093) ^ (cell[..., 1] * 19349663) ^ (cell[..., 2] * 83492791)
+            if self.tile_time:
+                tcell = torch.floor(norm_coords[..., 3] * self.base_temporal_resolution
+                                    * (self.temporal_growth_factor ** lvl)).long()
+                h = h ^ (tcell * 50331653)
             out.append(torch.nn.functional.one_hot(
                 (h + lvl * 2654435761) % self.tile, num_classes=self.tile).float())
         return torch.cat(out, dim=-1)
