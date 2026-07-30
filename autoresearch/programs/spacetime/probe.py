@@ -64,6 +64,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.encoders.spacetime.earth4d import Earth4D
+from deepearth.autoresearch.programs.spacetime import probe_modes_tables
+from deepearth.autoresearch.programs.spacetime.probe_emit import (
+    PHENO_RAW_REASON,
+    RAW_PE_REASON,
+    _set_result_sink,
+    declare,
+)
 from deepearth.autoresearch.programs.spacetime.recurrence import (
     DEFAULT_TIME_HORIZON,
     normalize_forecast_time,
@@ -76,72 +83,12 @@ from deepearth.autoresearch.programs.spacetime.recurrence import (
 )
 
 
-PHENO_RAW_REASON = (
-    "this phenology direction runs on RAW spatial features only (Earth4D settled neutral here), "
-    "so its numbers cannot speak to the encoder"
-)
-
-RAW_PE_REASON = (
-    "this mode evaluates propagator architectures on RAW coordinate features only -- Earth4D is "
-    "not in the comparison, so its numbers cannot speak to the encoder"
-)
-
-_RESULT_SINK = {"path": "", "capability": "", "protocol": "", "flags": "", "seed": None,
-                "steps": None, "n_shards": None, "trained_encoder": False}
 
 
-def _set_result_sink(path, capability, protocol, args):
-    """Arm the result contract for this run. Called once, right after parse_args."""
-    _RESULT_SINK.update({
-        "path": path or "", "capability": capability or "", "protocol": protocol,
-        "flags": " ".join(sys.argv[1:]), "seed": getattr(args, "seed", None),
-        "steps": getattr(args, "steps", None), "n_shards": getattr(args, "n_shards", None),
-        "trained_encoder": bool(getattr(args, "train_encoder", False)),
-    })
 
 
-def declare(capability, mode, metric, value, gains=None, baselines=None, split="",
-            trained_encoder=None, diagnostic=False, diagnostic_reason="", **extras):
-    """Declare WHAT this run measured, in the contract's terms.
 
-    A mode calls this immediately before returning. Fields the run already knows (seed, steps, shard
-    count, protocol, whether the encoder was trained) come from the armed sink rather than being
-    re-derived, so they cannot drift from the actual invocation.
 
-    `--capability` from the harness wins over the mode's natural default when both are present: the
-    harness declared the objective, and any mismatch is the harness's to detect.
-
-    `trained_encoder` defaults to the --train_encoder FLAG, but some modes (FIELD-DECODE, ENV-DECODE)
-    train the encoder end-to-end unconditionally, so they pass it explicitly. Only the trained protocol
-    can support a claim about learned hash state, so this field must describe what actually happened
-    rather than what was requested.
-    """
-    from deepearth.autoresearch.programs.spacetime.probe_contract import Primary, ProbeResult
-
-    result = ProbeResult(
-        capability=_RESULT_SINK["capability"] or capability,
-        mode=mode,
-        primary=Primary(metric, float(value)),
-        protocol=_RESULT_SINK["protocol"],
-        split=split,
-        n_shards=_RESULT_SINK["n_shards"],
-        seed=_RESULT_SINK["seed"],
-        steps=_RESULT_SINK["steps"],
-        trained_encoder=(_RESULT_SINK["trained_encoder"] if trained_encoder is None
-                         else bool(trained_encoder)),
-        gains=dict(gains or {}),
-        baselines=dict(baselines or {}),
-        flags=_RESULT_SINK["flags"],
-        extras=dict(extras),
-        diagnostic=bool(diagnostic),
-        diagnostic_reason=diagnostic_reason,
-    ).validate()
-    print(result.render(), flush=True)          # the ONE human-readable block, derived from the result
-    if _RESULT_SINK["path"]:
-        result.write(_RESULT_SINK["path"])
-        print(f"[probe] result -> {_RESULT_SINK['path']}  identity={result.identity_digest()}",
-              flush=True)
-    return result
 
 
 def load_obs(cache: str, n_shards: int, with_time: bool = False, with_gid: bool = False):
@@ -700,101 +647,19 @@ def main(argv=None):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(a.seed)
 
-    if a.env_construct:
-        r = env_construct(a.cache_dir, seed=a.seed, construct=a.construct,
-                          feature=a.construct_feature, holdout=a.holdout, shuffle=a.construct_shuffle, only=a.construct_only)
-        print(f"  n_labeled_used={r['n_labeled_used']} n_classes={r['n_classes']} held_out={r['held_out']}")
-        print(f"  FLOOR acc {r['floor_acc']:.4f} bacc {r['floor_bacc']:.4f}  |  FEAT acc {r['acc']:.4f} bacc {r['bacc']:.4f}  |  Spearman(ord) {r['spearman_ord']:+.4f}")
-        print(f"  univar Spearman: {r['univar_spearman']}")
-        declare(
-            capability="", mode=f"ENV-CONSTRUCT({r['construct']}<-{r['feature']})", metric="acc",
-            value=r["acc"],
-            diagnostic=True,
-            diagnostic_reason=f"{r['construct']} is a species-level construct, not a scorecard capability",
-            floor_acc=r["floor_acc"], floor_bacc=r["floor_bacc"], bacc=r["bacc"],
-            spearman_ord=r["spearman_ord"], n_labeled_used=r["n_labeled_used"],
-            n_classes=r["n_classes"], held_out=r["held_out"], shuffle_null=r["shuffle_null"],
-        )
-        return r
+    # Modes that never touch the encoder: env -> identity from precomputed tables (DATA lever only).
+    for _flag, _mode in (
+        (a.env_construct, probe_modes_tables.env_construct_mode),
+        (a.cooccur, probe_modes_tables.cooccur_mode),
+        (a.sdm_presence, probe_modes_tables.sdm_presence_mode),
+        (a.sdm_hard, probe_modes_tables.sdm_hard_mode),
+    ):
+        if _flag:
+            return _mode(a, env_construct=env_construct)
 
-    if a.cooccur:
-        import sys as _sys; _sys.path.insert(0, '/workspace')
-        from deepearth.autoresearch.programs.spacetime.dyntargets import cooccur_routing
-        r = cooccur_routing(a.cache_dir, thresh=a.cooccur_thresh, seed=a.seed,
-                            mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file,
-                            env_channels=a.cooccur_channels)
-        print(f"  query_sp={r['n_query_sp']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
-        print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
-        print(f"  [leak-guard] {r['leak_guard']}")
-        declare(
-            capability="community_from_env",
-            mode="COOCCUR-ROUTING",
-            metric="micro_AP_feat",
-            value=r["micro_AP_feat"],
-            split=f"mech={r['mechanism']}",
-            gains={"GAIN": r["gain_over_prevalence"]},
-            baselines={"prevalence": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
-            mechanism=r["mechanism"], thresh=r["thresh"], cooccur_file=r["cooccur_file"],
-            n_query_sp=r["n_query_sp"], n_cand_sp=r["n_cand_sp"], feat_dim=r["feat_dim"],
-            lift_over_baserate=r["lift_over_baserate"], leak_guard=r["leak_guard"],
-        )
-        return r
 
-    if a.sdm_presence:
-        import sys as _sys; _sys.path.insert(0, '/workspace')
-        from deepearth.autoresearch.programs.spacetime.dyntargets import sdm_presence
-        r = sdm_presence(a.cache_dir, seed=a.seed, mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file)
-        print(f"  query_cells={r['n_query_cells']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
-        print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
-        print(f"  [leak-guard] {r['leak_guard']}")
-        declare(
-            capability="species_from_env",
-            mode="SDM-PRESENCE",
-            metric="micro_AP_feat",
-            value=r["micro_AP_feat"],
-            split=f"mech={r['mechanism']}",
-            gains={"GAIN": r["gain_over_prevalence"]},
-            baselines={"prevalence": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
-            mechanism=r["mechanism"], n_query_cells=r["n_query_cells"], n_cand_sp=r["n_cand_sp"],
-            feat_dim=r["feat_dim"], lift_over_baserate=r["lift_over_baserate"],
-            leak_guard=r["leak_guard"],
-        )
-        return r
 
-    if a.sdm_hard:
-        import sys as _sys; _sys.path.insert(0, '/workspace')
-        from deepearth.autoresearch.programs.spacetime.dyntargets import sdm_presence_hard
-        import numpy as _np
-        runs = []
-        for sd in range(a.seed, a.seed + a.sdm_seeds):
-            r = sdm_presence_hard(a.cache_dir, seed=sd, mechanism=a.cooccur_mech,
-                                  cell_deg=a.sdm_cell_deg, holdout_mode=a.sdm_holdout_mode,
-                                  block_deg=a.sdm_block_deg, env_channels=a.sdm_channels,
-                                  add_time=a.sdm_time, cooccur_file=a.cooccur_file)
-            runs.append(r)
-        aps = _np.array([x['micro_AP_feat'] for x in runs])
-        gns = _np.array([x['gain_over_prevalence'] for x in runs])
-        r0 = runs[0]
-        print(f"  query_cells={r0['n_query_cells']} train_cells={r0['n_train_cells']} cand_sp={r0['n_cand_sp']} "
-              f"feat_dim={r0['feat_dim']} base_rate={r0['micro_AP_baserate']:.4f}")
-        print(f"  micro-AP(feat) {aps.mean():.4f} +/- {aps.std():.4f} | prevalence {r0['micro_AP_prevalence']:.4f} | "
-              f"GAIN {gns.mean():+.4f} +/- {gns.std():.4f} | lift {r0['lift_over_baserate']:.2f}x")
-        print(f"  [leak-guard] {r0['leak_guard']}")
-        declare(
-            capability="species_from_env",
-            mode="SDM-HARD",
-            metric="micro_AP_feat",
-            value=float(aps.mean()),
-            split=f"{r0['holdout_mode']}({r0['block_deg']}deg)/grid{r0['cell_deg']}deg",
-            gains={"GAIN": float(gns.mean())},
-            baselines={"prevalence": r0["micro_AP_prevalence"], "baserate": r0["micro_AP_baserate"]},
-            mechanism=r0["mechanism"], env_channels=r0["env_channels"], add_time=r0["add_time"],
-            sdm_seeds=a.sdm_seeds, ap_std=float(aps.std()), gain_std=float(gns.std()),
-            n_query_cells=r0["n_query_cells"], n_train_cells=r0["n_train_cells"],
-            n_cand_sp=r0["n_cand_sp"], feat_dim=r0["feat_dim"], leak_guard=r0["leak_guard"],
-        )
-        return {'runs': runs, 'ap_mean': float(aps.mean()), 'ap_std': float(aps.std()),
-                'gain_mean': float(gns.mean()), 'gain_std': float(gns.std())}
+
 
     t0 = time.time()
     need_gid = a.env or a.env_decode or a.pheno_env
