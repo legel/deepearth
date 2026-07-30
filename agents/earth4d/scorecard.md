@@ -84,7 +84,7 @@ Fast frozen-encoder probes. `fair_gain` = Earth4D − the strongest fair baselin
 | community_from_env | **0.8845** | micro-AP | **+0.4570** | GAIN | COOCCUR-ROUTING | 12 | v2-leakfix |
 | species_from_env | **0.6275** | micro-AP | **+0.4000** | GAIN | SDM-PRESENCE | 16 | v2-leakfix |
 | calibration | **0.5910** | AUROC conf→correct | — | *none reported* | *none* | 8 | v2-leakfix |
-| family_from_spacetime | **0.1914** | acc | **+0.0917** | trained_rff | FORECAST(past→future) | 12 | v2-leakfix |
+| family_from_spacetime | **0.1769** | acc | **+0.0772** | RFF | FORECAST(past→future) | 12 | v2-leakfix |
 | family_from_env | **0.1423** | acc | **+0.0411** | best-coord-PE | ENV | 12 | v2-leakfix |
 | flowering_peak_month | **0.0521** | within-tol acc | **+0.0087** | RFF | PHENOLOGY-FUTURE | 12 | v2-leakfix |
 | species_from_spacetime | **0.0512** | acc | **+0.0432** | RFF | FORECAST | 12 | v2-leakfix |
@@ -93,12 +93,15 @@ Reads:
 - **calibration** reports no fair baseline, so its bottleneck is undiagnosable and 0.5910 is barely
   above the 0.5 useless floor. Its stored probe uses `--feature/--ensemble`, which belong to
   `calib_probe.py`, not `probe.py` — the record cannot currently be reproduced through the harness.
-- **family_from_spacetime** 0.1914 is **unreproducible under current code**. It was set by an automated
-  run (`exp58_..._causal_clock_second_jet`, 2026-07-30T06:34) claiming `fair_baseline=trained_rff`, but
-  no probe mode in the tree emits a `trained_rff` gain, and replaying its exact stored command
-  (`--forecast --target family --head_hidden 256 --n_shards 12 --steps 800`) yields `st_gain(vs RFF)
-  +0.0481`, not +0.0917. The code that produced the board's headline encoder-vs-PE number is gone.
-  Treat 0.1914 / +0.0917 as unverified until re-run deliberately.
+- **family_from_spacetime** was **invalidated on 2026-07-30** and restored to 0.1769. A second agent tree
+  on the box (`/workspace/codex-earth4d-native-fb35a7f`, its own harness and `--causal_clock_*` flags)
+  walked the record 0.1769 → 0.19143524765968323 in seven accepted single-seed steps
+  (+0.0007 / +0.0008 / +0.0112 / +0.0005 / +0.0002 / +0.0006 / +0.0006), each stacking another
+  `--causal_*` flag on the same held-out split. Every delta is inside single-seed noise and the walk is a
+  maximum selected over repeated runs. It is also unreproducible here: nothing in this tree emits its
+  claimed `trained_rff` baseline, and replaying the stored command gives `st_gain(vs RFF) +0.0481`.
+  Prior state kept at `records.pre-invalidation-20260730.json`; the reason is in the ledger dead-ends.
+  **The board is shared and singular** — see `BOARD_FROZEN.md`.
 - **flowering_peak_month**'s stored probe passes `--pheno_env`, which is **silently ignored**: in
   `probe.py` the `if a.phenology:` block returns before the `--pheno_env/--pheno_disttarget/
   --pheno_taxon` and `--pheno_densefield` blocks can run. Verified — `--phenology --forecast` with
