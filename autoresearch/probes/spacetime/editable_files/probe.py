@@ -192,7 +192,7 @@ CONFIG = {
     "spatial_ensemble": 0,     # spend the space-time budget on three purely SPATIAL tables instead
     "whiten": False,           # PCA-whiten the encoder output (fit on train rows)
     "standardize": False,      # per-dimension mean/std of the encoder output (fit on train rows)
-    "tile": 0,                 # sparse tile coding: per-level one-hot cell code of this width
+    "tile": 64,                 # sparse tile coding: per-level one-hot cell code of this width
     "tile_replace": False,     # tile coding REPLACES the hash blocks instead of joining them
     "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
 }
