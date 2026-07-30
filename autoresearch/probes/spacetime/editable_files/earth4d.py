@@ -291,7 +291,8 @@ class Earth4D(nn.Module):
                  tile: int = 0,
                  tile_levels: int = 18,
                  tile_replace: bool = False,
-                 tile_time: bool = False):
+                 tile_time: bool = False,
+                 tile_offsets: int = 1):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -554,10 +555,18 @@ class Earth4D(nn.Module):
         # embeddings (dropping them entirely costs 0.0021); the same conjunction as a sparse cell
         # indicator is a different representation of the same structure.
         self.tile_time = bool(tile_time)
+        # tile_offsets: CMAC-style OVERLAPPING tilings. One tiling per level puts a hard boundary
+        # through the middle of a cell wherever the grid happens to fall; several randomly
+        # displaced tilings of the same resolution vote instead, so the code degrades smoothly
+        # across a boundary rather than switching discontinuously.
+        self.tile_offsets = max(int(tile_offsets), 1)
+        if self.tile > 0 and self.tile_offsets > 1:
+            g = torch.Generator().manual_seed(1234)
+            self.register_buffer('_tile_off', torch.rand(self.tile_offsets, 3, generator=g))
         if self.tile > 0:
             if self.tile_replace:
                 self.output_dim = self.output_dim - self.spatial_dim - self.spatiotemporal_dim
-            self.output_dim = self.output_dim + self.tile * self.tile_levels
+            self.output_dim = self.output_dim + self.tile * self.tile_levels * max(int(tile_offsets), 1)
         self._wh_mean = None; self._wh_W = None
         self._mean = None; self._std = None
 
@@ -641,15 +650,17 @@ class Earth4D(nn.Module):
         xyz = norm_coords[..., :3]
         out = []
         for lvl in range(self.tile_levels):
-            res = self.base_spatial_resolution * (self.growth_factor ** lvl)
-            cell = torch.floor((xyz + 1.0) * 0.5 * res).long()
+          res = self.base_spatial_resolution * (self.growth_factor ** lvl)
+          for off in range(self.tile_offsets):
+            shift = 0.0 if self.tile_offsets == 1 else self._tile_off[off] / res
+            cell = torch.floor(((xyz + 1.0) * 0.5 + shift) * res).long()
             h = (cell[..., 0] * 73856093) ^ (cell[..., 1] * 19349663) ^ (cell[..., 2] * 83492791)
             if self.tile_time:
                 tcell = torch.floor(norm_coords[..., 3] * self.base_temporal_resolution
                                     * (self.temporal_growth_factor ** lvl)).long()
                 h = h ^ (tcell * 50331653)
             out.append(torch.nn.functional.one_hot(
-                (h + lvl * 2654435761) % self.tile, num_classes=self.tile).float())
+                (h + (lvl * self.tile_offsets + off) * 2654435761) % self.tile, num_classes=self.tile).float())
         return torch.cat(out, dim=-1)
 
     def _learnable_freq(self, norm: torch.Tensor) -> torch.Tensor:

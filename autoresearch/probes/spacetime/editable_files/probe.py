@@ -828,7 +828,7 @@ def main(argv=None):
                   time_period=(365.25 / tspan if CONFIG["forecast"] and CONFIG["seasonal_time"] else 0.0),
                   coord_shrink=CONFIG["coord_shrink"], spatial_ensemble=CONFIG["spatial_ensemble"],
                   whiten=CONFIG["whiten"], standardize=CONFIG["standardize"],
-                  tile=CONFIG["tile"], tile_replace=CONFIG["tile_replace"], tile_time=CONFIG["tile_time"],
+                  tile=CONFIG["tile"], tile_replace=CONFIG["tile_replace"], tile_time=CONFIG["tile_time"], tile_offsets=CONFIG["tile_offsets"],
                   coordinate_system=("geographic" if CONFIG["geographic"] else "ecef"),
                   ).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
     if CONFIG["whiten"]:
