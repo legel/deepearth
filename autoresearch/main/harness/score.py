@@ -14,8 +14,8 @@ restricts it to the encoder's benchmark subset, and reports:
 The full-suite net_score is untouched -- this is an added lens, not a replacement (science.md rule 32).
 
 Usage:
-  python -m deepearth.autoresearch.main.score --log run.log [--encoder biological|spacetime|both]
-         [--champion autoresearch/main/champion_scores.json] [--json out.json] [--ensue-tag biological]
+  python -m deepearth.autoresearch.main.harness.score --log run.log [--encoder biological|spacetime|both]
+         [--champion autoresearch/main/state/champion_scores.json] [--json out.json] [--ensue-tag biological]
 """
 from __future__ import annotations
 import argparse
@@ -28,7 +28,7 @@ from typing import Dict, List, Optional, Tuple
 # --- reuse evaluate's OWN scoring maps so the encoder lens never redefines scoring (autoresearch.md rule) ---
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # <parent-of-deepearth> on path
-    from deepearth.autoresearch.main.evaluate import _net_value, is_diagnostic  # type: ignore
+    from deepearth.autoresearch.main.harness.evaluate import _net_value, is_diagnostic  # type: ignore
 except Exception:  # pragma: no cover - standalone log scoring without the heavy (torch) import
     _SCORE_FLOOR = 1e-3
     def is_diagnostic(k: str) -> bool:            # MIRROR of evaluate.is_diagnostic -- keep byte-identical

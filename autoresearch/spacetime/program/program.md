@@ -117,11 +117,33 @@ architecture.
 Capacity knobs (`spatial_levels`, `log2_hashmap`, `head_hidden`, `time_harmonics`) tune a winner — they
 are not the move.
 
+### An experiment is an EDIT on a BRANCH — not a new file, not a new flag
+
 ```
-   encoder edit:  back up ─► gate DEFAULT-OFF (champion byte-identical) ─► py_compile
-                          ─► wire the probe flag ─► scp ─► sweep ─► only a positive probe graduates
+   ① branch          git worktree add ../e4d-<tag> -b exp/<tag>
+   ② EDIT in place   change probe/ and encoders/spacetime/earth4d.py directly. No copy, no new
+                     module, no gated flag. The branch is the isolation.
+   ③ sweep           run it; the diff IS the experiment
+   ④ dies            delete the branch. The edit vanishes with it; Ensue keeps the reason.
+   ⑤ graduates       only then gate it default-off so the champion path stays byte-identical,
+                     and only then does a flag exist
 ```
-Before graduating an architectural win, confirm the champion doesn't already carry that prior.
+
+**Gate at graduation, not at conception.** This rule used to read "back up → gate DEFAULT-OFF → wire a
+probe flag" as the *first* step, and with no branch discipline that was the only isolation available. So
+every idea became permanent surface: **113 flags**, 19 `if a.<flag>:` branches, a 1,552-line `main()`,
+and when a flag felt too invasive, a copied file — `b42.py`, `diag2…diag8`, `mm_envrecon.py`,
+`*_sota.py`, 21 `champion_*.yaml`. Nothing ever said *remove the flag when the idea dies*, so nothing
+ever shrank, and every agent after paid the reading cost.
+
+The cost is not theoretical: `--phenology` silently shadows `--pheno_env`/`--pheno_taxon`/
+`--pheno_densefield` (≈120 unreachable lines, and a live record standing on an inert flag), and eight
+modes require `--forecast` through bare `assert`s buried mid-function.
+
+- **Never add a file to `probe/` for one idea.** Those files are the instrument; an experiment edits
+  them. A new module there is only justified when a mode is permanent and registered.
+- **A dead flag is a bug.** If an experiment ends, its flag and branch go with it.
+- Before graduating an architectural win, confirm the champion doesn't already carry that prior.
 
 ## Evidence standard — binding before any claim or scale-up
 

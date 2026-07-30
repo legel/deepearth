@@ -5,7 +5,7 @@ This is how the two encoder loops launch an experiment -- through programs/, so 
 with NO edit to train.py / evaluate.py / fusion.py.
 
 Usage (identical to train.py, plus optional --st-gain to build st_gain via the spacetime ablation):
-  python -m deepearth.autoresearch.main.run_experiment autoresearch/main/champion.yaml --tag bio_maskw --cache_dir ... [--st-gain]
+  python -m deepearth.autoresearch.main.harness.run_experiment autoresearch/main/instrument/champion.yaml --tag bio_maskw --cache_dir ... [--st-gain]
 """
 import sys
 

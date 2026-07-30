@@ -166,11 +166,11 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     construction; a dense/top-k attention is an interim approximation to be replaced, never the champion.
 
 30. **Report every champion improvement as before->after — always run the benchmarks and use `champion_report.py`.**
-    No SoTA champion is committed without `python -m deepearth.autoresearch.main.champion_report --log <run> --desc
+    No SoTA champion is committed without `python -m deepearth.autoresearch.main.harness.champion_report --log <run> --desc
     <result> --save`: the commit headline states the net score BEFORE->AFTER (harmonic mean + arithmetic), the body
     describes what changed / why / how, and an enumerated list reports every benchmark's before->after (delta) with an
     explicit regressions summary — no individual metric may regress. The helper diffs against the committed
-    `autoresearch/main/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
+    `autoresearch/main/state/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
 
 31. **Heads are DETACHED read-outs by default; the universal self-supervised reconstruction is inviolable.** The core
     learns ONE representation whose dense, always-available capabilities (species, family, vision, environment) are

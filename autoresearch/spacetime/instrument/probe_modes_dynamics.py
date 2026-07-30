@@ -29,7 +29,7 @@ def ar_rollout_mode(ctx):
     obs_index = ctx.obs_index
     assert a.forecast, "--ar_rollout requires --forecast"
     import numpy as _np
-    from deepearth.autoresearch.spacetime.experiments.dyntargets import (
+    from deepearth.autoresearch.spacetime.instrument.dyntargets import (
         _windows, _assemble, _reg_skill, _community_activity_target, _abundance_target, _richness_target)
     lat_a = lat.astype(_np.float32); lon_a = lon.astype(_np.float32)
     rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
@@ -196,7 +196,7 @@ def ar_cond_lead_mode(ctx):
     load_species = ctx.load_species
     assert a.forecast, "--ar_cond_lead requires --forecast"
     import numpy as _np
-    from deepearth.autoresearch.spacetime.experiments.dyntargets import (
+    from deepearth.autoresearch.spacetime.instrument.dyntargets import (
         _windows, _assemble, _reg_skill, _community_activity_target)
     lat_a = lat.astype(_np.float32); lon_a = lon.astype(_np.float32)
     rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
@@ -296,7 +296,7 @@ def breadth_mode(ctx):
     obs_index = ctx.obs_index
     assert a.forecast, "--breadth_target requires --forecast"
     import numpy as _np
-    from deepearth.autoresearch.spacetime.experiments.dyntargets import (
+    from deepearth.autoresearch.spacetime.instrument.dyntargets import (
         _windows, _assemble, _reg_skill, _occupancy_target, _richness_target, _community_activity_target)
     coords_ll = torch.tensor(_np.stack([lat, lon], 1).astype(_np.float32))
     lat_a = coords_ll[:, 0].numpy(); lon_a = coords_ll[:, 1].numpy()
@@ -420,7 +420,7 @@ def prop_arch_mode(ctx):
     # leak-guarded window builder + target; define deeper/attention heads LOCALLY (additive, probe-only).
     assert a.forecast, "--abund_prop_arch requires --forecast"
     import numpy as _np
-    from deepearth.autoresearch.spacetime.experiments.dyntargets import (
+    from deepearth.autoresearch.spacetime.instrument.dyntargets import (
         _abundance_target, _windows, _assemble, _reg_skill, doy_of, doy_to_vec)
     lat_a = coords_ll[:, 0].numpy(); lon_a = coords_ll[:, 1].numpy()
     raw_feat = raw_sp                                              # SPACE-ONLY query feature (t stripped)
@@ -592,7 +592,7 @@ def arrival_abundance_mode(ctx):
         for _f in sorted(_glob.glob(str(_Path(a.cache_dir) / "gbif_tokens/*.npz")))[:a.n_shards]:
             _sp.append(np.load(_f)["species_local"])
         sp_all = np.concatenate(_sp).astype(np.int64)[obs_index]
-        from deepearth.autoresearch.spacetime.experiments.dyntargets import run_first_arrival_all
+        from deepearth.autoresearch.spacetime.instrument.dyntargets import run_first_arrival_all
         r = run_first_arrival_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, sp_all, test, dev,
                                   feats=tuple(x for x in a.pheno_feats.split(",") if x),
                                   K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol)
@@ -609,7 +609,7 @@ def arrival_abundance_mode(ctx):
         return res | {"seconds": dt, "first_arrival": True}
 
     if a.abundance:
-        from deepearth.autoresearch.spacetime.experiments.dyntargets import run_abundance_all
+        from deepearth.autoresearch.spacetime.instrument.dyntargets import run_abundance_all
         r = run_abundance_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, test, dev,
                               feats=tuple(x for x in a.pheno_feats.split(",") if x),
                               K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, win=a.abund_win, lead=a.abund_lead, delta=a.abund_delta)

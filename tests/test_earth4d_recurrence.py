@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from autoresearch.spacetime.experiments.recurrence import (
+from autoresearch.spacetime.instrument.recurrence import (
     build_causal_windows_kdtree,
     normalize_time_from_train,
     strict_spatiotemporal_masks,

@@ -11,7 +11,7 @@
 > selects on capability records. It has been removed; two definitions of the same surface is how an
 > agent ends up optimizing a scalar nobody is scoring.
 >
-> `autoresearch/main/autoresearch.md` is a DIFFERENT surface: the full-model loop over the whole B1..B60
+> `autoresearch/main/program/autoresearch.md` is a DIFFERENT surface: the full-model loop over the whole B1..B60
 > suite. Do not mix the two.
 
 ## Scientific evidence gate (binding before scale)
@@ -90,5 +90,5 @@ basis; it can be an ablation inside that model, but it is not the autoregressive
 | which probe modes move my capability, and where do I edit? | `probe_registry.py` (`--capability X`) |
 | what must a result satisfy before it is science? | `autoresearch/spacetime/program/program.md`, "Evidence standard" |
 | the LFMC gate's pinned data/split provenance | this file, above |
-| the full-model B1..B60 loop (different surface) | `autoresearch/main/autoresearch.md` |
+| the full-model B1..B60 loop (different surface) | `autoresearch/main/program/autoresearch.md` |
 

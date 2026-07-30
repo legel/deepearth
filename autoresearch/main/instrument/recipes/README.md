@@ -1,6 +1,6 @@
 # Ensue data-channel recipes
 
-The champion config (`autoresearch/main/deepcal.yaml`) uses transferable environmental channels beyond the
+The champion config (`autoresearch/main/instrument/deepcal.yaml`) uses transferable environmental channels beyond the
 standard data download. Bulk token files are NOT in git — reproduce them with these recipes. A channel that
 is not present in the cache is skipped automatically at train time (`build_variables` in `train.py`), so
 **every config stays runnable on the standard data download**; a recipe is only needed to *enable* the extra
@@ -28,7 +28,7 @@ variable it instead *hurts* arith (−0.004…−0.006). Extract (~25–45 min f
 
 ```bash
 EE_PROJECT=<your-ee-project> AE_COORDS=ae_coords.npz \
-AE_OUT=gbif_alphaearth_tokens.npz python autoresearch/main/recipes/extract_alphaearth.py
+AE_OUT=gbif_alphaearth_tokens.npz python autoresearch/main/instrument/recipes/extract_alphaearth.py
 ```
 
 Place `gbif_alphaearth_tokens.npz` in the cache dir; `data.py::_load_modalities` loads it (aligned by `gbifID`,

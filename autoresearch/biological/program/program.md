@@ -45,14 +45,14 @@ beats the ±0.008 noise floor.
 under a single thesis). `TAG` = `bio_<short-name>`.
 ```
 rm -f data/deepcal/prepared_*.pt                                                  # cache round-trip is lossy — rm before every run
-python -m deepearth.autoresearch.main.run_experiment VARIANT --cache_dir data/deepcal --tag TAG > TAG.log 2>&1
+python -m deepearth.autoresearch.main.harness.run_experiment VARIANT --cache_dir data/deepcal --tag TAG > TAG.log 2>&1
 ```
 `run_experiment` installs the feedback instrument (auto-emits `[profile] refined_seed_norm`); budget = the
 champion.yaml `time_budget_s` (rule 20). CONTROL = the same command on champion.yaml, run once → `CTRL.log`.
 
 ## ④ Measure — one command
 ```
-python -m deepearth.autoresearch.main.score --log TAG.log --encoder biological --champion CTRL.log --ensue-tag biological
+python -m deepearth.autoresearch.main.harness.score --log TAG.log --encoder biological --champion CTRL.log --ensue-tag biological
 ```
 Emits `bio_gain` + Δ vs control · capability floor · per-benchmark Δ · the bottleneck · trace→Ensue.
 **Bottleneck to read** (`[profile]`): `refined_seed_norm` (≈0 ⟹ graph moves nothing), `ou_rate_*`

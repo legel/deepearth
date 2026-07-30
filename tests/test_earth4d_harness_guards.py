@@ -23,8 +23,8 @@ from autoresearch.spacetime.harness.trace import (
     _read_records,
     _record_gate,
 )
-from autoresearch.main.perception_diag import _macro_accuracy, probe_genus_from_semantic
-from autoresearch.spacetime.experiments.recurrence import (
+from autoresearch.main.harness.perception_diag import _macro_accuracy, probe_genus_from_semantic
+from autoresearch.spacetime.instrument.recurrence import (
     TRACE_AUTH_FD_ENV,
     normalize_forecast_time,
     phenology_feature_set,
@@ -286,7 +286,7 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
 
     def test_canonical_probe_rejects_unrecorded_direct_call(self):
         result = self.run_module(
-            "deepearth.autoresearch.spacetime.experiments.probe"
+            "deepearth.autoresearch.spacetime.instrument.probe"
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("would never be recorded", result.stdout)
@@ -298,8 +298,8 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
         They must now be reachable; the only gate is that a run be recordable.
         """
         modules = (
-            "experiments.probe",
-            "experiments.calib_probe",
+            "instrument.probe",
+            "instrument.calib_probe",
         )
         for name in modules:
             with self.subTest(module=name):

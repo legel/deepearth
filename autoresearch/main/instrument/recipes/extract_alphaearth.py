@@ -2,8 +2,8 @@
 """Extract AlphaEarth (Google Satellite Embedding V1) 64-dim annual embeddings @10m for every GBIF observation.
 
 AlphaEarth is REQUIRED to reproduce the DeepCal champion (arith 0.6074): the model consumes it as a
-SatCLIP-style learned geo prior (``model.alphaearth_geo: true`` in ``autoresearch/main/champion.yaml``), added to
-the spatial position that every head reads. See ``autoresearch/main/recipes/README.md``.
+SatCLIP-style learned geo prior (``model.alphaearth_geo: true`` in ``autoresearch/main/instrument/champion.yaml``), added to
+the spatial position that every head reads. See ``autoresearch/main/instrument/recipes/README.md``.
 
 Prerequisites
 -------------
@@ -14,7 +14,7 @@ Prerequisites
 Output
 ------
 ``gbif_alphaearth_tokens.npz`` with ``{gbifID: [N], ae: [N,64] float32}`` (NaN rows = no coverage).
-Drop it into your DeepCal cache dir; ``autoresearch/main/data.py`` loads it automatically as the ``alphaearth`` modality
+Drop it into your DeepCal cache dir; ``autoresearch/main/instrument/data.py`` loads it automatically as the ``alphaearth`` modality
 (aligned by gbifID, z-scored on the train split).
 
 Performance note

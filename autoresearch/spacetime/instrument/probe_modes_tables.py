@@ -32,7 +32,7 @@ def env_construct_mode(a, env_construct=None):
 
 def cooccur_mode(a, env_construct=None):
     import sys as _sys; _sys.path.insert(0, '/workspace')
-    from deepearth.autoresearch.spacetime.experiments.dyntargets import cooccur_routing
+    from deepearth.autoresearch.spacetime.instrument.dyntargets import cooccur_routing
     r = cooccur_routing(a.cache_dir, thresh=a.cooccur_thresh, seed=a.seed,
                         mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file,
                         env_channels=a.cooccur_channels)
@@ -55,7 +55,7 @@ def cooccur_mode(a, env_construct=None):
 
 def sdm_presence_mode(a, env_construct=None):
     import sys as _sys; _sys.path.insert(0, '/workspace')
-    from deepearth.autoresearch.spacetime.experiments.dyntargets import sdm_presence
+    from deepearth.autoresearch.spacetime.instrument.dyntargets import sdm_presence
     r = sdm_presence(a.cache_dir, seed=a.seed, mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file)
     print(f"  query_cells={r['n_query_cells']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
     print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
@@ -76,7 +76,7 @@ def sdm_presence_mode(a, env_construct=None):
 
 def sdm_hard_mode(a, env_construct=None):
     import sys as _sys; _sys.path.insert(0, '/workspace')
-    from deepearth.autoresearch.spacetime.experiments.dyntargets import sdm_presence_hard
+    from deepearth.autoresearch.spacetime.instrument.dyntargets import sdm_presence_hard
     import numpy as _np
     runs = []
     for sd in range(a.seed, a.seed + a.sdm_seeds):

@@ -9,7 +9,7 @@ Objective (standalone `st_gain`): held-out-block family accuracy from Earth4D(co
 normalized coordinates. >0 ⟹ the multi-resolution positional encoder adds spatial-biology structure a raw
 coordinate cannot. Reuses Earth4D unchanged (no core edit).
 
-  python -m deepearth.autoresearch.spacetime.experiments.probe --cache_dir data/deepcal --steps 800
+  python -m deepearth.autoresearch.spacetime.instrument.probe --cache_dir data/deepcal --steps 800
 
 FORECAST mode (--forecast, chronological discovery probe):
   Real event-time (gbif_eventtime.npz, joined by gbifID) is placed into Earth4D coord slot 3 (t), which the
@@ -34,14 +34,14 @@ biology follows; a coordinate is not the science, the environment at that coordi
                 (-0.10)? A smooth environment target is the field rule-24 actually asks for.
 Both default-off; the no-flag path is byte-identical.
 """
-PROBE_MODULE = "deepearth.autoresearch.spacetime.experiments.probe"
+PROBE_MODULE = "deepearth.autoresearch.spacetime.instrument.probe"
 # Must match autoresearch/spacetime/harness/trace.py PROTOCOL. Bump both when a change alters what a run MEASURES.
 PROTOCOL_VERSION = "v2-leakfix"
 
 _TRACE_AUTHORIZED = False
 if __name__ == "__main__":
     import sys as _entry_sys
-    from deepearth.autoresearch.spacetime.experiments.recurrence import (
+    from deepearth.autoresearch.spacetime.instrument.recurrence import (
         require_recorded_entrypoint as _require_recorded,
     )
 
@@ -66,7 +66,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.encoders.spacetime.earth4d import Earth4D
-from deepearth.autoresearch.spacetime.experiments import (
+from deepearth.autoresearch.spacetime.instrument import (
     probe_modes_dynamics,
     probe_modes_tables,
 )
@@ -86,7 +86,7 @@ class _DynamicsCtx:
     enc: object = None          # arrival/abundance compare their propagator against the encoder
     e4d: object = None
 
-from deepearth.autoresearch.spacetime.experiments.recurrence import (
+from deepearth.autoresearch.spacetime.instrument.recurrence import (
     DEFAULT_TIME_HORIZON,
     normalize_forecast_time,
     normalize_time_from_train,
@@ -768,7 +768,7 @@ def main(argv=None):
         # rain_max 0.76 elev_min 0.78 elev_max 0.52; vs phylo-graph ~0.1. Levers: --env_agg, --env_extra, --env_head.
         import sys as _sys
         _sys.path.insert(0, "/workspace")
-        from deepearth.autoresearch.biological.probe import load_trait as _load_trait
+        from deepearth.autoresearch.biological.instrument.probe import load_trait as _load_trait
         vocab = np.load(Path(a.cache_dir) / "gbif_vocab.npz", allow_pickle=True)
         gidx = vocab["global_idx"]
         emean, emedoid, npsp, estd, elo, ehi, emin, emax, etime, epheno = load_env_species(a.cache_dir, extra_channels=a.env_extra, temporal=(a.env_temporal or a.env_phenobreadth))
@@ -805,7 +805,7 @@ def main(argv=None):
             # graph refines) aligned to the 2141-vocab, and predict each trait from it via the identical RidgeCV
             # + same held-out species split as the env side. Fair head-for-head: only the FEATURE source differs
             # (env aggregates vs phylo seed), so the winner is the honest per-axis routing verdict.
-            from deepearth.autoresearch.biological.probe import load_species as _load_species
+            from deepearth.autoresearch.biological.instrument.probe import load_species as _load_species
             E1, _famid, _tree, _tiprow, _gidxb = _load_species(a.cache_dir)
             PHY = np.asarray(E1.detach().cpu()).astype(np.float32)   # [2141, seed_dim] text/tree species seed
         dt0 = time.time()
@@ -931,7 +931,7 @@ def main(argv=None):
         # biology from the learned field at the strict held-out set. Fair controls (mlp/rff) get the identical
         # aux. st_gain = env-supervised-Earth4D biology-acc MINUS best generic control -> does a physically-real
         # smooth target make the 4D field finally beat a generic PE (family-supervised field failed -0.10)?
-        from deepearth.autoresearch.spacetime.experiments.env_field import run_env_decode
+        from deepearth.autoresearch.spacetime.instrument.env_field import run_env_decode
         with torch.no_grad():
             fdim = enc(coords[:8].to(dev)).shape[1]
         env_tgt = env[:, :19]                                    # worldclim = the smooth, physically-real field
@@ -973,7 +973,7 @@ def main(argv=None):
         # a trainable coord-MLP (generic learned PE, matched capacity) and fixed-RFF+trainable-head.
         # st_gain = trained-Earth4D forecast MINUS the best generic learned control -> isolates whether the
         # 4D hash field learns propagatable field structure a plain learned coordinate map lacks.
-        from deepearth.autoresearch.spacetime.experiments.recurrence import run_field_decode
+        from deepearth.autoresearch.spacetime.instrument.recurrence import run_field_decode
         with torch.no_grad():
             fdim = enc(coords[:8].to(dev)).shape[1]
         rn_fd = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
@@ -1026,7 +1026,7 @@ def main(argv=None):
         # static no-propagation floor vs GNN vs LSTM, each over Earth4D / RFF / raw, on the declared split.
         # propagator_gain = propagator MAE improvement over the static floor.
         assert a.forecast, "--phenology requires --forecast (needs live event-time + past->future split)"
-        from deepearth.autoresearch.spacetime.experiments.phenology import run_phenology_all
+        from deepearth.autoresearch.spacetime.instrument.phenology import run_phenology_all
         coords_ll = torch.tensor(np.stack([lat, lon], 1).astype(np.float32))
         # CRITICAL leak-guard: the phenology TARGET is the query's own day-of-year, which is derivable from the
         # query timestamp. So the QUERY-POINT features here must be SPACE-ONLY (lat,lon) -- time stripped -- else
@@ -1146,7 +1146,7 @@ def main(argv=None):
         # excluded from its own neighbour window (contributes nothing to itself). raw features only.
         assert a.forecast, "--pheno_densefield requires --forecast"
         import numpy as _np
-        from deepearth.autoresearch.spacetime.experiments.dyntargets import run_pheno_densefield
+        from deepearth.autoresearch.spacetime.instrument.dyntargets import run_pheno_densefield
         coords_ll = torch.tensor(_np.stack([lat, lon], 1).astype(_np.float32))
         rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
         raw_sp = torch.tensor(rn_sp)
@@ -1187,7 +1187,7 @@ def main(argv=None):
         res = {"obs": len(lat), "split": SPLIT}
 
         if a.pheno_env:
-            from deepearth.autoresearch.spacetime.experiments.dyntargets import run_pheno_env
+            from deepearth.autoresearch.spacetime.instrument.dyntargets import run_pheno_env
             env = load_env(a.cache_dir, gid, fit_mask=~test)
             r = run_pheno_env(raw_sp, fdim, days, coords_ll, env, test, dev,
                               K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.pheno_tol)
@@ -1218,7 +1218,7 @@ def main(argv=None):
             return res
 
         if a.pheno_disttarget:
-            from deepearth.autoresearch.spacetime.experiments.dyntargets import run_pheno_disttarget
+            from deepearth.autoresearch.spacetime.instrument.dyntargets import run_pheno_disttarget
             r = run_pheno_disttarget(raw_sp, fdim, days, coords_ll, test, dev, target=a.pheno_disttarget,
                                      K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol)
             dt = time.time() - t0
@@ -1239,7 +1239,7 @@ def main(argv=None):
             return res
 
         if a.pheno_taxon:
-            from deepearth.autoresearch.spacetime.experiments.dyntargets import run_pheno_by_taxon
+            from deepearth.autoresearch.spacetime.instrument.dyntargets import run_pheno_by_taxon
             import csv as _csv
             from pathlib import Path as _P
             rows = list(_csv.DictReader(open(_P(a.cache_dir) / "derived/species_index.csv")))
@@ -1295,7 +1295,7 @@ def main(argv=None):
         # mechanism control -- the SAME GNN over Earth4D / RFF / raw node features. propagator-vs-none isolates
         # whether causal propagation forecasts forward at all; Earth4D-vs-RFF isolates mechanism vs encoder.
         assert a.forecast, "--gnn requires --forecast (needs live event-time + past->future split)"
-        from deepearth.autoresearch.spacetime.experiments.gnn import run_gnn
+        from deepearth.autoresearch.spacetime.instrument.gnn import run_gnn
         coords_ll = torch.tensor(np.stack([lat, lon], 1).astype(np.float32))
         e4d_r = run_gnn(e4d, e4d.shape[1], fam, days, coords_ll, test, n_fam, dev,
                         K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops)
@@ -1348,7 +1348,7 @@ def main(argv=None):
             # rule24+2b: instead of feeding each neighbour its OWN static code, re-encode the QUERY cell
             # (lat_q,lon_q) FORWARD to each step's event day so the encoder's time axis carries state the LSTM
             # propagates. featurize(lat,lon,day) reproduces the exact Earth4D / raw / RFF normalizations.
-            from deepearth.autoresearch.spacetime.experiments.recurrence import run_recurrence_timecond
+            from deepearth.autoresearch.spacetime.instrument.recurrence import run_recurrence_timecond
             def _tn(day_arr):
                 return ((np.asarray(day_arr, dtype=np.float32) - tmin) / tspan).astype(np.float32)
             def feat_e4d(la, lo, dy):
@@ -1374,7 +1374,7 @@ def main(argv=None):
             print(f"  {len(lat)} obs, {a.steps}-step rollout in {dt:.1f}s")
             return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc,
                     "raw_acc": raw_acc, "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "recurrence": True, "time_cond": True}
-        from deepearth.autoresearch.spacetime.experiments.recurrence import run_recurrence
+        from deepearth.autoresearch.spacetime.instrument.recurrence import run_recurrence
         raw_acc, raw_t5, n_te = run_recurrence(raw, fam, days, coords_ll, test, n_fam, dev,
                                                K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tag="raw")
         rff_acc, rff_t5, _ = run_recurrence(rff, fam, days, coords_ll, test, n_fam, dev,
@@ -1581,7 +1581,7 @@ def env_construct(cache, seed=0, construct="rarity", feature="range", holdout=0.
     from sklearn.linear_model import LogisticRegression as _LR
     from sklearn.metrics import balanced_accuracy_score as _bacc
     import sys as _sys; _sys.path.insert(0, "/workspace")
-    from deepearth.autoresearch.biological.probe import load_trait as _load_trait
+    from deepearth.autoresearch.biological.instrument.probe import load_trait as _load_trait
 
     vocab = _np.load(_P(cache) / "gbif_vocab.npz", allow_pickle=True); gidx = vocab["global_idx"]; S = len(gidx)
     if construct in ("ns_grank", "crpr"):

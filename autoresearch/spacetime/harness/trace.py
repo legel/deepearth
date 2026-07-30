@@ -1,7 +1,7 @@
 """autoresearch/spacetime/harness/trace.py — the Earth4D probe harness and record ledger.
 
 The surface is the spacetime encoder (encoders/spacetime/earth4d.py) and the data channels feeding it,
-measured by the fast encoder probe (autoresearch/spacetime/experiments/probe.py & friends) — NOT full-model
+measured by the fast encoder probe (autoresearch/spacetime/instrument/probe.py & friends) — NOT full-model
 training. The probe trains the encoder + a light head on ~65k obs in minutes and reports the
 encoder-isolated marginal vs a FAIR baseline (RFF / MLP / best generic PE) on the SAME capability the
 scorecard measures.
@@ -43,7 +43,7 @@ from deepearth.autoresearch.spacetime.harness import probe_registry  # noqa: E40
 
 REPO = Path(__file__).resolve().parents[4]                 # .../deepearth
 RECORDS = Path(__file__).resolve().parents[1] / "state" / "records.json"  # the machine record (fill scorecard by breaking these)
-DEFAULT_PROBE_MODULE = "deepearth.autoresearch.spacetime.experiments.probe"
+DEFAULT_PROBE_MODULE = "deepearth.autoresearch.spacetime.instrument.probe"
 TRACE_AUTH_FD_ENV = "EARTH4D_TRACE_AUTH_FD"
 
 # The encoder-probeable capabilities (scorecard.md Layer 2). The objective must be one of these; the

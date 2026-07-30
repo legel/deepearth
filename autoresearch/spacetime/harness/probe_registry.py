@@ -154,15 +154,15 @@ MODES: Tuple[Mode, ...] = (
 # needs the file layout.
 LEVER_SITES = {
     DATA: [
-        "autoresearch/spacetime/experiments/probe.py: load_env / load_vision / load_env_species "
+        "autoresearch/spacetime/instrument/probe.py: load_env / load_vision / load_env_species "
         "(which channel feeds the head)",
         "flags: --env_channels, --env_extra, --sdm_channels, --vision --vision_feats, --pheno_channel",
         "data prep: occurrence densification, channel fusion, per-entity aggregation",
     ],
     ARCH: [
         "encoders/spacetime/earth4d.py: __init__, forward, training objective (the encoder itself)",
-        "autoresearch/spacetime/experiments/recurrence.py: run_recurrence, run_field_decode, propagators",
-        "autoresearch/spacetime/experiments/gnn.py: message passing",
+        "autoresearch/spacetime/instrument/recurrence.py: run_recurrence, run_field_decode, propagators",
+        "autoresearch/spacetime/instrument/gnn.py: message passing",
         "flags: --recurrence, --gnn, --forecast, --env_decode, --field_decode, --fourier, "
         "--spatial_siren, --time_harmonics",
     ],

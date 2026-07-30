@@ -7,6 +7,6 @@ species GNN (:mod:`deepearth.encoders.biological`) -- are fused by a masked mult
     from deepearth.core.fusion import DeepEarth
 
 See ``autoresearch/science.md`` for the scientific framing, ``autoresearch/README.md`` to prepare data and run,
-and ``autoresearch/main/autoresearch.md`` for the autonomous-experimentation loop.
+and ``autoresearch/main/program/autoresearch.md`` for the autonomous-experimentation loop.
 """
 __version__ = "1.0.0"

@@ -22,7 +22,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from deepearth.autoresearch.spacetime.experiments.recurrence import _CoordMLP
+from deepearth.autoresearch.spacetime.instrument.recurrence import _CoordMLP
 
 
 def run_env_decode(kind, coords4, rn_in, env_tgt, fam, test, n_fam, dev, enc=None, feat_dim=96,

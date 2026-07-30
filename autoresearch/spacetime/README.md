@@ -4,18 +4,25 @@ Four directories, one rule each. The split exists so an agent never has to guess
 fair game.
 
 ```
-  program/       READ FIRST, edit deliberately     the contract: what to pick, what counts as evidence
-  experiments/   EDIT FREELY                       the science: probe modes, propagators, data channels
-  harness/       DO NOT EDIT to win a run          the judge: what gets measured and what gets recorded
-  state/         NEVER hand-edit                   generated: records.json, traces, ledgers
+  program/   READ FIRST, edit deliberately   the contract: what to pick, what counts as evidence
+  instrument/ EDIT IN PLACE, on a branch     the probe: modes, propagators, channels
+  harness/   DO NOT EDIT to win a run        the judge: what gets measured and what gets recorded
+  state/     NEVER hand-edit                 generated: records.json, traces, ledgers
 ```
 
 | directory | contains | policy |
 |---|---|---|
 | `program/` | `program.md` (the loop), `scorecard.md` (the board), `lfmc_gate.md` (pinned gate provenance), `box-operations.md` | Read before every cycle. Change it when the *doctrine* changes — never to accommodate a result. |
-| `experiments/` | `probe.py`, `probe_modes_*.py`, `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py`, `lfmc_recurrent.py` | **This is where an experiment lives.** Add modes, change mechanisms, swap channels, rewrite a propagator. Also edit `encoders/spacetime/earth4d.py` for architecture work. |
+| `instrument/` | `probe.py`, `probe_modes_*.py`, `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py`, `lfmc_recurrent.py` | The **instrument**, not a folder of experiments. An experiment is a *branch of edits to these files* — change mechanisms, swap channels, rewrite a propagator, and edit `encoders/spacetime/earth4d.py` for architecture work. **Do not add a file here for one idea**, and do not add a gated flag until it graduates. See program.md, "An experiment is an EDIT on a BRANCH". |
 | `harness/` | `trace.py`, `probe_contract.py`, `probe_emit.py`, `probe_registry.py`, `science_gate.py` | The measurement and recording layer. **Editing this to make a run look better is the one move that invalidates everything.** Change it only as deliberate infrastructure work, with tests, never inside an experiment. |
 | `state/` | `records.json`, `traces/`, `events.jsonl`, backups | Written by the harness. Hand-editing it forges a result. To correct a record, write the correction *and its reason* through the ledger. |
+
+## Why `instrument/` is not called `experiments/`
+
+Because a directory called `experiments/` invites you to *put an experiment in it*, and that is the
+habit that produced 113 flags, a 1,552-line `main()`, 21 `champion_*.yaml` variants and a pile of
+`diag*.py` copies. These files are the instrument. The experiment is the diff, held by a branch, and it
+disappears when the branch does.
 
 ## Why `harness/` is fenced off
 
@@ -41,6 +48,6 @@ python -m deepearth.autoresearch.spacetime.harness.trace \
     --tag my_swing --device cuda:0 --ensue
 
 # measure without recording (parity checks, smoke tests)
-EARTH4D_ALLOW_UNRECORDED=1 python -m deepearth.autoresearch.spacetime.experiments.probe \
+EARTH4D_ALLOW_UNRECORDED=1 python -m deepearth.autoresearch.spacetime.instrument.probe \
     --forecast --n_shards 12 --device cuda:0 --result-json /tmp/r.json
 ```

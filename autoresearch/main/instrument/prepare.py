@@ -1,7 +1,7 @@
 """One-time setup for DeepCal autoresearch. Idempotent: safe to run repeatedly.
 
-    python -m deepearth.autoresearch.main.prepare                              # uses autoresearch/main/deepcal.yaml
-    python -m deepearth.autoresearch.main.prepare --config autoresearch/main/deepcal.yaml
+    python -m deepearth.autoresearch.main.instrument.prepare                              # uses autoresearch/main/instrument/deepcal.yaml
+    python -m deepearth.autoresearch.main.instrument.prepare --config autoresearch/main/instrument/deepcal.yaml
 
 Run from the repo's PARENT directory (the one containing ``deepearth/``) so the ``deepearth`` package imports.
 
@@ -192,7 +192,7 @@ def main():
     data_dir = resolve_data_dir(cache_dir_cfg)
     prepared = ensure_prepared(config, data_dir, a.device)
     ensure_test_io(prepared, a.device)
-    print("=== prepare complete: ready for `python -m deepearth.autoresearch.main.train` and the autoresearch loop ===")
+    print("=== prepare complete: ready for `python -m deepearth.autoresearch.main.instrument.train` and the autoresearch loop ===")
 
 
 if __name__ == "__main__":

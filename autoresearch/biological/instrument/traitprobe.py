@@ -24,7 +24,7 @@ For each source we report:
 The CHAMPION baseline to beat is `text graph`. A source wins iff its `graph` (or `impute`) absolute trait
 score exceeds `text graph` by > floor across seeds. Reuses SpeciesGraph unchanged; edits nothing in core/.
 
-    python -m deepearth.autoresearch.biological.traitprobe \
+    python -m deepearth.autoresearch.biological.instrument.traitprobe \
         --cache_dir data/deepcal --trait_key multi_flower_color --steps 400 --seeds 0 1 2
 """
 import argparse
@@ -36,7 +36,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from deepearth.autoresearch.biological.probe import (
+from deepearth.autoresearch.biological.instrument.probe import (
     load_species, load_trait, nn_trait_acc, nn_trait_ap, nn_trait_num,
 )
 from deepearth.encoders.biological.phylogenomic import SpeciesGraph, build_tree_buffers

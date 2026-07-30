@@ -16,7 +16,7 @@ provenance to probe.py -- no external data, fully science-respecting. Calibratio
 modeling/uncertainty choice layered on top of the same held-out predictions.
 
 Usage on newbox (real Earth4D held-out logits, reuses probe.py loaders + head):
-  CUDA_VISIBLE_DEVICES=0 python -m deepearth.autoresearch.spacetime.experiments.calib_probe \
+  CUDA_VISIBLE_DEVICES=0 python -m deepearth.autoresearch.spacetime.instrument.calib_probe \
       --cache_dir data/deepcal --feature env --steps 400 --seed 0
 
 If the token cache is absent (e.g. code-only checkout), pass --surrogate to run the IDENTICAL
@@ -25,12 +25,12 @@ env-correlated logits) so the mechanisms themselves are measured end-to-end. The
 math (ECE/Brier/temperature/isotonic/conformal/ensemble/MC-dropout/AUROC) is byte-identical in
 both modes; only the source of the held-out logits differs.
 """
-_MODULE_NAME = "deepearth.autoresearch.spacetime.experiments.calib_probe"
+_MODULE_NAME = "deepearth.autoresearch.spacetime.instrument.calib_probe"
 
 if __name__ == "__main__":
     import sys as _entry_sys
 
-    from deepearth.autoresearch.spacetime.experiments.recurrence import (
+    from deepearth.autoresearch.spacetime.instrument.recurrence import (
         require_recorded_entrypoint as _require_recorded,
     )
 
@@ -44,7 +44,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from deepearth.autoresearch.spacetime.experiments.recurrence import (
+from deepearth.autoresearch.spacetime.instrument.recurrence import (
     require_recorded_entrypoint,
 )
 
@@ -271,7 +271,7 @@ def _train_head_logits(feats, fam, n_fam, test_mask, dev, steps, lr, dropout=0.0
 
 def _real_features(cache, feature, n_shards, dev, seed):
     """Reuse probe.py loaders for genuine encoder/env features. Returns (feats, fam, n_fam, lat, lon)."""
-    from deepearth.autoresearch.spacetime.experiments import probe as P
+    from deepearth.autoresearch.spacetime.instrument import probe as P
     from deepearth.encoders.spacetime.earth4d import Earth4D
     lat, lon, fam, n_fam, _, gid, _sp = P.load_obs(cache, n_shards, with_gid=(feature == "env"))
     if feature == "raw":
@@ -301,7 +301,7 @@ def _real_pollinator(cache, feature, n_shards, dev, seed, topk=40):
     restricted to the topk most frequent pollinators (rest dropped) so the head is well-posed, the
     same way family SDM is a bounded-class problem. This is the low-data, phylogenetically-packed
     B53 regime -- fewer obs, pollinator (not plant-family) classes -- measured on real data."""
-    from deepearth.autoresearch.spacetime.experiments import probe as P
+    from deepearth.autoresearch.spacetime.instrument import probe as P
     from deepearth.encoders.spacetime.earth4d import Earth4D
     lat, lon, fam, n_fam0, _, gid, _sp = P.load_obs(cache, n_shards, with_gid=True)
     sp = P.load_species(cache, n_shards)                       # plant species_local per obs

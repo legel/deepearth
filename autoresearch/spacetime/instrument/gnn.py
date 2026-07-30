@@ -30,7 +30,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from deepearth.autoresearch.spacetime.experiments.recurrence import build_causal_windows
+from deepearth.autoresearch.spacetime.instrument.recurrence import build_causal_windows
 
 
 class GNNPropagator(nn.Module):

@@ -13,7 +13,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from deepearth.autoresearch.spacetime.experiments import lfmc_recurrent as LR
+from deepearth.autoresearch.spacetime.instrument import lfmc_recurrent as LR
 from deepearth.autoresearch.spacetime.harness.science_gate import (
     build_rolling_origin_pairs,
     collapse_lfmc_visits,
