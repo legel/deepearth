@@ -77,3 +77,12 @@ results.tsv
 encoders/spacetime/hashencoder/build/
 **/*.so
 deepearth
+
+# agent scratch: one-off scripts, logs, dumps. Disposable by definition -- see
+# agents/earth4d/program.md "Experiment version control". Scratch beside source is how 83 untracked
+# files, 6 hand-rolled .pre-X backups and 21 champion_*.yaml variants accumulated.
+scratch/
+**/scratch/
+*.pre-*
+*.bak
+*.orig

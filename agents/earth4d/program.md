@@ -144,6 +144,32 @@ Before graduating an architectural win, confirm the champion doesn't already car
 unusable until future-sentinel, horizon-purge, and right-censoring tests pass. Log it against the lever
 in Ensue so the whole swarm inherits the block.
 
+## Experiment version control
+
+Multiple agents share one box and **one** board. Isolation is per-experiment, not per-agent-feeling.
+
+```
+   shared checkout  ─────────────►  NEVER where an experiment runs (another agent is reading it)
+         │
+         ├─ worktree + branch per experiment ──► commit EVERY run, failures included
+         │        │
+         │        ├─ dead end ─────► stays on the branch; the Ensue dead-end entry is the durable record
+         │        └─ clears the gate ─► rebase onto the main line, push
+         │
+         └─ scratch/  (gitignored) ──► logs, one-off scripts, dumps. Disposable by definition.
+```
+
+| rule | why |
+|---|---|
+| `git worktree add ../e4d-<tag> -b exp/<tag>` per experiment | the shared checkout is being read by other agents; editing it in place makes their results unattributable |
+| Commit every run on the branch, failures included | a `.pre-moe` / `.pre-warmup` / `.pre-sotae1` copy is a commit someone didn't make |
+| Push only a result that clears the evidence gate, or harness/contract/test changes the swarm needs | discovery noise on the main line is how 77 single-seed commits became a headline |
+| Scratch lives in `scratch/`, never beside source | `b42.py`, `diag2…diag8`, `mm_pheno_ceiling.py`, `*_sota.py` at repo root are scratch that escaped |
+| No config variants as files | 21 `champion_*.yaml` are 21 undocumented experiments. Pass overrides as flags; if a config wins, commit it *with* its result |
+| Tests are always tracked | `tests/` was entirely untracked while the program's own instructions told agents to run it |
+| One board owner | only the checkout that owns `records.json` may write it; everyone else measures with `EARTH4D_ALLOW_UNRECORDED=1` |
+| A record from an unpushed commit is discovery-only | nobody else can reproduce it. This is exactly how a board record came to claim a `trained_rff` baseline that exists in no reachable tree |
+
 ## Don'ts
 
 - Don't train the full fusion model — confounded and slow.
