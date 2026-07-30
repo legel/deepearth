@@ -144,31 +144,32 @@ Before graduating an architectural win, confirm the champion doesn't already car
 unusable until future-sentinel, horizon-purge, and right-censoring tests pass. Log it against the lever
 in Ensue so the whole swarm inherits the block.
 
-## Experiment version control
+## Experiment tracking
 
-Multiple agents share one box and **one** board. Isolation is per-experiment, not per-agent-feeling.
+One experiment = one branch. Many agents share this box and **one** board, so never run in the
+shared checkout — another agent is reading it.
 
 ```
-   shared checkout  ─────────────►  NEVER where an experiment runs (another agent is reading it)
-         │
-         ├─ worktree + branch per experiment ──► commit EVERY run, failures included
-         │        │
-         │        ├─ dead end ─────► stays on the branch; the Ensue dead-end entry is the durable record
-         │        └─ clears the gate ─► rebase onto the main line, push
-         │
-         └─ scratch/  (gitignored) ──► logs, one-off scripts, dumps. Disposable by definition.
+   ① git worktree add ../e4d-<tag> -b exp/<tag>      one experiment, one branch, own directory
+   ② commit EVERY run on it — failures too           a .pre-X copy is a commit you didn't make
+   ③ scratch/ for logs, one-offs, dumps              gitignored, disposable, never beside source
+   ④ dead end  → leave it on the branch              the Ensue dead-end entry is the durable record
+   ⑤ BREAKTHROUGH → rebase, then push to main        nothing else reaches main. Ever.
 ```
 
-| rule | why |
-|---|---|
-| `git worktree add ../e4d-<tag> -b exp/<tag>` per experiment | the shared checkout is being read by other agents; editing it in place makes their results unattributable |
-| Commit every run on the branch, failures included | a `.pre-moe` / `.pre-warmup` / `.pre-sotae1` copy is a commit someone didn't make |
-| Push only a result that clears the evidence gate, or harness/contract/test changes the swarm needs | discovery noise on the main line is how 77 single-seed commits became a headline |
-| Scratch lives in `scratch/`, never beside source | `b42.py`, `diag2…diag8`, `mm_pheno_ceiling.py`, `*_sota.py` at repo root are scratch that escaped |
-| No config variants as files | 21 `champion_*.yaml` are 21 undocumented experiments. Pass overrides as flags; if a config wins, commit it *with* its result |
-| Tests are always tracked | `tests/` was entirely untracked while the program's own instructions told agents to run it |
-| One board owner | only the checkout that owns `records.json` may write it; everyone else measures with `EARTH4D_ALLOW_UNRECORDED=1` |
-| A record from an unpushed commit is discovery-only | nobody else can reproduce it. This is exactly how a board record came to claim a `trained_rff` baseline that exists in no reachable tree |
+**A breakthrough is a result that cleared the evidence standard above** — multi-seed, no regression,
+identity matched, reproducible from a committed tree. Not a probe record. Not a single seed. Not a
+score that beat the board by a hair.
+
+Two exceptions may go to main without a breakthrough: **harness/contract/test changes** the whole
+swarm depends on, and **provenance fixes** to the board. Both are infrastructure, not findings.
+
+- A record from an unpushed commit is **discovery-only** — nobody else can reproduce it.
+- Only the checkout that owns `records.json` writes records; everyone else measures with
+  `EARTH4D_ALLOW_UNRECORDED=1`.
+- No config variants as files (21 `champion_*.yaml` = 21 undocumented experiments). Pass overrides as
+  flags; if one wins, commit it *with* its result.
+- Tests are always tracked.
 
 ## Don'ts
 
