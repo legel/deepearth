@@ -580,11 +580,18 @@ EXCLUDED_CAPABILITIES = {
 #                   landed where the hash grid saturates.
 #   v2-leakfix    : strict spatiotemporal split, train-only time normalization with horizon headroom,
 #                   train-only feature standardization, deterministic seeding.
-PROTOCOL = "v2-leakfix"
+#   v3-fairbaseline: the RFF control is no longer degenerate. It was `rn @ N(0, 8)` on GLOBE-normalized
+#                   coords, which across a regional corpus varies ~0.04 cycles end to end -- it scored
+#                   0.008, BELOW raw coordinates at 0.0166. Every `vs RFF` gain measured against it was
+#                   inflated by that handicap, and every EARNING share on the board rested on it. The
+#                   control now gets train-extent normalization (the same courtesy the encoder gets) and
+#                   its bandwidth selected over a sweep. This changes what fair-gain MEANS, so v2 numbers
+#                   are not comparable to v3 ones and must re-baseline rather than be beaten.
+PROTOCOL = "v3-fairbaseline"
 # Only explicitly identified, audited protocols may be migrated automatically.
 # Absence of a protocol is not evidence that a hand-restored or pre-gate record
 # belongs to the known v1 measurement regime.
-REBASELINE_PROTOCOLS = frozenset({"v1-prefix"})
+REBASELINE_PROTOCOLS = frozenset({"v1-prefix", "v2-leakfix"})
 
 # Fair-baseline preference: Earth4D must beat a TRAINED generic PE, not just raw coords.
 FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "prop_acc", "best-coord", "raw"]

@@ -304,3 +304,52 @@ class ProvenanceTests(unittest.TestCase):
     def test_a_dirty_tree_is_detectable_not_silent(self):
         """A dirty tree does not block a run — it must simply be impossible to hide afterwards."""
         self.assertIn("dirty", self.prov)
+
+
+class FairBaselineTests(unittest.TestCase):
+    """The control must be given the same courtesy as the encoder, or the gain measures its handicap.
+
+    The old control was `(lat/90, lon/180) @ N(0, 8)`. Across California that projection varies ~0.04
+    cycles end to end, so it scored 0.008 — BELOW the raw-coordinate baseline at 0.0166. A nonlinear
+    control that loses to raw coordinates is not a control.
+    """
+
+    def setUp(self):
+        import numpy as np
+        from autoresearch.probes.spacetime.editable_files.lib.fair_baseline import fair_rff, _rff_features
+        self.np, self.fair_rff, self.feats = np, fair_rff, _rff_features
+        # a regional corpus, as a fraction of the globe-normalized range
+        rng = np.random.default_rng(0)
+        lat = rng.uniform(32.5, 42.0, 4096)
+        lon = rng.uniform(-124.4, -114.2, 4096)
+        self.rn = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
+
+    def test_train_extent_normalization_actually_spans_the_range(self):
+        """The old normalization left a regional corpus in ~5% of the domain; this must fill it."""
+        scaled, _, _ = self.fair_rff(self.rn, 64)
+        self.assertGreater(scaled.max() - scaled.min(), 1.9, "train-extent scaling must span ~[-1,1]")
+        self.assertLess(abs(float(scaled.mean())), 0.1)
+
+    def test_the_old_fixed_bandwidth_was_degenerate_on_this_corpus(self):
+        """Quantify the defect: at the old sigma the features are near-constant across the dataset."""
+        proj = self.rn @ (self.np.random.default_rng(0).normal(0, 8.0, (2, 32)).astype("float32"))
+        cycles = float((proj.max(0) - proj.min(0)).mean()) / (2 * self.np.pi)
+        self.assertLess(cycles, 0.2, "the old control varied well under one cycle across the corpus")
+
+    def test_the_fixed_control_varies_over_many_cycles(self):
+        scaled, base, sigmas = self.fair_rff(self.rn, 64)
+        proj = scaled @ (base * max(sigmas))
+        cycles = float((proj.max(0) - proj.min(0)).mean()) / (2 * self.np.pi)
+        self.assertGreater(cycles, 1.0, "the control must be able to resolve structure at data scale")
+
+    def test_bandwidth_is_a_sweep_not_a_constant(self):
+        _, _, sigmas = self.fair_rff(self.rn, 64)
+        self.assertGreater(len(sigmas), 1, "a baseline pinned to one sigma is a straw man")
+
+    def test_extent_is_fit_on_train_rows_only(self):
+        """Fitting on all rows would leak the evaluation range into the control's features."""
+        mask = self.np.zeros(len(self.rn), dtype=bool); mask[: len(self.rn) // 2] = True
+        scaled_train, _, _ = self.fair_rff(self.rn, 64, train_mask=mask)
+        scaled_all, _, _ = self.fair_rff(self.rn, 64)
+        self.assertFalse(self.np.allclose(scaled_train, scaled_all),
+                         "train-fitted extent must differ from all-rows extent")

@@ -41,7 +41,7 @@ to 113 flags and 19 modes; the diagnostics that could never set a record have be
 
 PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.editable_files.probe"
 # Must match autoresearch/probes/spacetime/editable_files/harness.py PROTOCOL. Bump both when a change alters what a run MEASURES.
-PROTOCOL_VERSION = "v2-leakfix"
+PROTOCOL_VERSION = "v3-fairbaseline"
 
 _TRACE_AUTHORIZED = False
 if __name__ == "__main__":
@@ -71,6 +71,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
+from deepearth.autoresearch.probes.spacetime.editable_files.lib.fair_baseline import (
+    _rff_features,
+    fair_rff,
+)
 from deepearth.autoresearch.probes.spacetime.editable_files.harness import (
     _set_result_sink,
     declare,
@@ -94,6 +98,8 @@ from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence impor
     strict_spatiotemporal_masks,
     require_recorded_entrypoint,
 )
+
+
 
 
 
@@ -919,10 +925,20 @@ def main(argv=None):
     if a.forecast:
         rn = np.concatenate([rn, tnorm[:, None]], 1)             # fair: baselines get the SAME time feature
     raw = torch.tensor(rn)                                        # raw normalized coords (+time) baseline
-    # Random Fourier Features of (lat,lon[,t]): fair nonlinear positional-encoding control vs Earth4D
-    rff_rng = np.random.default_rng(0)
-    proj = rn @ (rff_rng.normal(0, 8.0, (rn.shape[1], e4d.shape[1] // 2)).astype(np.float32))
-    rff = torch.tensor(np.concatenate([np.sin(proj), np.cos(proj)], 1).astype(np.float32))
+    # Random Fourier Features of (lat,lon[,t]): the fair nonlinear positional-encoding control.
+    # Train-extent normalized and bandwidth-selected — see fair_rff(). The previous fixed sigma=8 on
+    # globe-normalized coords was degenerate on a regional corpus and scored BELOW raw coordinates.
+    _rff_scaled, _rff_base, _rff_sigmas = fair_rff(rn, e4d.shape[1], train_mask=~test, seed=a.seed)
+    _best = (-1.0, _rff_sigmas[0], None)
+    for _sig in _rff_sigmas:
+        _cand = _rff_features(_rff_scaled, _rff_base, _sig)
+        _acc, _ = evaluate(_cand, fam_t, test, n_fam, dev, a.steps, a.lr, f"rff_s{_sig:g}",
+                           a.head_hidden, a.seed)
+        if _acc > _best[0]:
+            _best = (_acc, _sig, _cand)
+    rff = _best[2]
+    print(f"  [fair-baseline] RFF bandwidth selected: sigma={_best[1]:g} "
+          f"(acc {_best[0]:.4f} over {[f'{x:g}' for x in _rff_sigmas]}) — the control gets its best shot")
 
     if a.phenology:
         # DECISIVE non-stationary control (science.md rule 1+2b). Prior family-presence forecasting showed
