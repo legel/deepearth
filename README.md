@@ -14,6 +14,51 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 > must pass the pinned temporal + held-site protocol in
 > [`autoresearch/spacetime/program/program.md`](autoresearch/spacetime/program/program.md).
 
+## How research runs here: granular probe loops first, fusion last
+
+We build **backwards**. Each autonomous research loop owns **one probe and its own data**, and recovers
+signal for one part of the science in [`autoresearch/science.md`](autoresearch/science.md). Only once
+those signals are established do they get plugged into the fusion layer — the full model comes last.
+
+```
+   probe loop              probe loop              probe loop
+   ─────────────           ─────────────           ─────────────
+   one probe               one probe               one probe
+   own data                own data                own data
+   own metric + evals      own metric + evals      own metric + evals
+   independent code        independent code        independent code
+        │                       │                       │
+        └────────── recovered, validated signal ────────┘
+                              ▼
+                    FUSION  (autoresearch/main/)
+                    integrates — only after the science is filled out
+```
+
+A fusion model trained before its constituent signals are established cannot tell you which part
+works: it is confounded and slow, and every number it produces is a joint claim about everything at
+once. A probe loop makes **one narrow claim, in minutes, against fair controls** — and a claim that
+survives its own validation is what earns a place in fusion. So a probe loop's job is not to raise an
+aggregate; it is to recover a real signal on one capability and prove the signal is the encoder's, not
+borrowed from a frozen pretrained embedding.
+
+Every loop has the same four directories, so scope is never ambiguous:
+
+```
+autoresearch/<loop>/
+  program/                the contract: objective, board, what counts as evidence
+  editable_files/
+     harness/             the loop itself
+     lib/                 auxiliary code the loop calls
+  data/                   input channels (editable — the DATA lever) +
+                          harness-written records and traces (never hand-edited)
+```
+
+**Rules that hold across every loop** — see [`autoresearch/README.md`](autoresearch/README.md):
+one probe per loop · no loop imports another loop's code · only the fusion loop touches the fusion
+model · an experiment is an edit on a branch, never a new file or a new flag · a record from an
+unpushed commit is discovery-only · `main` is reached only by a result that cleared its loop's evidence
+bar. `tests/test_loop_independence.py` enforces the structural ones.
+
 ## Exciting News:
 
 - _March 7, 2026_  
