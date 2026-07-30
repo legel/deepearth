@@ -120,6 +120,8 @@ class ProbeResult:
     gains: Dict[str, float] = field(default_factory=dict)     # baseline label -> Earth4D minus baseline
     baselines: Dict[str, float] = field(default_factory=dict)  # baseline label -> its absolute score
     flags: str = ""
+    # The probe's CONFIG block: the levers that used to be flags. Part of identity — see config_digest.
+    config: Dict[str, Any] = field(default_factory=dict)
     extras: Dict[str, Any] = field(default_factory=dict)
     # A diagnostic measures something that is NOT a scorecard capability, or measures it without
     # Earth4D in the comparison at all (several dynamics modes run on raw PE only). It is legitimate
@@ -130,6 +132,16 @@ class ProbeResult:
     contract_version: int = CONTRACT_VERSION
 
     # -- identity ---------------------------------------------------------------------------------
+    def config_digest(self) -> str:
+        """Hash of the probe's CONFIG block — what the encoder was actually built and trained as.
+
+        With the levers moved out of the CLI and into the file, two experiments run with the SAME
+        command line. Identity therefore has to include what was built, or the gate would compare a
+        rewired encoder against the control as though they were the same measurement.
+        """
+        return hashlib.sha256(
+            json.dumps(self.config, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
     def identity(self) -> Dict[str, Any]:
         """The tuple that decides comparability. Two runs whose identities differ measure different
         things, however similar their scores look."""
@@ -140,6 +152,7 @@ class ProbeResult:
             "n_shards": self.n_shards,
             "protocol": self.protocol,
             "metric": self.primary.name,
+            "config": self.config_digest(),
         }
 
     def identity_digest(self) -> str:
@@ -156,7 +169,9 @@ class ProbeResult:
         for key in ("mode", "metric"):
             if mine[key] != other.get(key):
                 return False
-        for key in ("capability", "split", "n_shards", "protocol"):
+        # `config` is skipped only when the stored record predates it — a legacy record cannot assert
+        # what it was built as. When both sides have one, a different build is a different measurement.
+        for key in ("capability", "split", "n_shards", "protocol", "config"):
             if key in other and other[key] is not None and mine[key] != other[key]:
                 return False
         return True
@@ -287,13 +302,24 @@ _RESULT_SINK = {"path": "", "capability": "", "protocol": "", "flags": "", "seed
                 "steps": None, "n_shards": None, "trained_encoder": False}
 
 
-def _set_result_sink(path, capability, protocol, args):
-    """Arm the result contract for this run. Called once, right after parse_args."""
+def _set_result_sink(path, capability, protocol, args, config=None):
+    """Arm the result contract for this run. Called once, right after parse_args.
+
+    `config` is the probe's CONFIG block — the levers that used to be CLI flags. It must reach the
+    identity: with the levers in the file, two experiments have IDENTICAL command lines, so without a
+    digest of what was actually built the gate would treat a rewired encoder as the same measurement as
+    the control and let one 'beat' the other.
+    """
     _RESULT_SINK.update({
+        "config": dict(config or {}),
         "path": path or "", "capability": capability or "", "protocol": protocol,
+        # These moved out of argv and into the probe's CONFIG, so read them from there first. Falling
+        # back to argv keeps any module that still declares them as flags working.
         "flags": " ".join(sys.argv[1:]), "seed": getattr(args, "seed", None),
-        "steps": getattr(args, "steps", None), "n_shards": getattr(args, "n_shards", None),
-        "trained_encoder": bool(getattr(args, "train_encoder", False)),
+        "steps": (config or {}).get("steps", getattr(args, "steps", None)),
+        "n_shards": (config or {}).get("n_shards", getattr(args, "n_shards", None)),
+        "trained_encoder": bool((config or {}).get("train_encoder",
+                                                   getattr(args, "train_encoder", False))),
     })
 
 
@@ -324,6 +350,7 @@ def declare(capability, mode, metric, value, gains=None, baselines=None, split="
         steps=_RESULT_SINK["steps"],
         trained_encoder=(_RESULT_SINK["trained_encoder"] if trained_encoder is None
                          else bool(trained_encoder)),
+        config=dict(_RESULT_SINK.get("config") or {}),
         gains=dict(gains or {}),
         baselines=dict(baselines or {}),
         flags=_RESULT_SINK["flags"],
@@ -598,10 +625,20 @@ FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "prop_acc", "best-coord", "raw"
 
 
 def _run(module: str, probe_args: str, device: str, log_path: str, result_path: str,
-         capability: str) -> int:
-    probe_argv = shlex.split(probe_args) + ["--device", device,
-                                            "--result-json", result_path,
-                                            "--capability", capability]
+         capability: str, seed=None) -> int:
+    """Invoke the probe.
+
+    The spacetime probe now takes FOUR arguments — capability, seed, device, result-json — because every
+    lever that used to be a flag lives in its CONFIG block, and an experiment is a diff of that block on
+    a branch rather than a command line. `probe_args` stays supported and is passed through when given,
+    because other modules under lib/ (calib_probe) still declare their own flags; for the spacetime
+    probe it should be empty.
+    """
+    probe_argv = shlex.split(probe_args or "") + ["--device", device,
+                                                  "--result-json", result_path,
+                                                  "--capability", capability]
+    if seed is not None and "--seed" not in probe_argv:
+        probe_argv += ["--seed", str(seed)]
     cmd = [sys.executable, "-m", module] + probe_argv
     env = dict(os.environ)
     env["PYTHONPATH"] = str(REPO.parent) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
@@ -1051,7 +1088,10 @@ def main() -> None:
         description="Earth4D legacy probe ledger — exact audited protocol migrations only"
     )
     ap.add_argument("--metric", required=True, help="objective capability (one of the scorecard capabilities)")
-    ap.add_argument("--probe", required=True, help="probe flags = the architectural lever (quote the whole string)")
+    ap.add_argument("--probe", default="",
+                    help="LEGACY passthrough for modules that still declare flags (lib/calib_probe). The "
+                         "spacetime probe takes none: its levers live in CONFIG and an experiment is a "
+                         "diff of that block on a branch. Leave empty.")
     ap.add_argument("--probe-module", default=DEFAULT_PROBE_MODULE)
     ap.add_argument("--tag", default=None)
     ap.add_argument("--device", default="cuda")
@@ -1086,10 +1126,10 @@ def main() -> None:
     # from --seed, so seed k is the same initialization for every configuration compared here.
     seed_results, seed_values = [], []
     for k in range(max(1, a.seeds)):
-        seed_probe = a.probe if a.seeds == 1 else f"{a.probe} --seed {k}"
+        seed_probe = a.probe
         seed_log = log_path if a.seeds == 1 else str(Path(log_path).with_suffix(f".seed{k}.log"))
         result_path = str(Path(seed_log).with_suffix(".result.json"))
-        rc = _run(a.probe_module, seed_probe, a.device, seed_log, result_path, a.metric)
+        rc = _run(a.probe_module, seed_probe, a.device, seed_log, result_path, a.metric, seed=k)
         text = Path(seed_log).read_text(errors="ignore")
         if rc != 0:
             print(text[-1800:])

@@ -39,6 +39,8 @@ change earns when it GRADUATES, and a dead flag is a bug. Gating at conception i
 to 113 flags and 19 modes; the diagnostics that could never set a record have been deleted.
 """
 
+
+
 PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.editable_files.probe"
 # Must match autoresearch/probes/spacetime/editable_files/harness.py PROTOCOL. Bump both when a change alters what a run MEASURES.
 PROTOCOL_VERSION = "v3-fairbaseline"
@@ -79,6 +81,104 @@ from deepearth.autoresearch.probes.spacetime.editable_files.harness import (
     _set_result_sink,
     declare,
 )
+
+# ===================================================================================================
+# CONFIG — THE EXPERIMENT. Edit this, on a branch. There is no command-line flag for any of it.
+# ===================================================================================================
+#
+# These 33 values used to be CLI flags. That was the problem: when every lever is a flag, every
+# "experiment" is a toggle, and the code takes the shape of its toggles -- 113 flags, 19 modes, a
+# 1,552-line main(), and gated-default-off branches nobody ever removed. A flag is also a promise that
+# the default path still works, which is why nothing was ever deleted.
+#
+# Now an experiment is a DIFF of this block (and of earth4d.py). Change a value, commit it on a branch,
+# run it. The branch is the isolation and git is the record; if it fails, delete the branch and the
+# change is gone. Nothing accumulates.
+#
+# The CLI keeps only what decides WHICH MEASUREMENT is being made -- capability/mode, data size, split,
+# seed, device -- because those must be comparable across experiments and belong in the record's
+# identity. Everything below is how the encoder is BUILT and TRAINED, which is exactly what an
+# experiment is supposed to change.
+#
+# The identity carries config_digest (see harness.py), so two runs with different CONFIG are never
+# treated as the same measurement even though their command lines are identical.
+CONFIG = {
+    # Starts at the STANDING CHAMPION for species_from_spacetime (0.0691). A run with no edits must
+    # reproduce the record; if the defaults measured some other mode, every experiment would silently be
+    # compared against a different measurement.
+    "lr": 3e-3,
+    "spatial_levels": 18,
+    "temporal_levels": 18,
+    "log2_hashmap": 20,
+    "head_hidden": 512,
+    "fourier": 1024,
+    "fourier_scale": 6400.0,
+    "time_harmonics": 8,
+    "train_encoder": False,
+    "enc_lr_mult": 0.05,
+    "enc_warmup": 0.15,
+    "enc_c2f": 0.5,
+    # literal, not the imported constant: CONFIG is read at module load, before that import.
+    # Must stay equal to lib/recurrence.py DEFAULT_TIME_HORIZON.
+    "time_horizon": 2.0,
+    # ---- WHAT IS MEASURED (these were mode-selector and data flags on the CLI) ----
+    # Changing any of these changes the measurement, which is exactly why they belong in the
+    # experiment rather than on a command line. config_digest makes the gate see the difference.
+    "cache_dir": "autoresearch/data/deepcal",
+    "n_shards": 12,
+    "steps": 800,
+    "holdout": 0.2,
+    "target": "species",
+    "forecast": True,
+    "forecast_spatial": False,
+    "recurrence": False,
+    "gnn": False,
+    "phenology": False,
+    "pheno_nofair": False,
+    "pheno_feats": "e4d,rff,raw",
+    "pheno_spatial": False,
+    "field_decode": False,
+    "env": False,
+    "env_decode": False,
+    "env_extra": False,
+    "env_channels": "all",
+    "vision": False,
+    "vision_feats": "dino",
+    "pheno_channel": False,
+    "cooccur": False,
+    "cooccur_mech": "env",
+    "cooccur_thresh": 2,
+    "cooccur_file": "cooccur_count_005.npy",
+    "cooccur_channels": "all",
+    "sdm_presence": False,
+    "sdm_hard": False,
+    "sdm_cell_deg": 0.1,
+    "sdm_holdout_mode": "block",
+    "sdm_block_deg": 2.0,
+    "sdm_channels": "all",
+    "sdm_time": False,
+    "sdm_seeds": 1,
+    "causal_lags": 0,
+    "causal_lag_span": 0.25,
+    "spatial_siren": 0,
+    "siren_layers": 2,
+    "siren_w0": 30.0,
+    "spatial_cline": 64,
+    "cline_scale": 1.0,
+    "time_film": 0,
+    "rec_k": 16,
+    "rec_hidden": 256,
+    "rec_time_cond": False,
+    "gnn_hops": 2,
+    "pheno_tol": 15.0,
+    "pheno_attn": False,
+    "attn_heads": 4,
+    "attn_layers": 2,
+    "pheno_species": False,
+    "rec_block_deg": 2.0,
+    "rec_fast": False,
+    "env_aux_weight": 1.0,
+}
 @dataclass
 class _DynamicsCtx:
     """What the dynamics/AR diagnostics need from main()'s loaded state."""
@@ -523,9 +623,9 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
 def cooccur_mode(a):
     import sys as _sys; _sys.path.insert(0, '/workspace')
     from deepearth.autoresearch.probes.spacetime.editable_files.lib.dyntargets import cooccur_routing
-    r = cooccur_routing(a.cache_dir, thresh=a.cooccur_thresh, seed=a.seed,
-                        mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file,
-                        env_channels=a.cooccur_channels)
+    r = cooccur_routing(CONFIG["cache_dir"], thresh=CONFIG["cooccur_thresh"], seed=a.seed,
+                        mechanism=CONFIG["cooccur_mech"], cooccur_file=CONFIG["cooccur_file"],
+                        env_channels=CONFIG["cooccur_channels"])
     print(f"  query_sp={r['n_query_sp']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
     print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
     print(f"  [leak-guard] {r['leak_guard']}")
@@ -546,7 +646,7 @@ def cooccur_mode(a):
 def sdm_presence_mode(a):
     import sys as _sys; _sys.path.insert(0, '/workspace')
     from deepearth.autoresearch.probes.spacetime.editable_files.lib.dyntargets import sdm_presence
-    r = sdm_presence(a.cache_dir, seed=a.seed, mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file)
+    r = sdm_presence(CONFIG["cache_dir"], seed=a.seed, mechanism=CONFIG["cooccur_mech"], cooccur_file=CONFIG["cooccur_file"])
     print(f"  query_cells={r['n_query_cells']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
     print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
     print(f"  [leak-guard] {r['leak_guard']}")
@@ -569,11 +669,11 @@ def sdm_hard_mode(a):
     from deepearth.autoresearch.probes.spacetime.editable_files.lib.dyntargets import sdm_presence_hard
     import numpy as _np
     runs = []
-    for sd in range(a.seed, a.seed + a.sdm_seeds):
-        r = sdm_presence_hard(a.cache_dir, seed=sd, mechanism=a.cooccur_mech,
-                              cell_deg=a.sdm_cell_deg, holdout_mode=a.sdm_holdout_mode,
-                              block_deg=a.sdm_block_deg, env_channels=a.sdm_channels,
-                              add_time=a.sdm_time, cooccur_file=a.cooccur_file)
+    for sd in range(a.seed, a.seed + CONFIG["sdm_seeds"]):
+        r = sdm_presence_hard(CONFIG["cache_dir"], seed=sd, mechanism=CONFIG["cooccur_mech"],
+                              cell_deg=CONFIG["sdm_cell_deg"], holdout_mode=CONFIG["sdm_holdout_mode"],
+                              block_deg=CONFIG["sdm_block_deg"], env_channels=CONFIG["sdm_channels"],
+                              add_time=CONFIG["sdm_time"], cooccur_file=CONFIG["cooccur_file"])
         runs.append(r)
     aps = _np.array([x['micro_AP_feat'] for x in runs])
     gns = _np.array([x['gain_over_prevalence'] for x in runs])
@@ -592,7 +692,7 @@ def sdm_hard_mode(a):
         gains={"GAIN": float(gns.mean())},
         baselines={"prevalence": r0["micro_AP_prevalence"], "baserate": r0["micro_AP_baserate"]},
         mechanism=r0["mechanism"], env_channels=r0["env_channels"], add_time=r0["add_time"],
-        sdm_seeds=a.sdm_seeds, ap_std=float(aps.std()), gain_std=float(gns.std()),
+        sdm_seeds=CONFIG["sdm_seeds"], ap_std=float(aps.std()), gain_std=float(gns.std()),
         n_query_cells=r0["n_query_cells"], n_train_cells=r0["n_train_cells"],
         n_cand_sp=r0["n_cand_sp"], feat_dim=r0["feat_dim"], leak_guard=r0["leak_guard"],
     )
@@ -602,77 +702,10 @@ def sdm_hard_mode(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cache_dir", default="autoresearch/data/deepcal")
-    ap.add_argument("--n_shards", type=int, default=8)         # ~65k obs; the lever for coverage/speed
-    ap.add_argument("--steps", type=int, default=800)
-    ap.add_argument("--lr", type=float, default=3e-3)
-    ap.add_argument("--holdout", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--spatial_levels", type=int, default=18)   # S3: expose Earth4D capacity
-    ap.add_argument("--temporal_levels", type=int, default=18)
-    ap.add_argument("--log2_hashmap", type=int, default=20)
-    ap.add_argument("--head_hidden", type=int, default=0)       # 0=linear head; >0=MLP head width
-    ap.add_argument("--fourier", type=int, default=0)           # ARCH LEVER: add a random-Fourier-features branch of this width to Earth4D (0=off) -- tests hash+Fourier vs the pure-RFF baseline it currently loses to
-    ap.add_argument("--fourier_scale", type=float, default=10.0)  # RFF bandwidth (freq scale) for the --fourier branch
-    ap.add_argument("--time_harmonics", type=int, default=0)      # ARCH LEVER: internal learnable multi-scale sin/cos time basis (0=off) -- seasonal/persistence prior the discrete hash lacks; NOT redundant with spatial smooth_geo
-    ap.add_argument("--train_encoder", action="store_true")   # TRAIN the encoder end-to-end instead of reading a frozen RANDOM hash table (every other path is frozen -- see evaluate_trainable)
-    ap.add_argument("--enc_lr_mult", type=float, default=0.05)  # encoder lr = lr * this (own param group, wd=0)
-    ap.add_argument("--enc_warmup", type=float, default=0.15)   # fraction of steps for linear LR warmup
-    ap.add_argument("--enc_c2f", type=float, default=0.5)       # fraction of steps to fully unmask hash levels
-    ap.add_argument("--target", default="family", choices=["family", "species"])  # CAPABILITY LEVER: classification target. The paths only ever predicted family (166-way); "species" switches to the 2141-way species vocab, which is what species_from_spacetime / species_from_env actually name
-    ap.add_argument("--time_horizon", type=float, default=DEFAULT_TIME_HORIZON)   # train time compressed into [0,1/h] so the held-out FUTURE stays inside the encoder's representable range (it saturates past t~1.1). Design constant; never derived from test dates
-    ap.add_argument("--causal_lags", type=int, default=0)         # ARCH LEVER: delayed positional basis (K learned backward coordinate reads; 0=off). It consumes no observed state, so it is not memory or autoregression
-    ap.add_argument("--causal_lag_span", type=float, default=0.25)  # max lag as a fraction of the normalized time span
-    ap.add_argument("--spatial_siren", type=int, default=0)      # ARCH LEVER: gated SIREN spatial branch (width; 0=off) -- sinusoidal-activation MLP over xyz, smooth+extrapolative BY CONSTRUCTION with LEARNED per-layer frequencies; aimed at the hash's held-out-spatial-block weakness (loses to a fixed RFF on static tasks)
-    ap.add_argument("--siren_layers", type=int, default=2)
-    ap.add_argument("--siren_w0", type=float, default=30.0)       # SIREN frequency scale (Sitzmann et al. default)
-    ap.add_argument("--spatial_cline", type=int, default=0)      # ARCH LEVER: gated smooth spatial-CLINE band (0=off) -- linear xyz + LEARNABLE low-freq sin/cos; the monotone spatial gradient (lat->flowering-DOY Hopkins cline) the hash memorizes away and the fixed high-freq --fourier cannot form
-    ap.add_argument("--cline_scale", type=float, default=1.0)     # init bandwidth of the learnable cline band (LOW by design; ~1 cycle over the domain)
-    ap.add_argument("--time_film", type=int, default=0)        # ARCH LEVER: gated space x time FiLM (0=off) -- modulate spatial hash by a learned time basis; explicit seasonal-spatial interaction the additive features cannot form
-    ap.add_argument("--forecast", action="store_true")          # S1/rule1: causal past->future temporal split + live time coord
-    ap.add_argument("--forecast_spatial", action="store_true")  # rule1 strict: future time AND held-out place (no location-recall shortcut)
-    ap.add_argument("--recurrence", action="store_true")        # rule2b: 4D-LSTM rollout PROPAGATES past->future (replaces static lookup head)
-    ap.add_argument("--rec_k", type=int, default=16)            # causal context-window size (K nearest past neighbours)
-    ap.add_argument("--rec_hidden", type=int, default=256)      # LSTM hidden width
-    ap.add_argument("--rec_time_cond", action="store_true")     # rule24+2b: per-step token = QUERY cell re-encoded FORWARD in time (propagate encoder STATE, not a static neighbour code)
-    ap.add_argument("--gnn", action="store_true")               # rule1+2b: GraphCast/GenCast-style message-passing propagator (learned space-time edges, multi-hop) vs LSTM vs no-propagation; reports ABSOLUTE forecast skill
-    ap.add_argument("--gnn_hops", type=int, default=2)          # message-passing rounds (multi-hop)
-    ap.add_argument("--phenology", action="store_true")         # DECISIVE non-stationary control: predict day-of-year (seasonal timing) a static coord map CANNOT capture; static vs GNN vs LSTM propagator over Earth4D/RFF/raw
-    ap.add_argument("--pheno_tol", type=float, default=15.0)    # within-+/-N-days circular accuracy tolerance
-    ap.add_argument("--pheno_attn", action="store_true")        # ROUND-1: add temporal self-attention propagator (AttnDOY) alongside static/GNN/LSTM
-    ap.add_argument("--attn_heads", type=int, default=4)        # attention heads for AttnDOY
-    ap.add_argument("--attn_layers", type=int, default=2)       # self-attention encoder layers over the past window
-    ap.add_argument("--pheno_species", action="store_true")     # ROUND-2: species-conditioned LSTM propagator (neighbour species emb + query species + match bit)
-    ap.add_argument("--rec_block_deg", type=float, default=2.0)  # ROUND-3: spatial neighbour-search block width (deg); widen with large K to feed more past-DOY samples
-    ap.add_argument("--rec_fast", action="store_true")           # ROUND-4: vectorized cKDTree causal-window builder (true K-nearest, no block-ring cap, no per-query loop) -- decouples receptive-field breadth from O(block_area) cost so large K is affordable
-    ap.add_argument("--pheno_nofair", action="store_true")   # opt OUT of auto-training the RFF fair control alongside Earth4D (default: always train it, so no phenology record is set without a fair baseline)
-    ap.add_argument("--pheno_feats", default="e4d,rff,raw")  # HARD-RULE fast path: comma list subset of e4d,rff,raw to TRAIN (isolate ONE feature-type per run)
     # ---- LOOP-spacetime NEW DIRECTIONS on the mean-DOY graduation target (additive, default-off) ----
-    ap.add_argument("--pheno_spatial", action="store_true")     # (1) SPATIAL generalization: query set = held-out 0.5deg BLOCKS (unseen geography), neighbours from train blocks; MAE-gain over static floor in new places
-    ap.add_argument("--field_decode", action="store_true")      # rule24: TRAIN the encoder end-to-end to decode the dense family field between sparse obs; fair control = trainable-head-on-RFF / coord-MLP
-    ap.add_argument("--env", action="store_true")               # Move1: real ENVIRONMENT covariates (worldclim+soil+elev) vs coordinate-PE; + Earth4D+env fused
-    ap.add_argument("--env_decode", action="store_true")        # Move2/rule24: TRAIN encoder to decode the smooth ENVIRONMENT field (aux), then predict biology from the learned field
-    ap.add_argument("--env_aux_weight", type=float, default=1.0) # weight on the env-reconstruction auxiliary loss
-    ap.add_argument("--env_extra", action="store_true")         # add soil(9)+elev(1) channels on top of worldclim(19)+AlphaEarth(64)
-    ap.add_argument("--env_channels", default="all", choices=["all","worldclim","alphaearth","wcsoil","modis","all+modis"])  # ("wcsoil" = the legacy hard-wired 19wc+9soil+1elev stack the --env path used to force regardless of this flag) # channel-family ablation: which env source carries the niche-trait routing
-    ap.add_argument("--vision", action="store_true")             # DATA LEVER: family from per-obs PLANT vision (DINO/BioCLIP) instead of env -- perception-law test
-    ap.add_argument("--vision_feats", default="dino", choices=["dino","bio","both"])
-    ap.add_argument("--pheno_channel", action="store_true")      # DATA LEVER: join per-obs MODIS phenology (gbif_phenology_tokens, 12 feats) onto the phenology forecaster query features
     ap.add_argument("--device", default="cuda")
     # ---- LOOP-spacetime rule-1 AR ROLLOUT (this turn) ----------------------------------------------------
-    ap.add_argument("--cooccur", action="store_true")            # CROSS-ENCODER ROUTING: predict per-species co-occurrence PARTNER-SET from ENV/SPACE (held-out species); micro-AP + gain over non-spatial prevalence baseline.
-    ap.add_argument("--cooccur_mech", default="env", choices=["env","space","both"])
-    ap.add_argument("--cooccur_thresh", type=int, default=2)
-    ap.add_argument("--cooccur_file", default="cooccur_count_005.npy")
-    ap.add_argument("--cooccur_channels", default="all", choices=["all","worldclim","alphaearth"])
-    ap.add_argument("--sdm_presence", action="store_true")       # SDM env->biology (rules 1-6, B1/B5/B6/B8): predict which SPECIES occur at a held-out 0.5deg CELL from env+space.
-    ap.add_argument("--sdm_hard", action="store_true")            # HARDENED SDM presence: finer grid + spatial-block CV -> many held-out cells; per-channel env decomp; optional seasonal-time feature.
-    ap.add_argument("--sdm_cell_deg", type=float, default=0.1)     # grid cell size (deg); smaller => many more cells.
-    ap.add_argument("--sdm_holdout_mode", default="block", choices=["block","random"])  # spatial-block CV vs random cell holdout.
-    ap.add_argument("--sdm_block_deg", type=float, default=2.0)    # super-block width (deg) for spatial-block CV.
-    ap.add_argument("--sdm_channels", default="all", choices=["all","worldclim","alphaearth","soil","elev"])  # per-channel env decomposition.
-    ap.add_argument("--sdm_time", action="store_true")            # append per-cell seasonal timing (sin/cos mean-DOY + R).
-    ap.add_argument("--sdm_seeds", type=int, default=1)            # run seeds seed..seed+n-1; report mean +/- std.
     # ---- LOOP-spacetime ENV-DERIVABLE CONSTRUCT test (rarity=range-size, ease=climate-breadth) ----
     # The result contract (probe_contract.py). --capability is what the harness DECLARED as its
     # objective; a mode supplies its own natural capability when the probe is run standalone. The
@@ -682,7 +715,7 @@ def main(argv=None):
     ap.add_argument("--capability", default="",
                     help="the capability the harness declared as its objective")
     a = ap.parse_args(argv)
-    _set_result_sink(a.result_json, a.capability, PROTOCOL_VERSION, a)
+    _set_result_sink(a.result_json, a.capability, PROTOCOL_VERSION, a, config=CONFIG)
     if not _TRACE_AUTHORIZED:
         authorization_argv = sys.argv[1:] if argv is None else list(argv)
         require_recorded_entrypoint(
@@ -697,8 +730,8 @@ def main(argv=None):
         torch.cuda.manual_seed_all(a.seed)
 
     # Modes that never build Earth4D: env -> identity from precomputed tables (DATA lever only).
-    for _flag, _mode in ((a.cooccur, cooccur_mode), (a.sdm_presence, sdm_presence_mode),
-                         (a.sdm_hard, sdm_hard_mode)):
+    for _flag, _mode in ((CONFIG["cooccur"], cooccur_mode), (CONFIG["sdm_presence"], sdm_presence_mode),
+                         (CONFIG["sdm_hard"], sdm_hard_mode)):
         if _flag:
             return _mode(a)
 
@@ -707,10 +740,10 @@ def main(argv=None):
 
 
     t0 = time.time()
-    need_gid = a.env or a.env_decode
-    lat, lon, fam, n_fam, days, gid, sp_obs = load_obs(a.cache_dir, a.n_shards, with_time=a.forecast, with_gid=need_gid)
+    need_gid = CONFIG["env"] or CONFIG["env_decode"]
+    lat, lon, fam, n_fam, days, gid, sp_obs = load_obs(CONFIG["cache_dir"], CONFIG["n_shards"], with_time=CONFIG["forecast"], with_gid=need_gid)
     obs_index = np.arange(len(lat), dtype=np.int64)
-    if a.forecast:
+    if CONFIG["forecast"]:
         valid_time = np.isfinite(days)
         if not valid_time.all():
             lat, lon, fam, days, sp_obs = (
@@ -719,26 +752,26 @@ def main(argv=None):
             if gid is not None:
                 gid = gid[valid_time]
             obs_index = obs_index[valid_time]
-    if a.target == "species":
+    if CONFIG["target"] == "species":
         # CAPABILITY LEVER: the classification paths only ever predicted FAMILY, which is why
         # species_from_spacetime / species_from_env were never probeable from this probe at all. Species is a
         # strictly harder target (2141-way vocab vs 166 families) and is the capability the scorecard names.
         _u, fam = np.unique(sp_obs, return_inverse=True)         # compact the species ids actually present
         fam = fam.astype(np.int64); n_fam = int(fam.max()) + 1
-    if a.forecast:
+    if CONFIG["forecast"]:
         # Temporal holdout is a forecast split, but direct coordinate classification is
         # still a static forecast probe, not an autoregressive model.
-        test = temporal_holdout(days, a.holdout)
-        if a.pheno_spatial:
+        test = temporal_holdout(days, CONFIG["holdout"])
+        if CONFIG["pheno_spatial"]:
             # LOOP-spacetime (1) SPATIAL generalization: the mean-DOY graduation head must forecast timing in
             # UNSEEN geography, not just future time. Swap the query set to held-out 0.5deg spatial blocks;
             # neighbours are drawn from TRAIN (seen) blocks. Tests generalization to new places, not memorization.
-            test = spatial_holdout(lat, lon, a.holdout, seed=a.seed)
-        if a.forecast_spatial:
+            test = spatial_holdout(lat, lon, CONFIG["holdout"], seed=a.seed)
+        if CONFIG["forecast_spatial"]:
             # Keep only the two valid quadrants.  The old ``test=future&held; train=~test``
             # leaked future-seen-place and past-held-place rows into training.
             train, test, _embargo = strict_spatiotemporal_holdout(
-                lat, lon, days, a.holdout, seed=a.seed
+                lat, lon, days, CONFIG["holdout"], seed=a.seed
             )
             keep = train | test
             lat, lon, fam, days, sp_obs = (
@@ -754,38 +787,38 @@ def main(argv=None):
         # axis. A DESIGN constant -- no test date is consulted, so the train-only fit stays leak-free.
         # 1/(1-holdout) is NOT enough: temporal_holdout splits by row COUNT and observations are denser in the
         # past, so the last 20% of rows spans ~52% of the calendar range (measured test t max 1.52 at h=1.0).
-        tnorm, tmin, tspan = normalize_time_from_train(days, ~test, horizon=a.time_horizon)
+        tnorm, tmin, tspan = normalize_time_from_train(days, ~test, horizon=CONFIG["time_horizon"])
         coords = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), tnorm], 1))  # [N,4]=(lat,lon,elev=0,t=REAL)
     else:
-        test = spatial_holdout(lat, lon, a.holdout, seed=a.seed)
+        test = spatial_holdout(lat, lon, CONFIG["holdout"], seed=a.seed)
         coords = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), np.zeros_like(lat)], 1))  # [N,4] t=0
     fam_t = torch.tensor(fam)
 
-    enc = Earth4D(verbose=False, spatial_levels=a.spatial_levels, temporal_levels=a.temporal_levels,   # S3: exposed capacity
-                  spatial_log2_hashmap_size=a.log2_hashmap, temporal_log2_hashmap_size=a.log2_hashmap, freq_log_scale_init=-2.5,
-                  fourier_features=a.fourier, fourier_scale=a.fourier_scale,
-                  time_harmonics=a.time_harmonics, time_film=a.time_film,
-                  spatial_cline=a.spatial_cline, cline_scale=a.cline_scale,
-                  spatial_siren=a.spatial_siren, siren_layers=a.siren_layers, siren_w0=a.siren_w0,
-                  causal_lags=a.causal_lags, causal_lag_span=a.causal_lag_span).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
+    enc = Earth4D(verbose=False, spatial_levels=CONFIG["spatial_levels"], temporal_levels=CONFIG["temporal_levels"],   # S3: exposed capacity
+                  spatial_log2_hashmap_size=CONFIG["log2_hashmap"], temporal_log2_hashmap_size=CONFIG["log2_hashmap"], freq_log_scale_init=-2.5,
+                  fourier_features=CONFIG["fourier"], fourier_scale=CONFIG["fourier_scale"],
+                  time_harmonics=CONFIG["time_harmonics"], time_film=CONFIG["time_film"],
+                  spatial_cline=CONFIG["spatial_cline"], cline_scale=CONFIG["cline_scale"],
+                  spatial_siren=CONFIG["spatial_siren"], siren_layers=CONFIG["siren_layers"], siren_w0=CONFIG["siren_w0"],
+                  causal_lags=CONFIG["causal_lags"], causal_lag_span=CONFIG["causal_lag_span"]).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
 
     # (The old --env_temporal/--env_perobs/--env_quantiles/--env_extremes/--env_spread guard is gone with
     # those flags: they only ever affected the deleted --env_trait diagnostic and were silently inert on
     # the --env path, which is how family_from_env read data-limited for 53 runs. A flag that cannot act
     # is worse than no flag.)
 
-    if a.env or a.env_decode:
+    if CONFIG["env"] or CONFIG["env_decode"]:
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
         # follows. Real env covariates (worldclim+soil+elev) joined by gbifID -> the science-aligned question.
-        env = load_env(a.cache_dir, gid, channels=a.env_channels, fit_mask=~test)  # train-fit transform
-        if a.vision:
-            env = load_vision(a.cache_dir, gid, a.vision_feats, a.n_shards, fit_mask=~test)
+        env = load_env(CONFIG["cache_dir"], gid, channels=CONFIG["env_channels"], fit_mask=~test)  # train-fit transform
+        if CONFIG["vision"]:
+            env = load_vision(CONFIG["cache_dir"], gid, CONFIG["vision_feats"], CONFIG["n_shards"], fit_mask=~test)
         rn = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
-        if a.forecast:
+        if CONFIG["forecast"]:
             rn = np.concatenate([rn, tnorm[:, None]], 1)
 
 
-    if a.env:
+    if CONFIG["env"]:
         # ---- Move 1: is real ENVIRONMENT >> any coordinate positional encoding at held-out biology? ----
         # Fair controls: Earth4D(coords), RFF(coords), raw(coords) -- the best coordinate-PE. Plus Earth4D+env
         # fused. All share the SAME head (linear or MLP), steps, lr. st_gain reported as env-or-fused MINUS the
@@ -798,17 +831,17 @@ def main(argv=None):
         proj = rn @ (rff_rng.normal(0, 8.0, (rn.shape[1], e4d.shape[1] // 2)).astype(np.float32))
         rff = torch.tensor(np.concatenate([np.sin(proj), np.cos(proj)], 1).astype(np.float32))
         fused = torch.cat([e4d, env_t], 1)                       # Earth4D coords ++ real environment
-        raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden, a.seed)
-        rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden, a.seed)
-        e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d",
-                                              a.head_hidden, a.enc_lr_mult, a.enc_warmup, a.enc_c2f, seed=a.seed)
-                           if a.train_encoder else
-                           evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden, a.seed))
-        env_acc, env_t5 = evaluate(env_t, fam_t, test, n_fam, dev, a.steps, a.lr, "env", a.head_hidden, a.seed)
-        fus_acc, fus_t5 = evaluate(fused, fam_t, test, n_fam, dev, a.steps, a.lr, "fused", a.head_hidden, a.seed)
+        raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "raw", CONFIG["head_hidden"], a.seed)
+        rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], "rff", CONFIG['head_hidden'], a.seed)
+        e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
+                                              CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'], seed=a.seed)
+                           if CONFIG["train_encoder"] else
+                           evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d", CONFIG["head_hidden"], a.seed))
+        env_acc, env_t5 = evaluate(env_t, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "env", CONFIG["head_hidden"], a.seed)
+        fus_acc, fus_t5 = evaluate(fused, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "fused", CONFIG["head_hidden"], a.seed)
         dt = time.time() - t0
         best_coord = max(raw_acc, rff_acc, e4d_acc)              # best coordinate-only PE
-        mode = ("FORECAST(future+newplace)" if a.forecast_spatial else "FORECAST(past->future)") if a.forecast else "spatial-block"
+        mode = ("FORECAST(future+newplace)" if CONFIG["forecast_spatial"] else "FORECAST(past->future)") if CONFIG["forecast"] else "spatial-block"
         print(f"  held-out family acc | raw {raw_acc:.4f} | RFF {rff_acc:.4f} | Earth4D {e4d_acc:.4f} || ENV {env_acc:.4f} | Earth4D+ENV {fus_acc:.4f}")
         # The record's primary for family_from_env is the FUSED Earth4D+ENV accuracy; the old harness
         # recovered it by matching r"Earth4D\+ENV\s+([\d.]+)" against the first line that happened to
@@ -837,7 +870,7 @@ def main(argv=None):
                 "env_acc": env_acc, "fused_acc": fus_acc, "earth4d_acc": e4d_acc, "rff_acc": rff_acc,
                 "raw_acc": raw_acc, "best_coord_pe": best_coord, "obs": len(lat), "seconds": dt, "env": True}
 
-    if a.env_decode:
+    if CONFIG["env_decode"]:
         # ---- Move 2 (rule 24 done right): env-supervised field. Train each encoder to ALSO decode the smooth ----
         # real ENVIRONMENT field (worldclim, standardized) at TRAIN obs as an aux regression target, THEN predict
         # biology from the learned field at the strict held-out set. Fair controls (mlp/rff) get the identical
@@ -848,19 +881,19 @@ def main(argv=None):
             fdim = enc(coords[:8].to(dev)).shape[1]
         env_tgt = env[:, :19]                                    # worldclim = the smooth, physically-real field
         e4d_acc, e4d_t5, n_te, e4d_er = run_env_decode("earth4d", coords, rn, env_tgt, fam, test, n_fam, dev,
-                                                       enc=enc, feat_dim=fdim, steps=a.steps, lr=a.lr,
-                                                       head_hidden=max(a.head_hidden, 256), aux_w=a.env_aux_weight)
+                                                       enc=enc, feat_dim=fdim, steps=CONFIG["steps"], lr=CONFIG["lr"],
+                                                       head_hidden=max(CONFIG["head_hidden"], 256), aux_w=CONFIG["env_aux_weight"])
         mlp_acc, mlp_t5, _, mlp_er = run_env_decode("mlp", coords, rn, env_tgt, fam, test, n_fam, dev,
-                                                    feat_dim=fdim, steps=a.steps, lr=a.lr,
-                                                    head_hidden=max(a.head_hidden, 256), aux_w=a.env_aux_weight)
+                                                    feat_dim=fdim, steps=CONFIG["steps"], lr=CONFIG["lr"],
+                                                    head_hidden=max(CONFIG["head_hidden"], 256), aux_w=CONFIG["env_aux_weight"])
         rff_acc, rff_t5, _, rff_er = run_env_decode("rff", coords, rn, env_tgt, fam, test, n_fam, dev,
-                                                    feat_dim=fdim, steps=a.steps, lr=a.lr,
-                                                    head_hidden=max(a.head_hidden, 256), aux_w=a.env_aux_weight)
+                                                    feat_dim=fdim, steps=CONFIG["steps"], lr=CONFIG["lr"],
+                                                    head_hidden=max(CONFIG["head_hidden"], 256), aux_w=CONFIG["env_aux_weight"])
         dt = time.time() - t0
         ctrl = max(mlp_acc, rff_acc)
-        mode = ("FORECAST(future+newplace)" if a.forecast_spatial else "FORECAST(past->future)") if a.forecast else "spatial-block"
+        mode = ("FORECAST(future+newplace)" if CONFIG["forecast_spatial"] else "FORECAST(past->future)") if CONFIG["forecast"] else "spatial-block"
         print(f"  env-recon val R2ish | mlp {mlp_er:.4f} | RFF {rff_er:.4f} | Earth4D {e4d_er:.4f}   (aux env-field fit quality)")
-        print(f"  {len(lat)} obs, {a.steps}-step env-decode in {dt:.1f}s")
+        print(f"  {len(lat)} obs, {CONFIG['steps']}-step env-decode in {dt:.1f}s")
         declare(
             capability="family_from_env",
             mode=f"ENV-DECODE({mode})",
@@ -871,7 +904,7 @@ def main(argv=None):
             gains={"vs mlp": e4d_acc - mlp_acc, "vs best-ctrl": e4d_acc - ctrl},
             baselines={"mlp": mlp_acc, "RFF": rff_acc, "best-ctrl": ctrl},
             obs=len(lat), held_out=n_te, earth4d_dim=fdim, seconds=dt,
-            env_aux_weight=a.env_aux_weight,
+            env_aux_weight=CONFIG["env_aux_weight"],
             env_recon_r2={"mlp": mlp_er, "rff": rff_er, "earth4d": e4d_er},
             top5={"mlp": mlp_t5, "rff": rff_t5, "earth4d": e4d_t5},
         )
@@ -879,7 +912,7 @@ def main(argv=None):
                 "mlp_acc": mlp_acc, "rff_acc": rff_acc, "earth4d_envR2": e4d_er, "obs": len(lat),
                 "seconds": dt, "env_decode": True}
 
-    if a.field_decode:
+    if CONFIG["field_decode"]:
         # science.md rule 24: TRAIN the encoder end-to-end to decode the dense family field between sparse obs,
         # then forecast the strict held-out (future+new-place) set. Fair controls under the identical decode:
         # a trainable coord-MLP (generic learned PE, matched capacity) and fixed-RFF+trainable-head.
@@ -889,20 +922,20 @@ def main(argv=None):
         with torch.no_grad():
             fdim = enc(coords[:8].to(dev)).shape[1]
         rn_fd = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
-        if a.forecast:
+        if CONFIG["forecast"]:
             rn_fd = np.concatenate([rn_fd, tnorm[:, None]], 1)
         else:
             rn_fd = np.concatenate([rn_fd, np.zeros((len(lat), 1), np.float32)], 1)
         e4d_acc, e4d_t5, n_te = run_field_decode("earth4d", coords, rn_fd, fam, test, n_fam, dev,
-                                                 enc=enc, feat_dim=fdim, steps=a.steps, lr=a.lr, head_hidden=max(a.head_hidden, 256))
+                                                 enc=enc, feat_dim=fdim, steps=CONFIG["steps"], lr=CONFIG["lr"], head_hidden=max(CONFIG["head_hidden"], 256))
         mlp_acc, mlp_t5, _ = run_field_decode("mlp", coords, rn_fd, fam, test, n_fam, dev,
-                                              feat_dim=fdim, steps=a.steps, lr=a.lr, head_hidden=max(a.head_hidden, 256))
+                                              feat_dim=fdim, steps=CONFIG["steps"], lr=CONFIG["lr"], head_hidden=max(CONFIG["head_hidden"], 256))
         rff_acc, rff_t5, _ = run_field_decode("rff", coords, rn_fd, fam, test, n_fam, dev,
-                                              feat_dim=fdim, steps=a.steps, lr=a.lr, head_hidden=max(a.head_hidden, 256))
+                                              feat_dim=fdim, steps=CONFIG["steps"], lr=CONFIG["lr"], head_hidden=max(CONFIG["head_hidden"], 256))
         dt = time.time() - t0
         ctrl = max(mlp_acc, rff_acc)
-        mode = "FIELD-DECODE(future+newplace)" if a.forecast_spatial else ("FIELD-DECODE(past->future)" if a.forecast else "FIELD-DECODE(spatial-block)")
-        print(f"  {len(lat)} obs, {a.steps}-step decode in {dt:.1f}s")
+        mode = "FIELD-DECODE(future+newplace)" if CONFIG["forecast_spatial"] else ("FIELD-DECODE(past->future)" if CONFIG["forecast"] else "FIELD-DECODE(spatial-block)")
+        print(f"  {len(lat)} obs, {CONFIG['steps']}-step decode in {dt:.1f}s")
         declare(
             capability="family_from_spacetime",
             mode=mode,                     # already reads "FIELD-DECODE(...)"; do not wrap it again
@@ -922,7 +955,7 @@ def main(argv=None):
     with torch.no_grad():
         e4d = enc(coords.to(dev)).cpu()                          # [N, output_dim] Earth4D positional features
     rn = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
-    if a.forecast:
+    if CONFIG["forecast"]:
         rn = np.concatenate([rn, tnorm[:, None]], 1)             # fair: baselines get the SAME time feature
     raw = torch.tensor(rn)                                        # raw normalized coords (+time) baseline
     # Random Fourier Features of (lat,lon[,t]): the fair nonlinear positional-encoding control.
@@ -932,22 +965,22 @@ def main(argv=None):
     _best = (-1.0, _rff_sigmas[0], None)
     for _sig in _rff_sigmas:
         _cand = _rff_features(_rff_scaled, _rff_base, _sig)
-        _acc, _ = evaluate(_cand, fam_t, test, n_fam, dev, a.steps, a.lr, f"rff_s{_sig:g}",
-                           a.head_hidden, a.seed)
+        _acc, _ = evaluate(_cand, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], f"rff_s{_sig:g}",
+                           CONFIG["head_hidden"], a.seed)
         if _acc > _best[0]:
             _best = (_acc, _sig, _cand)
     rff = _best[2]
     print(f"  [fair-baseline] RFF bandwidth selected: sigma={_best[1]:g} "
           f"(acc {_best[0]:.4f} over {[f'{x:g}' for x in _rff_sigmas]}) — the control gets its best shot")
 
-    if a.phenology:
+    if CONFIG["phenology"]:
         # DECISIVE non-stationary control (science.md rule 1+2b). Prior family-presence forecasting showed
         # propagator_gain ~0 because a STATIONARY spatial climatology fit the target. Here the target is the
         # DAY-OF-YEAR (phenology / seasonal timing) -- non-stationary: a static (lat,lon) map explains ~3% of
         # it, so a real propagator that carries WHEN nearby species were recently seen should finally win.
         # static no-propagation floor vs GNN vs LSTM, each over Earth4D / RFF / raw, on the declared split.
         # propagator_gain = propagator MAE improvement over the static floor.
-        assert a.forecast, "--phenology requires --forecast (needs live event-time + past->future split)"
+        assert CONFIG["forecast"], "--phenology requires --forecast (needs live event-time + past->future split)"
         from deepearth.autoresearch.probes.spacetime.editable_files.lib.phenology import run_phenology_all
         coords_ll = torch.tensor(np.stack([lat, lon], 1).astype(np.float32))
         # CRITICAL leak-guard: the phenology TARGET is the query's own day-of-year, which is derivable from the
@@ -963,11 +996,11 @@ def main(argv=None):
         with torch.no_grad():
             e4d_sp = enc(coords_sp.to(dev)).cpu()
         fd = {"e4d": e4d_sp.shape[1], "rff": rff_sp.shape[1], "raw": raw_sp.shape[1]}
-        if a.pheno_channel:
-            _ph = np.load(Path(a.cache_dir) / "gbif_phenology_tokens.npz")
+        if CONFIG["pheno_channel"]:
+            _ph = np.load(Path(CONFIG["cache_dir"]) / "gbif_phenology_tokens.npz")
             _pm = {int(g): i for i, g in enumerate(_ph["gbifID"])}; _PH = _ph["phenology"]
             import glob as _g2
-            _gg=[np.load(_f)["gbifID"] for _f in sorted(_g2.glob(str(Path(a.cache_dir)/"gbif_tokens/*.npz")))[:a.n_shards]]
+            _gg=[np.load(_f)["gbifID"] for _f in sorted(_g2.glob(str(Path(CONFIG["cache_dir"])/"gbif_tokens/*.npz")))[:CONFIG["n_shards"]]]
             _gid=np.concatenate(_gg).astype(np.int64)[obs_index]
             _px = np.zeros((len(lat), _PH.shape[1]), np.float32)
             for _i, _g in enumerate(_gid):
@@ -979,22 +1012,22 @@ def main(argv=None):
             raw_sp = torch.cat([raw_sp, _pt], 1); e4d_sp = torch.cat([e4d_sp, _pt], 1)
             fd = {"e4d": e4d_sp.shape[1], "rff": rff_sp.shape[1], "raw": raw_sp.shape[1]}
         sp_all = None
-        if a.pheno_species:
+        if CONFIG["pheno_species"]:
             import glob as _glob
             from pathlib import Path as _Path
             _sp = []
-            for _f in sorted(_glob.glob(str(_Path(a.cache_dir) / "gbif_tokens/*.npz")))[:a.n_shards]:
+            for _f in sorted(_glob.glob(str(_Path(CONFIG["cache_dir"]) / "gbif_tokens/*.npz")))[:CONFIG["n_shards"]]:
                 _sp.append(np.load(_f)["species_local"])
             sp_all = np.concatenate(_sp).astype(np.int64)[obs_index]
-        _feats = phenology_feature_set(a.pheno_feats, a.pheno_nofair)
+        _feats = phenology_feature_set(CONFIG["pheno_feats"], CONFIG["pheno_nofair"])
         # FAIR-BASELINE GUARD: a single-feature run (e.g. --pheno_feats e4d) left the RFF control untrained, so the
         # trace could report NO fair gain at all and still set a record -- this capability's records were being
         # gated on nothing. Whenever Earth4D is trained, train raw and generic-PE controls too
         # (opt out: --pheno_nofair).
         r = run_phenology_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, test, dev,
-                              K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol,
-                              attn=a.pheno_attn, attn_heads=a.attn_heads, attn_layers=a.attn_layers, sp=sp_all,
-                              block_deg=a.rec_block_deg, fast=a.rec_fast,
+                              K=CONFIG["rec_k"], steps=CONFIG["steps"], lr=CONFIG["lr"], hidden=CONFIG["rec_hidden"], hops=CONFIG["gnn_hops"], tol_days=CONFIG["pheno_tol"],
+                              attn=CONFIG["pheno_attn"], attn_heads=CONFIG["attn_heads"], attn_layers=CONFIG["attn_layers"], sp=sp_all,
+                              block_deg=CONFIG["rec_block_deg"], fast=CONFIG["rec_fast"],
                               feats=_feats)
         dt = time.time() - t0
         n_te = r["raw"]["n_te"]
@@ -1006,18 +1039,18 @@ def main(argv=None):
         pg_rff_gnn_mae, _ = pg("rff", "gnn")
         best_prop_raw_mae = max(pg_raw_gnn_mae, pg_raw_lstm_mae)
         pg_raw_attn_mae = pg_raw_attn_acc = float("nan")
-        if a.pheno_attn:
+        if CONFIG["pheno_attn"]:
             pg_raw_attn_mae, pg_raw_attn_acc = pg("raw", "attn")
             best_prop_raw_mae = max(best_prop_raw_mae, pg_raw_attn_mae)
         pg_raw_sp_mae = pg_raw_sp_acc = float("nan")
-        if a.pheno_species:
+        if CONFIG["pheno_species"]:
             pg_raw_sp_mae, pg_raw_sp_acc = pg("raw", "sp")
             best_prop_raw_mae = max(best_prop_raw_mae, pg_raw_sp_mae)
-        pheno_mode = phenology_mode(a.forecast_spatial, a.pheno_spatial)
+        pheno_mode = phenology_mode(CONFIG["forecast_spatial"], CONFIG["pheno_spatial"])
         for ft in ("raw", "rff", "e4d"):
             d = r[ft]
-            attn_s = f" | ATTN MAE {d.get('attn_mae', float('nan')):6.2f}d acc {d.get('attn_acc', float('nan')):.4f} (prop {d['static_mae']-d.get('attn_mae', float('nan')):+.2f}d)" if a.pheno_attn else ""
-            sp_s = f" | SP MAE {d.get('sp_mae', float('nan')):6.2f}d acc {d.get('sp_acc', float('nan')):.4f} (prop {d['static_mae']-d.get('sp_mae', float('nan')):+.2f}d)" if a.pheno_species else ""
+            attn_s = f" | ATTN MAE {d.get('attn_mae', float('nan')):6.2f}d acc {d.get('attn_acc', float('nan')):.4f} (prop {d['static_mae']-d.get('attn_mae', float('nan')):+.2f}d)" if CONFIG['pheno_attn'] else ""
+            sp_s = f" | SP MAE {d.get('sp_mae', float('nan')):6.2f}d acc {d.get('sp_acc', float('nan')):.4f} (prop {d['static_mae']-d.get('sp_mae', float('nan')):+.2f}d)" if CONFIG['pheno_species'] else ""
             print(f"  {ft:>4} | static MAE {d['static_mae']:6.2f}d acc {d['static_acc']:.4f} -> GNN MAE {d['gnn_mae']:6.2f}d acc {d['gnn_acc']:.4f} (prop {d['static_mae']-d['gnn_mae']:+.2f}d) | LSTM MAE {d['lstm_mae']:6.2f}d acc {d['lstm_acc']:.4f} (prop {d['static_mae']-d['lstm_mae']:+.2f}d){attn_s}{sp_s}")
         print(f"  BEST propagator_gain (raw features, MAE reduction in days; POSITIVE=propagation helps) GNN {pg_raw_gnn_mae:+.2f}d  LSTM {pg_raw_lstm_mae:+.2f}d  ATTN {pg_raw_attn_mae:+.2f}d  SP {pg_raw_sp_mae:+.2f}d  best {best_prop_raw_mae:+.2f}d")
         print(f"  propagator_gain(within-tol acc, raw) GNN {pg_raw_gnn_acc:+.4f}  LSTM {pg_raw_lstm_acc:+.4f}  ATTN {pg_raw_attn_acc:+.4f}  SP {pg_raw_sp_acc:+.4f}")
@@ -1034,7 +1067,7 @@ def main(argv=None):
         _e4d_best, _rff_best = _best_acc("e4d"), _best_acc("rff")
         if _e4d_best == _e4d_best and _rff_best == _rff_best:
             print(f"  st_gain(Earth4D vs RFF, best-head within-tol acc) {_e4d_best - _rff_best:+.4f}   (Earth4D {_e4d_best:.4f}  RFF {_rff_best:.4f})")
-        print(f"  {len(lat)} obs, {a.steps}-step phenology in {dt:.1f}s")
+        print(f"  {len(lat)} obs, {CONFIG['steps']}-step phenology in {dt:.1f}s")
         # The record metric here is Earth4D's BEST-HEAD within-tolerance accuracy vs the generic trained
         # PE's -- NOT propagator_gain, which is a propagation-vs-static quantity on RAW features and so
         # never gated the encoder at all. _best_acc() is nan-safe when a head was not run.
@@ -1047,8 +1080,8 @@ def main(argv=None):
             gains=({"Earth4D vs RFF, best-head within-tol acc": _e4d_best - _rff_best}
                    if _e4d_best == _e4d_best and _rff_best == _rff_best else {}),
             baselines={"RFF_best_head": _rff_best, "raw_best_head": _best_acc("raw")},
-            forecast_queries=n_te, tol_days=a.pheno_tol, K=a.rec_k, hops=a.gnn_hops,
-            attn=a.pheno_attn, obs=len(lat), seconds=dt,
+            forecast_queries=n_te, tol_days=CONFIG["pheno_tol"], K=CONFIG["rec_k"], hops=CONFIG["gnn_hops"],
+            attn=CONFIG["pheno_attn"], obs=len(lat), seconds=dt,
             propagator_gain_acc_raw=pg_raw_gnn_acc, propagator_gain_mae_raw=best_prop_raw_mae,
             static_mae_raw=r["raw"]["static_mae"], gnn_mae_raw=r["raw"]["gnn_mae"],
         )
@@ -1069,22 +1102,22 @@ def main(argv=None):
 
 
 
-    if a.gnn:
+    if CONFIG["gnn"]:
         # science.md rule 1+2b: GraphCast/GenCast-style message-passing propagator. Per held-out (future+new-
         # place) query, build a graph of its K strictly-earlier past observations with LEARNED space-time edges
         # (dlat,dlon,dt), run multi-hop message passing, decode the query -> family forecast. Report ABSOLUTE
         # forecast skill for: GNN propagator vs the no-propagation static head (same query set) vs -- for the
         # mechanism control -- the SAME GNN over Earth4D / RFF / raw node features. propagator-vs-none isolates
         # whether causal propagation forecasts forward at all; Earth4D-vs-RFF isolates mechanism vs encoder.
-        assert a.forecast, "--gnn requires --forecast (needs live event-time + past->future split)"
+        assert CONFIG["forecast"], "--gnn requires --forecast (needs live event-time + past->future split)"
         from deepearth.autoresearch.probes.spacetime.editable_files.lib.gnn import run_gnn
         coords_ll = torch.tensor(np.stack([lat, lon], 1).astype(np.float32))
         e4d_r = run_gnn(e4d, e4d.shape[1], fam, days, coords_ll, test, n_fam, dev,
-                        K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops)
+                        K=CONFIG["rec_k"], steps=CONFIG["steps"], lr=CONFIG["lr"], hidden=CONFIG["rec_hidden"], hops=CONFIG["gnn_hops"])
         rff_r = run_gnn(rff, rff.shape[1], fam, days, coords_ll, test, n_fam, dev,
-                        K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops)
+                        K=CONFIG["rec_k"], steps=CONFIG["steps"], lr=CONFIG["lr"], hidden=CONFIG["rec_hidden"], hops=CONFIG["gnn_hops"])
         raw_r = run_gnn(raw, raw.shape[1], fam, days, coords_ll, test, n_fam, dev,
-                        K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops)
+                        K=CONFIG["rec_k"], steps=CONFIG["steps"], lr=CONFIG["lr"], hidden=CONFIG["rec_hidden"], hops=CONFIG["gnn_hops"])
         dt = time.time() - t0
         n_te = e4d_r["n_te"]
         # propagator-vs-none PER feature type (apples-to-apples: each GNN vs its OWN static floor).
@@ -1093,7 +1126,7 @@ def main(argv=None):
         print(f"  ABSOLUTE top1 | raw: static {raw_r['static_acc']:.4f} -> GNN {raw_r['gnn_acc']:.4f} (prop {pg_raw:+.4f}) | RFF: static {rff_r['static_acc']:.4f} -> GNN {rff_r['gnn_acc']:.4f} (prop {pg_rff:+.4f}) | E4D: static {e4d_r['static_acc']:.4f} -> GNN {e4d_r['gnn_acc']:.4f} (prop {pg_e4d:+.4f})")
         print(f"  ABSOLUTE top5 | raw: static {raw_r['static_top5']:.4f} -> GNN {raw_r['gnn_top5']:.4f} (prop {pg_raw5:+.4f}) | RFF: static {rff_r['static_top5']:.4f} -> GNN {rff_r['gnn_top5']:.4f} | E4D: static {e4d_r['static_top5']:.4f} -> GNN {e4d_r['gnn_top5']:.4f}")
         print(f"  BEST propagator_gain (raw features: GNN vs its no-prop floor) top1 {pg_raw:+.4f}  top5 {pg_raw5:+.4f}   (does causal propagation forecast forward?)")
-        print(f"  {len(lat)} obs, {a.steps}-step GNN in {dt:.1f}s")
+        print(f"  {len(lat)} obs, {CONFIG['steps']}-step GNN in {dt:.1f}s")
         # The mechanism (GNN propagation) and the encoder are separate questions. propagator_gain
         # measures propagation-vs-static; the ENCODER gain is Earth4D's GNN accuracy against the
         # generic PE's GNN accuracy. Declaring both keeps them from being confused for one another.
@@ -1107,7 +1140,7 @@ def main(argv=None):
                    "GNN Earth4D vs raw": e4d_r["gnn_acc"] - raw_r["gnn_acc"]},
             baselines={"raw_gnn": raw_r["gnn_acc"], "RFF_gnn": rff_r["gnn_acc"],
                        "raw_static": raw_r["static_acc"]},
-            obs=len(lat), forecast_queries=n_te, K=a.rec_k, hops=a.gnn_hops,
+            obs=len(lat), forecast_queries=n_te, K=CONFIG["rec_k"], hops=CONFIG["gnn_hops"],
             earth4d_dim=int(e4d.shape[1]), seconds=dt,
             propagator_gain_raw=pg_raw, propagator_gain_e4d=pg_e4d, propagator_gain_rff=pg_rff,
         )
@@ -1119,14 +1152,14 @@ def main(argv=None):
                 "st_gain": e4d_r["gnn_acc"] - rff_r["gnn_acc"], "st_gain_raw": e4d_r["gnn_acc"] - raw_r["gnn_acc"],
                 "obs": len(lat), "seconds": dt, "gnn": True, "n_te": n_te}
 
-    if a.recurrence:
+    if CONFIG["recurrence"]:
         # science.md rule 2b: physics-inspired 4D recurrence. Instead of a static per-point lookup head,
         # a causal LSTM rollout PROPAGATES local past state forward to each held-out (future+new-place) query.
         # Same rollout is run on Earth4D / raw / RFF features -> st_gain isolates whether Earth4D's 4D field
         # carries structure that PROPAGATES past->future, not just structure that indexes a cell.
-        assert a.forecast, "--recurrence requires --forecast (needs live event-time + past->future split)"
+        assert CONFIG["forecast"], "--recurrence requires --forecast (needs live event-time + past->future split)"
         coords_ll = torch.tensor(np.stack([lat, lon], 1).astype(np.float32))
-        if a.rec_time_cond:
+        if CONFIG["rec_time_cond"]:
             # rule24+2b: instead of feeding each neighbour its OWN static code, re-encode the QUERY cell
             # (lat_q,lon_q) FORWARD to each step's event day so the encoder's time axis carries state the LSTM
             # propagates. featurize(lat,lon,day) reproduces the exact Earth4D / raw / RFF normalizations.
@@ -1147,24 +1180,24 @@ def main(argv=None):
                 p = _rn3(la, lo, dy) @ _P
                 return torch.tensor(np.concatenate([np.sin(p), np.cos(p)], 1).astype(np.float32))
             raw_acc, raw_t5, n_te = run_recurrence_timecond(feat_raw, 3, fam, days, coords_ll, test, n_fam, dev,
-                                                            K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tag="raw")
+                                                            K=CONFIG["rec_k"], steps=CONFIG["steps"], lr=CONFIG["lr"], hidden=CONFIG["rec_hidden"], tag="raw")
             rff_acc, rff_t5, _ = run_recurrence_timecond(feat_rff, e4d.shape[1], fam, days, coords_ll, test, n_fam, dev,
-                                                         K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tag="rff")
+                                                         K=CONFIG['rec_k'], steps=CONFIG['steps'], lr=CONFIG['lr'], hidden=CONFIG['rec_hidden'], tag="rff")
             e4d_acc, e4d_t5, _ = run_recurrence_timecond(feat_e4d, e4d.shape[1], fam, days, coords_ll, test, n_fam, dev,
-                                                         K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tag="earth4d")
+                                                         K=CONFIG["rec_k"], steps=CONFIG["steps"], lr=CONFIG["lr"], hidden=CONFIG["rec_hidden"], tag="earth4d")
             dt = time.time() - t0
-            print(f"  {len(lat)} obs, {a.steps}-step rollout in {dt:.1f}s")
+            print(f"  {len(lat)} obs, {CONFIG['steps']}-step rollout in {dt:.1f}s")
             return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc,
                     "raw_acc": raw_acc, "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "recurrence": True, "time_cond": True}
         from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence import run_recurrence
         raw_acc, raw_t5, n_te = run_recurrence(raw, fam, days, coords_ll, test, n_fam, dev,
-                                               K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tag="raw")
+                                               K=CONFIG["rec_k"], steps=CONFIG["steps"], lr=CONFIG["lr"], hidden=CONFIG["rec_hidden"], tag="raw")
         rff_acc, rff_t5, _ = run_recurrence(rff, fam, days, coords_ll, test, n_fam, dev,
-                                            K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tag="rff")
+                                            K=CONFIG['rec_k'], steps=CONFIG['steps'], lr=CONFIG['lr'], hidden=CONFIG['rec_hidden'], tag="rff")
         e4d_acc, e4d_t5, _ = run_recurrence(e4d, fam, days, coords_ll, test, n_fam, dev,
-                                            K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tag="earth4d")
+                                            K=CONFIG["rec_k"], steps=CONFIG["steps"], lr=CONFIG["lr"], hidden=CONFIG["rec_hidden"], tag="earth4d")
         dt = time.time() - t0
-        print(f"  {len(lat)} obs, {a.steps}-step rollout in {dt:.1f}s")
+        print(f"  {len(lat)} obs, {CONFIG['steps']}-step rollout in {dt:.1f}s")
         declare(
             capability="family_from_spacetime",
             mode="RECURRENCE(4D-LSTM rollout past->future)",
@@ -1173,40 +1206,40 @@ def main(argv=None):
             split="FORECAST(past->future)",
             gains={"vs raw": e4d_acc - raw_acc, "vs RFF": e4d_acc - rff_acc},
             baselines={"raw": raw_acc, "RFF": rff_acc},
-            obs=len(lat), rollout_queries=n_te, families=n_fam, K=a.rec_k, hidden=a.rec_hidden,
+            obs=len(lat), rollout_queries=n_te, families=n_fam, K=CONFIG["rec_k"], hidden=CONFIG["rec_hidden"],
             earth4d_dim=int(e4d.shape[1]), seconds=dt,
             top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5},
         )
         return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc,
                 "raw_acc": raw_acc, "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "recurrence": True}
 
-    raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, a.steps, a.lr, "raw", a.head_hidden, a.seed)
-    rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, a.steps, a.lr, "rff", a.head_hidden, a.seed)
-    e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d",
-                                          a.head_hidden, a.enc_lr_mult, a.enc_warmup, a.enc_c2f, seed=a.seed)
-                       if a.train_encoder else
-                       evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden, a.seed))
+    raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "raw", CONFIG["head_hidden"], a.seed)
+    rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], "rff", CONFIG['head_hidden'], a.seed)
+    e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
+                                          CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'], seed=a.seed)
+                       if CONFIG["train_encoder"] else
+                       evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d", CONFIG["head_hidden"], a.seed))
     dt = time.time() - t0
-    mode = ("FORECAST(future+newplace)" if a.forecast_spatial else "FORECAST(past->future)") if a.forecast else "spatial-block"
-    print(f"  {len(lat)} obs, {a.steps}-step probe in {dt:.1f}s")
+    mode = ("FORECAST(future+newplace)" if CONFIG["forecast_spatial"] else "FORECAST(past->future)") if CONFIG["forecast"] else "spatial-block"
+    print(f"  {len(lat)} obs, {CONFIG['steps']}-step probe in {dt:.1f}s")
     # The shared coordinate/forecast tail. --target selects WHICH capability this is; the old harness
     # could not tell family_from_spacetime from species_from_spacetime here because both print the same
     # header and both were matched by the same r"\bEarth4D\s+([\d.]+)" pattern.
-    _target_capability = ("species_from_spacetime" if a.target == "species" else "family_from_spacetime")
+    _target_capability = ("species_from_spacetime" if CONFIG["target"] == "species" else "family_from_spacetime")
     declare(
         capability=_target_capability,
         mode=mode,
-        metric=f"{a.target}_top1_accuracy",
+        metric=f"{CONFIG['target']}_top1_accuracy",
         value=e4d_acc,
         split=mode,
         gains={"vs raw": e4d_acc - raw_acc, "vs RFF": e4d_acc - rff_acc},
         baselines={"raw": raw_acc, "RFF": rff_acc},
         obs=len(lat), held_out=int(test.sum()), n_classes=n_fam, earth4d_dim=int(e4d.shape[1]),
-        seconds=dt, target=a.target,
+        seconds=dt, target=CONFIG["target"],
         top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5},
     )
     return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc, "raw_acc": raw_acc,
-            "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "forecast": a.forecast}
+            "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "forecast": CONFIG["forecast"]}
 
 
 
