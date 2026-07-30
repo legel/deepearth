@@ -280,3 +280,27 @@ class ScaleFreeDiagnosisTests(unittest.TestCase):
 
     def test_missing_baseline_is_undiagnosable_not_zero(self):
         self.assertIn("NO-FAIR-BASELINE", self.read(None, 0.5))
+
+
+class ProvenanceTests(unittest.TestCase):
+    """Every published number must carry the tree that produced it and the evidence behind it.
+
+    The evidence standard says a record from an unpushed commit is discovery-only — unenforceable while
+    nothing recorded WHICH commit produced a number. Two concrete failures motivated this: a foreign
+    agent's record on this board claims a `trained_rff` baseline that exists in no reachable tree, and a
+    run of this loop was contaminated for an hour by an uncommitted edit to earth4d.py that nothing in
+    the record would have revealed.
+    """
+
+    def setUp(self):
+        from autoresearch.probes.spacetime.editable_files.harness import _code_provenance
+        self.prov = _code_provenance()
+
+    def test_provenance_reports_commit_branch_and_dirtiness(self):
+        self.assertEqual(set(self.prov), {"commit", "branch", "dirty"})
+        self.assertTrue(self.prov["commit"], "a run with no commit SHA cannot be reproduced")
+        self.assertIsInstance(self.prov["dirty"], bool)
+
+    def test_a_dirty_tree_is_detectable_not_silent(self):
+        """A dirty tree does not block a run — it must simply be impossible to hide afterwards."""
+        self.assertIn("dirty", self.prov)

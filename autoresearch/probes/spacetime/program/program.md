@@ -196,7 +196,7 @@ shared checkout — another agent is reading it.
    ② commit EVERY run on it — failures too           a .pre-X copy is a commit you didn't make
    ③ scratch/ for logs, one-offs, dumps              gitignored, disposable, never beside source
    ④ dead end  → leave it on the branch              the Ensue dead-end entry is the durable record
-   ⑤ BREAKTHROUGH → rebase, then push to main        nothing else reaches main. Ever.
+   ⑤ BREAKTHROUGH → rebase, then the OPERATOR pushes    nothing else reaches the remote. Ever.
 ```
 
 **A breakthrough is a result that cleared the evidence standard above** — multi-seed, no regression,
@@ -206,7 +206,10 @@ score that beat the board by a hair.
 Two exceptions may go to main without a breakthrough: **harness/contract/test changes** the whole
 swarm depends on, and **provenance fixes** to the board. Both are infrastructure, not findings.
 
-- A record from an unpushed commit is **discovery-only** — nobody else can reproduce it.
+- A record from an unpushed commit is **discovery-only** — nobody else can reproduce it. That is a
+  statement about how much such a record can CLAIM, not a licence to push: an agent never pushes on its
+  own judgement. This is a shared repository, and an experiment branch — above all a failed one — stays
+  local. Commit everything; let the operator decide what leaves the machine.
 - Only the checkout that owns `records.json` writes records; everyone else measures with
   `EARTH4D_ALLOW_UNRECORDED=1`.
 - No config variants as files (21 `champion_*.yaml` = 21 undocumented experiments). Pass overrides as

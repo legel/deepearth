@@ -53,7 +53,11 @@ and stop — do not change it yourself.
 - **Never hand-edit `records/`.** The harness writes it. A correction goes through the ledger with its
   reason.
 - **Publish dead-ends.** A failed lever is information the swarm paid for. Losing it means someone
-  re-buys it.
+  re-buys it. Publishing means **Ensue**, not the git remote.
+- **Never `git push`.** This is a shared repository. Commit every run to your LOCAL branch — failures
+  included — and report the local commit SHA. An experiment branch, especially a failed one, does not
+  belong on the remote. If you think something has earned the main line, say so and let the operator
+  decide; pushing is never your call.
 - **Do not claim a ceiling.** N failed levers is evidence about those N levers. Where the ceiling is,
   is the thing being discovered.
 - **Report honestly.** If a run failed, say so with the output. If a result is inside the noise, say

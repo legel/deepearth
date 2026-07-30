@@ -973,6 +973,26 @@ def _ensue_token() -> str:
             or _read_env_file(Path("/workspace/.env"), "ENSUE_API_TOKEN"))
 
 
+def _code_provenance() -> dict:
+    """Commit SHA + dirty flag for the tree this run measured.
+
+    The evidence standard says a record from an unpushed commit is discovery-only, because nobody else
+    can reproduce it. That rule was unenforceable: nothing recorded WHICH commit produced a number. It
+    is not hypothetical -- a foreign agent's record on this board claims a `trained_rff` baseline that
+    exists in no reachable tree, and a run of this loop was contaminated for an hour by an uncommitted
+    edit to earth4d.py that nothing in the record would have revealed.
+    """
+    def git(*args):
+        try:
+            return subprocess.run(["git", *args], cwd=str(REPO), capture_output=True, text=True,
+                                  timeout=10).stdout.strip()
+        except Exception:
+            return ""
+    return {"commit": git("rev-parse", "HEAD")[:12],
+            "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+            "dirty": bool(git("status", "--porcelain"))}
+
+
 def post_ensue(trace: dict) -> None:
     tok = _ensue_token()
     if not tok:
@@ -990,10 +1010,20 @@ def post_ensue(trace: dict) -> None:
     dead_str = "; ".join(f"{t}={d['score']}({(d.get('why') or '')[:34]})" for t, d in list(dead.items())[-12:]) or "(none)"
     # ONE upserted key per capability (LOOP-<program>-<capability> taxonomy): running best + record history +
     # this run's outcome + deduped dead-ends WITH their bottleneck reason. Win or dead-end, every run captured.
+    # Evidence and provenance travel WITH the number. Without them the swarm cannot tell a 5-seed
+    # result from a single-seed one, nor reproduce the tree that produced it -- and both of those
+    # ambiguities have already put a noise-mined record on this board.
+    ev = trace.get("evidence", {})
+    prov = trace.get("code", {})
+    ev_str = (f"{ev.get('n_seeds', '?')} seeds"
+              + (f" sd {ev['seed_std']:.6f}" if ev.get("seed_std") is not None else " (sd needs >=3)")
+              + (" PROVISIONAL" if ev.get("provisional", True) else " CONFIRMED-ELIGIBLE"))
+    prov_str = (f"{prov.get('branch', '?')}@{prov.get('commit', '?')}"
+                + (" DIRTY-TREE" if prov.get("dirty") else ""))
     val = (f"LOOP-earth4d {trace['metric']}: BEST {best.get('score')} (gain {best.get('gain')}, {o.get('fair_baseline')}) "
            f"via '{best.get('tag')}'. runs={led.get('runs')}. record-history: {rec_str}. "
            f"THIS RUN '{trace['tag']}': primary={o['primary']} gain={o['fair_st_gain']} "
-           f"decision={o.get('decision', 'legacy')} "
+           f"decision={o.get('decision', 'legacy')} evidence={ev_str} code={prov_str} "
            f"bottleneck={trace['bottleneck']}. dead-ends-tried: {dead_str}.")
     payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "create_memory", "arguments": {
         "items": [{"key_name": f"LOOP-earth4d-{trace['metric']}", "value": val,
@@ -1160,6 +1190,7 @@ def main() -> None:
     ledger["runs"] = ledger.get("runs", 0) + 1
     if is_record:
         cur = {"score": key_val, "primary": primary, "fair_st_gain": fair,
+               "code": _code_provenance(),
                "n_seeds": len(seed_values), "seed_values": [float(v) for v in seed_values],
                "seed_std": (float(seed_std) if seed_std is not None else None),
                "provisional": len(seed_values) < 5,
@@ -1206,7 +1237,17 @@ def main() -> None:
     objective = {"primary": primary, "fair_st_gain": fair, "fair_baseline": fair_base,
                  "record": bool(is_record), "rebaseline": bool(rebaseline), "decision": decision,
                  "prev_record": prev, "record_value": key_val}
+    code = _code_provenance()
+    if code.get("dirty"):
+        print("[trace] *** DIRTY TREE: this run measured uncommitted changes. The result is not "
+              "reproducible by anyone else and is discovery-only. Commit before recording a claim.",
+              flush=True)
     trace = {"metric": a.metric, "tag": tag, "probe": a.probe, "probe_module": a.probe_module,
+             "code": code,
+             "evidence": {"n_seeds": len(seed_values),
+                          "seed_values": [float(v) for v in seed_values],
+                          "seed_std": (float(seed_std) if seed_std is not None else None),
+                          "provisional": len(seed_values) < 5},
              "objective": objective, "gains": gains, "header": header, "metrics": metrics,
              "bottleneck": bottleneck, "rc": rc, "ledger": ledger}
 
