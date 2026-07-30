@@ -32,8 +32,8 @@ Programs and rules: [`README.md`](README.md) · [`science.md`](science.md) ·
    read         the diagnosis, and therefore which lever comes next:
 
                 INPUT-LIMITED      does not beat a generic PE → DATA lever, change the channel
-                ENCODER-LIMITED    beats the PE, score still low → ARCHITECTURE lever
-                EARNING            carrying real signal → push further
+                ENCODER-LIMITED    contributes <25% of the score → ARCHITECTURE lever
+                EARNING            contributes ≥25% of the score → push the mechanism further
                 STALE-GAIN         the stored gain is a CHANNEL advantage, not encoder-vs-PE — re-measure
                 NO-FAIR-BASELINE   no control was recorded, so the bottleneck is undiagnosable
                 pre-contract       record predates the result contract; its metric name was never stored

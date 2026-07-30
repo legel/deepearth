@@ -777,24 +777,48 @@ def _commit_records_if_unchanged(expected_raw, records, path=RECORDS):
 
 
 
-def _bottleneck(fair, primary) -> str:
-    """Diagnose which lever family the fair-gain points at (program.md, section 3 Diagnose).
+ENCODER_SHARE_FLOOR = 0.25      # below this, the encoder is adding little over a generic PE
 
-    This string is written into records.json AND pushed to Ensue as the swarm's reason-to-move, so it
-    has to agree with the program. It previously read a flat/negative fair-gain as ARCHITECTURE-LIMITED
-    and told the agent to "swing bigger on the architecture" -- the exact inverse of the program, which
-    reads a flat gain as the INPUT being signal-limited. Under the old string every flat-gain run
-    advised the whole swarm to do the one thing the program forbids ("Don't default to architecture").
+
+def _bottleneck(fair, primary) -> str:
+    """Diagnose which lever family the measurement points at (program.md, section 3).
+
+    This string is written into records.json AND published to Ensue as the swarm's reason-to-move, so
+    it decides what every agent reaches for next. It has to mean the same thing for every capability.
+
+    It used to read `fair_gain > 0 and primary < 0.20 -> ENCODER-LIMITED`. That 0.20 was an absolute
+    constant applied regardless of how hard the target is. species_from_spacetime has ~2,009 classes
+    (chance ~0.0005, so 0.0512 is ~100x chance); family_from_spacetime has 166 (chance ~0.006, so
+    0.1769 is ~30x chance). Both tripped `< 0.20` and both were told ARCHITECTURE, though they are not
+    remotely in the same position relative to their own baselines. Acting on that sent four consecutive
+    mechanism changes at species_from_spacetime -- --recurrence -0.0180, --gnn -0.0261, --train_encoder
+    +0.0037, a tri-plane conjunction edit -0.0001 -- when the encoder was already contributing 84% of
+    the score and the mechanism was not the weak part.
+
+    The scale-free quantity is the encoder's SHARE of what was achieved:
+
+        share = fair_gain / score      how much of the score is Earth4D over the strongest fair baseline
+
+    A fraction is comparable across targets of any difficulty, needs nothing the contract does not
+    already carry, and answers the question the lever choice actually turns on: is the encoder the part
+    doing the work, or is it barely beating a generic positional encoding?
+
+    Note what this does NOT claim. A high share does not mean the capability is finished, and a low
+    absolute score is not evidence of a ceiling -- where the ceiling is, is the thing being discovered.
     """
     if fair is None:
         return "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain — check output)"
     if fair <= 0:
         return ("INPUT-LIMITED: Earth4D does not beat a generic trained PE, so the coordinate/current "
                 "channel lacks the signal → DATA lever, change the channel")
-    if primary is not None and primary < 0.20:
-        return ("ENCODER-LIMITED: the encoder beats the PE but the absolute score is low → ARCHITECTURE "
-                "lever, change the mechanism")
-    return "EARNING: the architecture is carrying real signal → push it further"
+    if primary is None or primary <= 0:
+        return f"EARNING: positive fair-gain {fair:+.4f} but no absolute score to weigh it against"
+    share = fair / primary
+    if share < ENCODER_SHARE_FLOOR:
+        return (f"ENCODER-LIMITED: Earth4D contributes only {share:.0%} of the score over a generic PE "
+                f"→ ARCHITECTURE lever, change the mechanism")
+    return (f"EARNING: Earth4D contributes {share:.0%} of the score over a generic PE → the mechanism "
+            f"is carrying real signal, push it further")
 
 
 
@@ -866,9 +890,10 @@ def write_scorecard(recs: dict, path: Path = SCORECARD_TXT) -> Path:
         "  ".join("-" * w[i] for i in range(len(head))),
         f"probed {probed}/{len(CAPABILITIES)}   ·   earning (fair-gain > 0): {earning}",
         "",
-        "READ:  INPUT-LIMITED     Earth4D does not beat a generic trained PE -> DATA lever, change the channel",
-        "       ENCODER-LIMITED   beats the PE but the absolute score is low -> ARCHITECTURE lever",
-        "       EARNING           the architecture is carrying real signal -> push it further",
+        "READ:  share = fair-gain / score — how much of the score Earth4D contributes over the fair baseline",
+        "       INPUT-LIMITED     does not beat a generic trained PE -> DATA lever, change the channel",
+        "       ENCODER-LIMITED   Earth4D contributes <25% of the score -> ARCHITECTURE lever",
+        "       EARNING           Earth4D contributes >=25% -> the mechanism carries signal, push it",
         "       STALE-GAIN        the stored gain is a CHANNEL advantage, not encoder-vs-PE. Re-measure",
         "                         before trusting the read (family_from_env: board +0.0411, live -0.0072)",
         "       pre-contract      record predates the result contract, so its metric name was never stored",

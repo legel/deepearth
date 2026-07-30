@@ -96,19 +96,33 @@ Rules:
 ## ③ Diagnose
 
 ```
-              fair-gain  =  Earth4D  −  generic trained PE / RFF
+        fair-gain = Earth4D − strongest fair baseline (trained PE / RFF / MLP)
+        share     = fair-gain / score      ← how much of the score the ENCODER contributes
                                   │
              ┌────────────────────┴────────────────────┐
-        ≈ 0 or negative                        positive but score low
-             │                                          │
-      INPUT-limited                             ENCODER-limited
-             ▼                                          ▼
-        DATA lever                             ARCHITECTURE lever
-      change the channel                       change the mechanism
+        fair-gain ≤ 0                          fair-gain > 0
+             │                          ┌────────────┴────────────┐
+             │                    share < 25%              share ≥ 25%
+             ▼                          ▼                         ▼
+       INPUT-limited              ENCODER-limited             EARNING
+       DATA lever                 ARCHITECTURE lever          push the mechanism further
+       change the channel         change the mechanism
 ```
 
-Flat fair-gain across a whole input type = signal-limited. Change the channel; don't swing the
-architecture.
+**The read is a fraction, not an absolute cutoff.** It used to be `fair-gain > 0 and score < 0.20 →
+ENCODER-LIMITED`, which applied one constant to every target regardless of difficulty:
+`species_from_spacetime` (~2,009 classes, chance ≈0.0005) at 0.0512 and `family_from_spacetime` (166
+classes, chance ≈0.006) at 0.1769 both tripped it. Acting on that sent four consecutive mechanism
+changes at a capability whose encoder was already contributing 84% of its score — `--recurrence`
+−0.0180, `--gnn` −0.0261, `--train_encoder` +0.0037, a tri-plane conjunction edit −0.0001.
+
+A share is comparable across targets of any difficulty and answers the question the lever choice turns
+on: is the encoder doing the work, or barely beating a generic positional encoding?
+
+Flat fair-gain across a whole input type = signal-limited. Change the channel, don't swing the
+architecture. And note what the read does **not** say: a high share does not mean a capability is
+finished, and a low absolute score is not evidence of a ceiling — where the ceiling is, is the thing
+being discovered.
 
 ## Levers
 

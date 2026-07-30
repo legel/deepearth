@@ -106,9 +106,10 @@ class TraceProtocolGateTests(unittest.TestCase):
         """
         self.assertIn("DATA lever", _bottleneck(-0.01, 0.5))
         self.assertIn("INPUT-LIMITED", _bottleneck(0.0, 0.5))
-        self.assertIn("ARCHITECTURE lever", _bottleneck(0.05, 0.10))
-        self.assertIn("ENCODER-LIMITED", _bottleneck(0.05, 0.10))
-        self.assertIn("EARNING", _bottleneck(0.05, 0.80))
+        # the lever now turns on the encoder's SHARE of the score, not an absolute cutoff
+        self.assertIn("ARCHITECTURE lever", _bottleneck(0.05, 0.80))     # 6% share -> weak mechanism
+        self.assertIn("ENCODER-LIMITED", _bottleneck(0.05, 0.80))
+        self.assertIn("EARNING", _bottleneck(0.05, 0.10))                # 50% share -> carrying it
         self.assertIn("NO-FAIR-BASELINE", _bottleneck(None, 0.5))
 
     def test_records_commit_is_atomic_compare_and_swap(self):

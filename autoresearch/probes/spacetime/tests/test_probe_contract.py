@@ -237,3 +237,46 @@ class NoiseBarrierTests(unittest.TestCase):
     def test_two_seeds_cannot_claim_a_measured_spread(self):
         """A standard deviation from two points is not a spread; fall back to the floor."""
         self.assertAlmostEqual(self.barrier(0.5, seed_std=0.02, n_seeds=2), 0.01)
+
+
+class ScaleFreeDiagnosisTests(unittest.TestCase):
+    """The read must mean the same thing for a 166-class and a 2,009-class target.
+
+    It used to be `fair_gain > 0 and score < 0.20 -> ENCODER-LIMITED`, an absolute constant applied
+    regardless of target difficulty. species_from_spacetime (~2,009 classes, chance ~0.0005) scoring
+    0.0512 and family_from_spacetime (166 classes, chance ~0.006) scoring 0.1769 both tripped it, and
+    acting on that sent four consecutive mechanism changes at a capability whose encoder was already
+    contributing 84% of its score.
+    """
+
+    def setUp(self):
+        from autoresearch.probes.spacetime.editable_files.harness import _bottleneck
+        self.read = _bottleneck
+
+    def test_a_hard_target_carried_by_the_encoder_reads_EARNING(self):
+        """species_from_spacetime: 0.0512 with +0.0432 of it from Earth4D — 84% is not encoder-limited,
+        whatever the absolute number looks like."""
+        self.assertIn("EARNING", self.read(0.0432, 0.0512))
+        self.assertIn("84%", self.read(0.0432, 0.0512))
+
+    def test_an_easier_target_with_the_same_share_reads_the_same(self):
+        """Scale-free: 10x the score with 10x the gain must give the identical verdict."""
+        self.assertEqual(self.read(0.0432, 0.0512).split(":")[0],
+                         self.read(0.432, 0.512).split(":")[0])
+
+    def test_a_marginal_encoder_still_reads_ENCODER_LIMITED(self):
+        """flowering_peak_month: +0.0087 on 0.0521 is 17% — the mechanism really is the weak part."""
+        self.assertIn("ENCODER-LIMITED", self.read(0.0087, 0.0521))
+
+    def test_no_gain_over_the_fair_baseline_reads_INPUT_LIMITED(self):
+        self.assertIn("INPUT-LIMITED", self.read(-0.0072, 0.1423))
+
+    def test_absolute_score_alone_never_decides(self):
+        """A low score with a high share and a high score with a low share must NOT read the same."""
+        low_score_high_share = self.read(0.09, 0.10)
+        high_score_low_share = self.read(0.05, 0.90)
+        self.assertIn("EARNING", low_score_high_share)
+        self.assertIn("ENCODER-LIMITED", high_score_low_share)
+
+    def test_missing_baseline_is_undiagnosable_not_zero(self):
+        self.assertIn("NO-FAIR-BASELINE", self.read(None, 0.5))
