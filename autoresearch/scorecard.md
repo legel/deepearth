@@ -43,7 +43,14 @@ Programs and rules: [`README.md`](README.md) · [`science.md`](science.md) ·
 matched seeds, block bootstrap, no registered regression, reproducible from a committed tree. Anything
 short of that is discovery — which is most of what these files contain today, and they say so.
 
-Two live caveats worth knowing before trusting a number:
+Three live caveats worth knowing before trusting a number:
+
+- **The standing records are single-seed high draws, and at least one is measurably so.** Running
+  `family_from_env` at 3 matched seeds gives 0.142318 / 0.122941 / 0.139142 — mean **0.1348**, sd
+  **0.0085**. The board's record is 0.1423, which is *seed 0*: the best draw, sitting +0.0075 above the
+  mean, inside one standard deviation. With the spread measured, the barrier to beat that record is
+  2σ = 0.017 — so **the record could not clear its own bar.** Every record predating the noise barrier
+  should be assumed to be the maximum of its reruns until re-measured at ≥5 seeds.
 
 - `spacetime` `family_from_env` is stored with a channel gain (`+0.0411 ENV vs best-coord-PE`) while a
   live run reports `−0.0072 Earth4D vs RFF`. Flagged `STALE-GAIN`; the honest read is INPUT-LIMITED.

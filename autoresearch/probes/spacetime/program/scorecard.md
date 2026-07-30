@@ -4,7 +4,12 @@
 > after every run and committed to git, so anyone can read the campaign's state without the gitignored
 > board. **Never hand-edit it** — a hand-maintained scorecard drifts, and a drifted one is worse than
 > none. This file explains what each row means, how a record is earned, and what is excluded and why.
-> The index of all loops' scorecards is [`../../scorecard.md`](../../scorecard.md).
+> The index of all loops' scorecards is [`../../../scorecard.md`](../../../scorecard.md).
+>
+> **Every record on this board predates the noise barrier and should be treated as the maximum of its
+> reruns.** Measured directly: `family_from_env` at 3 matched seeds is 0.142318 / 0.122941 / 0.139142,
+> mean 0.1348, sd 0.0085 — and the stored record, 0.1423, is exactly seed 0. Re-measure at ≥5 seeds
+> before treating any of these as a baseline to beat.
 
 
 The agent picks **one capability from Layer 1, with intention**, declares it as `--metric`, and is then
