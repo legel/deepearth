@@ -1,5 +1,15 @@
+import sys
+
+from deepearth.autoresearch.programs.spacetime.recurrence import (
+    require_recorded_entrypoint,
+)
+
+_MODULE = "deepearth.autoresearch.programs.spacetime.satprobe"
+require_recorded_entrypoint("satprobe.py", module=_MODULE, argv=sys.argv[1:])
+
 import numpy as np, glob, csv, time
 import torch, torch.nn as nn, torch.nn.functional as F
+
 c="data/deepcal"; t0=time.time()
 vocab=np.load(c+"/gbif_vocab.npz",allow_pickle=True); gidx=vocab["global_idx"]
 rows=list(csv.DictReader(open(c+"/derived/species_index.csv")))

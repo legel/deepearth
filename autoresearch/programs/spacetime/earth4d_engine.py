@@ -43,6 +43,17 @@ Usage:
     deepearth/autoresearch/programs/spacetime/earth4d_engine.py \
     --cache_dir data/deepcal --n_shards 8 --steps 1500 --rec_k 24 --seed 0 [--forecast_spatial]
 """
+_MODULE_NAME = "deepearth.autoresearch.programs.spacetime.earth4d_engine"
+
+if __name__ == "__main__":
+    import sys as _entry_sys
+
+    from deepearth.autoresearch.programs.spacetime.recurrence import (
+        require_recorded_entrypoint as _require_recorded,
+    )
+
+    _require_recorded("earth4d_engine.py", module=_MODULE_NAME, argv=_entry_sys.argv[1:])
+
 import argparse, glob, csv, time
 from pathlib import Path
 import numpy as np
@@ -56,6 +67,7 @@ from deepearth.encoders.spacetime.earth4d import Earth4D
 from deepearth.autoresearch.programs.spacetime.recurrence import (
     build_causal_windows,
     normalize_time_from_train,
+    require_recorded_entrypoint,
     strict_spatiotemporal_masks,
 )
 
@@ -872,6 +884,8 @@ def main(argv=None):
     ap.add_argument("--arms", default="raw,e4d_frozen,e4d_e2e,mlp_e2e")
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
+    require_recorded_entrypoint("earth4d_engine.py", module=_MODULE_NAME,
+                               argv=(argv if argv is not None else sys.argv[1:]))
     t0 = time.time()
     dev = a.device
     np.random.seed(a.seed)

@@ -19,10 +19,16 @@ that PROPAGATES, not just structure that indexes.
 Additive + flag-gated: imported only when probe.py is called with --recurrence; the default probe path never
 touches this file.
 """
+import json
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+DEFAULT_TIME_HORIZON = 2.0
+TRACE_AUTH_FD_ENV = "EARTH4D_TRACE_AUTH_FD"
 
 
 def normalize_time_from_train(days, train_mask, horizon=1.0):
@@ -54,6 +60,123 @@ def normalize_time_from_train(days, train_mask, horizon=1.0):
     span = max(float(train_days.max()) - origin, 1e-6) * float(horizon)
     normalized = ((days - origin) / span).astype(np.float32)
     return normalized, origin, span
+
+
+def normalize_forecast_time(days, test_mask, horizon=DEFAULT_TIME_HORIZON):
+    """Fit time on training rows and reserve predeclared future headroom."""
+    return normalize_time_from_train(
+        days, ~np.asarray(test_mask, dtype=bool), horizon=horizon
+    )
+
+
+def phenology_mode(forecast_spatial=False, pheno_spatial=False):
+    """Exact evaluation-design label consumed by the trace record gate."""
+    if forecast_spatial:
+        return "PHENOLOGY-FUTURE-HELD"
+    if pheno_spatial:
+        return "PHENOLOGY-HELD"
+    return "PHENOLOGY-FUTURE"
+
+
+def phenology_feature_set(spec, nofair=False):
+    """Requested phenology features plus mandatory raw/RFF controls for Earth4D."""
+    feats = [x for x in spec.split(",") if x]
+    if "e4d" in feats and not nofair:
+        for control in ("raw", "rff"):
+            if control not in feats:
+                feats.append(control)
+    return tuple(feats)
+
+
+def validate_dynamic_target_causality(
+    *,
+    ar_rollout=False,
+    ar_cond_lead=False,
+    abundance=False,
+    abund_prop_arch=False,
+    breadth_target="",
+    lead=0.0,
+):
+    """Fail closed for audited paths whose inputs or labels cross the origin."""
+    unsafe = []
+    if ar_rollout:
+        unsafe.append("--ar_rollout")
+    if ar_cond_lead:
+        unsafe.append("--ar_cond_lead")
+    if float(lead) > 0 and abundance:
+        unsafe.append("--abundance with --abund_lead > 0")
+    if float(lead) > 0 and abund_prop_arch:
+        unsafe.append("--abund_prop_arch with --abund_lead > 0")
+    if float(lead) > 0 and breadth_target:
+        unsafe.append("--breadth_target with --abund_lead > 0")
+    if unsafe:
+        raise ValueError(
+            "causality audit quarantine: "
+            + ", ".join(unsafe)
+            + " can expose post-origin observations through neighbor state or "
+              "uncensored target windows; quarantined until future-sentinel, "
+              "horizon-purge, and right-censoring tests pass"
+        )
+
+
+def trace_authorization_payload(module, argv):
+    """Canonical one-shot payload binding authorization to module and argv."""
+    return (
+        json.dumps(
+            {"module": str(module), "argv": list(argv)},
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+
+def consume_trace_authorization(module, argv):
+    """Consume the one-shot pipe capability inherited from ``trace.py``."""
+    descriptor = os.environ.pop(TRACE_AUTH_FD_ENV, None)
+    if descriptor is None:
+        return False
+    try:
+        fd = int(descriptor)
+        expected = trace_authorization_payload(module, argv)
+        payload = os.read(fd, len(expected) + 1)
+        os.close(fd)
+    except (OSError, TypeError, ValueError):
+        return False
+    return payload == expected
+
+
+ALLOW_UNRECORDED_ENV = "EARTH4D_ALLOW_UNRECORDED"
+
+
+def require_recorded_entrypoint(
+    name,
+    trace_authorized=None,
+    *,
+    module=None,
+    argv=(),
+):
+    """Require that a probe run be recordable.
+
+    A probe whose result never reaches ``records.json``/Ensue is a run the swarm pays for and
+    cannot learn from, so the default entrypoint is through ``trace.py``, which issues a one-shot
+    authorization bound to (module, argv) and writes the ledger afterwards.
+
+    This is a RECORDING invariant, not a research directive: it constrains where a result goes,
+    never which experiment is allowed. Set ``EARTH4D_ALLOW_UNRECORDED=1`` for runs that
+    deliberately produce no record -- parity checks, smoke tests, debugging.
+    """
+    if trace_authorized is None:
+        trace_authorized = (
+            module is not None and consume_trace_authorization(module, argv)
+        )
+    if trace_authorized or os.environ.get(ALLOW_UNRECORDED_ENV) == "1":
+        return
+    raise ValueError(
+        f"{name} was invoked directly, so its result would never be recorded. Run it through "
+        "deepearth.agents.earth4d.trace (which declares --metric and writes the ledger), or set "
+        f"{ALLOW_UNRECORDED_ENV}=1 for a deliberately unrecorded run."
+    )
 
 
 def strict_spatiotemporal_masks(lat, lon, days, future, held_place, block=0.5):

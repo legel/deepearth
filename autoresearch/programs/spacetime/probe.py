@@ -34,9 +34,25 @@ biology follows; a coordinate is not the science, the environment at that coordi
                 (-0.10)? A smooth environment target is the field rule-24 actually asks for.
 Both default-off; the no-flag path is byte-identical.
 """
+PROBE_MODULE = "deepearth.autoresearch.programs.spacetime.probe"
+_TRACE_AUTHORIZED = False
+if __name__ == "__main__":
+    import sys as _entry_sys
+    from deepearth.autoresearch.programs.spacetime.recurrence import (
+        require_recorded_entrypoint as _require_recorded,
+    )
+
+    _require_recorded(
+        "probe.py",
+        module=PROBE_MODULE,
+        argv=_entry_sys.argv[1:],
+    )
+    _TRACE_AUTHORIZED = True
+
 import argparse
 import csv
 import glob
+import sys
 import time
 from pathlib import Path
 
@@ -47,8 +63,14 @@ import torch.nn.functional as F
 
 from deepearth.encoders.spacetime.earth4d import Earth4D
 from deepearth.autoresearch.programs.spacetime.recurrence import (
+    DEFAULT_TIME_HORIZON,
+    normalize_forecast_time,
     normalize_time_from_train,
+    phenology_feature_set,
+    phenology_mode,
     strict_spatiotemporal_masks,
+    validate_dynamic_target_causality,
+    require_recorded_entrypoint,
 )
 
 
@@ -482,7 +504,7 @@ def main(argv=None):
     ap.add_argument("--enc_warmup", type=float, default=0.15)   # fraction of steps for linear LR warmup
     ap.add_argument("--enc_c2f", type=float, default=0.5)       # fraction of steps to fully unmask hash levels
     ap.add_argument("--target", default="family", choices=["family", "species"])  # CAPABILITY LEVER: classification target. The paths only ever predicted family (166-way); "species" switches to the 2141-way species vocab, which is what species_from_spacetime / species_from_env actually name
-    ap.add_argument("--time_horizon", type=float, default=2.0)   # train time compressed into [0,1/h] so the held-out FUTURE stays inside the encoder's representable range (it saturates past t~1.1). Design constant; never derived from test dates
+    ap.add_argument("--time_horizon", type=float, default=DEFAULT_TIME_HORIZON)   # train time compressed into [0,1/h] so the held-out FUTURE stays inside the encoder's representable range (it saturates past t~1.1). Design constant; never derived from test dates
     ap.add_argument("--causal_lags", type=int, default=0)         # ARCH LEVER: delayed positional basis (K learned backward coordinate reads; 0=off). It consumes no observed state, so it is not memory or autoregression
     ap.add_argument("--causal_lag_span", type=float, default=0.25)  # max lag as a fraction of the normalized time span
     ap.add_argument("--spatial_siren", type=int, default=0)      # ARCH LEVER: gated SIREN spatial branch (width; 0=off) -- sinusoidal-activation MLP over xyz, smooth+extrapolative BY CONSTRUCTION with LEARNED per-layer frequencies; aimed at the hash's held-out-spatial-block weakness (loses to a fixed RFF on static tasks)
@@ -579,6 +601,21 @@ def main(argv=None):
     ap.add_argument("--construct_shuffle", action="store_true")
     ap.add_argument("--construct_only", default="")
     a = ap.parse_args(argv)
+    if not _TRACE_AUTHORIZED:
+        authorization_argv = sys.argv[1:] if argv is None else list(argv)
+        require_recorded_entrypoint(
+            "probe.py",
+            module=PROBE_MODULE,
+            argv=authorization_argv,
+        )
+    validate_dynamic_target_causality(
+        ar_rollout=a.ar_rollout,
+        ar_cond_lead=a.ar_cond_lead,
+        abundance=a.abundance,
+        abund_prop_arch=a.abund_prop_arch,
+        breadth_target=a.breadth_target,
+        lead=a.abund_lead,
+    )
     dev = a.device if torch.cuda.is_available() else "cpu"
     np.random.seed(a.seed)
     torch.manual_seed(a.seed)
@@ -944,8 +981,8 @@ def main(argv=None):
         # propagator_gain ~0 because a STATIONARY spatial climatology fit the target. Here the target is the
         # DAY-OF-YEAR (phenology / seasonal timing) -- non-stationary: a static (lat,lon) map explains ~3% of
         # it, so a real propagator that carries WHEN nearby species were recently seen should finally win.
-        # static no-propagation floor vs GNN vs LSTM, each over Earth4D / RFF / raw, on the SAME future+new-
-        # place query set. propagator_gain = propagator MAE improvement over the static floor.
+        # static no-propagation floor vs GNN vs LSTM, each over Earth4D / RFF / raw, on the declared split.
+        # propagator_gain = propagator MAE improvement over the static floor.
         assert a.forecast, "--phenology requires --forecast (needs live event-time + past->future split)"
         from deepearth.autoresearch.programs.spacetime.phenology import run_phenology_all
         coords_ll = torch.tensor(np.stack([lat, lon], 1).astype(np.float32))
@@ -985,17 +1022,16 @@ def main(argv=None):
             for _f in sorted(_glob.glob(str(_Path(a.cache_dir) / "gbif_tokens/*.npz")))[:a.n_shards]:
                 _sp.append(np.load(_f)["species_local"])
             sp_all = np.concatenate(_sp).astype(np.int64)[obs_index]
-        _feats = [x for x in a.pheno_feats.split(",") if x]
+        _feats = phenology_feature_set(a.pheno_feats, a.pheno_nofair)
         # FAIR-BASELINE GUARD: a single-feature run (e.g. --pheno_feats e4d) left the RFF control untrained, so the
         # trace could report NO fair gain at all and still set a record -- this capability's records were being
-        # gated on nothing. Whenever Earth4D is trained, train the generic-PE control too (opt out: --pheno_nofair).
-        if "e4d" in _feats and "rff" not in _feats and not a.pheno_nofair:
-            _feats.append("rff")
+        # gated on nothing. Whenever Earth4D is trained, train raw and generic-PE controls too
+        # (opt out: --pheno_nofair).
         r = run_phenology_all(e4d_sp, rff_sp, raw_sp, fd, days, coords_ll, test, dev,
                               K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol,
                               attn=a.pheno_attn, attn_heads=a.attn_heads, attn_layers=a.attn_layers, sp=sp_all,
                               block_deg=a.rec_block_deg, fast=a.rec_fast,
-                              feats=tuple(_feats))
+                              feats=_feats)
         dt = time.time() - t0
         n_te = r["raw"]["n_te"]
         def pg(ft, prop):
@@ -1013,7 +1049,8 @@ def main(argv=None):
         if a.pheno_species:
             pg_raw_sp_mae, pg_raw_sp_acc = pg("raw", "sp")
             best_prop_raw_mae = max(best_prop_raw_mae, pg_raw_sp_mae)
-        print(f"=== SPACETIME encoder (standalone) | mode=PHENOLOGY(day-of-year, non-stationary, future+newplace) obs={len(lat)} forecast-queries={n_te} tol=+/-{a.pheno_tol:.0f}d K={a.rec_k} hops={a.gnn_hops} attn={a.pheno_attn} ===")
+        pheno_mode = phenology_mode(a.forecast_spatial, a.pheno_spatial)
+        print(f"=== SPACETIME encoder (standalone) | mode={pheno_mode}(day-of-year, non-stationary) obs={len(lat)} forecast-queries={n_te} tol=+/-{a.pheno_tol:.0f}d K={a.rec_k} hops={a.gnn_hops} attn={a.pheno_attn} ===")
         for ft in ("raw", "rff", "e4d"):
             d = r[ft]
             attn_s = f" | ATTN MAE {d.get('attn_mae', float('nan')):6.2f}d acc {d.get('attn_acc', float('nan')):.4f} (prop {d['static_mae']-d.get('attn_mae', float('nan')):+.2f}d)" if a.pheno_attn else ""

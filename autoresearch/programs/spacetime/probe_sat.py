@@ -21,6 +21,17 @@ Q2 (--sat --phenology --forecast --forecast_spatial): exploratory GBIF collectio
   python -m deepearth.autoresearch.programs.spacetime.probe_sat --sat --sat_clay --cache_dir data/deepcal
   python -m deepearth.autoresearch.programs.spacetime.probe_sat --sat --phenology --forecast --forecast_spatial ...
 """
+_MODULE_NAME = "deepearth.autoresearch.programs.spacetime.probe_sat"
+
+if __name__ == "__main__":
+    import sys as _entry_sys
+
+    from deepearth.autoresearch.programs.spacetime.recurrence import (
+        require_recorded_entrypoint as _require_recorded,
+    )
+
+    _require_recorded("probe_sat.py", module=_MODULE_NAME, argv=_entry_sys.argv[1:])
+
 import argparse
 import time
 from pathlib import Path
@@ -32,7 +43,11 @@ from deepearth.encoders.spacetime.earth4d import Earth4D
 from deepearth.autoresearch.programs.spacetime.probe import (
     load_obs, evaluate, spatial_holdout, temporal_holdout, strict_spatiotemporal_holdout,
 )
-from deepearth.autoresearch.programs.spacetime.recurrence import normalize_time_from_train
+from deepearth.autoresearch.programs.spacetime.recurrence import (
+    DEFAULT_TIME_HORIZON,
+    normalize_forecast_time,
+    require_recorded_entrypoint,
+)
 
 
 def load_sat(cache: str, gid, want_clay: bool = False, fit_mask=None):
@@ -90,6 +105,12 @@ def main(argv=None):
     ap.add_argument("--sat_clay", action="store_true")
     ap.add_argument("--forecast", action="store_true")
     ap.add_argument("--forecast_spatial", action="store_true")
+    ap.add_argument(
+        "--time_horizon",
+        type=float,
+        default=DEFAULT_TIME_HORIZON,
+        help="predeclared train-time compression that keeps held-out dates inside Earth4D's temporal domain",
+    )
     ap.add_argument("--phenology", action="store_true")
     ap.add_argument("--pheno_attn", action="store_true")
     ap.add_argument("--pheno_tol", type=float, default=15.0)
@@ -100,6 +121,8 @@ def main(argv=None):
     ap.add_argument("--gnn_hops", type=int, default=2)
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
+    require_recorded_entrypoint("probe_sat.py", module=_MODULE_NAME,
+                               argv=(argv if argv is not None else sys.argv[1:]))
     dev = a.device if torch.cuda.is_available() else "cpu"
     torch.manual_seed(a.seed); np.random.seed(a.seed)
     if torch.cuda.is_available():
@@ -123,7 +146,7 @@ def main(argv=None):
                 x[keep] for x in (lat, lon, fam, days, gid)
             )
             test = test[keep]
-        tnorm, _tmin, _tspan = normalize_time_from_train(days, ~test)
+        tnorm, _tmin, _tspan = normalize_forecast_time(days, test, a.time_horizon)
         coords = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), tnorm], 1))
     else:
         test = spatial_holdout(lat, lon, a.holdout, seed=a.seed)

@@ -31,6 +31,17 @@ result this probe is for.
 
   python -m deepearth.autoresearch.programs.spacetime.intensity_probe --n_shards 12 --feature earth4d
 """
+_MODULE_NAME = "deepearth.autoresearch.programs.spacetime.intensity_probe"
+
+if __name__ == "__main__":
+    import sys as _entry_sys
+
+    from deepearth.autoresearch.programs.spacetime.recurrence import (
+        require_recorded_entrypoint as _require_recorded,
+    )
+
+    _require_recorded("intensity_probe.py", module=_MODULE_NAME, argv=_entry_sys.argv[1:])
+
 import argparse
 import time
 
@@ -39,6 +50,9 @@ import torch
 import torch.nn as nn
 
 from deepearth.autoresearch.programs.spacetime.probe import load_obs, temporal_holdout
+from deepearth.autoresearch.programs.spacetime.recurrence import (
+    require_recorded_entrypoint,
+)
 from deepearth.encoders.spacetime.earth4d import Earth4D
 
 
@@ -142,6 +156,8 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
+    require_recorded_entrypoint("intensity_probe.py", module=_MODULE_NAME,
+                               argv=(argv if argv is not None else sys.argv[1:]))
     dev = torch.device(a.device if torch.cuda.is_available() else "cpu")
     t0 = time.time()
 

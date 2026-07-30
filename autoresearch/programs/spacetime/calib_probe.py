@@ -25,6 +25,17 @@ env-correlated logits) so the mechanisms themselves are measured end-to-end. The
 math (ECE/Brier/temperature/isotonic/conformal/ensemble/MC-dropout/AUROC) is byte-identical in
 both modes; only the source of the held-out logits differs.
 """
+_MODULE_NAME = "deepearth.autoresearch.programs.spacetime.calib_probe"
+
+if __name__ == "__main__":
+    import sys as _entry_sys
+
+    from deepearth.autoresearch.programs.spacetime.recurrence import (
+        require_recorded_entrypoint as _require_recorded,
+    )
+
+    _require_recorded("calib_probe.py", module=_MODULE_NAME, argv=_entry_sys.argv[1:])
+
 import argparse
 import time
 
@@ -32,6 +43,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from deepearth.autoresearch.programs.spacetime.recurrence import (
+    require_recorded_entrypoint,
+)
 
 
 # --------------------------------------------------------------------------------------------
@@ -372,6 +387,8 @@ def main(argv=None):
     ap.add_argument("--label", default="")
     ap.add_argument("--device", default="cuda")   # accepted for harness compat; GPU selected via CUDA_VISIBLE_DEVICES
     a = ap.parse_args(argv)
+    require_recorded_entrypoint("calib_probe.py", module=_MODULE_NAME,
+                               argv=(argv if argv is not None else sys.argv[1:]))
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     t0 = time.time()
 

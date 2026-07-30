@@ -1,19 +1,22 @@
-"""agents/earth4d/trace.py — FIXED harness: run the Earth4D ENCODER PROBE, emit a consistent trace.
+"""agents/earth4d/trace.py — the Earth4D probe harness and record ledger.
 
-Surface = ONLY the spacetime encoder. Every experiment is a big architectural swing on Earth4D
-(encoders/spacetime/earth4d.py) measured by the fast encoder probe
-(autoresearch/programs/spacetime/probe.py & friends) — NOT full-model training. The probe trains only
-the encoder + a light head on ~65k obs in minutes and reports the encoder-isolated marginal vs a FAIR
-baseline (RFF / MLP / best generic PE) on the SAME capability the scorecard/science measures.
+The surface is the spacetime encoder (encoders/spacetime/earth4d.py) and the data channels feeding it,
+measured by the fast encoder probe (autoresearch/programs/spacetime/probe.py & friends) — NOT full-model
+training. The probe trains the encoder + a light head on ~65k obs in minutes and reports the
+encoder-isolated marginal vs a FAIR baseline (RFF / MLP / best generic PE) on the SAME capability the
+scorecard measures.
 
-Every run produces the SAME consistent trace:
-  - OBJECTIVE block: the declared --metric's primary score + fair st_gain + RECORD verdict.
-  - BOTTLENECK read: ARCHITECTURE-LIMITED (Earth4D loses to a generic PE) vs EARNING vs EARNING-BUT-LOW.
+The agent declares one capability from scorecard.md and may then change anything the hypothesis needs.
+What this harness enforces is measurement identity, not a menu of permitted edits: a run is comparable to
+a record only when capability, mode, split, n_shards and protocol all match. A mismatch is recorded as a
+re-baseline or withheld — never as a win.
+
+Every successful run produces the same trace:
+  - OBJECTIVE block: the declared --metric's primary score + fair gain + RECORD verdict.
+  - BOTTLENECK read: INPUT-LIMITED (→ DATA lever) vs ENCODER-LIMITED (→ ARCHITECTURE lever) vs EARNING.
   - the parsed probe header + native metric lines.
-  - RECORD tracking in agents/earth4d/records.json (fill the scorecard by breaking records).
-
---metric (required) declares the objective capability (keeps the loop on track).
---probe  (required) is the probe flags = the architectural lever.  --ensue auto-logs to Ensue.
+  - RECORD tracking in agents/earth4d/records.json, and one upserted Ensue key per capability.
+A failed probe (rc != 0) writes no trace and no record; the log is kept for diagnosis.
 
 Usage:
   python -m deepearth.agents.earth4d.trace --metric family_from_spacetime \
@@ -21,6 +24,7 @@ Usage:
 """
 from __future__ import annotations
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -32,15 +36,35 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]                 # .../deepearth
 RECORDS = Path(__file__).resolve().parent / "records.json"  # the machine record (fill scorecard by breaking these)
+DEFAULT_PROBE_MODULE = "deepearth.autoresearch.programs.spacetime.probe"
+TRACE_AUTH_FD_ENV = "EARTH4D_TRACE_AUTH_FD"
 
-# The scorecard capabilities — the objective must be one (keeps the loop on track). Same capabilities as
-# the science / evaluate.py, scoped to the encoder probe. The probe MODE/architecture is the loop's choice.
+# The encoder-probeable capabilities (scorecard.md Layer 2). The objective must be one of these; the
+# probe MODE and the architecture are the agent's choice. This list and scorecard.md Layer 2/3 are one
+# contract -- change both together.
 CAPABILITIES = [
     "species_from_env", "species_from_spacetime", "family_from_env", "family_from_spacetime",
-    "community_from_env", "lfmc_from_env", "mycorrhiza_from_env", "pollinator_from_env",
-    "calibration", "flowering_auc", "flowering_fidelity", "flowering_peak_month",
-    "infer_clay", "infer_soil", "infer_climate", "infer_hydro",
+    "community_from_env", "calibration", "flowering_peak_month",
 ]
+
+# Declared-and-refused, with the reason (scorecard.md Layer 3). These used to sit in CAPABILITIES with
+# no PRIMARY_RE entry, so a run would fall through to the generic r"\bEarth4D\s+([\d.]+)" pattern and
+# record whatever number matched first -- a legal --metric that measured nothing in particular. An
+# explicit refusal is the honest version: the capability is real on the full-model board, it is simply
+# not reachable through the encoder probe.
+EXCLUDED_CAPABILITIES = {
+    "family_from_vision": "borrowed frozen DINO/BioCLIP, and the stored record has no mode or shard "
+                          "identity; it is not an Earth4D probe record",
+    "lfmc_from_env": "non-encoder head: the capability lives in a downstream head",
+    "mycorrhiza_from_env": "non-encoder head: the capability lives in a downstream head",
+    "pollinator_from_env": "non-encoder head: the capability lives in a downstream head",
+    "flowering_auc": "measured on the fusion model's flowering head, not the encoder",
+    "flowering_fidelity": "measured on the fusion model's flowering head, not the encoder",
+    "infer_clay": "env->env reconstruction runs through the field decoder, not the encoder probe",
+    "infer_soil": "env->env reconstruction runs through the field decoder, not the encoder probe",
+    "infer_climate": "env->env reconstruction runs through the field decoder, not the encoder probe",
+    "infer_hydro": "env->env reconstruction runs through the field decoder, not the encoder probe",
+}
 
 # How to read the capability's PRIMARY absolute score from the probe output (native metric, first match wins).
 PRIMARY_RE = {
@@ -50,7 +74,6 @@ PRIMARY_RE = {
     "family_from_spacetime": [r"\bEarth4D\s+([\d.]+)"],
     "species_from_spacetime": [r"\bEarth4D\s+([\d.]+)"],
     "flowering_peak_month": [r"acc\s+([\d.]+)"],
-    "flowering_auc": [r"acc\s+([\d.]+)"],
 }
 # PROTOCOL VERSION. Bump this whenever a change alters what a run MEASURES rather than how well it does:
 # a leak fix, a split change, a target/normalization change. Records carry the protocol they were set under,
@@ -63,18 +86,48 @@ PRIMARY_RE = {
 #   v2-leakfix    : strict spatiotemporal split, train-only time normalization with horizon headroom,
 #                   train-only feature standardization, deterministic seeding.
 PROTOCOL = "v2-leakfix"
+# Only explicitly identified, audited protocols may be migrated automatically.
+# Absence of a protocol is not evidence that a hand-restored or pre-gate record
+# belongs to the known v1 measurement regime.
+REBASELINE_PROTOCOLS = frozenset({"v1-prefix"})
 
 # Fair-baseline preference: Earth4D must beat a TRAINED generic PE, not just raw coords.
 FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "prop_acc", "best-coord", "raw"]
 
 
 def _run(module: str, probe_args: str, device: str, log_path: str) -> int:
-    cmd = [sys.executable, "-m", module] + shlex.split(probe_args) + ["--device", device]
+    probe_argv = shlex.split(probe_args) + ["--device", device]
+    cmd = [sys.executable, "-m", module] + probe_argv
     env = dict(os.environ)
     env["PYTHONPATH"] = str(REPO.parent) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    print(f"[trace] $ {' '.join(cmd)}  (cwd={REPO})", flush=True)
-    with open(log_path, "w") as lf:
-        return subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT, env=env, cwd=str(REPO)).returncode
+    read_fd, write_fd = os.pipe()
+    try:
+        authorization = (
+            json.dumps(
+                {"module": module, "argv": probe_argv},
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + b"\n"
+        )
+        os.write(write_fd, authorization)
+        os.close(write_fd)
+        write_fd = -1
+        env[TRACE_AUTH_FD_ENV] = str(read_fd)
+        print(f"[trace] $ {' '.join(cmd)}  (cwd={REPO})", flush=True)
+        with open(log_path, "w") as lf:
+            return subprocess.run(
+                cmd,
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                env=env,
+                cwd=str(REPO),
+                pass_fds=(read_fd,),
+            ).returncode
+    finally:
+        if write_fd >= 0:
+            os.close(write_fd)
+        os.close(read_fd)
 
 
 def _parse(text: str):
@@ -124,6 +177,74 @@ def _fair_gain(gains: dict):
     return (None, None)
 
 
+def _same_probe(probe, prev_probe):
+    """Compare a migration command after shell-token normalization."""
+    if not probe or not prev_probe:
+        return False
+    try:
+        return shlex.split(probe) == shlex.split(prev_probe)
+    except ValueError:
+        return False
+
+
+def _record_gate(
+    key_val,
+    prev,
+    prev_proto,
+    mode,
+    prev_mode,
+    shards,
+    prev_shards,
+    probe=None,
+    prev_probe=None,
+):
+    """Return the like-for-like record decision and its component checks."""
+    mode_ok = (prev is None) or (mode == prev_mode)
+    shards_ok = (prev is None) or (shards == prev_shards)
+    beats = key_val is not None and (prev is None or key_val > prev)
+    rebaseline = (
+        prev is not None
+        and prev_proto in REBASELINE_PROTOCOLS
+        and prev_proto != PROTOCOL
+        and mode_ok
+        and shards_ok
+        and _same_probe(probe, prev_probe)
+    )
+    current_comparison = prev is None or prev_proto == PROTOCOL
+    is_record = (
+        beats and mode_ok and shards_ok and current_comparison
+    ) or (rebaseline and key_val is not None)
+    return is_record, rebaseline, beats, mode_ok, shards_ok
+
+
+def _read_records(path=RECORDS):
+    """Read one exact board snapshot for optimistic concurrency control."""
+    raw = path.read_bytes() if path.exists() else b""
+    return raw, json.loads(raw or b"{}")
+
+
+def _commit_records_if_unchanged(expected_raw, records, path=RECORDS):
+    """Atomically replace a board only if it has not changed since preflight."""
+    lock_path = path.with_name("records.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        current_raw = path.read_bytes() if path.exists() else b""
+        if current_raw != expected_raw:
+            return False
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            with temporary.open("w") as stream:
+                stream.write(json.dumps(records, indent=2, sort_keys=True))
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    return True
+
+
 def _primary(text: str, cap: str):
     if cap == "calibration":                              # calib_probe: AUROC of confidence->correctness (0.5=useless)
         # LIKE-FOR-LIKE. An earlier edit made this the max over conf_auroc_ens/_ent/_bald/_ensvar too, so a run
@@ -152,12 +273,22 @@ def _primary(text: str, cap: str):
 
 
 def _bottleneck(fair, primary) -> str:
+    """Diagnose which lever family the fair-gain points at (program.md, section 3 Diagnose).
+
+    This string is written into records.json AND pushed to Ensue as the swarm's reason-to-move, so it
+    has to agree with the program. It previously read a flat/negative fair-gain as ARCHITECTURE-LIMITED
+    and told the agent to "swing bigger on the architecture" -- the exact inverse of the program, which
+    reads a flat gain as the INPUT being signal-limited. Under the old string every flat-gain run
+    advised the whole swarm to do the one thing the program forbids ("Don't default to architecture").
+    """
     if fair is None:
         return "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain — check output)"
     if fair <= 0:
-        return "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE → swing bigger on the architecture"
+        return ("INPUT-LIMITED: Earth4D does not beat a generic trained PE, so the coordinate/current "
+                "channel lacks the signal → DATA lever, change the channel")
     if primary is not None and primary < 0.20:
-        return "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        return ("ENCODER-LIMITED: the encoder beats the PE but the absolute score is low → ARCHITECTURE "
+                "lever, change the mechanism")
     return "EARNING: the architecture is carrying real signal → push it further"
 
 
@@ -201,8 +332,11 @@ def _ensue_token() -> str:
 def post_ensue(trace: dict) -> None:
     tok = _ensue_token()
     if not tok:
-        print("[trace] --ensue set but no ENSUE_API_TOKEN (env or /workspace/.env); skipping", flush=True)
-        return
+        # A silent skip here means the swarm never learns this run happened, and the next agent pays to
+        # rediscover the same dead-end. --ensue was explicitly requested, so a missing token is an error.
+        sys.exit("[trace] --ensue was requested but no ENSUE_API_TOKEN is available (env or "
+                 "/workspace/.env). The record was written locally; the swarm was NOT updated. "
+                 "Export the token and re-publish rather than leaving the board stale.")
     o = trace["objective"]
     led = trace.get("ledger", {}) or {}
     hist = led.get("records", [])
@@ -214,7 +348,8 @@ def post_ensue(trace: dict) -> None:
     # this run's outcome + deduped dead-ends WITH their bottleneck reason. Win or dead-end, every run captured.
     val = (f"LOOP-earth4d {trace['metric']}: BEST {best.get('score')} (gain {best.get('gain')}, {o.get('fair_baseline')}) "
            f"via '{best.get('tag')}'. runs={led.get('runs')}. record-history: {rec_str}. "
-           f"THIS RUN '{trace['tag']}': primary={o['primary']} gain={o['fair_st_gain']} RECORD={o['record']} "
+           f"THIS RUN '{trace['tag']}': primary={o['primary']} gain={o['fair_st_gain']} "
+           f"decision={o.get('decision', 'legacy')} "
            f"bottleneck={trace['bottleneck']}. dead-ends-tried: {dead_str}.")
     payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "create_memory", "arguments": {
         "items": [{"key_name": f"LOOP-earth4d-{trace['metric']}", "value": val,
@@ -231,19 +366,26 @@ def post_ensue(trace: dict) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Earth4D encoder-probe trace harness — big architectural swings, measured fast.")
+    ap = argparse.ArgumentParser(
+        description="Earth4D legacy probe ledger — exact audited protocol migrations only"
+    )
     ap.add_argument("--metric", required=True, help="objective capability (one of the scorecard capabilities)")
     ap.add_argument("--probe", required=True, help="probe flags = the architectural lever (quote the whole string)")
-    ap.add_argument("--probe-module", default="deepearth.autoresearch.programs.spacetime.probe")
+    ap.add_argument("--probe-module", default=DEFAULT_PROBE_MODULE)
     ap.add_argument("--tag", default=None)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--ensue", action="store_true")
     ap.add_argument("--log", default=None)
     a = ap.parse_args()
 
+    if a.metric in EXCLUDED_CAPABILITIES:
+        sys.exit("[trace] --metric %r is excluded: %s\n"
+                 "        See agents/earth4d/scorecard.md Layer 3."
+                 % (a.metric, EXCLUDED_CAPABILITIES[a.metric]))
     if a.metric not in CAPABILITIES:
-        sys.exit("[trace] --metric %r is not a scorecard capability. one of:\n  %s"
+        sys.exit("[trace] --metric %r is not an encoder-probeable capability. one of:\n  %s"
                  % (a.metric, "\n  ".join(CAPABILITIES)))
+    records_snapshot, preflight_records = _read_records()
 
     tag = a.tag or ("e4d_" + re.sub(r"\W+", "_", a.probe)[:24].strip("_"))
     log_path = a.log or str(Path(__file__).resolve().parent / "traces" / f"{tag}.log")
@@ -253,7 +395,7 @@ def main() -> None:
     rc = _run(a.probe_module, a.probe, a.device, log_path)
     text = Path(log_path).read_text(errors="ignore")
     header, gains, metrics = _parse(text)
-    if rc != 0 and not gains and not header:
+    if rc != 0:
         print(text[-1800:])
         sys.exit(f"[trace] probe FAILED (rc={rc}); see {log_path}")
 
@@ -264,7 +406,7 @@ def main() -> None:
     shards = _shards(a.probe)
 
     # RECORD tracking + full run LEDGER (taxonomy: never lose a run's result; publish win OR dead-end w/ reason) --
-    recs = json.loads(RECORDS.read_text()) if RECORDS.exists() else {}
+    recs = preflight_records
     key_val = primary if primary is not None else fair
     cur = recs.get(a.metric, {})
     prev = cur.get("score")
@@ -274,17 +416,35 @@ def main() -> None:
     # run in the SAME probe mode; a different mode is a different target and gets flagged for review instead.
     prev_mode, prev_shards = cur.get("mode"), cur.get("n_shards")
     prev_proto = cur.get("protocol")
-    rebaseline = prev is not None and prev_proto != PROTOCOL
     # An UNSTAMPED record (pre-gate, or hand-restored) is treated as unknown-mode and does NOT auto-pass:
     # that is exactly how the leaked peak-week run slipped through on its second attempt.
-    mode_ok = (prev is None) or (mode == prev_mode)      # both-absent is consistent; a MISMATCH is not
-    shards_ok = (prev is None) or (shards == prev_shards)
-    beats = key_val is not None and (prev is None or key_val > prev)
-    is_record = (beats and mode_ok and shards_ok) or (rebaseline and key_val is not None)
+    is_record, rebaseline, beats, mode_ok, shards_ok = _record_gate(
+        key_val,
+        prev,
+        prev_proto,
+        mode,
+        prev_mode,
+        shards,
+        prev_shards,
+        a.probe,
+        cur.get("probe"),
+    )
+    migration_withheld = prev is not None and prev_proto != PROTOCOL and not rebaseline
     if rebaseline and key_val is not None:
         print(f"[trace] *** RE-BASELINE: record was set under protocol {prev_proto!r}, this run is {PROTOCOL!r}.\n"
               f"[trace]     {prev} and {key_val} measure different things, so this is not a comparison —\n"
               f"[trace]     the capability's baseline is being RESET to {key_val}. Prior record archived in the ledger.",
+              flush=True)
+    elif prev is not None and prev_proto != PROTOCOL and prev_proto not in REBASELINE_PROTOCOLS:
+        print(f"[trace] *** PROTOCOL MIGRATION WITHHELD: prior protocol {prev_proto!r} is not an "
+              f"explicitly audited migration source.\n"
+              f"[trace]     The protected record remains unchanged; migrate it deliberately after provenance review.",
+              flush=True)
+    elif prev is not None and prev_proto in REBASELINE_PROTOCOLS and prev_proto != PROTOCOL and not rebaseline:
+        print(f"[trace] *** PROTOCOL MIGRATION WITHHELD: the old probe command, mode, and shard count "
+              f"must match exactly.\n"
+              f"[trace]     old={cur.get('probe')!r} mode={prev_mode!r} shards={prev_shards!r}\n"
+              f"[trace]     new={a.probe!r} mode={mode!r} shards={shards!r}",
               flush=True)
     if beats and not (mode_ok and shards_ok):
         why = ("mode %r != record mode %r" % (mode, prev_mode) if not mode_ok
@@ -297,10 +457,20 @@ def main() -> None:
     if is_record:
         cur = {"score": key_val, "primary": primary, "fair_st_gain": fair,
                "fair_baseline": fair_base, "tag": tag, "probe": a.probe, "mode": mode, "n_shards": shards,
-               "protocol": PROTOCOL}
+               "probe_module": a.probe_module, "protocol": PROTOCOL}
         ledger["records"] = (ledger.get("records", []) + [{"tag": tag, "score": key_val, "gain": fair,
                                                            "protocol": PROTOCOL,
                                                            "rebaseline_from": prev if rebaseline else None}])[-20:]
+    elif migration_withheld and key_val is not None:
+        ledger.setdefault("deadends", {})[tag] = {
+            "score": key_val,
+            "gain": fair,
+            "why": (
+                f"PROTOCOL MIGRATION WITHHELD (old protocol={prev_proto!r}, mode={prev_mode!r}, "
+                f"n_shards={prev_shards!r}, probe={cur.get('probe')!r}; new mode={mode!r}, "
+                f"n_shards={shards!r}, probe={a.probe!r})"
+            ),
+        }
     elif beats and not (mode_ok and shards_ok):
         ledger.setdefault("deadends", {})[tag] = {
             "score": key_val, "gain": fair,
@@ -313,10 +483,21 @@ def main() -> None:
             ledger["deadends"] = dict(list(ledger["deadends"].items())[-40:])
     cur["ledger"] = ledger
     recs[a.metric] = cur
-    RECORDS.write_text(json.dumps(recs, indent=2, sort_keys=True))
+    if not _commit_records_if_unchanged(records_snapshot, recs):
+        sys.exit(
+            "[trace] WORKFLOW WITHHELD: records.json changed while the probe ran; "
+            f"the probe log is preserved at {log_path}, but no record was written"
+        )
 
+    decision = (
+        "rebaseline" if rebaseline
+        else "record" if is_record
+        else "migration_withheld" if migration_withheld
+        else "no_record"
+    )
     objective = {"primary": primary, "fair_st_gain": fair, "fair_baseline": fair_base,
-                 "record": bool(is_record), "prev_record": prev, "record_value": key_val}
+                 "record": bool(is_record), "rebaseline": bool(rebaseline), "decision": decision,
+                 "prev_record": prev, "record_value": key_val}
     trace = {"metric": a.metric, "tag": tag, "probe": a.probe, "probe_module": a.probe_module,
              "objective": objective, "gains": gains, "header": header, "metrics": metrics,
              "bottleneck": bottleneck, "rc": rc, "ledger": ledger}
@@ -327,7 +508,13 @@ def main() -> None:
     print(header or "(no '=== SPACETIME' header parsed — check the log)")
     print("-" * 76)
     print(f"  primary(score) = {primary}   fair_st_gain = {fair} (vs {fair_base})   all_gains = {gains}")
-    print(f"  RECORD = {'YES (new best!)' if is_record else 'no'}   prev_record = {prev}")
+    record_text = (
+        "RE-BASELINE (not a comparable win)" if rebaseline
+        else "YES (new best!)" if is_record
+        else "WITHHELD (protocol migration mismatch)" if migration_withheld
+        else "no"
+    )
+    print(f"  RECORD = {record_text}   prev_record = {prev}")
     print(f"  BOTTLENECK: {bottleneck}")
     print("  metrics:")
     for m in metrics:
