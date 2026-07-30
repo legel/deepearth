@@ -7,7 +7,7 @@ The OLD loop metrics scored the wrong thing:
 Both are ~0 because they measure the redundant OPERATOR, not the encoder's capability,
 which lives in the OBJECTIVE. This module formalises the two CORRECT, leak-guarded scores
 as reusable functions that parse the existing probes' machine-readable output. It edits
-nothing in core/fusion.py, evaluate.py, encoders/*, earth4d.py, or existing probe defaults.
+nothing in autoresearch/main/editable_files/fusion/fusion.py, evaluate.py, encoders/*, earth4d.py, or existing probe defaults.
 
 Two instruments
 ---------------

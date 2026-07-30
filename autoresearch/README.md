@@ -99,7 +99,7 @@ own commit with its own tests, separate from any result.
 - **Each loop is independent CODE.** No loop imports another loop. If two loops need the same loader,
   each keeps its own copy — a cross-loop import means a change in one loop silently moves another loop's
   numbers with no record saying so. Sharing is allowed only *downward*, into code no loop owns
-  (`encoders/`, and `core/` for the fusion loop alone). `tests/test_loop_independence.py` enforces this,
+  (`encoders/`, and `autoresearch/main/editable_files/fusion/` for the fusion loop alone). `tests/test_loop_independence.py` enforces this,
   plus the identical four directories and the presence of each loop's program.
 - **Each loop optimizes its own metric under its own evals.** A loop's program declares what it is
   raising and what would falsify it. No loop is scored on another's number, and no loop's result is

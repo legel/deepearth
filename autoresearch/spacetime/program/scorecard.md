@@ -136,7 +136,7 @@ scored on them; they are simply not reachable by the encoder probe.
 A gated **spatial-only random-Fourier-features branch** (default off) fixes the bare probe's weakness:
 a raw Earth4D hash grid loses to a generic RFF PE on smooth/static tasks (0.069→~0.08–0.10 static;
 forecast 0.153→0.165, +0.096 vs RFF). **But the champion already carries this exact prior** —
-`core/fusion.py:311` wires `SmoothGeoField` (an RFF geo prior added to the hash position;
+`autoresearch/main/editable_files/fusion/fusion.py:311` wires `SmoothGeoField` (an RFF geo prior added to the hash position;
 `champion.yaml smooth_geo: true`). The probe-win is the probe catching up to the champion, not a new
 lever. **Do not graduate** (Ensue `earth4d_FOURIER_redundant_with_smooth_geo_NO_graduation_2026_07_28`).
 Keep the branch default-off for probe fairness only. Single-seed, noisy.

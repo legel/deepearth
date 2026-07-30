@@ -45,14 +45,19 @@ Every loop has the same four directories, so scope is never ambiguous:
 
 ```
 autoresearch/<loop>/
-  program/                the contract: objective, board, what counts as evidence
+  program/                the contract: objective, scorecard, what counts as evidence
   editable_files/
-     harness/             the loop itself
-     lib/                 auxiliary code the loop calls
+     harness.py           the loop itself — one file (spacetime is the reference shape)
+     probe.py             what gets computed
+     lib/                 mechanisms the probe calls
      data/                the DATA lever: sources added, moved and removed
                           based on the signal they provide
   records/                harness-written board, traces, ledgers — never hand-edited
 ```
+
+`encoders/` stays top-level because it is the **interface** between the loops: a probe loop improves an
+encoder, the fusion loop consumes it. Anything owned by one loop lives inside it — which is why the
+fusion model moved from `core/` to `autoresearch/main/editable_files/fusion/`.
 
 **Where the campaign stands:** [`autoresearch/scorecard.md`](autoresearch/scorecard.md) indexes every
 loop's scorecard. Each loop publishes `program/scorecard.txt` — the current best per metric with its fair

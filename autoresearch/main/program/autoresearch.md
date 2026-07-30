@@ -41,7 +41,7 @@ SSL shapes the representation; the head only reads it, and imagined-vs-real test
 the representation itself carries the signal. Keep head grad light (small weight, optionally stop-grad) so it never
 hard-codes a supervised shortcut into the shared representation.
 
-**Fair game (edit + commit):** `core/fusion.py` (main target), `encoders/spacetime/earth4d.py`,
+**Fair game (edit + commit):** `autoresearch/main/editable_files/fusion/fusion.py` (main target), `encoders/spacetime/earth4d.py`,
 `encoders/biological/phylogenomic.py`, `deepcal.yaml`, `evaluate.py` (benchmark definitions + heads),
 `data.py`/`prepare.py` (integrate new datasets). Architecture, encoders, fusion, operators, Bayesian priors/posteriors,
 GNN autoregressive rollout (GraphCast/GenCast), diffusion/recurrent decoding, optimizer, schedule, hyperparameters, and
@@ -65,7 +65,7 @@ they lift induction. New datasets must be >= US-national in extent (DeepCal then
 
 Do not settle for tuning mechanism knobs. Search the ENTIRE architecture — tokenizers, embeddings, encodings,
 fusion, operators, heads — to find the absolutely best model. The surface, grouped (config = a key in
-`deepcal.yaml` `model:`; code = edit `core/fusion.py` / `encoders/*`):
+`deepcal.yaml` `model:`; code = edit `autoresearch/main/editable_files/fusion/fusion.py` / `encoders/*`):
 
 - **Embeddings & latent capacity** (config): `d_model` (token/latent width), `n_latents` (Perceiver latent bank
   size), `manifolds` (phylo/biological subspace width), `decoder_hidden`. Wider is not free under a fixed step
@@ -90,7 +90,7 @@ Every box shares one leaderboard, so a result is only trustworthy if any box can
 something the other boxes do NOT have natively (i.e. it needs a code change, not just a config value):
 1. **Make it a config toggle that DEFAULTS to current behaviour** — `m.get("<key>", <current_default>)` — so
    pulling the code changes nothing until a config sets the key. Never a bare hardcoded edit.
-2. **Commit the toggle** to `core/fusion.py` / `encoders/*` and **sync the changed files to every box** (all
+2. **Commit the toggle** to `autoresearch/main/editable_files/fusion/fusion.py` / `encoders/*` and **sync the changed files to every box** (all
    boxes must run byte-identical code — verify with `md5sum`).
 3. **Document the new lever in the registry below** (key, file, default, effect) so any box can drive it from
    config alone and the candidate generators can sweep it.
@@ -102,13 +102,13 @@ worktree, not the shared loop repo, so concurrent candidate runs are never conta
 ### Registry of added config toggles (append one line per new lever)
 | key | file | default | effect |
 |---|---|---|---|
-| `comm_attached` | `core/fusion.py` | `false` | let the community-head loss shape the backbone (un-detached) |
-| `mod_encoder` | `core/fusion.py` | `"linear"` | modality tokenizer for continuous vars: `"linear"` (bare Linear) / `"mlp2"` (2-layer MLP) / `"mlp2ln"` (+LayerNorm) |
-| `read_op` | `core/fusion.py` | `"mha"` | Perceiver READ operator: `mha`(stock) / `slot`(competitive slot-attn) / `typed`(variable-vs-context split, gated) / `crossself`(latents co-attend field+selves). All tested NEUTRAL vs champion. |
-| `neighbor_op` | `core/fusion.py` | `"add"` | neighbor token value×position combine: `add` / `film` / `gate` / `bind`(Hadamard value⊙pos term). **bind PROMOTED** (+0.0013). film NaN-collapses. |
-| `token_op` | `core/fusion.py` | `"add"` | query variable-token value×position combine: `add` / `bind` / `film`(FiLM by pos) / `filmbind`. **film PROMOTED** (+0.0034). |
-| `read_cond` | `core/fusion.py` | `false` | location-aware read: FiLM the read query by the query GLOBAL position. Tested NEGATIVE (-0.0033). |
-| `joint_decode` | `core/fusion.py` | `false` | cross-variable joint decoder: variables attend to each other (self-attn over pooled beliefs) before decoding. Tested NEGATIVE (-0.0042). |
-| `grad_checkpoint` | `core/fusion.py` | `false` | recompute read+processor-block activations in backward (memory<->compute). NOTE: torch.compile largely overrides it; latent blocks are tiny anyway, so limited effect. |
-| `diffusion` | `core/fusion.py` | `false` | Rule-22 diffusion decode: masked states init as NOISE, denoised over rounds on a decreasing schedule (needs rounds>=3, round_loss=final to fit). |
+| `comm_attached` | `autoresearch/main/editable_files/fusion/fusion.py` | `false` | let the community-head loss shape the backbone (un-detached) |
+| `mod_encoder` | `autoresearch/main/editable_files/fusion/fusion.py` | `"linear"` | modality tokenizer for continuous vars: `"linear"` (bare Linear) / `"mlp2"` (2-layer MLP) / `"mlp2ln"` (+LayerNorm) |
+| `read_op` | `autoresearch/main/editable_files/fusion/fusion.py` | `"mha"` | Perceiver READ operator: `mha`(stock) / `slot`(competitive slot-attn) / `typed`(variable-vs-context split, gated) / `crossself`(latents co-attend field+selves). All tested NEUTRAL vs champion. |
+| `neighbor_op` | `autoresearch/main/editable_files/fusion/fusion.py` | `"add"` | neighbor token value×position combine: `add` / `film` / `gate` / `bind`(Hadamard value⊙pos term). **bind PROMOTED** (+0.0013). film NaN-collapses. |
+| `token_op` | `autoresearch/main/editable_files/fusion/fusion.py` | `"add"` | query variable-token value×position combine: `add` / `bind` / `film`(FiLM by pos) / `filmbind`. **film PROMOTED** (+0.0034). |
+| `read_cond` | `autoresearch/main/editable_files/fusion/fusion.py` | `false` | location-aware read: FiLM the read query by the query GLOBAL position. Tested NEGATIVE (-0.0033). |
+| `joint_decode` | `autoresearch/main/editable_files/fusion/fusion.py` | `false` | cross-variable joint decoder: variables attend to each other (self-attn over pooled beliefs) before decoding. Tested NEGATIVE (-0.0042). |
+| `grad_checkpoint` | `autoresearch/main/editable_files/fusion/fusion.py` | `false` | recompute read+processor-block activations in backward (memory<->compute). NOTE: torch.compile largely overrides it; latent blocks are tiny anyway, so limited effect. |
+| `diffusion` | `autoresearch/main/editable_files/fusion/fusion.py` | `false` | Rule-22 diffusion decode: masked states init as NOISE, denoised over rounds on a decreasing schedule (needs rounds>=3, round_loss=final to fit). |
 | _(add new tokenizer/embedding/encoding toggles here as they are introduced)_ | | | |

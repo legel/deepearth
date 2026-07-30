@@ -1,6 +1,6 @@
 """The DeepCal benchmark suite and the harmonic-mean north star.
 
-A trained :class:`~deepearth.core.fusion.DeepEarth` is scored on the full suite, each benchmark asking "given the
+A trained :class:`~deepearth.autoresearch.main.editable_files.fusion.fusion.DeepEarth` is scored on the full suite, each benchmark asking "given the
 widely-available context U (and sometimes a ground photo), how well is a sparse target induced?" Every metric is
 already in ``[0, 1]`` (top-k accuracy, macro-F1, unit-embedding cosine, recall@k, MRR), so the score IS the raw value:
 no baseline/target remap, because a hand-set target below a metric's attainable maximum is an artificial ceiling. The

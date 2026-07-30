@@ -15,7 +15,7 @@ import torch.nn.functional as F
 import yaml
 
 from deepearth.autoresearch import data as data_module
-from deepearth.core.fusion import DeepEarth, Variable
+from deepearth.autoresearch.main.editable_files.fusion.fusion import DeepEarth, Variable
 
 
 def build_variables(spec, dims):

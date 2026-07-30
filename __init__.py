@@ -2,9 +2,9 @@
 
 Two learnable encoders -- an Earth4D space-time GNN (:mod:`deepearth.encoders.spacetime`) and a phylogenomic
 species GNN (:mod:`deepearth.encoders.biological`) -- are fused by a masked multimodal autoencoder
-(:mod:`deepearth.core.fusion`), which learns to reconstruct any hidden variable from the others.
+(:mod:`deepearth.autoresearch.main.editable_files.fusion.fusion`), which learns to reconstruct any hidden variable from the others.
 
-    from deepearth.core.fusion import DeepEarth
+    from deepearth.autoresearch.main.editable_files.fusion.fusion import DeepEarth
 
 See ``autoresearch/science.md`` for the scientific framing, ``autoresearch/README.md`` to prepare data and run,
 and ``autoresearch/main/program/autoresearch.md`` for the autonomous-experimentation loop.

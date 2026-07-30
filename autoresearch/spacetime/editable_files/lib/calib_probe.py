@@ -1,6 +1,6 @@
 """Additive, flag-gated CALIBRATION probe for the encoder SDM head (science.md rule 17).
 
-DOES NOT touch core/fusion.py, evaluate.py, encoders/*, earth4d.py, phenology.py, recurrence.py,
+DOES NOT touch autoresearch/main/editable_files/fusion/fusion.py, evaluate.py, encoders/*, earth4d.py, phenology.py, recurrence.py,
 or any existing probe's default path. Default-off. Scratch only. Nothing committed by this file.
 
 Question (the untested vertical, Bayesian-calibration gap ~0.143, B23 species_calibration /

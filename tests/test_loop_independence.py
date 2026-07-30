@@ -55,7 +55,7 @@ class LoopIndependenceTests(unittest.TestCase):
                 if "__pycache__" in str(path):
                     continue
                 for module in imported_modules(path):
-                    if "deepearth.core.fusion" in module:
+                    if "deepearth.autoresearch.main.editable_files.fusion.fusion" in module:
                         offenders.append(str(path.relative_to(AUTORESEARCH)))
         self.assertEqual(offenders, [], "probe loops must not import the fusion model: " + str(offenders))
 

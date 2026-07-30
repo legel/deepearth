@@ -1,3 +1,10 @@
+> **Moved here from the repository root `core/` (2026-07-30).** It was imported by exactly one loop —
+> main's `train.py` and `evaluate.py` — so a top-level `core/` read as shared while being owned by the
+> fusion loop. It now lives with its owner. `encoders/` stayed top-level for the opposite reason: all
+> three loops import it, because it is the interface a probe loop improves and fusion consumes.
+>
+> Probe loops must not import this directory; `tests/test_loop_independence.py` enforces that.
+
 # DeepEarth core
 
 The model. A masked multimodal autoencoder over spatio-temporally covarying variables: given whichever variables
@@ -5,7 +12,7 @@ are observed at a location and its neighbors, it infers the rest — trained by 
 reconstructing them, so at inference any variable predicts any other.
 
 ```python
-from deepearth.core.fusion import DeepEarth
+from deepearth.autoresearch.main.editable_files.fusion.fusion import DeepEarth
 ```
 
 `fusion.py` is the whole core. It composes two learnable encoders and fuses everything through latent attention:
