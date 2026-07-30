@@ -699,6 +699,18 @@ def main(argv=None):
         print(f"  query_sp={r['n_query_sp']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
         print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
         print(f"  [leak-guard] {r['leak_guard']}")
+        declare(
+            capability="community_from_env",
+            mode="COOCCUR-ROUTING",
+            metric="micro_AP_feat",
+            value=r["micro_AP_feat"],
+            split=f"mech={r['mechanism']}",
+            gains={"GAIN": r["gain_over_prevalence"]},
+            baselines={"prevalence": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
+            mechanism=r["mechanism"], thresh=r["thresh"], cooccur_file=r["cooccur_file"],
+            n_query_sp=r["n_query_sp"], n_cand_sp=r["n_cand_sp"], feat_dim=r["feat_dim"],
+            lift_over_baserate=r["lift_over_baserate"], leak_guard=r["leak_guard"],
+        )
         return r
 
     if a.sdm_presence:
@@ -709,6 +721,18 @@ def main(argv=None):
         print(f"  query_cells={r['n_query_cells']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
         print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
         print(f"  [leak-guard] {r['leak_guard']}")
+        declare(
+            capability="species_from_env",
+            mode="SDM-PRESENCE",
+            metric="micro_AP_feat",
+            value=r["micro_AP_feat"],
+            split=f"mech={r['mechanism']}",
+            gains={"GAIN": r["gain_over_prevalence"]},
+            baselines={"prevalence": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
+            mechanism=r["mechanism"], n_query_cells=r["n_query_cells"], n_cand_sp=r["n_cand_sp"],
+            feat_dim=r["feat_dim"], lift_over_baserate=r["lift_over_baserate"],
+            leak_guard=r["leak_guard"],
+        )
         return r
 
     if a.sdm_hard:
@@ -732,6 +756,19 @@ def main(argv=None):
         print(f"  micro-AP(feat) {aps.mean():.4f} +/- {aps.std():.4f} | prevalence {r0['micro_AP_prevalence']:.4f} | "
               f"GAIN {gns.mean():+.4f} +/- {gns.std():.4f} | lift {r0['lift_over_baserate']:.2f}x")
         print(f"  [leak-guard] {r0['leak_guard']}")
+        declare(
+            capability="species_from_env",
+            mode="SDM-HARD",
+            metric="micro_AP_feat",
+            value=float(aps.mean()),
+            split=f"{r0['holdout_mode']}({r0['block_deg']}deg)/grid{r0['cell_deg']}deg",
+            gains={"GAIN": float(gns.mean())},
+            baselines={"prevalence": r0["micro_AP_prevalence"], "baserate": r0["micro_AP_baserate"]},
+            mechanism=r0["mechanism"], env_channels=r0["env_channels"], add_time=r0["add_time"],
+            sdm_seeds=a.sdm_seeds, ap_std=float(aps.std()), gain_std=float(gns.std()),
+            n_query_cells=r0["n_query_cells"], n_train_cells=r0["n_train_cells"],
+            n_cand_sp=r0["n_cand_sp"], feat_dim=r0["feat_dim"], leak_guard=r0["leak_guard"],
+        )
         return {'runs': runs, 'ap_mean': float(aps.mean()), 'ap_std': float(aps.std()),
                 'gain_mean': float(gns.mean()), 'gain_std': float(gns.std())}
 
@@ -1148,6 +1185,23 @@ def main(argv=None):
             print(f"  st_gain(Earth4D vs RFF, best-head within-tol acc) {_e4d_best - _rff_best:+.4f}   (Earth4D {_e4d_best:.4f}  RFF {_rff_best:.4f})")
         print(f"  [profile] forecast_queries={n_te} K={a.rec_k} hidden={a.rec_hidden} hops={a.gnn_hops} steps={a.steps}")
         print(f"  {len(lat)} obs, {a.steps}-step phenology in {dt:.1f}s")
+        # The record metric here is Earth4D's BEST-HEAD within-tolerance accuracy vs the generic trained
+        # PE's -- NOT propagator_gain, which is a propagation-vs-static quantity on RAW features and so
+        # never gated the encoder at all. _best_acc() is nan-safe when a head was not run.
+        declare(
+            capability="flowering_peak_month",
+            mode=pheno_mode,
+            metric="within_tol_accuracy",
+            value=_e4d_best,
+            split=pheno_mode,
+            gains=({"Earth4D vs RFF, best-head within-tol acc": _e4d_best - _rff_best}
+                   if _e4d_best == _e4d_best and _rff_best == _rff_best else {}),
+            baselines={"RFF_best_head": _rff_best, "raw_best_head": _best_acc("raw")},
+            forecast_queries=n_te, tol_days=a.pheno_tol, K=a.rec_k, hops=a.gnn_hops,
+            attn=a.pheno_attn, obs=len(lat), seconds=dt,
+            propagator_gain_acc_raw=pg_raw_gnn_acc, propagator_gain_mae_raw=best_prop_raw_mae,
+            static_mae_raw=r["raw"]["static_mae"], gnn_mae_raw=r["raw"]["gnn_mae"],
+        )
         return {"static_mae_raw": r["raw"]["static_mae"], "gnn_mae_raw": r["raw"]["gnn_mae"], "lstm_mae_raw": r["raw"]["lstm_mae"],
                 "attn_mae_raw": r["raw"].get("attn_mae", float("nan")), "sp_mae_raw": r["raw"].get("sp_mae", float("nan")),
                 "propagator_gain_mae": best_prop_raw_mae, "propagator_gain_gnn_mae": pg_raw_gnn_mae, "propagator_gain_lstm_mae": pg_raw_lstm_mae,
@@ -1949,6 +2003,22 @@ def main(argv=None):
     print(f"  held-out top5 acc   | raw-coords {raw_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f}   top5_gain(vs raw) {e4d_t5 - raw_t5:+.4f}")
     print(f"  [profile] earth4d_dim={e4d.shape[1]}  frac_held={test.mean():.3f}  spatial_levels={a.spatial_levels} temporal_levels={a.temporal_levels} log2_hashmap={a.log2_hashmap} forecast={a.forecast}")
     print(f"  {len(lat)} obs, {a.steps}-step probe in {dt:.1f}s")
+    # The shared coordinate/forecast tail. --target selects WHICH capability this is; the old harness
+    # could not tell family_from_spacetime from species_from_spacetime here because both print the same
+    # header and both were matched by the same r"\bEarth4D\s+([\d.]+)" pattern.
+    _target_capability = ("species_from_spacetime" if a.target == "species" else "family_from_spacetime")
+    declare(
+        capability=_target_capability,
+        mode=mode,
+        metric=f"{a.target}_top1_accuracy",
+        value=e4d_acc,
+        split=mode,
+        gains={"vs raw": e4d_acc - raw_acc, "vs RFF": e4d_acc - rff_acc},
+        baselines={"raw": raw_acc, "RFF": rff_acc},
+        obs=len(lat), held_out=int(test.sum()), n_classes=n_fam, earth4d_dim=int(e4d.shape[1]),
+        seconds=dt, target=a.target,
+        top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5},
+    )
     return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc, "raw_acc": raw_acc,
             "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "forecast": a.forecast}
 
