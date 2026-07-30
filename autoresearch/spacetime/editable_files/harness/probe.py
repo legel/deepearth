@@ -739,7 +739,7 @@ def main(argv=None):
         # rain_max 0.76 elev_min 0.78 elev_max 0.52; vs phylo-graph ~0.1. Levers: --env_agg, --env_extra, --env_head.
         import sys as _sys
         _sys.path.insert(0, "/workspace")
-        from deepearth.autoresearch.biological.editable_files.harness.probe import load_trait as _load_trait
+        from deepearth.autoresearch.spacetime.editable_files.lib.species_priors import load_trait as _load_trait
         vocab = np.load(Path(a.cache_dir) / "gbif_vocab.npz", allow_pickle=True)
         gidx = vocab["global_idx"]
         emean, emedoid, npsp, estd, elo, ehi, emin, emax, etime, epheno = load_env_species(a.cache_dir, extra_channels=a.env_extra, temporal=(a.env_temporal or a.env_phenobreadth))
@@ -776,7 +776,7 @@ def main(argv=None):
             # graph refines) aligned to the 2141-vocab, and predict each trait from it via the identical RidgeCV
             # + same held-out species split as the env side. Fair head-for-head: only the FEATURE source differs
             # (env aggregates vs phylo seed), so the winner is the honest per-axis routing verdict.
-            from deepearth.autoresearch.biological.editable_files.harness.probe import load_species as _load_species
+            from deepearth.autoresearch.spacetime.editable_files.lib.species_priors import load_species as _load_species
             E1, _famid, _tree, _tiprow, _gidxb = _load_species(a.cache_dir)
             PHY = np.asarray(E1.detach().cpu()).astype(np.float32)   # [2141, seed_dim] text/tree species seed
         dt0 = time.time()
@@ -1539,7 +1539,7 @@ def env_construct(cache, seed=0, construct="rarity", feature="range", holdout=0.
     from sklearn.linear_model import LogisticRegression as _LR
     from sklearn.metrics import balanced_accuracy_score as _bacc
     import sys as _sys; _sys.path.insert(0, "/workspace")
-    from deepearth.autoresearch.biological.editable_files.harness.probe import load_trait as _load_trait
+    from deepearth.autoresearch.spacetime.editable_files.lib.species_priors import load_trait as _load_trait
 
     vocab = _np.load(_P(cache) / "gbif_vocab.npz", allow_pickle=True); gidx = vocab["global_idx"]; S = len(gidx)
     if construct in ("ns_grank", "crpr"):

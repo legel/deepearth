@@ -94,6 +94,14 @@ own commit with its own tests, separate from any result.
 - **One probe per loop.** If a loop grows a second probe with its own targets and its own scoring, it is
   two loops wearing one directory — split it. That accretion is what produced 113 flags and 19 modes in
   a single file here.
+- **Each loop is independent CODE.** No loop imports another loop. If two loops need the same loader,
+  each keeps its own copy — a cross-loop import means a change in one loop silently moves another loop's
+  numbers with no record saying so. Sharing is allowed only *downward*, into code no loop owns
+  (`encoders/`, and `core/` for the fusion loop alone). `tests/test_loop_independence.py` enforces this,
+  plus the identical four directories and the presence of each loop's program.
+- **Each loop optimizes its own metric under its own evals.** A loop's program declares what it is
+  raising and what would falsify it. No loop is scored on another's number, and no loop's result is
+  promoted by another loop's evidence.
 - **No loop writes another loop's `data/`.**
 - **One program per surface.** Two definitions of the same surface means one is stale — reconcile before
   running anything. (`spacetime/program/lfmc_gate.md` is a gate record, not a second program.)
