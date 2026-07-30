@@ -1,0 +1,1439 @@
+{
+  "calibration": {
+    "fair_baseline": null,
+    "fair_st_gain": null,
+    "ledger": {
+      "deadends": {
+        "cal_earth4d": {
+          "gain": null,
+          "score": 0.5416,
+          "why": "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain \u2014 check output)"
+        },
+        "cal_signalswap_ens5": {
+          "gain": null,
+          "score": 0.5818,
+          "why": "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain \u2014 check output)"
+        },
+        "caldiag_earth4d": {
+          "gain": null,
+          "score": 0.6092,
+          "why": "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain \u2014 check output)"
+        },
+        "caldiag_raw": {
+          "gain": null,
+          "score": 0.5318,
+          "why": "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain \u2014 check output)"
+        },
+        "smoke_cal": {
+          "gain": null,
+          "score": 0.513,
+          "why": "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain \u2014 check output)"
+        }
+      },
+      "records": [
+        {
+          "gain": null,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": 0.6295,
+          "score": 0.591,
+          "tag": "v2_baseline_cal"
+        }
+      ],
+      "runs": 91
+    },
+    "mode": null,
+    "n_shards": 8,
+    "primary": 0.591,
+    "probe": "--feature earth4d --n_shards 8 --steps 400 --ensemble 3",
+    "protocol": "v2-leakfix",
+    "score": 0.591,
+    "tag": "v2_baseline_cal"
+  },
+  "community_from_env": {
+    "fair_baseline": "GAIN",
+    "fair_st_gain": 0.457,
+    "ledger": {
+      "deadends": {
+        "coocc_both": {
+          "gain": 0.4366,
+          "score": 0.8641,
+          "why": "EARNING: the architecture is carrying real signal \u2192 push it further"
+        },
+        "coocc_env": {
+          "gain": 0.4361,
+          "score": 0.8635,
+          "why": "EARNING: the architecture is carrying real signal \u2192 push it further"
+        },
+        "coocc_space": {
+          "gain": 0.2901,
+          "score": 0.7176,
+          "why": "EARNING: the architecture is carrying real signal \u2192 push it further"
+        },
+        "v2_baseline_cooccur": {
+          "gain": 0.457,
+          "score": 0.8845,
+          "why": "EARNING: the architecture is carrying real signal \u2192 push it further"
+        }
+      },
+      "records": [
+        {
+          "gain": 0.457,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": 0.887,
+          "score": 0.8845,
+          "tag": "v2_baseline_cooccur2"
+        }
+      ],
+      "runs": 90
+    },
+    "mode": "COOCCUR-ROUTING",
+    "n_shards": 12,
+    "primary": 0.8845,
+    "probe": "--cooccur --cooccur_mech both --cooccur_channels all --n_shards 12",
+    "protocol": "v2-leakfix",
+    "score": 0.8845,
+    "tag": "v2_baseline_cooccur2"
+  },
+  "family_from_env": {
+    "fair_baseline": "ENV vs best-coord-PE",
+    "fair_st_gain": 0.0411,
+    "ledger": {
+      "deadend_seq": 1,
+      "deadends": {
+        "barrier_verify": {
+          "gain": -0.007226563990116119,
+          "score": 0.1348001410563787,
+          "seq": 1,
+          "why": "INPUT-LIMITED: Earth4D does not beat a generic trained PE, so the coordinate/current channel lacks the signal \u2192 DATA lever, change the channel"
+        },
+        "contract_cutover_famenv": {
+          "gain": 0.04114583134651184,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "contract_famenv_fixedgain": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "dag_verify": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "editable_files_verify": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "famenv_all": {
+          "gain": 0.029,
+          "score": 0.1424,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "famenv_alphaearth": {
+          "gain": 0.0367,
+          "score": 0.1429,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "famenv_alphaearth_REAL93": {
+          "gain": 0.0376,
+          "score": 0.1409,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "famenv_diag": {
+          "gain": -0.0037,
+          "score": 0.1126,
+          "why": "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE \u2192 swing bigger on the architecture"
+        },
+        "famenv_diag2": {
+          "gain": 0.0277,
+          "score": 0.1363,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "famenv_envdecode_aux": {
+          "gain": -0.0327,
+          "score": 0.0831,
+          "why": "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE \u2192 swing bigger on the architecture"
+        },
+        "famenv_modis_modality": {
+          "gain": 0.0411,
+          "score": 0.1411,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "famenv_perobs_temporal_extra": {
+          "gain": 0.0026,
+          "score": 0.1152,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "famenv_siren128": {
+          "gain": 0.0337,
+          "score": 0.1419,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "famenv_worldclim": {
+          "gain": -0.0027,
+          "score": 0.1161,
+          "why": "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE \u2192 swing bigger on the architecture"
+        },
+        "final_state": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "final_verify": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "indep_verify": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "leaf_verify": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "onefile4": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "ontology_verify": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "pathfix_verify": {
+          "gain": -0.007226563990116119,
+          "score": 0.14231771230697632,
+          "why": "RECORD WITHHELD (mode 'ENV(spatial-block)' vs 'ENV', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "postfix_family_from_env": {
+          "gain": 0.0411,
+          "score": 0.1423,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "smoke_env": {
+          "gain": 0.0282,
+          "score": 0.1426,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "test_gate_normal": {
+          "gain": 0.0309,
+          "score": 0.1423,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "test_ledger": {
+          "gain": 0.0089,
+          "score": 0.1069,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        }
+      },
+      "records": [
+        {
+          "gain": 0.0337,
+          "score": 0.1439,
+          "tag": "famenv_alphaearth"
+        },
+        {
+          "gain": 0.0312,
+          "score": 0.1453,
+          "tag": "famenv_all"
+        },
+        {
+          "gain": 0.0306,
+          "score": 0.1459,
+          "tag": "famenv_alphaearth"
+        },
+        {
+          "gain": 0.0411,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": 0.1459,
+          "score": 0.1423,
+          "tag": "v2_baseline_famenv"
+        }
+      ],
+      "runs": 494
+    },
+    "mode": "ENV",
+    "n_shards": 12,
+    "primary": 0.1423,
+    "probe": "--env --env_channels alphaearth --n_shards 12",
+    "protocol": "v2-leakfix",
+    "score": 0.1423,
+    "tag": "v2_baseline_famenv"
+  },
+  "family_from_spacetime": {
+    "fair_baseline": "vs RFF",
+    "fair_st_gain": 0.0772,
+    "ledger": {
+      "deadend_seq": 116,
+      "deadends": {
+        "anchor_calendar_time_topology-20260730T005250863683Z-a16de0be": {
+          "decision": "DROP",
+          "gain": 0.06876207888126373,
+          "score": 0.16849760711193085,
+          "seq": 1,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_causal_channel_factorization-20260730T012524276887Z-46f1db75": {
+          "decision": "DROP",
+          "gain": 0.07227139174938202,
+          "score": 0.17200691998004913,
+          "seq": 2,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_causal_clock_interaction-20260730T013537880494Z-2e6247fa": {
+          "decision": "DROP",
+          "gain": 0.1265385001897812,
+          "score": 0.1664123684167862,
+          "seq": 3,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_causal_dyadic_continuation-20260730T013111319590Z-ee54cb76": {
+          "decision": "DROP",
+          "gain": 0.07710304856300354,
+          "score": 0.17683857679367065,
+          "seq": 4,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_causal_temporal_tower-20260729T234030562248Z-48f84042": {
+          "decision": "DROP",
+          "gain": 0.07710304856300354,
+          "score": 0.17683857679367065,
+          "seq": 5,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_causal_vertex_lock-20260730T012016919154Z-d52b20e2": {
+          "decision": "DROP",
+          "gain": 0.07862882316112518,
+          "score": 0.1783643513917923,
+          "seq": 6,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_cell_causal_rank_clock-20260730T010558522364Z-75055f91": {
+          "decision": "DROP",
+          "gain": 0.06860950589179993,
+          "score": 0.16834503412246704,
+          "seq": 7,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_absorbing_hash-20260730T021248020330Z-9910f703": {
+          "decision": "DROP",
+          "gain": 0.08951276540756226,
+          "score": 0.18924829363822937,
+          "seq": 8,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_cayley_semicircle-20260730T023412359190Z-c5db2fd2": {
+          "decision": "DROP",
+          "gain": 0.08605432510375977,
+          "score": 0.18578985333442688,
+          "seq": 9,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_anchor_frame_holonomy-20260730T034742676617Z-875c7db3": {
+          "decision": "DROP",
+          "gain": 0.08951276540756226,
+          "score": 0.18924829363822937,
+          "seq": 10,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_base_fiber_holonomy-20260730T030213344612Z-4a3e4758": {
+          "decision": "DROP",
+          "gain": 0.08986878395080566,
+          "score": 0.18960431218147278,
+          "seq": 11,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_boundary_layer-20260730T022006434905Z-ae3b2d25": {
+          "decision": "DROP",
+          "gain": 0.08946190774440765,
+          "score": 0.18919743597507477,
+          "seq": 12,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_c3_temporal_core-20260730T032042728442Z-7f43b843": {
+          "decision": "DROP",
+          "gain": 0.08691893517971039,
+          "score": 0.1866544634103775,
+          "seq": 13,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_dual_carrier_bundle-20260730T042713729429Z-424366df": {
+          "decision": "DROP",
+          "gain": 0.14535652101039886,
+          "score": 0.18523038923740387,
+          "seq": 14,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_ecef_plane_holonomy-20260730T031030088376Z-1eb60ca0": {
+          "decision": "DROP",
+          "gain": 0.09002135694026947,
+          "score": 0.18975688517093658,
+          "seq": 15,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_hodge_contrast_semigroup-20260730T035714043450Z-e2a2d04b": {
+          "decision": "DROP",
+          "gain": 0.08915674686431885,
+          "score": 0.18889227509498596,
+          "seq": 16,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_plane_channel_braid-20260730T042033730914Z-d9880d8b": {
+          "decision": "DROP",
+          "gain": 0.08574916422367096,
+          "score": 0.18548469245433807,
+          "seq": 17,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_plane_gram_wedge_relation-20260730T040733123251Z-6650ee95": {
+          "decision": "DROP",
+          "gain": 0.08671548962593079,
+          "score": 0.1864510178565979,
+          "seq": 18,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_scale_holonomy-20260730T025720449184Z-eaf0c09e": {
+          "decision": "DROP",
+          "gain": 0.09027566015720367,
+          "score": 0.1900111883878708,
+          "seq": 19,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_hash_spatial_partition_normalization-20260730T041634208631Z-179cf6c9": {
+          "decision": "DROP",
+          "gain": 0.0874275267124176,
+          "score": 0.18716305494308472,
+          "seq": 20,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_quaternion_commutator-20260730T034018044700Z-8bc38ba5": {
+          "decision": "DROP",
+          "gain": 0.08997049927711487,
+          "score": 0.18970602750778198,
+          "seq": 21,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_spectral_transport-20260730T022656836528Z-6740929e": {
+          "decision": "DROP",
+          "gain": 0.087376669049263,
+          "score": 0.18711219727993011,
+          "seq": 22,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_clock_support_marginalization-20260730T023951488765Z-2e4cface": {
+          "decision": "DROP",
+          "gain": 0.07110162079334259,
+          "score": 0.1708371490240097,
+          "seq": 23,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_collision_diverse_hash-20260730T015121557367Z-e5ed44d4": {
+          "decision": "DROP",
+          "gain": 0.07588241994380951,
+          "score": 0.17561794817447662,
+          "seq": 24,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_hash_energy_balance-20260730T005023516896Z-1628690b": {
+          "decision": "DROP",
+          "gain": 0.04394263029098511,
+          "score": 0.14367815852165222,
+          "seq": 25,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_hash_phase_code-20260730T004649449027Z-bb725db7": {
+          "decision": "DROP",
+          "gain": 0.07247482240200043,
+          "score": 0.17221035063266754,
+          "seq": 26,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_octahedral_surface_atlas-20260730T005447820916Z-167a2f62": {
+          "decision": "DROP",
+          "gain": 0.0677957534790039,
+          "score": 0.16753128170967102,
+          "seq": 27,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_orthogonal_branch_mixer-20260730T005606298192Z-c68442ce": {
+          "decision": "DROP",
+          "gain": 0.07674703001976013,
+          "score": 0.17648255825042725,
+          "seq": 28,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_orthogonal_fourier-20260730T014232755938Z-1b9b601c": {
+          "decision": "DROP",
+          "gain": 0.07252568006515503,
+          "score": 0.17226120829582214,
+          "seq": 29,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_scale_separated_clock-20260730T004914559339Z-1f35e4ce": {
+          "decision": "DROP",
+          "gain": 0.06662598252296448,
+          "score": 0.1663615107536316,
+          "seq": 30,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_spacetime_bind-20260730T004352973607Z-6a648b73": {
+          "decision": "DROP",
+          "gain": 0.071305051445961,
+          "score": 0.1710405796766281,
+          "seq": 31,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_spatial_spectral_pyramid-20260729T233824652938Z-3939dacb": {
+          "decision": "DROP",
+          "gain": 0.07461091876029968,
+          "score": 0.1743464469909668,
+          "seq": 32,
+          "why": "tie or lower comparable native primary"
+        },
+        "anchor_terminal_ghost-20260730T015931662848Z-c7ea6e27": {
+          "decision": "DROP",
+          "gain": 0.07227139174938202,
+          "score": 0.17200691998004913,
+          "seq": 33,
+          "why": "tie or lower comparable native primary"
+        },
+        "causal_time_reflect-20260729T233620168318Z-22f1a447": {
+          "decision": "DROP",
+          "gain": 0.07593327760696411,
+          "score": 0.17566880583763123,
+          "seq": 34,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp47_exp39_plane_skew_lift-20260730T043803515639Z-04e5e583": {
+          "decision": "DROP",
+          "gain": 0.08941105008125305,
+          "score": 0.18914657831192017,
+          "seq": 35,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp48_exp39_contrast_polar_twist-20260730T044507686098Z-5ecc0506": {
+          "decision": "DROP",
+          "gain": 0.08122266829013824,
+          "score": 0.18095819652080536,
+          "seq": 36,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp49_exp39_spatiotemporal_symplectic_lift-20260730T044815909864Z-be787c93": {
+          "decision": "DROP",
+          "gain": 0.0833079069852829,
+          "score": 0.18304343521595,
+          "seq": 37,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp50_exp39_symmetric_split-20260730T045327218951Z-047b1f57": {
+          "decision": "DROP",
+          "gain": 0.09047910571098328,
+          "score": 0.1902146339416504,
+          "seq": 38,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp51_exp39_projective_cell_retraction-20260730T045941461503Z-b45982a1": {
+          "decision": "DROP",
+          "gain": 0.09058082103729248,
+          "score": 0.1903163492679596,
+          "seq": 39,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp52_exp39_c3_hash_convolution-20260730T051813297220Z-bec9c49d": {
+          "decision": "DROP",
+          "gain": 0.07603499293327332,
+          "score": 0.17577052116394043,
+          "seq": 40,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp53_exp39_temporal_plane_disk_square_atlas-20260730T052935701020Z-91bd91ef": {
+          "decision": "DROP",
+          "gain": 0.08244329690933228,
+          "score": 0.1821788251399994,
+          "seq": 41,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp54_exp39_temporal_vertex_phase_fiber-20260730T053945124276Z-62151ddf": {
+          "decision": "DROP",
+          "gain": 0.08803784847259521,
+          "score": 0.18777337670326233,
+          "seq": 42,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp55_exp39_temporal_balanced_probe_routing-20260730T055905231738Z-54822717": {
+          "decision": "DROP",
+          "gain": 0.08529143035411835,
+          "score": 0.18502695858478546,
+          "seq": 43,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp56_exp39_causal_clock_cell_origin_connection-20260730T061125062112Z-cb962ffb": {
+          "decision": "DROP",
+          "gain": 0.09098769724369049,
+          "score": 0.1907232254743576,
+          "seq": 44,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp57_exp39_causal_terminal_cell_average-20260730T062627676805Z-745b2005": {
+          "decision": "DROP",
+          "gain": 0.09083510935306549,
+          "score": 0.1905706375837326,
+          "seq": 45,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp58_exp39_causal_clock_second_jet-INVALIDATED": {
+          "gain": 0.09169971942901611,
+          "score": 0.19143524765968323,
+          "seq": 116,
+          "why": "INVALIDATED 2026-07-30: score 0.19143524765968323 (gain 0.09169971942901611 vs 'trained_rff', tag exp58_exp39_causal_clock_second_jet) was reached by 7 accepted single-seed steps of +0.0007/+0.0008/+0.0112/+0.0005/+0.0002/+0.0006/+0.0006, each stacking another --causal_* flag on the same held-out split. Every delta is within single-seed noise and the walk is a maximum selected over repeated runs. Not reproducible in this tree: no mode here emits a 'trained_rff' gain and the --causal_clock_* flags live only in /workspace/codex-earth4d-native-fb35a7f. Replaying the stored command here gives st_gain(vs RFF) +0.0481. Record restored to the last deliberate measurement, v2_exact_migration_family 0.1769. Re-earn it with matched seeds."
+        },
+        "exp59_exp58_causal_clock_third_jet-20260730T064038249312Z-1d1c9d19": {
+          "decision": "DROP",
+          "gain": 0.09164886176586151,
+          "score": 0.19138438999652863,
+          "seq": 46,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp60_exp58_causal_clock_erlang_radius-20260730T064834397628Z-c78f0250": {
+          "decision": "DROP",
+          "gain": 0.09037737548351288,
+          "score": 0.19011290371418,
+          "seq": 47,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp61_exp58_causal_clock_scale_fibration-20260730T065901729901Z-28497666": {
+          "decision": "DROP",
+          "gain": 0.0912928581237793,
+          "score": 0.1910283863544464,
+          "seq": 48,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp62_exp58_causal_clock_scale_fiber_conjugacy-20260730T071039481800Z-6a132254": {
+          "decision": "DROP",
+          "gain": 0.08885160088539124,
+          "score": 0.18858712911605835,
+          "seq": 49,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp63_exp58_causal_clock_gudermannian-20260730T071835957127Z-553bb73c": {
+          "decision": "DROP",
+          "gain": 0.08966535329818726,
+          "score": 0.18940088152885437,
+          "seq": 50,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp64_exp58_causal_clock_hash_radial_completion-20260730T072409107733Z-159daabc": {
+          "decision": "DROP",
+          "gain": 0.08997049927711487,
+          "score": 0.18970602750778198,
+          "seq": 51,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp65_exp58_causal_clock_unitary_rff-20260730T073214089760Z-e7335b37": {
+          "decision": "DROP",
+          "gain": 0.0870715081691742,
+          "score": 0.1868070363998413,
+          "seq": 52,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp66_exp58_causal_clock_oriented_plane_channel_holonomy-20260730T073817940340Z-645d2853": {
+          "decision": "DROP",
+          "gain": 0.09032651782035828,
+          "score": 0.1900620460510254,
+          "seq": 53,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp67_exp58_causal_clock_signed_support-20260730T074241625231Z-74bf0da9": {
+          "decision": "DROP",
+          "gain": 0.09032651782035828,
+          "score": 0.1900620460510254,
+          "seq": 54,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp68_exp58_causal_temporal_freudenthal_cells-20260730T080105141767Z-088e7dc7": {
+          "decision": "DROP",
+          "gain": 0.0876818299293518,
+          "score": 0.18741735816001892,
+          "seq": 55,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp69_exp58_causal_spatial_clock_tensor-20260730T081118263446Z-349c7263": {
+          "decision": "DROP",
+          "gain": 0.09790458530187607,
+          "score": 0.18192452192306519,
+          "seq": 56,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp70_exp58_causal_clock_irrep_direct_sum-20260730T082016018791Z-7824bfe5": {
+          "decision": "DROP",
+          "gain": 0.09012308716773987,
+          "score": 0.18985861539840698,
+          "seq": 57,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp71_exp58_causal_joint4d_hash_core-20260730T083839851661Z-b0a76048": {
+          "decision": "DROP",
+          "gain": 0.07862882316112518,
+          "score": 0.1783643513917923,
+          "seq": 58,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp72_exp58_causal_temporal_hermite_jet-20260730T085223051526Z-58f917bc": {
+          "decision": "DROP",
+          "gain": 0.08315533399581909,
+          "score": 0.1828908622264862,
+          "seq": 59,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp73_exp58_causal_temporal_countsketch-20260730T090400640805Z-b22fb21e": {
+          "decision": "DROP",
+          "gain": 0.0794934332370758,
+          "score": 0.17922896146774292,
+          "seq": 60,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp74_exp58_causal_temporal_sheet_lift-20260730T091704786268Z-74b0d800": {
+          "decision": "DROP",
+          "gain": 0.11306072771549225,
+          "score": 0.18426406383514404,
+          "seq": 61,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp75_exp58_causal_temporal_unsigned_twin_hash-20260730T092343962971Z-6b14cdd9": {
+          "decision": "DROP",
+          "gain": 0.07984945178031921,
+          "score": 0.17958498001098633,
+          "seq": 62,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp76_exp58_spherical_cap_field-20260730T092708257476Z-8fb7ae61": {
+          "decision": "DROP",
+          "gain": 0.07191537320613861,
+          "score": 0.17165090143680573,
+          "seq": 63,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp77_exp58_causal_temporal_gaussian_codebook-20260730T093500754857Z-2c255957": {
+          "decision": "DROP",
+          "gain": 0.09047910571098328,
+          "score": 0.1902146339416504,
+          "seq": 64,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp78_exp58_causal_clock_boundary_householder-20260730T093725091534Z-d3258021": {
+          "decision": "DROP",
+          "gain": 0.09063167870044708,
+          "score": 0.1903672069311142,
+          "seq": 65,
+          "why": "tie or lower comparable native primary"
+        },
+        "exp79_exp58_causal_clock_boundary_frame_barycenter-20260730T094211508022Z-94ff0b06": {
+          "decision": "DROP",
+          "gain": 0.0910894125699997,
+          "score": 0.1908249408006668,
+          "seq": 66,
+          "why": "tie or lower comparable native primary"
+        },
+        "factorized_hash_clock-20260729T233448815118Z-e33c0c0a": {
+          "decision": "DROP",
+          "gain": 0.07456006109714508,
+          "score": 0.1742955893278122,
+          "seq": 67,
+          "why": "tie or lower comparable native primary"
+        },
+        "fc_hh0_ff512_th16": {
+          "gain": 0.1489,
+          "score": 0.1787,
+          "seq": 68,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh0_ff512_th8": {
+          "gain": 0.1269,
+          "score": 0.1726,
+          "seq": 69,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff0_th0": {
+          "gain": 0.0542,
+          "score": 0.1264,
+          "seq": 70,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff0_th16": {
+          "gain": 0.0459,
+          "score": 0.1309,
+          "seq": 71,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff0_th8": {
+          "gain": 0.0491,
+          "score": 0.1221,
+          "seq": 72,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff1024_th0": {
+          "gain": 0.0987,
+          "score": 0.1578,
+          "seq": 73,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff1024_th16": {
+          "gain": 0.0702,
+          "score": 0.1654,
+          "seq": 74,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff1024_th8": {
+          "gain": 0.0994,
+          "score": 0.1717,
+          "seq": 75,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff256_th0": {
+          "gain": 0.0972,
+          "score": 0.1518,
+          "seq": 76,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff256_th16": {
+          "gain": 0.0431,
+          "score": 0.1602,
+          "seq": 77,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff256_th8": {
+          "gain": 0.1159,
+          "score": 0.1669,
+          "seq": 78,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff512_th0": {
+          "gain": 0.1228,
+          "score": 0.1717,
+          "seq": 79,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff512_th16": {
+          "gain": 0.1418,
+          "score": 0.1681,
+          "seq": 80,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh256_ff512_th8": {
+          "gain": 0.1429,
+          "score": 0.164,
+          "seq": 81,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff0_th0": {
+          "gain": 0.0126,
+          "score": 0.123,
+          "seq": 82,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff0_th16": {
+          "gain": 0.0569,
+          "score": 0.1134,
+          "seq": 83,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff0_th8": {
+          "gain": 0.0755,
+          "score": 0.1138,
+          "seq": 84,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff1024_th0": {
+          "gain": 0.1308,
+          "score": 0.1585,
+          "seq": 85,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff1024_th16": {
+          "gain": 0.1054,
+          "score": 0.1623,
+          "seq": 86,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff1024_th8": {
+          "gain": 0.1429,
+          "score": 0.1632,
+          "seq": 87,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff256_th0": {
+          "gain": 0.1093,
+          "score": 0.1543,
+          "seq": 88,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff256_th16": {
+          "gain": 0.0624,
+          "score": 0.1428,
+          "seq": 89,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff256_th8": {
+          "gain": 0.1055,
+          "score": 0.1548,
+          "seq": 90,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff512_th0": {
+          "gain": 0.1053,
+          "score": 0.1569,
+          "seq": 91,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff512_th16": {
+          "gain": 0.0865,
+          "score": 0.14,
+          "seq": 92,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fc_hh512_ff512_th8": {
+          "gain": 0.1355,
+          "score": 0.1656,
+          "seq": 93,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fcp_hh256_ff1024_th0": {
+          "gain": -0.0188,
+          "score": 0.0888,
+          "seq": 94,
+          "why": "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE \u2192 swing bigger on the architecture"
+        },
+        "fcp_hh256_ff1024_th8": {
+          "gain": -0.0161,
+          "score": 0.1012,
+          "seq": 95,
+          "why": "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE \u2192 swing bigger on the architecture"
+        },
+        "fcp_hh256_ff512_th0": {
+          "gain": -0.0264,
+          "score": 0.085,
+          "seq": 96,
+          "why": "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE \u2192 swing bigger on the architecture"
+        },
+        "fcp_hh256_ff512_th8": {
+          "gain": 0.1125,
+          "score": 0.1709,
+          "seq": 97,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fcp_hh512_ff1024_th0": {
+          "gain": 0.1296,
+          "score": 0.1549,
+          "seq": 98,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fcp_hh512_ff1024_th8": {
+          "gain": 0.1236,
+          "score": 0.1591,
+          "seq": 99,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fcp_hh512_ff512_th0": {
+          "gain": 0.1047,
+          "score": 0.1545,
+          "seq": 100,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fcp_hh512_ff512_th8": {
+          "gain": 0.0044,
+          "score": 0.1167,
+          "seq": 101,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fcs_causalstate4": {
+          "gain": 0.1169,
+          "score": 0.1612,
+          "seq": 102,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fcs_diag": {
+          "gain": 0.1318,
+          "score": 0.1637,
+          "seq": 103,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fcs_siren128": {
+          "gain": 0.1268,
+          "score": 0.1576,
+          "seq": 104,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "fcs_timefilm8": {
+          "gain": 0.1213,
+          "score": 0.163,
+          "seq": 105,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "geodesic_scattering-20260729T232439208197Z-961a4e21": {
+          "decision": "DROP",
+          "gain": 0.06855864822864532,
+          "score": 0.16829417645931244,
+          "seq": 106,
+          "why": "tie or lower comparable native primary"
+        },
+        "postfix_family_from_spacetime": {
+          "gain": 0.1237,
+          "score": 0.1663,
+          "seq": 107,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "readiness_ensue": {
+          "gain": -0.01388464868068695,
+          "score": 0.08966534584760666,
+          "seq": 114,
+          "why": "INPUT-LIMITED: Earth4D does not beat a generic trained PE, so the coordinate/current channel lacks the signal \u2192 DATA lever, change the channel"
+        },
+        "registry_wired": {
+          "gain": -0.01388464868068695,
+          "score": 0.08966534584760666,
+          "seq": 115,
+          "why": "INPUT-LIMITED: Earth4D does not beat a generic trained PE, so the coordinate/current channel lacks the signal \u2192 DATA lever, change the channel"
+        },
+        "smoke_fc": {
+          "gain": 0.0078,
+          "score": 0.1153,
+          "seq": 108,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "spacetime_bind-20260729T232634570134Z-2f2fb1f6": {
+          "decision": "DROP",
+          "gain": 0.07018615305423737,
+          "score": 0.16992168128490448,
+          "seq": 109,
+          "why": "tie or lower comparable native primary"
+        },
+        "spectral_sidebands-20260729T232850256550Z-a43ebd74": {
+          "decision": "DROP",
+          "gain": 0.014088094234466553,
+          "score": 0.11382362246513367,
+          "seq": 110,
+          "why": "tie or lower comparable native primary"
+        },
+        "spherical_harmonic_core-20260729T233116647260Z-1a55dd81": {
+          "decision": "DROP",
+          "gain": 0.07288169860839844,
+          "score": 0.17261722683906555,
+          "seq": 111,
+          "why": "tie or lower comparable native primary"
+        },
+        "surface_triplane-20260729T232051208636Z-a68193f3": {
+          "decision": "DROP",
+          "gain": 0.12953920662403107,
+          "score": 0.16941307485103607,
+          "seq": 112,
+          "why": "tie or lower comparable native primary"
+        },
+        "v2_baseline_fcs": {
+          "gain": 0.1237,
+          "invalidated": true,
+          "probe": "--forecast --head_hidden 512 --fourier 1024 --time_harmonics 8 --n_shards 12",
+          "protocol": "v2-leakfix",
+          "score": 0.1663,
+          "seq": 113,
+          "why": "INVALIDATED BY WORKFLOW AUDIT: protocol migration changed --head_hidden 256 to 512, so it was not a like-for-like rebaseline."
+        }
+      },
+      "records": [
+        {
+          "gain": 0.1482,
+          "score": 0.1818,
+          "tag": "fc_hh256_ff1024_th8"
+        },
+        {
+          "gain": 0.0772,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": 0.1818,
+          "score": 0.1769,
+          "tag": "v2_exact_migration_family"
+        },
+        {
+          "decision": "KEEP",
+          "delta": 0.0007014566421508772,
+          "gain": 0.07786592841148376,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": null,
+          "score": 0.17760145664215088,
+          "tag": "causal_time_anchor-20260729T233246732487Z-656a0057"
+        },
+        {
+          "decision": "KEEP",
+          "delta": 0.0007628947496414185,
+          "gain": 0.07862882316112518,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": null,
+          "score": 0.1783643513917923,
+          "tag": "anchor_causal_cell_anchor-20260730T010016450013Z-6156f7b2"
+        },
+        {
+          "decision": "KEEP",
+          "delta": 0.011189103126525879,
+          "gain": 0.08981792628765106,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": null,
+          "score": 0.18955345451831818,
+          "tag": "anchor_tangent_clock_continuation-20260730T020419846056Z-5dc0c341"
+        },
+        {
+          "decision": "KEEP",
+          "delta": 0.0005085915327072144,
+          "gain": 0.09032651782035828,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": null,
+          "score": 0.1900620460510254,
+          "tag": "anchor_clock_hash_gauge-20260730T024553810096Z-28ef0c94"
+        },
+        {
+          "decision": "KEEP",
+          "delta": 0.00020344555377960205,
+          "gain": 0.09052996337413788,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": null,
+          "score": 0.190265491604805,
+          "tag": "anchor_clock_hash_plane_holonomy-20260730T025129896011Z-04bd36ed"
+        },
+        {
+          "decision": "KEEP",
+          "delta": 0.0005594491958618164,
+          "gain": 0.0910894125699997,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": null,
+          "score": 0.1908249408006668,
+          "tag": "anchor_clock_hash_plane_channel_holonomy-20260730T033011017063Z-9749d4e2"
+        },
+        {
+          "decision": "KEEP",
+          "delta": 0.0006103068590164185,
+          "gain": 0.09169971942901611,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": null,
+          "score": 0.19143524765968323,
+          "tag": "exp58_exp39_causal_clock_second_jet-20260730T063420185714Z-96f6e667"
+        },
+        {
+          "decision": "INVALIDATE_AND_RESTORE",
+          "gain": 0.0772,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": 0.19143524765968323,
+          "score": 0.1769,
+          "tag": "v2_exact_migration_family"
+        }
+      ],
+      "runs": 1230
+    },
+    "measurement_mode": "FORECAST(past->future)",
+    "mode": "FORECAST(past->future)",
+    "n_shards": 12,
+    "primary": 0.1769,
+    "probe": "--forecast --head_hidden 256 --fourier 1024 --time_harmonics 8 --n_shards 12",
+    "probe_metric": "family_top1_accuracy",
+    "probe_module": "deepearth.autoresearch.programs.spacetime.probe",
+    "protocol": "v2-leakfix",
+    "score": 0.1769,
+    "seed": 0,
+    "tag": "v2_exact_migration_family"
+  },
+  "family_from_vision": {
+    "fair_baseline": "vs best-coord-PE",
+    "fair_st_gain": 0.8352,
+    "n_shards": null,
+    "primary": 0.9445,
+    "probe": "--env --vision --vision_feats both",
+    "protocol": "v1-prefix",
+    "score": 0.9445,
+    "tag": "fam_vision_both(dino+bio)"
+  },
+  "flowering_peak_month": {
+    "fair_baseline": "Earth4D vs RFF, best-head within-tol acc",
+    "fair_st_gain": 0.0087,
+    "ledger": {
+      "deadend_seq": 1,
+      "deadends": {
+        "pheno_attn_l2h4": {
+          "gain": null,
+          "score": 0.0526,
+          "why": "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain \u2014 check output)"
+        },
+        "pheno_cline64": {
+          "gain": null,
+          "score": 0.0571,
+          "why": "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain \u2014 check output)"
+        },
+        "pheno_densify27": {
+          "gain": 0.0046,
+          "score": 0.0547,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "pheno_diag2": {
+          "gain": null,
+          "score": 0.0604,
+          "why": "NO-FAIR-BASELINE (probe reported no vs-generic-PE gain \u2014 check output)"
+        },
+        "pheno_diag_fair": {
+          "gain": 0.0508,
+          "score": 0.0584,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "pheno_fairfix_verify": {
+          "gain": 0.0149,
+          "score": 0.0608,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "pheno_leakfix_republish": {
+          "gain": -0.0069,
+          "score": 0.0503,
+          "why": "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE \u2192 swing bigger on the architecture"
+        },
+        "pheno_peakweek_target": {
+          "gain": null,
+          "score": 0.6832,
+          "why": "REVERTED \u2014 LABEL LEAK, not a record. _peak_week_doy builds the target from ALL obs in each 0.5deg cell (test rows included) BEFORE the split, so every obs in a cell shares one label; the split is TEMPORAL so train and test share cells, and a spatial query feature just memorizes cell->peak_week and reads it off. Evidence: static field alone 26.54d MAE / 0.6832 acc while propagation adds only +1.57d. A leak-free version must build the target from PAST/train obs only."
+        },
+        "pheno_rec": {
+          "gain": 0.0173,
+          "score": 0.0509,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "pheno_rec_env": {
+          "gain": 0.0018,
+          "score": 0.0498,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "pheno_species_prop": {
+          "gain": 0.0081,
+          "score": 0.0585,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "rename_verify-REVERTED-noise": {
+          "gain": 0.00869697704911232,
+          "score": 0.052131012082099915,
+          "seq": 1,
+          "why": "REVERTED: 0.052131012082099915 beat the 0.0521 record by +0.000031 on a SINGLE seed. A delta of 3e-05 is noise, not a result. Recorded automatically because the >=5-matched-seed rule is documented but not enforced in trace.py. Do not re-set this record without matched seeds."
+        },
+        "test_leakfix": {
+          "gain": null,
+          "score": 0.6718,
+          "why": "LEAK PERSISTS after train-only aggregation: cell-aggregate target is constant within a 0.5deg cell, so train rows in the same cell reveal the test label. Now hard-refused unless the split is SPATIAL (test cells disjoint)."
+        },
+        "v2_baseline_pheno": {
+          "gain": 0.0087,
+          "invalidated": true,
+          "probe": "--phenology --forecast --recurrence --pheno_feats e4d --n_shards 12",
+          "protocol": "v2-leakfix",
+          "score": 0.0521,
+          "why": "INVALIDATED BY WORKFLOW AUDIT: migration changed --pheno_env to --recurrence; the temporal-only split was also mislabeled future+newplace and raw control was skipped."
+        }
+      },
+      "records": [
+        {
+          "gain": 0.0087,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": 0.0674,
+          "score": 0.0521,
+          "tag": "v2_exact_migration_phenology"
+        },
+        {
+          "gain": 0.00869697704911232,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": null,
+          "score": 0.052131012082099915,
+          "tag": "rename_verify"
+        }
+      ],
+      "runs": 107
+    },
+    "mode": "PHENOLOGY-FUTURE",
+    "n_shards": 12,
+    "primary": 0.0521,
+    "probe": "--phenology --forecast --pheno_feats e4d --n_shards 12",
+    "probe_module": "deepearth.autoresearch.spacetime.probe.probe",
+    "protocol": "v2-leakfix",
+    "score": 0.0521,
+    "tag": "v2_exact_migration_phenology"
+  },
+  "species_from_env": {
+    "fair_baseline": "GAIN",
+    "fair_st_gain": 0.4,
+    "ledger": {
+      "deadends": {
+        "sdm_all": {
+          "gain": 0.3954,
+          "score": 0.6229,
+          "why": "EARNING: the architecture is carrying real signal \u2192 push it further"
+        },
+        "sdm_alphaearth": {
+          "gain": 0.3952,
+          "score": 0.6227,
+          "why": "EARNING: the architecture is carrying real signal \u2192 push it further"
+        },
+        "sdm_worldclim": {
+          "gain": 0.3946,
+          "score": 0.6221,
+          "why": "EARNING: the architecture is carrying real signal \u2192 push it further"
+        }
+      },
+      "records": [
+        {
+          "gain": 0.4,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": 0.6363,
+          "score": 0.6275,
+          "tag": "v2_baseline_sdm"
+        }
+      ],
+      "runs": 478
+    },
+    "mode": "SDM-PRESENCE",
+    "n_shards": 16,
+    "primary": 0.6275,
+    "probe": "--sdm_presence --sdm_hard --sdm_channels alphaearth --n_shards 16",
+    "protocol": "v2-leakfix",
+    "score": 0.6275,
+    "tag": "v2_baseline_sdm"
+  },
+  "species_from_spacetime": {
+    "code": {
+      "branch": "deepcal-ensue-autoresearch",
+      "commit": "0e0ca17",
+      "dirty": false
+    },
+    "fair_baseline": "vs RFF",
+    "fair_st_gain": 0.054776,
+    "ledger": {
+      "deadend_seq": 8,
+      "deadends": {
+        "FORECAST-mode-identity-UNMATCHABLE": {
+          "gain": 0.0432,
+          "score": 0.0512,
+          "seq": 8,
+          "why": "RE-BASELINED: the record stored mode='FORECAST', a string the pre-contract stdout parser produced. Every current run emits 'FORECAST(past->future)' for the same measurement, so the like-for-like mode check withheld ALL of them -- control, trained-encoder and five extent/bandwidth arms -- for identity, not merit. 0.0512 was also single-seed and pre-barrier. Superseded by a 5-seed measurement with full provenance."
+        },
+        "extentnorm": {
+          "gain": 0.0476553775370121,
+          "score": 0.05513172745704651,
+          "why": "RECORD WITHHELD (mode 'FORECAST(past->future)' vs 'FORECAST', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "extentnorm_hashonly": {
+          "gain": 0.04175567254424095,
+          "score": 0.051103652268648145,
+          "seq": 6,
+          "why": "EARNING: Earth4D contributes 82% of the score over a generic PE \u2192 the mechanism is carrying real signal, push it further"
+        },
+        "extentnorm_rffonly": {
+          "gain": 0.04811311140656471,
+          "score": 0.055670838057994845,
+          "why": "RECORD WITHHELD (mode 'FORECAST(past->future)' vs 'FORECAST', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "fusion_move": {
+          "gain": 0.007476350292563438,
+          "score": 0.02461601048707962,
+          "seq": 2,
+          "why": "ENCODER-LIMITED: the encoder beats the PE but the absolute score is low \u2192 ARCHITECTURE lever, change the mechanism"
+        },
+        "gatetest_8shard": {
+          "gain": 0.0387,
+          "score": 0.0444,
+          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
+        },
+        "hash_ablated_6400": {
+          "gain": 0.018818024545907974,
+          "score": 0.03499135375022888,
+          "seq": 7,
+          "why": "EARNING: Earth4D contributes 54% of the score over a generic PE \u2192 the mechanism is carrying real signal, push it further"
+        },
+        "ontology_final": {
+          "gain": 0.007476350292563438,
+          "score": 0.02461601048707962,
+          "seq": 1,
+          "why": "ENCODER-LIMITED: the encoder beats the PE but the absolute score is low \u2192 ARCHITECTURE lever, change the mechanism"
+        },
+        "reorg_verify": {
+          "gain": 0.007476350292563438,
+          "score": 0.02461601048707962,
+          "why": "ENCODER-LIMITED: the encoder beats the PE but the absolute score is low \u2192 ARCHITECTURE lever, change the mechanism"
+        },
+        "rff_bandwidth_6400": {
+          "gain": 0.05477571114897728,
+          "score": 0.06182483956217766,
+          "why": "RECORD WITHHELD (mode 'FORECAST(past->future)' vs 'FORECAST', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "st_sp_gnn_5seed": {
+          "gain": 0.01825856976211071,
+          "score": 0.0237819142639637,
+          "seq": 4,
+          "why": "ENCODER-LIMITED: the encoder beats the PE but the absolute score is low \u2192 ARCHITECTURE lever, change the mechanism"
+        },
+        "st_sp_recurrence_5seed": {
+          "gain": 0.0030007120221853256,
+          "score": 0.031919438391923904,
+          "seq": 3,
+          "why": "ENCODER-LIMITED: the encoder beats the PE but the absolute score is low \u2192 ARCHITECTURE lever, change the mechanism"
+        },
+        "st_sp_trained_5seed": {
+          "gain": 0.04536669701337814,
+          "score": 0.05369748771190643,
+          "why": "RECORD WITHHELD (mode 'FORECAST(past->future)' vs 'FORECAST', n_shards 12 vs 12) -- not like-for-like; needs a deliberate check before it can count"
+        },
+        "st_sp_triplane_conjunction": {
+          "gain": 0.03656799718737602,
+          "score": 0.049842335283756256,
+          "seq": 5,
+          "why": "ENCODER-LIMITED: the encoder beats the PE but the absolute score is low \u2192 ARCHITECTURE lever, change the mechanism"
+        }
+      },
+      "records": [
+        {
+          "gain": 0.0351,
+          "score": 0.0474,
+          "tag": "spst_species_target"
+        },
+        {
+          "gain": 0.0432,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": 0.0474,
+          "score": 0.0512,
+          "tag": "v2_baseline_spst"
+        },
+        {
+          "decision": "REBASELINE_IDENTITY_FIX",
+          "gain": 0.054776,
+          "protocol": "v2-leakfix",
+          "rebaseline_from": 0.0512,
+          "score": 0.061825,
+          "tag": "rff_bandwidth_6400"
+        }
+      ],
+      "runs": 17
+    },
+    "measurement_mode": "FORECAST(past->future)",
+    "mode": "FORECAST(past->future)",
+    "n_seeds": 5,
+    "n_shards": 12,
+    "primary": 0.061825,
+    "probe": "--forecast --target species --head_hidden 512 --fourier 1024 --time_harmonics 8 --fourier_scale 6400 --n_shards 12",
+    "probe_metric": "species_top1_accuracy",
+    "protocol": "v2-leakfix",
+    "provisional": false,
+    "score": 0.061825,
+    "seed": 0,
+    "seed_std": 0.000995,
+    "seed_values": [
+      0.0628,
+      0.0623,
+      0.0604,
+      0.0628,
+      0.0609
+    ],
+    "tag": "rff_bandwidth_6400"
+  }
+}

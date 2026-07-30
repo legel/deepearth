@@ -1,24 +1,29 @@
 EARTH4D SPACETIME PROBE — SCORECARD
 protocol v2-leakfix   ·   generated from records.json by harness.py   ·   DO NOT HAND-EDIT
 
-capability              record  metric                fair-gain  vs baseline                               mode                    shards  read                 runs
-----------------------  ------  --------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----
-community_from_env      0.8845  pre-contract          +0.4570    GAIN                                      COOCCUR-ROUTING         12      EARNING              90
-species_from_env        0.6275  pre-contract          +0.4000    GAIN                                      SDM-PRESENCE            16      EARNING              478
-calibration             0.5910  pre-contract          —          —                                         —                       8       NO-FAIR-BASELINE     91
-family_from_spacetime   0.1769  family_top1_accuracy  +0.0772    vs RFF                                    FORECAST(past->future)  12      ENCODER-LIMITED      1230
-family_from_env         0.1423  pre-contract          +0.0411    ENV vs best-coord-PE                      ENV                     12      STALE-GAIN(channel)  491
-flowering_peak_month    0.0521  pre-contract          +0.0087    Earth4D vs RFF, best-head within-tol acc  PHENOLOGY-FUTURE        12      ENCODER-LIMITED      107
-species_from_spacetime  0.0512  pre-contract          +0.0432    vs RFF                                    FORECAST                12      ENCODER-LIMITED      7
-----------------------  ------  --------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----
+capability              record  metric                 fair-gain  vs baseline                               mode                    shards  read                 runs  evidence
+----------------------  ------  ---------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----  --------
+community_from_env      0.8845  pre-contract           +0.4570    GAIN                                      COOCCUR-ROUTING         12      EARNING              90    1 seed?
+species_from_env        0.6275  pre-contract           +0.4000    GAIN                                      SDM-PRESENCE            16      EARNING              478   1 seed?
+calibration             0.5910  pre-contract           —          —                                         —                       8       NO-FAIR-BASELINE     91    1 seed?
+family_from_spacetime   0.1769  family_top1_accuracy   +0.0772    vs RFF                                    FORECAST(past->future)  12      EARNING              1230  1 seed?
+family_from_env         0.1423  pre-contract           +0.0411    ENV vs best-coord-PE                      ENV                     12      STALE-GAIN(channel)  494   1 seed?
+species_from_spacetime  0.0618  species_top1_accuracy  +0.0548    vs RFF                                    FORECAST(past->future)  12      EARNING              17    5 seeds
+flowering_peak_month    0.0521  pre-contract           +0.0087    Earth4D vs RFF, best-head within-tol acc  PHENOLOGY-FUTURE        12      ENCODER-LIMITED      107   1 seed?
+----------------------  ------  ---------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----  --------
 probed 7/7   ·   earning (fair-gain > 0): 6
 
-READ:  INPUT-LIMITED     Earth4D does not beat a generic trained PE -> DATA lever, change the channel
-       ENCODER-LIMITED   beats the PE but the absolute score is low -> ARCHITECTURE lever
-       EARNING           the architecture is carrying real signal -> push it further
+READ:  share = fair-gain / score — how much of the score Earth4D contributes over the fair baseline
+       INPUT-LIMITED     does not beat a generic trained PE -> DATA lever, change the channel
+       ENCODER-LIMITED   Earth4D contributes <25% of the score -> ARCHITECTURE lever
+       EARNING           Earth4D contributes >=25% -> the mechanism carries signal, push it
        STALE-GAIN        the stored gain is a CHANNEL advantage, not encoder-vs-PE. Re-measure
                          before trusting the read (family_from_env: board +0.0411, live -0.0072)
        pre-contract      record predates the result contract, so its metric name was never stored
+
+EVIDENCE:  a record set on fewer than 5 matched seeds is PROVISIONAL — discovery, not a claim.
+           A new record must beat the standing one by more than the noise barrier: 2% of the record,
+           never less than 0.002, and with >=3 seeds also 2 sigma of the measured spread.
 
 A record here is a PROBE record: discovery, not science. It becomes a claim only by clearing the
 evidence standard in program.md (>=5 matched seeds, block bootstrap, no regression, reproducible

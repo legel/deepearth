@@ -1,5 +1,4 @@
 traces/
 exp/
-records.json
 records.lock
 box-operations.md
