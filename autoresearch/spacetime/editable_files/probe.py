@@ -1,41 +1,46 @@
-"""Standalone spacetime-encoder probe -- train + evaluate Earth4D IN ISOLATION.
+"""The Earth4D probe — the instrument this loop edits.
 
-No fusion model, no 790M backbone, no full benchmark suite -- just Earth4D + a linear head over a
-subsample of observation coordinates. Measures the encoder's science (science.md rules 1-6, 24): does the
-Earth4D positional field make space-time PREDICTIVE of biology at HELD-OUT locations (spatial generalization,
-the SDM task B1/B5/B8)? Fast.
+One capability at a time, measured against fair baselines in minutes. `harness.py` decides what a
+number means; this file decides what gets computed.
 
-Objective (standalone `st_gain`): held-out-block family accuracy from Earth4D(coords) MINUS from raw
-normalized coordinates. >0 ⟹ the multi-resolution positional encoder adds spatial-biology structure a raw
-coordinate cannot. Reuses Earth4D unchanged (no core edit).
+THE LEVERS. Two families, and the fair-gain tells you which one you are on:
 
-  python -m deepearth.autoresearch.spacetime.editable_files.harness.probe --cache_dir data/deepcal --steps 800
+  fair-gain ~ 0 or negative  →  INPUT-limited   →  DATA lever: change the channel
+  fair-gain positive, score low →  ENCODER-limited →  ARCHITECTURE lever: change the mechanism
 
-FORECAST mode (--forecast, chronological discovery probe):
-  Real event-time (gbif_eventtime.npz, joined by gbifID) is placed into Earth4D coord slot 3 (t), which the
-  default path leaves at 0. The held-out set becomes the LATEST `holdout` fraction of observations BY TIME
-  (train on the past, forecast the future) instead of held-out spatial blocks. The raw-coords and RFF
-  baselines receive the identical normalized-time feature, so the st_gain isolates whether Earth4D's 4D
-  multi-resolution field predicts later observations better than a plain space-time code. This is not
-  autoregression unless a separate mechanism consumes observed past state and rolls it forward. Default path
-  (no --forecast) is byte-identical to before: t=0, spatial-block holdout.
+  DATA ─────────────────────────────────────────────────────────────────────────────────
+    --env --env_channels {all,worldclim,alphaearth,wcsoil,...}   which environment
+    --env_extra                                                 + soil and elevation
+    --sdm_channels ...                                          channels for the SDM modes
+    --cooccur_channels ...                                      channels for co-occurrence
+    --vision --vision_feats {dino,bio,both}                     borrowed morphology (LABEL IT)
+    --pheno_channel                                             remote-sensing phenology
+    new sources: editable_files/data/, loaders in editable_files/lib/
 
-ENVIRONMENT modes (science.md rules 1-6, 24 done right -- the positional field should represent the ENVIRONMENT,
-biology follows; a coordinate is not the science, the environment at that coordinate is):
-  --env         (Move 1) held-out-block family acc from real ENVIRONMENT covariates (worldclim+soil+elev,
-                joined by gbifID) vs the best coordinate-PE (Earth4D / RFF / raw), plus an Earth4D+env fused
-                head. Answers: does real environment >> any coordinate positional encoding? If yes the
-                encoder's job is to REPRESENT environment, not index coordinates.
-  --env_decode  (Move 2, rule 24 done right) train Earth4D END-TO-END to decode the physically-real,
-                spatially-smooth ENVIRONMENT field (worldclim, standardized) at TRAIN obs as an auxiliary
-                regression target, THEN predict biology from the learned field at the strict held-out set.
-                Fair control = coord-MLP / RFF given the identical env-decode auxiliary. Answers: does an
-                env-supervised field finally beat a generic PE, where the family-supervised field failed
-                (-0.10)? A smooth environment target is the field rule-24 actually asks for.
-Both default-off; the no-flag path is byte-identical.
+  ARCHITECTURE ─────────────────────────────────────────────────────────────────────────
+    mechanism      --recurrence [--rec_k --rec_hidden --rec_time_cond]   4D-LSTM rollout
+                   --gnn [--gnn_hops]                                   message passing
+                   --field_decode                                       dense-field decode
+                   --env_decode [--env_aux_weight]                      env-supervised field
+    priors         --fourier[_scale] --spatial_siren[--siren_*] --spatial_cline[--cline_scale]
+                   --time_harmonics --time_film --causal_lags[--causal_lag_span]
+    encoder itself encoders/spacetime/earth4d.py  ← the real architecture lever
+    end-to-end     --train_encoder [--enc_lr_mult --enc_warmup --enc_c2f]
+
+  CAPACITY (tunes a winner; not a move) ────────────────────────────────────────────────
+    --spatial_levels --temporal_levels --log2_hashmap --head_hidden --steps --lr
+
+  WHAT IS MEASURED (identity — changing these makes a DIFFERENT measurement, not a better score)
+    --forecast [--forecast_spatial] · --target {family,species} · --phenology · --sdm_presence
+    --sdm_hard · --cooccur · --n_shards · --holdout · --seed
+
+An experiment is an EDIT to this file or to earth4d.py, on a branch. Not a new flag: a flag is what a
+change earns when it GRADUATES, and a dead flag is a bug. Gating at conception is what grew this file
+to 113 flags and 19 modes; the diagnostics that could never set a record have been deleted.
 """
-PROBE_MODULE = "deepearth.autoresearch.spacetime.editable_files.harness.probe"
-# Must match autoresearch/spacetime/editable_files/harness/trace.py PROTOCOL. Bump both when a change alters what a run MEASURES.
+
+PROBE_MODULE = "deepearth.autoresearch.spacetime.editable_files.probe"
+# Must match autoresearch/spacetime/editable_files/harness.py PROTOCOL. Bump both when a change alters what a run MEASURES.
 PROTOCOL_VERSION = "v2-leakfix"
 
 _TRACE_AUTHORIZED = False
@@ -66,10 +71,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.encoders.spacetime.earth4d import Earth4D
-from deepearth.autoresearch.spacetime.editable_files.harness import probe_modes_tables
-from deepearth.autoresearch.spacetime.editable_files.harness.probe_emit import (
-    PHENO_RAW_REASON,
-    RAW_PE_REASON,
+from deepearth.autoresearch.spacetime.editable_files.harness import (
     _set_result_sink,
     declare,
 )
@@ -512,6 +514,86 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     return acc, top5
 
 
+def cooccur_mode(a):
+    import sys as _sys; _sys.path.insert(0, '/workspace')
+    from deepearth.autoresearch.spacetime.editable_files.lib.dyntargets import cooccur_routing
+    r = cooccur_routing(a.cache_dir, thresh=a.cooccur_thresh, seed=a.seed,
+                        mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file,
+                        env_channels=a.cooccur_channels)
+    print(f"  query_sp={r['n_query_sp']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
+    print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
+    print(f"  [leak-guard] {r['leak_guard']}")
+    declare(
+        capability="community_from_env",
+        mode="COOCCUR-ROUTING",
+        metric="micro_AP_feat",
+        value=r["micro_AP_feat"],
+        split=f"mech={r['mechanism']}",
+        gains={"GAIN": r["gain_over_prevalence"]},
+        baselines={"prevalence": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
+        mechanism=r["mechanism"], thresh=r["thresh"], cooccur_file=r["cooccur_file"],
+        n_query_sp=r["n_query_sp"], n_cand_sp=r["n_cand_sp"], feat_dim=r["feat_dim"],
+        lift_over_baserate=r["lift_over_baserate"], leak_guard=r["leak_guard"],
+    )
+    return r
+
+def sdm_presence_mode(a):
+    import sys as _sys; _sys.path.insert(0, '/workspace')
+    from deepearth.autoresearch.spacetime.editable_files.lib.dyntargets import sdm_presence
+    r = sdm_presence(a.cache_dir, seed=a.seed, mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file)
+    print(f"  query_cells={r['n_query_cells']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
+    print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
+    print(f"  [leak-guard] {r['leak_guard']}")
+    declare(
+        capability="species_from_env",
+        mode="SDM-PRESENCE",
+        metric="micro_AP_feat",
+        value=r["micro_AP_feat"],
+        split=f"mech={r['mechanism']}",
+        gains={"GAIN": r["gain_over_prevalence"]},
+        baselines={"prevalence": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
+        mechanism=r["mechanism"], n_query_cells=r["n_query_cells"], n_cand_sp=r["n_cand_sp"],
+        feat_dim=r["feat_dim"], lift_over_baserate=r["lift_over_baserate"],
+        leak_guard=r["leak_guard"],
+    )
+    return r
+
+def sdm_hard_mode(a):
+    import sys as _sys; _sys.path.insert(0, '/workspace')
+    from deepearth.autoresearch.spacetime.editable_files.lib.dyntargets import sdm_presence_hard
+    import numpy as _np
+    runs = []
+    for sd in range(a.seed, a.seed + a.sdm_seeds):
+        r = sdm_presence_hard(a.cache_dir, seed=sd, mechanism=a.cooccur_mech,
+                              cell_deg=a.sdm_cell_deg, holdout_mode=a.sdm_holdout_mode,
+                              block_deg=a.sdm_block_deg, env_channels=a.sdm_channels,
+                              add_time=a.sdm_time, cooccur_file=a.cooccur_file)
+        runs.append(r)
+    aps = _np.array([x['micro_AP_feat'] for x in runs])
+    gns = _np.array([x['gain_over_prevalence'] for x in runs])
+    r0 = runs[0]
+    print(f"  query_cells={r0['n_query_cells']} train_cells={r0['n_train_cells']} cand_sp={r0['n_cand_sp']} "
+          f"feat_dim={r0['feat_dim']} base_rate={r0['micro_AP_baserate']:.4f}")
+    print(f"  micro-AP(feat) {aps.mean():.4f} +/- {aps.std():.4f} | prevalence {r0['micro_AP_prevalence']:.4f} | "
+          f"GAIN {gns.mean():+.4f} +/- {gns.std():.4f} | lift {r0['lift_over_baserate']:.2f}x")
+    print(f"  [leak-guard] {r0['leak_guard']}")
+    declare(
+        capability="species_from_env",
+        mode="SDM-HARD",
+        metric="micro_AP_feat",
+        value=float(aps.mean()),
+        split=f"{r0['holdout_mode']}({r0['block_deg']}deg)/grid{r0['cell_deg']}deg",
+        gains={"GAIN": float(gns.mean())},
+        baselines={"prevalence": r0["micro_AP_prevalence"], "baserate": r0["micro_AP_baserate"]},
+        mechanism=r0["mechanism"], env_channels=r0["env_channels"], add_time=r0["add_time"],
+        sdm_seeds=a.sdm_seeds, ap_std=float(aps.std()), gain_std=float(gns.std()),
+        n_query_cells=r0["n_query_cells"], n_train_cells=r0["n_train_cells"],
+        n_cand_sp=r0["n_cand_sp"], feat_dim=r0["feat_dim"], leak_guard=r0["leak_guard"],
+    )
+    return {'runs': runs, 'ap_mean': float(aps.mean()), 'ap_std': float(aps.std()),
+            'gain_mean': float(gns.mean()), 'gain_std': float(gns.std())}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache_dir", default="data/deepcal")
@@ -561,35 +643,15 @@ def main(argv=None):
     ap.add_argument("--pheno_feats", default="e4d,rff,raw")  # HARD-RULE fast path: comma list subset of e4d,rff,raw to TRAIN (isolate ONE feature-type per run)
     # ---- LOOP-spacetime NEW DIRECTIONS on the mean-DOY graduation target (additive, default-off) ----
     ap.add_argument("--pheno_spatial", action="store_true")     # (1) SPATIAL generalization: query set = held-out 0.5deg BLOCKS (unseen geography), neighbours from train blocks; MAE-gain over static floor in new places
-    ap.add_argument("--pheno_env", action="store_true")         # (2) ENV-conditioning: join per-obs worldclim(+soil+elev) as a propagator INPUT; neighbour-only vs neighbour+env vs env-only(static)
-    ap.add_argument("--pheno_disttarget", default="")           # (3) distributional-timing target class: phase_centroid | peak_week | mean_doy (static vs GNN vs LSTM)
-    ap.add_argument("--pheno_taxon", default="")                # (4) per-taxon breakdown of mean-DOY propagator gain: order | family (per-group static/LSTM MAE-gain)
-    ap.add_argument("--pheno_densefield", action="store_true")  # rule-24 dense-field: mean-DOY at query cells whose OWN cell is EXCLUDED from the window (pure spatial interpolation from surrounding occupied cells); reports EMPTY-cell vs OCCUPIED-cell MAE-gain over static. leak-guard: query cell contributes nothing to itself.
-    ap.add_argument("--densefield_drop", type=float, default=0.0)  # sparsity stress: drop this fraction of pool CELLS before interpolating (0.25/0.5/0.75) -- bounds where dense-field interpolation breaks.
-    ap.add_argument("--densefield_block", type=float, default=0.5)  # cell size (deg) defining "same cell" for the exclusion + empty/occupied labelling.
     ap.add_argument("--field_decode", action="store_true")      # rule24: TRAIN the encoder end-to-end to decode the dense family field between sparse obs; fair control = trainable-head-on-RFF / coord-MLP
     ap.add_argument("--env", action="store_true")               # Move1: real ENVIRONMENT covariates (worldclim+soil+elev) vs coordinate-PE; + Earth4D+env fused
     ap.add_argument("--env_decode", action="store_true")        # Move2/rule24: TRAIN encoder to decode the smooth ENVIRONMENT field (aux), then predict biology from the learned field
     ap.add_argument("--env_aux_weight", type=float, default=1.0) # weight on the env-reconstruction auxiliary loss
-    ap.add_argument("--env_trait", action="store_true")        # ROUTING (Ensue ROUTING-soil-ph/MAP-*): species-aggregated ENV->NICHE-TRAIT regression (held-out species). Predict num_soil_ph_max/rain_max/rain_min/elev_max/elev_min from per-species env (worldclim+AlphaEarth[+soil+elev]).
-    ap.add_argument("--env_agg", default="mean", choices=["mean", "medoid"])  # per-species env aggregation lever: smooth column-mean vs a real non-averaged niche exemplar
     ap.add_argument("--env_extra", action="store_true")         # add soil(9)+elev(1) channels on top of worldclim(19)+AlphaEarth(64)
-    ap.add_argument("--env_head", default="ridge", choices=["ridge", "mlp"])  # linear RidgeCV vs 1-hidden MLP niche head
-    ap.add_argument("--env_mlp_hidden", type=int, default=128)
     ap.add_argument("--env_channels", default="all", choices=["all","worldclim","alphaearth","wcsoil","modis","all+modis"])  # ("wcsoil" = the legacy hard-wired 19wc+9soil+1elev stack the --env path used to force regardless of this flag) # channel-family ablation: which env source carries the niche-trait routing
     ap.add_argument("--vision", action="store_true")             # DATA LEVER: family from per-obs PLANT vision (DINO/BioCLIP) instead of env -- perception-law test
     ap.add_argument("--vision_feats", default="dino", choices=["dino","bio","both"])
     ap.add_argument("--pheno_channel", action="store_true")      # DATA LEVER: join per-obs MODIS phenology (gbif_phenology_tokens, 12 feats) onto the phenology forecaster query features
-    ap.add_argument("--env_spread", action="store_true")
-    ap.add_argument("--env_quantiles", action="store_true")      # concat per-species p10/p90 env (explicit distribution EDGES) on top of mean(+std) -- most direct match to max/min niche-boundary traits         # concat per-species column STD (niche breadth) to the mean -- directly informs max/min envelope traits
-    ap.add_argument("--env_extremes", action="store_true")      # concat per-species column MIN/MAX env (realized niche ENVELOPE boundaries) -- the most literal match to num_*_max / num_*_min niche-boundary traits
-    ap.add_argument("--env_extra_traits", action="store_true")  # extend the env-niche routing panel with num_soil_ph_min (the min counterpart already env-routed, 366 species) -- broader niche-trait coverage test
-    ap.add_argument("--env_morph_traits", action="store_true")  # extend the routing panel with MORPHOLOGICAL traits (num_height_max 1768sp, num_width_max 420sp) -- tests whether env-niche routing carries non-climate (structural) traits, not just climate-envelope
-    ap.add_argument("--env_biotic_trait", action="store_true")  # extend panel with num_lep_support (lepidopteran host-support, full 2141sp) -- a BIOTIC-interaction niche axis: does env routing carry biotic niche, not just abiotic climate/structure
-    ap.add_argument("--env_trait_phylo", action="store_true")   # REROUTE VERDICT: alongside the env->trait Spearman, compute the PHYLO-SEED baseline (E1 text/tree species seed -> RidgeCV -> same held-out species split) for each numeric trait, and print the per-axis winner (env vs phylo). Isolates which encoder each numeric trait routes to.
-    ap.add_argument("--env_temporal", action="store_true")     # concat per-species SEASONAL-TIMING features (circular mean sin/cos of observed DOY + resultant length R = seasonal specialization) -- a temporal niche axis on top of static env aggregates
-    ap.add_argument("--env_phenobreadth", action="store_true")  # concat per-species PHENOLOGICAL-BREADTH temporal features (active-month occupancy fraction + 2nd-harmonic resultant R2 = bimodality/multivoltinism) -- a season-DURATION/multimodality axis (distinct from env_temporal mean+R) aimed at the biotic lep-support axis
-    ap.add_argument("--env_perobs", action="store_true")        # train the linear niche map on PER-OBSERVATION env rows (train species only), predict held-out species from their species-mean env -- more training rows, same species holdout
     ap.add_argument("--device", default="cuda")
     # ---- LOOP-spacetime rule-1 AR ROLLOUT (this turn) ----------------------------------------------------
     ap.add_argument("--cooccur", action="store_true")            # CROSS-ENCODER ROUTING: predict per-species co-occurrence PARTNER-SET from ENV/SPACE (held-out species); micro-AP + gain over non-spatial prevalence baseline.
@@ -606,11 +668,6 @@ def main(argv=None):
     ap.add_argument("--sdm_time", action="store_true")            # append per-cell seasonal timing (sin/cos mean-DOY + R).
     ap.add_argument("--sdm_seeds", type=int, default=1)            # run seeds seed..seed+n-1; report mean +/- std.
     # ---- LOOP-spacetime ENV-DERIVABLE CONSTRUCT test (rarity=range-size, ease=climate-breadth) ----
-    ap.add_argument("--env_construct", action="store_true")
-    ap.add_argument("--construct", default="rarity", choices=["rarity","ease","ns_grank","crpr"])
-    ap.add_argument("--construct_feature", default="range", choices=["range","breadth","both","nichebreadth","nichebreadth_env","allbreadth"])
-    ap.add_argument("--construct_shuffle", action="store_true")
-    ap.add_argument("--construct_only", default="")
     # The result contract (probe_contract.py). --capability is what the harness DECLARED as its
     # objective; a mode supplies its own natural capability when the probe is run standalone. The
     # harness asserts the two agree, so a probe cannot quietly answer a different question.
@@ -633,22 +690,18 @@ def main(argv=None):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(a.seed)
 
-    # Modes that never touch the encoder: env -> identity from precomputed tables (DATA lever only).
-    for _flag, _mode in (
-        (a.env_construct, probe_modes_tables.env_construct_mode),
-        (a.cooccur, probe_modes_tables.cooccur_mode),
-        (a.sdm_presence, probe_modes_tables.sdm_presence_mode),
-        (a.sdm_hard, probe_modes_tables.sdm_hard_mode),
-    ):
+    # Modes that never build Earth4D: env -> identity from precomputed tables (DATA lever only).
+    for _flag, _mode in ((a.cooccur, cooccur_mode), (a.sdm_presence, sdm_presence_mode),
+                         (a.sdm_hard, sdm_hard_mode)):
         if _flag:
-            return _mode(a, env_construct=env_construct)
+            return _mode(a)
 
 
 
 
 
     t0 = time.time()
-    need_gid = a.env or a.env_decode or a.pheno_env
+    need_gid = a.env or a.env_decode
     lat, lon, fam, n_fam, days, gid, sp_obs = load_obs(a.cache_dir, a.n_shards, with_time=a.forecast, with_gid=need_gid)
     obs_index = np.arange(len(lat), dtype=np.int64)
     if a.forecast:
@@ -710,17 +763,10 @@ def main(argv=None):
                   spatial_siren=a.spatial_siren, siren_layers=a.siren_layers, siren_w0=a.siren_w0,
                   causal_lags=a.causal_lags, causal_lag_span=a.causal_lag_span).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
 
-    # These flags only ever reached the env->TRAIT routing path. On the --env classification path they were
-    # silently inert, so a "DATA lever" run changed nothing while still reporting a score -- which is how
-    # family_from_env read data-limited for 53 runs. Fail loudly instead of lying.
-    _inert = [n for n, v in (("--env_extra", a.env_extra), ("--env_temporal", a.env_temporal),
-                             ("--env_perobs", a.env_perobs), ("--env_quantiles", a.env_quantiles),
-                             ("--env_extremes", a.env_extremes), ("--env_spread", a.env_spread))
-              if v and not a.env_trait]
-    if _inert and (a.env or a.env_decode):
-        raise SystemExit(f"[probe] {' '.join(_inert)} has NO effect on the --env/--env_decode path "
-                         f"(it only applies to --env_trait). Use --env_channels to change what --env loads, "
-                         f"or add --env_trait. Refusing to run a lever that would silently do nothing.")
+    # (The old --env_temporal/--env_perobs/--env_quantiles/--env_extremes/--env_spread guard is gone with
+    # those flags: they only ever affected the deleted --env_trait diagnostic and were silently inert on
+    # the --env path, which is how family_from_env read data-limited for 53 runs. A flag that cannot act
+    # is worse than no flag.)
 
     if a.env or a.env_decode:
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
@@ -732,117 +778,6 @@ def main(argv=None):
         if a.forecast:
             rn = np.concatenate([rn, tnorm[:, None]], 1)
 
-    if a.env_trait:
-        # ---- ENV->NICHE-TRAIT ROUTING (Ensue ROUTING-soil-ph-*/ROUTING-MAP-*): environmental-niche traits are ----
-        # routed to THIS (spacetime/environment) encoder. Aggregate env per species, predict each numeric niche
-        # trait on HELD-OUT species. Reference (worldclim+AlphaEarth, mean, ridge): soil_ph 0.59 rain_min 0.77
-        # rain_max 0.76 elev_min 0.78 elev_max 0.52; vs phylo-graph ~0.1. Levers: --env_agg, --env_extra, --env_head.
-        import sys as _sys
-        _sys.path.insert(0, "/workspace")
-        from deepearth.autoresearch.spacetime.editable_files.lib.species_priors import load_trait as _load_trait
-        vocab = np.load(Path(a.cache_dir) / "gbif_vocab.npz", allow_pickle=True)
-        gidx = vocab["global_idx"]
-        emean, emedoid, npsp, estd, elo, ehi, emin, emax, etime, epheno = load_env_species(a.cache_dir, extra_channels=a.env_extra, temporal=(a.env_temporal or a.env_phenobreadth))
-        ENV = emedoid if a.env_agg == "medoid" else emean
-        if a.env_spread:
-            ENV = np.concatenate([ENV, estd], 1)                 # mean niche center ++ per-species breadth
-        if a.env_quantiles:
-            ENV = np.concatenate([ENV, elo, ehi], 1)             # ++ per-species p10/p90 distribution edges
-        if a.env_extremes:
-            ENV = np.concatenate([ENV, emin, emax], 1)           # ++ per-species realized min/max envelope (literal niche boundaries)
-        if a.env_temporal:
-            ENV = np.concatenate([ENV, etime], 1)                # ++ per-species seasonal-timing (DOY circular mean + specialization R)
-        if a.env_phenobreadth:
-            ENV = np.concatenate([ENV, epheno], 1)               # ++ per-species phenological-breadth (active-month occupancy + 2nd-harmonic R2 bimodality)
-        if a.env_channels == "worldclim":
-            ENV = ENV[:, :19]                                     # physical climate only (WorldClim 19-band)
-        elif a.env_channels == "alphaearth":
-            ENV = ENV[:, 19:83]                                   # learned satellite embedding only (AlphaEarth 64d)
-        _XOBS = _SPOBS = None
-        if a.env_perobs:
-            _XOBS, _SPOBS = load_env_obs(a.cache_dir)
-            if a.env_channels == "worldclim": _XOBS = _XOBS[:, :19]
-            elif a.env_channels == "alphaearth": _XOBS = _XOBS[:, 19:83]
-        keys = ["num_soil_ph_max", "num_rain_max", "num_rain_min", "num_elev_max", "num_elev_min"]
-        if a.env_extra_traits:
-            keys = keys + ["num_soil_ph_min"]
-        if a.env_morph_traits:
-            keys = keys + ["num_height_max", "num_width_max"]
-        if a.env_biotic_trait:
-            keys = keys + ["num_lep_support"]
-        PHY = None
-        if a.env_trait_phylo:
-            # REROUTE VERDICT: load the PHYLO/text species seed (E1, the SAME BioCLIP text prior the biological
-            # graph refines) aligned to the 2141-vocab, and predict each trait from it via the identical RidgeCV
-            # + same held-out species split as the env side. Fair head-for-head: only the FEATURE source differs
-            # (env aggregates vs phylo seed), so the winner is the honest per-axis routing verdict.
-            from deepearth.autoresearch.spacetime.editable_files.lib.species_priors import load_species as _load_species
-            E1, _famid, _tree, _tiprow, _gidxb = _load_species(a.cache_dir)
-            PHY = np.asarray(E1.detach().cpu()).astype(np.float32)   # [2141, seed_dim] text/tree species seed
-        dt0 = time.time()
-        results = {}
-        rows = []
-        for key in keys:
-            _, Y, obs, _ = _load_trait(a.cache_dir, gidx, key, "cpu")
-            Y = np.asarray(Y).astype(np.float32); obs = np.asarray(obs).astype(bool)
-            sp = obs & (npsp > 0) & np.isfinite(ENV).all(1)
-            idx = np.where(sp)[0]
-            if len(idx) < 20:
-                rows.append((key, float("nan"), len(idx))); results[key] = float("nan"); continue
-            rng = np.random.default_rng(a.seed); rng.shuffle(idx)
-            cut = len(idx) // 5
-            te, tr = idx[:cut], idx[cut:]
-            if a.env_perobs:
-                # train linear niche map on PER-OBS env rows of the TRAIN species; predict held-out species from species-mean ENV
-                from sklearn.linear_model import RidgeCV as _RCV
-                from scipy.stats import spearmanr as _sr
-                tr_set = set(tr.tolist())
-                mo = np.array([sp0 in tr_set for sp0 in _SPOBS]) & np.isfinite(Y[_SPOBS]) & np.isfinite(_XOBS).all(1)
-                r = _RCV(alphas=[0.1,1.0,10.0,100.0]).fit(_XOBS[mo], Y[_SPOBS[mo]])
-                pr = r.predict(ENV[te]); _rho = _sr(Y[te], pr).correlation
-                rho = float(_rho if _rho==_rho else 0.0)
-            elif a.env_head == "mlp":
-                rho = _mlp_spearman(ENV, Y, tr, te, dev, hidden=a.env_mlp_hidden, steps=a.steps)
-            else:
-                rho = _ridge_spearman(ENV, Y, tr, te)
-            phy_rho = float("nan")
-            if PHY is not None:
-                # phylo baseline on the SAME te/tr species split; drop any species with a non-finite seed row
-                fin = np.isfinite(PHY).all(1)
-                tr_p = tr[fin[tr]]; te_p = te[fin[te]]
-                if len(tr_p) >= 5 and len(te_p) >= 5:
-                    phy_rho = _ridge_spearman(PHY, Y, tr_p, te_p)
-                results[key + "_phylo"] = phy_rho
-            rows.append((key, rho, len(te), phy_rho)); results[key] = rho
-        dt = time.time() - dt0
-        vals = [r[1] for r in rows if r[1] == r[1]]
-        mean_rho = float(np.mean(vals)) if vals else float("nan")
-        if PHY is not None:
-            phyvals = [r[3] for r in rows if r[3] == r[3]]
-            phy_mean = float(np.mean(phyvals)) if phyvals else float("nan")
-            print(f"  {'axis':18s} {'env':>8s} {'phylo':>8s} {'winner':>7s}  (n)   phylo_seed_dim={PHY.shape[1]}")
-            for key, rho, nte, prho in rows:
-                win = "ENV" if (rho == rho and (prho != prho or rho >= prho)) else "PHYLO"
-                d = (rho - prho) if (rho == rho and prho == prho) else float("nan")
-                print(f"  {key:18s} {rho:+8.3f} {prho:+8.3f} {win:>7s}  n={nte}  env-phylo={d:+.3f}")
-            print(f"  mean_over_traits  env {mean_rho:+.4f}  phylo {phy_mean:+.4f}  ({dt:.1f}s)")
-            results["phylo_mean_spearman"] = phy_mean
-        else:
-            for key, rho, nte, prho in rows:
-                print(f"  {key:18s} spearman {rho:+.3f}   held-out_species_n={nte}")
-            print(f"  mean_spearman_over_traits {mean_rho:+.4f}   ({dt:.1f}s)")
-        results["mean_spearman"] = mean_rho
-        results["env_dim"] = int(ENV.shape[1]); results["agg"] = a.env_agg
-        results["head"] = a.env_head; results["extra"] = bool(a.env_extra); results["seconds"] = dt
-        declare(
-            capability="", mode=f"ENV->NICHE-TRAIT(agg={a.env_agg})", metric="mean_spearman",
-            value=mean_rho,
-            diagnostic=True,
-            diagnostic_reason="trait Spearman over species aggregates is not a scorecard capability",
-            env_dim=int(ENV.shape[1]), agg=a.env_agg, head=a.env_head, extra=bool(a.env_extra),
-            seconds=dt,
-        )
-        return results
 
     if a.env:
         # ---- Move 1: is real ENVIRONMENT >> any coordinate positional encoding at held-out biology? ----
@@ -1110,134 +1045,7 @@ def main(argv=None):
                 "static_acc_raw": r["raw"]["static_acc"], "gnn_acc_raw": r["raw"]["gnn_acc"], "lstm_acc_raw": r["raw"]["lstm_acc"],
                 "obs": len(lat), "seconds": dt, "phenology": True, "n_te": n_te}
 
-    if a.pheno_densefield:
-        # ===== LOOP-spacetime rule-24 DENSE-FIELD interpolation (mean-DOY, empty vs occupied query cells) =====
-        # Reuses ALL phenology leak-guards: query features SPACE-ONLY (t=0 baked into raw_sp), spatial-only
-        # edge (no dt-to-query), neighbours carry OWN observed DOY. ADDITIONAL leak-guard: the query cell is
-        # excluded from its own neighbour window (contributes nothing to itself). raw features only.
-        assert a.forecast, "--pheno_densefield requires --forecast"
-        import numpy as _np
-        from deepearth.autoresearch.spacetime.editable_files.lib.dyntargets import run_pheno_densefield
-        coords_ll = torch.tensor(_np.stack([lat, lon], 1).astype(_np.float32))
-        rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
-        raw_sp = torch.tensor(rn_sp)
-        SPLIT = "SPATIAL(unseen-geo)" if a.pheno_spatial else "TEMPORAL(future)"
-        r = run_pheno_densefield(raw_sp, raw_sp.shape[1], days, coords_ll, test, dev,
-                                 block=a.densefield_block, drop_cell_frac=a.densefield_drop,
-                                 K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.pheno_tol, seed=a.seed)
-        dt = time.time() - t0
-        print("=== SPACETIME | mode=PHENO-DENSEFIELD(mean-DOY, same-cell-EXCLUDED) split=%s obs=%d queries=%d block=%.2fdeg drop_cells=%.2f pool=%d K=%d ===" % (SPLIT, len(lat), r.get("n_te", 0), a.densefield_block, a.densefield_drop, r.get("pool_n", 0), a.rec_k))
-        for _lab, _key in (("ALL      ", "all"), ("EMPTY-cell", "empty"), ("OCCUPIED ", "occ")):
-            d = r.get(_key, {})
-            print("  %s n=%6d | static MAE %6.2fd  LSTM MAE %6.2fd  gain %+.2fd" % (_lab, d.get("n", 0), d.get("static_mae", float("nan")), d.get("lstm_mae", float("nan")), d.get("gain", float("nan"))))
-        print("  LEAK-GUARD: query feat SPACE-ONLY(t=0); edge SPATIAL-only(no dt); query cell EXCLUDED from own window (surrounding cells only)")
-        print("  %d obs in %.1fs" % (len(lat), dt))
-        declare(
-            capability="", mode="PHENO-DENSEFIELD(mean-DOY, same-cell-EXCLUDED)", metric="MAEd",
-            value=float((r.get("all") or {}).get("static_mae", float("nan"))),
-            diagnostic=True, diagnostic_reason=PHENO_RAW_REASON,
-            split=SPLIT, obs=len(lat), queries=r.get("n_te"), pool_n=r.get("pool_n"),
-            block=a.densefield_block, drop_cell_frac=a.densefield_drop, K=a.rec_k, seconds=dt,
-            cells={k: r.get(k) for k in ("all", "empty", "occ")},
-        )
-        return {"pheno_densefield": True, "split": SPLIT, "block": a.densefield_block, "drop_cell_frac": a.densefield_drop,
-                "n_te": r.get("n_te", 0), "pool_n": r.get("pool_n", 0),
-                "all": r.get("all"), "empty": r.get("empty"), "occ": r.get("occ"), "seconds": dt}
 
-    if a.pheno_env or a.pheno_disttarget or a.pheno_taxon:
-        # ============ LOOP-spacetime NEW DIRECTIONS on the mean-DOY graduation target ============
-        # All reuse phenology leak-guards: query feature SPACE-ONLY (t=0); edge = spatial offset only
-        # (no dt-to-query); neighbours carry OWN observed DOY. raw features only (Earth4D settled neutral).
-        assert a.forecast, "--pheno_env/--pheno_disttarget/--pheno_taxon require --forecast"
-        import numpy as _np
-        coords_ll = torch.tensor(_np.stack([lat, lon], 1).astype(_np.float32))
-        rn_sp = _np.stack([lat / 90.0, lon / 180.0], 1).astype(_np.float32)
-        raw_sp = torch.tensor(rn_sp)
-        fdim = raw_sp.shape[1]
-        SPLIT = "SPATIAL(unseen-geo)" if a.pheno_spatial else "TEMPORAL(future)"
-        res = {"obs": len(lat), "split": SPLIT}
-
-        if a.pheno_env:
-            from deepearth.autoresearch.spacetime.editable_files.lib.dyntargets import run_pheno_env
-            env = load_env(a.cache_dir, gid, fit_mask=~test)
-            r = run_pheno_env(raw_sp, fdim, days, coords_ll, env, test, dev,
-                              K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.pheno_tol)
-            dt = time.time() - t0
-            gain_env = r["static_mae"] - r["neighbourenv_mae"]
-            gain_nbr = r["static_mae"] - r["neighbour_mae"]
-            gain_only = r["static_mae"] - r["envonly_mae"]
-            env_lift = r["neighbour_mae"] - r["neighbourenv_mae"]
-            print("=== SPACETIME | mode=PHENO-ENV(mean-DOY) split=%s obs=%d queries=%d env_dim=%d tol=+/-%.0fd K=%d ===" % (SPLIT, len(lat), r["n_te"], r["env_dim"], a.pheno_tol, a.rec_k))
-            print("  static           MAE %6.2fd acc %.4f  (no propagation, no env floor)" % (r["static_mae"], r["static_acc"]))
-            print("  neighbour-only   MAE %6.2fd acc %.4f  gain %+.2fd" % (r["neighbour_mae"], r["neighbour_acc"], gain_nbr))
-            print("  neighbour+env    MAE %6.2fd acc %.4f  gain %+.2fd  (env-lift-over-neighbour %+.2fd)" % (r["neighbourenv_mae"], r["neighbourenv_acc"], gain_env, env_lift))
-            print("  env-only(static) MAE %6.2fd acc %.4f  gain %+.2fd" % (r["envonly_mae"], r["envonly_acc"], gain_only))
-            print("  %d obs in %.1fs" % (len(lat), dt))
-            res.update({"pheno_env": True, "n_te": r["n_te"], "env_dim": r["env_dim"],
-                    "static_mae": r["static_mae"], "neighbour_mae": r["neighbour_mae"],
-                    "neighbourenv_mae": r["neighbourenv_mae"], "envonly_mae": r["envonly_mae"],
-                    "gain_neighbour": gain_nbr, "gain_neighbourenv": gain_env, "gain_envonly": gain_only,
-                    "env_lift_over_neighbour": env_lift, "seconds": dt})
-            declare(
-                capability="", mode="PHENO-ENV(mean-DOY)", metric="MAEd",
-                value=float(r.get("static_mae", float("nan"))),
-                diagnostic=True, diagnostic_reason=PHENO_RAW_REASON,
-                split=SPLIT, obs=len(lat), queries=r.get("n_te"), env_dim=r.get("env_dim"),
-                tol_days=a.pheno_tol, K=a.rec_k, lstm_mae=r.get("lstm_mae"), gain=r.get("gain"),
-                seconds=dt,
-            )
-            return res
-
-        if a.pheno_disttarget:
-            from deepearth.autoresearch.spacetime.editable_files.lib.dyntargets import run_pheno_disttarget
-            r = run_pheno_disttarget(raw_sp, fdim, days, coords_ll, test, dev, target=a.pheno_disttarget,
-                                     K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, hops=a.gnn_hops, tol_days=a.pheno_tol)
-            dt = time.time() - t0
-            gnn_gain = r["static_mae"] - r["gnn_mae"]; lstm_gain = r["static_mae"] - r["lstm_mae"]
-            print("=== SPACETIME | mode=PHENO-DISTTARGET(%s) split=%s obs=%d queries=%d tol=+/-%.0fd K=%d ===" % (a.pheno_disttarget, SPLIT, len(lat), r["n_te"], a.pheno_tol, a.rec_k))
-            print("  static MAE %6.2fd acc %.4f -> GNN MAE %6.2fd (gain %+.2fd) | LSTM MAE %6.2fd (gain %+.2fd)" % (r["static_mae"], r["static_acc"], r["gnn_mae"], gnn_gain, r["lstm_mae"], lstm_gain))
-            print("  %d obs in %.1fs" % (len(lat), dt))
-            res.update({"pheno_disttarget": a.pheno_disttarget, "n_te": r["n_te"],
-                    "static_mae": r["static_mae"], "gnn_mae": r["gnn_mae"], "lstm_mae": r["lstm_mae"],
-                    "gnn_gain": gnn_gain, "lstm_gain": lstm_gain, "seconds": dt})
-            declare(
-                capability="", mode=f"PHENO-DISTTARGET({a.pheno_disttarget})", metric="MAEd",
-                value=float(r.get("static_mae", float("nan"))),
-                diagnostic=True, diagnostic_reason=PHENO_RAW_REASON,
-                split=SPLIT, obs=len(lat), queries=r.get("n_te"), tol_days=a.pheno_tol, K=a.rec_k,
-                lstm_mae=r.get("lstm_mae"), gain=r.get("gain"), seconds=dt,
-            )
-            return res
-
-        if a.pheno_taxon:
-            from deepearth.autoresearch.spacetime.editable_files.lib.dyntargets import run_pheno_by_taxon
-            import csv as _csv
-            from pathlib import Path as _P
-            rows = list(_csv.DictReader(open(_P(a.cache_dir) / "derived/species_index.csv")))
-            vocab = _np.load(_P(a.cache_dir) / "gbif_vocab.npz", allow_pickle=True)["global_idx"]
-            col = a.pheno_taxon
-            taxon_str = _np.array([rows[i][col] for i in vocab])
-            names, gid_of_species = _np.unique(taxon_str, return_inverse=True)
-            sp_all = load_species(a.cache_dir, a.n_shards)[obs_index]
-            group = gid_of_species[sp_all].astype(_np.int64)
-            r = run_pheno_by_taxon(raw_sp, fdim, days, coords_ll, group, test, dev,
-                                   K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tol_days=a.pheno_tol)
-            dt = time.time() - t0
-            print("=== SPACETIME | mode=PHENO-BY-TAXON(%s) split=%s obs=%d queries=%d tol=+/-%.0fd K=%d ===" % (col, SPLIT, len(lat), r["n_te"], a.pheno_tol, a.rec_k))
-            for row in r["groups"][:15]:
-                print("  %-22s n_te %5d | static %6.2fd -> LSTM %6.2fd  gain %+.2fd" % (str(names[row["group"]])[:22], row["n_te"], row["static_mae"], row["lstm_mae"], row["gain"]))
-            print("  %d obs in %.1fs" % (len(lat), dt))
-            res.update({"pheno_taxon": col, "n_te": r["n_te"],
-                    "groups": [{"name": str(names[row["group"]]), "n_te": row["n_te"], "static_mae": row["static_mae"], "lstm_mae": row["lstm_mae"], "gain": row["gain"]} for row in r["groups"]],
-                    "seconds": dt})
-            declare(
-                capability="", mode=f"PHENO-BY-TAXON({col})", metric="MAEd",
-                value=float(r["groups"][0]["static_mae"]) if r.get("groups") else float("nan"),
-                diagnostic=True, diagnostic_reason=PHENO_RAW_REASON,
-                split=SPLIT, obs=len(lat), queries=r.get("n_te"), tol_days=a.pheno_tol, K=a.rec_k,
-                n_groups=len(r.get("groups", [])), seconds=dt,
-            )
-            return res
 
 
 
@@ -1522,133 +1330,6 @@ def _niche_breadth_features_per_species(cache, S):
             "ae_effrank": ae_effrank, "ae_meanpair": ae_meanpair}
 
 
-def env_construct(cache, seed=0, construct="rarity", feature="range", holdout=0.3, shuffle=False, only=""):
-    """Test whether a construct label is predictable from occurrence/env-derived features on held-out species.
-
-    construct: 'rarity' (cat_rarity ordinal) or 'ease' (cat_ease_of_care ordinal). Only LABELED species
-              (raw label>0; 0 == unlabeled/missing) enter the supervised task.
-    feature:  'range'   -> range-size features (n_cells_05/10, n_obs, spans, hull, max_gc)  [log1p heavy-tailed]
-              'breadth' -> per-species env-tolerance breadth (worldclim+alphaearth std/p10-p90/min-max)
-              'both'    -> concat
-    Reports, on held-out species: balanced accuracy vs a MAJORITY floor, Spearman(feature-score, ordinal),
-    per-feature univariate Spearman (channel decomposition), and a label-shuffle null (same pipeline, y permuted).
-    """
-    import numpy as _np
-    from pathlib import Path as _P
-    from scipy.stats import spearmanr as _sp
-    from sklearn.linear_model import LogisticRegression as _LR
-    from sklearn.metrics import balanced_accuracy_score as _bacc
-    import sys as _sys; _sys.path.insert(0, "/workspace")
-    from deepearth.autoresearch.spacetime.editable_files.lib.species_priors import load_trait as _load_trait
-
-    vocab = _np.load(_P(cache) / "gbif_vocab.npz", allow_pickle=True); gidx = vocab["global_idx"]; S = len(gidx)
-    if construct in ("ns_grank", "crpr"):
-        # AUTHORITATIVE EXTERNAL rarity ordinal from derived/species_rarity.jsonl (idx aligned to 2141 vocab).
-        import json as _json, re as _re
-        rows = [_json.loads(l) for l in open(_P(cache) / "derived/species_rarity.jsonl")]
-        yord = _np.full(S, -1, _np.int64)
-        for r in rows:
-            ii = int(r["idx"])
-            if not (0 <= ii < S):
-                continue
-            if construct == "ns_grank":  # NatureServe Global rank G1(rarest)..G5(secure) -> rarity ordinal 4..0
-                m = _re.match(r"G(\d)", r.get("ns_g_rank", "") or "")
-                if m:
-                    yord[ii] = 5 - int(m.group(1))   # G1->4 (rarest), G5->0 (common)
-            else:                          # CNPS Rare Plant Rank ordinal (0 = not-ranked/common .. higher = rarer)
-                yord[ii] = int(r.get("crpr_ordinal", 0))
-        labeled = yord >= 0
-    else:
-        key = "cat_rarity" if construct == "rarity" else "cat_ease_of_care"
-        _, yt, _, _ = _load_trait(cache, gidx, key, "cpu")
-        yraw = yt.cpu().numpy().astype(_np.int64)
-        # ordinal maps: raw label -> rarity/difficulty ordinal (higher = rarer / harder). 0 == missing.
-        if construct == "rarity":  # vocab [Abundant,Common,Rare,Uncommon]; raw = vocab_idx+1
-            ordmap = {1: 0, 2: 1, 4: 2, 3: 3}   # Abundant<Common<Uncommon<Rare
-        else:                       # vocab [Challenging,Easy,Moderate]; raw = vocab_idx+1; higher=harder
-            ordmap = {2: 0, 3: 1, 1: 2}         # Easy<Moderate<Challenging
-        labeled = _np.array([v in ordmap for v in yraw])
-        yord = _np.array([ordmap.get(v, -1) for v in yraw], _np.int64)
-
-    # ---- feature construction ----
-    feats = {}
-    if feature in ("range", "both"):
-        rf = _range_features_per_species(cache, S)
-        for k, v in rf.items():
-            vv = v.copy()
-            if k in ("n_obs", "n_cells_05", "n_cells_10", "hull_area"):
-                vv = _np.log1p(_np.nan_to_num(vv, nan=0.0))
-            feats[k] = vv
-    if feature in ("breadth", "both", "nichebreadth_env", "allbreadth"):
-        emean, emedoid, npsp, estd, elo, ehi, emin, emax, etime, epheno = load_env_species(cache, extra_channels=False, temporal=False)
-        # per-species scalar breadth summaries per channel-group (worldclim 0:19, alphaearth 19:83)
-        iqr = ehi - elo
-        feats["breadth_wc_std"]  = _np.nanmean(estd[:, :19], 1)
-        feats["breadth_ae_std"]  = _np.nanmean(estd[:, 19:83], 1)
-        feats["breadth_wc_iqr"]  = _np.nanmean(iqr[:, :19], 1)
-        feats["breadth_ae_iqr"]  = _np.nanmean(iqr[:, 19:83], 1)
-        feats["breadth_wc_range"] = _np.nanmean((emax - emin)[:, :19], 1)
-        feats["breadth_ae_range"] = _np.nanmean((emax - emin)[:, 19:83], 1)
-    if feature in ("nichebreadth", "allbreadth", "nichebreadth_env"):
-        nb = _niche_breadth_features_per_species(cache, S)
-        for k, v in nb.items():
-            vv = v.copy()
-            if k in ("elev_span", "elev_iqr"):
-                vv = _np.log1p(_np.nan_to_num(vv, nan=0.0))   # heavy-tailed elevation
-            feats[k] = vv
-    if feature == "allbreadth":
-        rf = _range_features_per_species(cache, S)
-        for k, v in rf.items():
-            vv = v.copy()
-            if k in ("n_obs", "n_cells_05", "n_cells_10", "hull_area"):
-                vv = _np.log1p(_np.nan_to_num(vv, nan=0.0))
-            feats[k] = vv
-
-    if only:
-        keep=[k for k in feats if any(t in k for t in only.split(","))]
-        feats={k:feats[k] for k in keep}
-    fnames = list(feats.keys())
-    X = _np.stack([feats[k] for k in fnames], 1).astype(_np.float32)
-    # a species with zero occurrences has all-nan features -> drop from labeled set (no self-data)
-    have = ~_np.isnan(X).any(1)
-    use = labeled & have
-    Xu = X[use]; yu = yord[use]
-    # z-score features over used species
-    mu = Xu.mean(0); sd = Xu.std(0); sd[sd < 1e-9] = 1.0; Xz = (Xu - mu) / sd
-    n = len(yu)
-
-    rng = _np.random.RandomState(seed)
-    if shuffle:
-        yu = yu[rng.permutation(n)]
-    perm = rng.permutation(n); ncut = int(round((1 - holdout) * n))
-    tr = perm[:ncut]; te = perm[ncut:]
-    # majority floor on the held-out split
-    vals, cts = _np.unique(yu[tr], return_counts=True); maj = vals[cts.argmax()]
-    floor_acc = float((yu[te] == maj).mean())
-    floor_bacc = float(_bacc(yu[te], _np.full(len(te), maj)))
-
-    # multinomial logistic (balanced) on train features -> held-out
-    clf = _LR(max_iter=2000, class_weight="balanced", C=1.0).fit(Xz[tr], yu[tr])
-    pred = clf.predict(Xz[te])
-    acc = float((pred == yu[te]).mean()); bacc = float(_bacc(yu[te], pred))
-    # ordinal signal: Spearman between a 1-D risk score (LR decision projected to ordinal expectation) and truth
-    proba = clf.predict_proba(Xz[te])
-    classes = clf.classes_.astype(_np.float32)
-    score = (proba * classes[None, :]).sum(1)  # expected ordinal
-    rho = _sp(yu[te], score).correlation
-    rho = float(rho if rho == rho else 0.0)
-
-    # per-feature univariate Spearman over ALL used labeled species (channel decomposition)
-    uni = {}
-    for j, name in enumerate(fnames):
-        r = _sp(yu, Xz[:, j]).correlation
-        uni[name] = round(float(r if r == r else 0.0), 3)
-
-    return {"construct": construct, "feature": feature, "n_labeled_used": int(n), "n_classes": int(len(vals)),
-            "held_out": int(len(te)), "floor_acc": round(floor_acc, 4), "floor_bacc": round(floor_bacc, 4),
-            "acc": round(acc, 4), "bacc": round(bacc, 4), "spearman_ord": round(rho, 4),
-            "univar_spearman": dict(sorted(uni.items(), key=lambda kv: -abs(kv[1]))),
-            "shuffle_null": shuffle, "seed": seed}
 
 
 if __name__ == "__main__":

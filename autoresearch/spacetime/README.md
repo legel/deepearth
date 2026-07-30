@@ -45,15 +45,15 @@ a pile of `diag*.py` copies — and cost every later agent the reading.
 
 ```bash
 # what can move my capability, and where do I edit?
-python -m deepearth.autoresearch.spacetime.editable_files.harness.probe_registry \
+python -m deepearth.autoresearch.spacetime.editable_files.harness \
     --capability family_from_spacetime
 
 # one experiment, recorded
-python -m deepearth.autoresearch.spacetime.editable_files.harness.trace \
+python -m deepearth.autoresearch.spacetime.editable_files.harness \
     --metric family_from_spacetime --probe "--forecast --n_shards 12" \
     --tag my_swing --device cuda:0 --ensue
 
 # measure WITHOUT recording (parity checks, smoke tests)
-EARTH4D_ALLOW_UNRECORDED=1 python -m deepearth.autoresearch.spacetime.editable_files.harness.probe \
+EARTH4D_ALLOW_UNRECORDED=1 python -m deepearth.autoresearch.spacetime.editable_files.probe \
     --forecast --n_shards 12 --device cuda:0 --result-json /tmp/r.json
 ```

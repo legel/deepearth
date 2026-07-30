@@ -30,6 +30,7 @@ meaning**, so an agent never has to guess what it may touch.
 ```
 autoresearch/
   .env                credentials (gitignored) — ENSUE_API_TOKEN; template in .env.example
+  scorecard.md        INDEX of every loop's scorecard — start here to read progress
   science.md          binding research rules — all three loops obey them
   bibliography.md     references
   main/               full-model DeepCal, the whole B1..B60 suite

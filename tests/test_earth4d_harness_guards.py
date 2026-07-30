@@ -13,7 +13,7 @@ REPO_PARENT = str(Path(__file__).resolve().parents[2])
 if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
-from autoresearch.spacetime.editable_files.harness.trace import (
+from autoresearch.spacetime.editable_files.harness import (
     CAPABILITIES,
     DEFAULT_PROBE_MODULE,
     EXCLUDED_CAPABILITIES,
@@ -286,7 +286,7 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
 
     def test_canonical_probe_rejects_unrecorded_direct_call(self):
         result = self.run_module(
-            "deepearth.autoresearch.spacetime.editable_files.harness.probe"
+            "deepearth.autoresearch.spacetime.editable_files.probe"
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("would never be recorded", result.stdout)
@@ -298,7 +298,7 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
         They must now be reachable; the only gate is that a run be recordable.
         """
         modules = (
-            "editable_files.harness.probe",
+            "editable_files.probe",
             "editable_files.lib.calib_probe",
         )
         for name in modules:

@@ -68,9 +68,13 @@ class LoopIndependenceTests(unittest.TestCase):
         """
         for loop in LOOPS:
             root = AUTORESEARCH / loop
-            for required in ("program", "editable_files", "editable_files/harness",
-                             "editable_files/lib", "editable_files/data", "records"):
+            for required in ("program", "editable_files", "editable_files/lib",
+                             "editable_files/data", "records"):
                 self.assertTrue((root / required).is_dir(), f"{loop}/ is missing {required}/")
+            # The harness may be ONE FILE (the target shape — spacetime is there) or still a package.
+            harness = root / "editable_files" / "harness"
+            self.assertTrue(harness.with_suffix(".py").is_file() or harness.is_dir(),
+                            f"{loop}/ has no harness")
 
     def test_every_loop_states_its_own_program(self):
         programs = {"main": "autoresearch.md", "biological": "program.md", "spacetime": "program.md"}
@@ -95,7 +99,7 @@ class RecordPathTests(unittest.TestCase):
     def test_spacetime_board_resolves_inside_its_loop(self):
         import importlib
         module = importlib.import_module(
-            "deepearth.autoresearch.spacetime.editable_files.harness.trace")
+            "deepearth.autoresearch.spacetime.editable_files.harness")
         expected = AUTORESEARCH / "spacetime" / "records" / "records.json"
         self.assertEqual(module.RECORDS.resolve(), expected.resolve(),
                          f"board resolved to {module.RECORDS} — outside its loop")

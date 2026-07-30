@@ -174,7 +174,7 @@ def require_recorded_entrypoint(
         return
     raise ValueError(
         f"{name} was invoked directly, so its result would never be recorded. Run it through "
-        "deepearth.autoresearch.spacetime.editable_files.harness.trace (which declares --metric and writes the ledger), or set "
+        "deepearth.autoresearch.spacetime.editable_files.harness (which declares --metric and writes the ledger), or set "
         f"{ALLOW_UNRECORDED_ENV}=1 for a deliberately unrecorded run."
     )
 
