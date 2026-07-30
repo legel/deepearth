@@ -286,7 +286,8 @@ class Earth4D(nn.Module):
                  stencil_radius: float = 0.002,
                  coord_shrink: float = 1.0,
                  spatial_ensemble: int = 0,
-                 whiten: bool = False):
+                 whiten: bool = False,
+                 standardize: bool = False):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -543,8 +544,9 @@ class Earth4D(nn.Module):
         # the blocks the encoder concatenates have wildly different norms, and 800 Adam steps on the raw
         # concatenation are dominated by whichever block is largest. A frozen PCA whitening fit on TRAIN
         # rows makes the output isotropic, changing the geometry the head actually sees.
-        self.whiten = bool(whiten)
+        self.whiten = bool(whiten); self.standardize = bool(standardize)
         self._wh_mean = None; self._wh_W = None
+        self._mean = None; self._std = None
 
         self.time_film = int(time_film)
         if self.time_film > 0:
@@ -763,7 +765,26 @@ class Earth4D(nn.Module):
             feats = torch.cat([feats, torch.sin(self.elm_scale * (z @ self._elm_W) / math.sqrt(self._elm_in))], dim=-1)
         if self._wh_W is not None:
             feats = (feats - self._wh_mean.to(feats.device)) @ self._wh_W.to(feats.device)
+        if self._std is not None:
+            # DIAGONAL standardization -- no rotation, so unlike PCA whitening it cannot amplify a
+            # near-null direction. The direct test of the dilution reading: every additive arm lost
+            # ~0.002-0.005, which is what a head dominated by whichever block has the largest norm does.
+            feats = (feats - self._mean.to(feats.device)) / self._std.to(feats.device)
         return feats
+
+    def fit_standardize(self, coords: torch.Tensor, chunk: int = 16384) -> 'Earth4D':
+        """Per-dimension mean/std of the encoder output, fit on TRAIN rows only."""
+        with torch.no_grad():
+            s = s2 = None; n = 0
+            for i in range(0, coords.shape[0], chunk):
+                f = self._forward_tensor(coords[i:i + chunk]).double()
+                s = f.sum(0) if s is None else s + f.sum(0)
+                s2 = (f * f).sum(0) if s2 is None else s2 + (f * f).sum(0)
+                n += f.shape[0]
+            mean = s / n
+            self._mean = mean.float()
+            self._std = (s2 / n - mean * mean).clamp_min(1e-8).sqrt().float()
+        return self
 
     def fit_whiten(self, coords: torch.Tensor, chunk: int = 16384, eps: float = 1e-4) -> 'Earth4D':
         """Fit a PCA whitening of the encoder output on TRAIN rows only."""
