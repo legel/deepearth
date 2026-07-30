@@ -178,6 +178,16 @@ CONFIG = {
     "rec_block_deg": 2.0,
     "rec_fast": False,
     "env_aux_weight": 1.0,
+    # ---- ARCHITECTURE ARMS (earth4d.py). Default-off: the champion path is byte-identical. ----
+    "seasonal_time": 0,        # 1 = space-time planes hash annual PHASE; 2 = absolute planes + seasonal planes
+    "drop_spatiotemporal": False,
+    "extent_fit": False,       # scale the ECEF axes to the TRAIN extent, not to the globe
+    "nystrom": 0,              # RBF features against N train-drawn space-time anchors
+    "conj": 0,                 # explicit space x time degree-2 sketch
+    "elm": 0,                  # frozen random nonlinear expansion of the encoder's own output
+    "elm_scale": 1.0,
+    "stencil": 0,              # local field average of the spatial lookup instead of a point sample
+    "stencil_radius": 0.002,
 }
 @dataclass
 class _DynamicsCtx:
@@ -800,7 +810,23 @@ def main(argv=None):
                   time_harmonics=CONFIG["time_harmonics"], time_film=CONFIG["time_film"],
                   spatial_cline=CONFIG["spatial_cline"], cline_scale=CONFIG["cline_scale"],
                   spatial_siren=CONFIG["spatial_siren"], siren_layers=CONFIG["siren_layers"], siren_w0=CONFIG["siren_w0"],
-                  causal_lags=CONFIG["causal_lags"], causal_lag_span=CONFIG["causal_lag_span"]).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
+                  causal_lags=CONFIG["causal_lags"], causal_lag_span=CONFIG["causal_lag_span"],
+                  seasonal_time=CONFIG["seasonal_time"], drop_spatiotemporal=CONFIG["drop_spatiotemporal"],
+                  nystrom=CONFIG["nystrom"], conj=CONFIG["conj"], elm=CONFIG["elm"],
+                  elm_scale=CONFIG["elm_scale"], stencil=CONFIG["stencil"],
+                  stencil_radius=CONFIG["stencil_radius"],
+                  # one year in normalized-time units. tspan is fit on TRAIN rows only (see
+                  # normalize_time_from_train), so the seasonal period carries no test information.
+                  time_period=(365.25 / tspan if CONFIG["forecast"] and CONFIG["seasonal_time"] else 0.0),
+                  ).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
+    if CONFIG["extent_fit"] or CONFIG["nystrom"] > 0:
+        # Fit on TRAIN rows only. Using every row would leak the evaluation period's extent (and, for the
+        # anchors, its actual coordinates) into the feature map.
+        _train_coords = coords[torch.tensor(~test)].to(dev)
+        if CONFIG["extent_fit"]:
+            enc.fit_extent(_train_coords)
+        if CONFIG["nystrom"] > 0:
+            enc.fit_anchors(_train_coords, seed=a.seed)
 
     # (The old --env_temporal/--env_perobs/--env_quantiles/--env_extremes/--env_spread guard is gone with
     # those flags: they only ever affected the deleted --env_trait diagnostic and were silently inert on

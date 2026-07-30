@@ -273,7 +273,17 @@ class Earth4D(nn.Module):
                  siren_layers: int = 2,
                  siren_w0: float = 30.0,
                  causal_lags: int = 0,
-                 causal_lag_span: float = 0.25):
+                 causal_lag_span: float = 0.25,
+                 seasonal_time: int = 0,
+                 time_period: float = 0.0,
+                 drop_spatiotemporal: bool = False,
+                 nystrom: int = 0,
+                 nystrom_scales: Tuple[float, ...] = (0.25, 1.0, 4.0),
+                 conj: int = 0,
+                 elm: int = 0,
+                 elm_scale: float = 1.0,
+                 stencil: int = 0,
+                 stencil_radius: float = 0.002):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -295,6 +305,22 @@ class Earth4D(nn.Module):
         self.spatial_log2_hashmap_size = spatial_log2_hashmap_size; self.temporal_log2_hashmap_size = temporal_log2_hashmap_size
         self.spatial_dim = spatial_levels * features_per_level
         self.spatiotemporal_dim = temporal_levels * features_per_level * 3    # 3 projections
+        # ---- ARCHITECTURE ARMS (all default-off; the champion path is byte-identical) --------------
+        # SEASONAL TIME. The forecast split trains on t in [0,0.5] and tests on t in [0.5,1.0], and the
+        # spatiotemporal planes hash ABSOLUTE t. Every test row therefore lands in a time cell no train
+        # row ever occupied, at EVERY level (coarsest cell width 0.0625 in t vs a 0.5-wide extrapolation
+        # gap), so with a frozen table the whole space-time block is an uncorrelated random code at test
+        # time. Replacing t with its ANNUAL PHASE makes train and test share cells: the block becomes a
+        # seasonal climatology of place, which is what actually transfers across a forecast boundary.
+        #   1 = replace absolute t by phase   2 = keep absolute planes and ADD seasonal planes
+        self.seasonal_time = int(seasonal_time)
+        self.time_period = float(time_period)    # one cycle, in normalized-time units (set by the probe)
+        if self.seasonal_time == 2:
+            self.spatiotemporal_dim = self.spatiotemporal_dim * 2
+        # DROP the space-time block entirely -- the ablation that says whether it carries anything at all.
+        self.drop_spatiotemporal = bool(drop_spatiotemporal)
+        if self.drop_spatiotemporal:
+            self.spatiotemporal_dim = 0
         self.output_dim = self.spatial_dim + self.spatiotemporal_dim
 
         spatial_max_res = int(base_spatial_resolution * (growth_factor ** (spatial_levels - 1)))
@@ -446,6 +472,52 @@ class Earth4D(nn.Module):
         # time-harmonic features are ADDITIVE; a linear head cannot form space*time PRODUCTS. This modulates the
         # spatial-hash block by a learned function of a multi-scale time basis -> explicit seasonal-spatial interaction
         # (species range shifts with season). Zero-init W/b -> gate = 1 + tanh(0) = 1 -> identity at start.
+        # NYSTROM / ANCHOR-RBF space-time channel. Both existing bases are DATA-BLIND: the hash tiles the
+        # domain uniformly and the RFF draws frequencies from a fixed Gaussian, so on a corpus whose
+        # occurrences are extremely clustered most of the capacity describes empty space. A Nystrom map
+        # puts its basis functions WHERE THE DATA IS -- features are RBF kernels to M anchor space-time
+        # points drawn from TRAIN rows only, at several bandwidths. Same idea as the hash (locality) with
+        # the tiling chosen by the data instead of by the grid. fit_anchors() must be called first.
+        self.nystrom = int(nystrom)
+        self.nystrom_scales = tuple(float(s) for s in nystrom_scales)
+        if self.nystrom > 0:
+            self.output_dim = self.output_dim + self.nystrom * len(self.nystrom_scales)
+        # SPACE x TIME CONJUNCTION by random sketch. The head gets spatial features and time features
+        # CONCATENATED, and a ReLU MLP has to discover any product between them from 800 steps of SGD.
+        # A species is present at this place AND in this season; that conjunction is a degree-2 term.
+        # This forms it explicitly: two random projections, one of the spatial-hash block and one of the
+        # time basis, multiplied element-wise -- the standard sketch of a degree-2 polynomial kernel.
+        # (exp/triplane-conjunction multiplied the three hash PLANES by each other, which is a different
+        # and much noisier product; this multiplies space by time.)
+        self.conj = int(conj)
+        if self.conj > 0:
+            self.register_buffer("_conj_Ws", torch.randn(self.spatial_dim, self.conj) / math.sqrt(self.spatial_dim))
+            self._conj_tdim = 2 * max(int(time_harmonics), 1) + 1
+            self.register_buffer("_conj_Wt", torch.randn(self._conj_tdim, self.conj) / math.sqrt(self._conj_tdim))
+            self.output_dim = self.output_dim + self.conj
+        # ELM: a frozen random NONLINEAR expansion of the encoder's own output. Everything the encoder
+        # emits today is fed to the head as a flat concatenation, so the head sees a LINEAR kernel over
+        # the feature blocks plus whatever its one hidden layer can learn. Passing the features through a
+        # fixed random projection and a sinusoid is an RFF over feature space -- i.e. a Gaussian kernel on
+        # the encoder's representation rather than a linear one. Changes the kernel class, not the levers.
+        self.elm = int(elm)
+        self.elm_scale = float(elm_scale)
+        if self.elm > 0:
+            self.register_buffer("_elm_W", torch.randn(self.output_dim, self.elm))
+            self._elm_in = self.output_dim
+            self.output_dim = self.output_dim + self.elm
+        # STENCIL. The hash is read POINTWISE, so its fine levels are an uncorrelated code for two points
+        # a few hundred metres apart. Averaging the spatial lookup over a fixed 6-point stencil turns the
+        # point sample into a LOCAL FIELD AVERAGE (a low-pass of the random code) at a chosen radius, so
+        # nearby observations share representation instead of colliding at random.
+        self.stencil = int(stencil)
+        self.stencil_radius = float(stencil_radius)
+        # EXTENT FIT (set by fit_extent from TRAIN rows): rescale the ECEF axes to the data's own extent
+        # instead of to the globe. At planetary normalization a regional corpus occupies ~8% of the hash
+        # domain, so the coarse levels are constant across every observation and only the finest levels
+        # vary at all.
+        self._ext_lo = None; self._ext_hi = None
+
         self.time_film = int(time_film)
         if self.time_film > 0:
             self.register_buffer("_film_freqs", torch.tensor([2.0 ** k for k in range(self.time_film)], dtype=torch.float32))
@@ -453,16 +525,62 @@ class Earth4D(nn.Module):
             self._film_b = nn.Parameter(torch.zeros(self.spatial_dim))
 
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
+        if self.stencil > 0:
+            out = self.xyz_encoder(xyz, size=1.0)
+            for axis in range(3):
+                for sign in (-1.0, 1.0):
+                    off = torch.zeros_like(xyz)
+                    off[..., axis] = sign * self.stencil_radius
+                    out = out + self.xyz_encoder(xyz + off, size=1.0)
+            return out / 7.0
         return self.xyz_encoder(xyz, size=1.0)
 
-    def _encode_spatiotemporal(self, xyzt: torch.Tensor) -> torch.Tensor:
-        t_scaled = (xyzt[..., 3:] * 2 - 1) * 0.9
-        xyzt_scaled = torch.cat([xyzt[..., :3], t_scaled], dim=-1)
+    def fit_extent(self, coords: torch.Tensor) -> 'Earth4D':
+        """Fit the spatial normalization to TRAIN rows (call with train coordinates only)."""
+        n = self._normalize_coords(coords)[..., :3]
+        self._ext_lo = n.min(0).values
+        self._ext_hi = torch.maximum(n.max(0).values, self._ext_lo + 1e-6)
+        return self
+
+    def fit_anchors(self, coords: torch.Tensor, seed: int = 0) -> 'Earth4D':
+        """Draw the Nystrom anchor set from TRAIN rows and whiten the space-time axes on them."""
+        n = self._normalize_coords(coords)
+        g = torch.Generator(device='cpu').manual_seed(int(seed))
+        idx = torch.randperm(n.shape[0], generator=g)[: self.nystrom]
+        self._anchors = n[idx.to(n.device)].contiguous()
+        self._anchor_scale = n.std(0).clamp_min(1e-6)
+        return self
+
+    def _nystrom(self, norm_coords: torch.Tensor) -> torch.Tensor:
+        """RBF kernel features against M train-drawn space-time anchors, at several bandwidths."""
+        u = norm_coords / self._anchor_scale
+        a = self._anchors / self._anchor_scale
+        d2 = torch.cdist(u, a).pow(2) / u.shape[-1]
+        return torch.cat([torch.exp(-d2 / (2.0 * s * s)) for s in self.nystrom_scales], dim=-1)
+
+    def _triplane(self, xyz: torch.Tensor, t_scaled: torch.Tensor) -> torch.Tensor:
+        xyzt_scaled = torch.cat([xyz, t_scaled], dim=-1)
         xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
         yzt = xyzt_scaled[..., 1:]
         xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
         return torch.cat([self.xyt_encoder(xyt, size=1.0), self.yzt_encoder(yzt, size=1.0),
                           self.xzt_encoder(xzt, size=1.0)], dim=-1)
+
+    def _seasonal_t(self, t: torch.Tensor) -> torch.Tensor:
+        """Annual phase of normalized time, in the planes' [-0.9, 0.9] coordinate units."""
+        if self.time_period <= 0:
+            raise RuntimeError("seasonal_time needs time_period (normalized units per cycle) from the probe")
+        return (torch.remainder(t / self.time_period, 1.0) * 2 - 1) * 0.9
+
+    def _encode_spatiotemporal(self, xyzt: torch.Tensor) -> torch.Tensor:
+        xyz = xyzt[..., :3]
+        abs_t = (xyzt[..., 3:] * 2 - 1) * 0.9
+        if self.seasonal_time == 1:
+            return self._triplane(xyz, self._seasonal_t(xyzt[..., 3:]))
+        if self.seasonal_time == 2:
+            return torch.cat([self._triplane(xyz, abs_t),
+                              self._triplane(xyz, self._seasonal_t(xyzt[..., 3:]))], dim=-1)
+        return self._triplane(xyz, abs_t)
 
     def _learnable_freq(self, norm: torch.Tensor) -> torch.Tensor:
         """Learnable per-axis frequency (scale + center), bounded to [-0.9, 0.9] by tanh."""
@@ -528,7 +646,11 @@ class Earth4D(nn.Module):
             else:
                 x_norm, y_norm, z_norm = x / ECEF_NORM_FACTOR, y / ECEF_NORM_FACTOR, z / ECEF_NORM_FACTOR
                 time_norm = time
-        return torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
+        out = torch.stack([x_norm, y_norm, z_norm, time_norm], dim=-1)
+        if self._ext_lo is not None:
+            lo, hi = self._ext_lo.to(out.device), self._ext_hi.to(out.device)
+            out = torch.cat([((out[..., :3] - lo) / (hi - lo) * 2.0 - 1.0) * 0.9, out[..., 3:]], dim=-1)
+        return out
 
     def _fourier(self, norm_coords: torch.Tensor) -> torch.Tensor:
         """Spatial-only random Fourier features (xyz, not time): [sin(2π B xyz), cos(2π B xyz)]."""
@@ -585,7 +707,14 @@ class Earth4D(nn.Module):
         if self.time_film > 0:
             gate = 1.0 + torch.tanh(self._film_harmonics(norm_coords) @ self._film_W + self._film_b)
             spatial = spatial * gate                             # space x time interaction (FiLM)
-        feats = torch.cat([spatial, self._encode_spatiotemporal(norm_coords)], dim=-1)
+        feats = (spatial if self.drop_spatiotemporal
+                 else torch.cat([spatial, self._encode_spatiotemporal(norm_coords)], dim=-1))
+        if self.nystrom > 0:
+            feats = torch.cat([feats, self._nystrom(norm_coords)], dim=-1)
+        if self.conj > 0:
+            tb = (torch.cat([self._time_harmonics(norm_coords), norm_coords[..., 3:]], dim=-1)
+                  if self.time_harmonics > 0 else norm_coords[..., 3:])
+            feats = torch.cat([feats, (spatial @ self._conj_Ws) * (tb @ self._conj_Wt)], dim=-1)
         if self.fourier_features > 0:
             feats = torch.cat([feats, self._fourier(norm_coords)], dim=-1)
         if self.time_harmonics > 0:
@@ -596,6 +725,9 @@ class Earth4D(nn.Module):
             feats = torch.cat([feats, self._siren(norm_coords)], dim=-1)
         if self.causal_lags > 0:
             feats = torch.cat([feats, self._causal_state(norm_coords)], dim=-1)
+        if self.elm > 0:
+            z = feats / feats.detach().std().clamp_min(1e-6)
+            feats = torch.cat([feats, torch.sin(self.elm_scale * (z @ self._elm_W) / math.sqrt(self._elm_in))], dim=-1)
         return feats
 
     def get_output_dim(self) -> int:
