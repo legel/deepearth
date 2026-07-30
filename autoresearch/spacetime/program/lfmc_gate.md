@@ -46,7 +46,7 @@ record must not be described as Earth4D science or promoted into a scaled run un
 Start the real-data split and baseline audit on the official Globe-LFMC table with:
 
 ```bash
-python3 -m autoresearch.spacetime.harness.science_gate \
+python3 -m autoresearch.spacetime.editable_files.lib.science_gate \
   --download --json-out data/lfmc/earth4d_science_gate_dev.json
 python3 -m unittest discover -s tests -p 'test_earth4d_*.py'
 ```

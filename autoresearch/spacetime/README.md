@@ -1,53 +1,59 @@
 # spacetime — Earth4D encoder loop
 
-Four directories, one rule each. The split exists so an agent never has to guess whether a file is
-fair game.
-
 ```
-  program/   READ FIRST, edit deliberately   the contract: what to pick, what counts as evidence
-  instrument/ EDIT IN PLACE, on a branch     the probe: modes, propagators, channels
-  harness/   DO NOT EDIT to win a run        the judge: what gets measured and what gets recorded
-  state/     NEVER hand-edit                 generated: records.json, traces, ledgers
+  program/                 the contract. Read first, change only when doctrine changes.
+  editable_files/          THE ONLY CODE AN EXPERIMENT MAY EDIT
+      harness/               the loop: probe.py, modes, trace.py, contract, registry
+      lib/                   auxiliary: propagators, phenology, targets, channels, gate
+  data/inputs/             EDITABLE — the DATA lever: channels, densification, new sources
+  data/records/            records.json, traces/, ledgers. Never hand-edited.
 ```
 
-| directory | contains | policy |
+| path | contains | notes |
 |---|---|---|
-| `program/` | `program.md` (the loop), `scorecard.md` (the board), `lfmc_gate.md` (pinned gate provenance), `box-operations.md` | Read before every cycle. Change it when the *doctrine* changes — never to accommodate a result. |
-| `instrument/` | `probe.py`, `probe_modes_*.py`, `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py`, `lfmc_recurrent.py` | The **instrument**, not a folder of experiments. An experiment is a *branch of edits to these files* — change mechanisms, swap channels, rewrite a propagator, and edit `encoders/spacetime/earth4d.py` for architecture work. **Do not add a file here for one idea**, and do not add a gated flag until it graduates. See program.md, "An experiment is an EDIT on a BRANCH". |
-| `harness/` | `trace.py`, `probe_contract.py`, `probe_emit.py`, `probe_registry.py`, `science_gate.py` | The measurement and recording layer. **Editing this to make a run look better is the one move that invalidates everything.** Change it only as deliberate infrastructure work, with tests, never inside an experiment. |
-| `state/` | `records.json`, `traces/`, `events.jsonl`, backups | Written by the harness. Hand-editing it forges a result. To correct a record, write the correction *and its reason* through the ledger. |
+| `program/program.md` | the loop: pick → diagnose → run → measure → decide → write | read every cycle |
+| `program/scorecard.md` | the board: 7 probeable capabilities, and what is excluded and why | pick your metric here |
+| `program/lfmc_gate.md` | pinned LFMC gate + split provenance | a gate record, not a program |
+| `program/box-operations.md` | box, GPUs, token location, commit identity | gitignored |
+| `editable_files/harness/probe.py` | the probe: shared loading, dispatch, the recording modes | edit in place, on a branch |
+| `editable_files/harness/probe_modes_tables.py` | the four encoder-free modes (env → identity from tables) | DATA lever only |
+| `editable_files/harness/trace.py` | declares the metric, runs the probe, applies the record gate, writes the ledger and Ensue | changing what a number MEANS is its own commit, with a test |
+| `editable_files/harness/probe_contract.py` | `ProbeResult`: identity, validation, fair-gain, rendering | the probe declares; nothing parses stdout |
+| `editable_files/harness/probe_emit.py` | `declare()` — the one path by which a number becomes recordable | |
+| `editable_files/harness/probe_registry.py` | capability → modes → what each requires → where to edit | `--capability X` |
+| `editable_files/lib/recurrence.py` | 4D-LSTM propagator (science.md rule 2b), time normalization, guards | imported by most of the loop |
+| `editable_files/lib/gnn.py` | message-passing propagator — the alternative mechanism to compare against | |
+| `editable_files/lib/phenology.py` | phenology runners | |
+| `editable_files/lib/dyntargets.py` | target builders for cooccur / SDM / pheno modes | |
+| `editable_files/lib/env_field.py` | env-field decode | |
+| `editable_files/lib/calib_probe.py` | the calibration capability (own CLI; not yet on the contract) | |
+| `editable_files/lib/lfmc_recurrent.py` | the registered LFMC evidence experiment (draft, unrun) | |
+| `editable_files/lib/science_gate.py` | LFMC split/baseline gate | |
+| `data/inputs/` | the channels that feed the encoder | **editable — the DATA lever.** `family_from_env` and `family_from_spacetime` both read INPUT-LIMITED right now, so this is where their next move lives |
+| `data/records/records.json` | the board: one record per capability + ledger of history and dead-ends | single owner, gitignored |
+| `data/records/traces/` | per-run log + `.trace.json` + `.result.json` | |
 
-## Why `instrument/` is not called `experiments/`
+## An experiment is an edit on a branch
 
-Because a directory called `experiments/` invites you to *put an experiment in it*, and that is the
-habit that produced 113 flags, a 1,552-line `main()`, 21 `champion_*.yaml` variants and a pile of
-`diag*.py` copies. These files are the instrument. The experiment is the diff, held by a branch, and it
-disappears when the branch does.
-
-## Why `harness/` is fenced off
-
-The harness decides what a number means: which capability a run measured, whether two runs are
-comparable, whether a score becomes a record. Every bad record in this project's history came from that
-layer being wrong or bypassed — a different target scraped into a capability's record, a control's
-accuracy stored as the encoder's, a research directive compiled into the gate so nothing could run, a
-dead-end ledger evicting history by first letter. An agent that edits the judge to pass its own run
-produces a number nobody can trust, including itself.
-
-If the harness is genuinely wrong, fixing it is welcome — as its own change, with a test that fails
-before and passes after, separate from any experiment.
+Not a new file, not a new flag. `git worktree add ../e4d-<tag> -b exp/<tag>`, edit
+`editable_files/**` and `encoders/spacetime/earth4d.py` in place, sweep, and let the branch hold the
+isolation. A flag is what you add when something **graduates**; a dead flag is a bug. Gating at
+conception instead is what produced 113 flags, a 1,552-line `main()`, 21 `champion_*.yaml` variants and
+a pile of `diag*.py` copies — and cost every later agent the reading.
 
 ## Running
 
 ```bash
 # what can move my capability, and where do I edit?
-python -m deepearth.autoresearch.spacetime.harness.probe_registry --capability family_from_spacetime
+python -m deepearth.autoresearch.spacetime.editable_files.harness.probe_registry \
+    --capability family_from_spacetime
 
 # one experiment, recorded
-python -m deepearth.autoresearch.spacetime.harness.trace \
+python -m deepearth.autoresearch.spacetime.editable_files.harness.trace \
     --metric family_from_spacetime --probe "--forecast --n_shards 12" \
     --tag my_swing --device cuda:0 --ensue
 
-# measure without recording (parity checks, smoke tests)
-EARTH4D_ALLOW_UNRECORDED=1 python -m deepearth.autoresearch.spacetime.instrument.probe \
+# measure WITHOUT recording (parity checks, smoke tests)
+EARTH4D_ALLOW_UNRECORDED=1 python -m deepearth.autoresearch.spacetime.editable_files.harness.probe \
     --forecast --n_shards 12 --device cuda:0 --result-json /tmp/r.json
 ```

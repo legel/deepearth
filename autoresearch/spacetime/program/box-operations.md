@@ -20,7 +20,7 @@ this is the "how to actually run it on the box" layer. **Not committed** (holds 
 ## Running experiments
 - No background driver. `loop.sh`/`start.sh` were removed (random 3-knob sampler, max-of-N records, hogged both GPUs).
 - Run one deliberate swing at a time:
-  `cd /workspace/deepearth && PYTHONPATH=/workspace python3.12 -m deepearth.autoresearch.spacetime.harness.trace --metric <cap> --probe "<flags>" --tag <id> --device cuda:N --ensue`
+  `cd /workspace/deepearth && PYTHONPATH=/workspace python3.12 -m deepearth.autoresearch.spacetime.editable_files.harness.trace --metric <cap> --probe "<flags>" --tag <id> --device cuda:N --ensue`
 - Check nothing is holding a GPU first: `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader`
   (empty = free; the util% counter shows a phantom 98% and means nothing).
 - Killing stragglers: use a self-excluding pattern — `pgrep -f "spacetime[.]probe" | xargs -r kill -9`.
@@ -33,4 +33,4 @@ this is the "how to actually run it on the box" layer. **Not committed** (holds 
 
 ## Report each check-in
 Iterations since last, any new records (old→new + receipt), and the full current-best scorecard:
-`python3 -c "import json;d=json.load(open('autoresearch/spacetime/state/records.json'));[print(k,round(v['score'],4),v.get('tag')) for k,v in sorted(d.items(),key=lambda x:-x[1]['score'])]"`
+`python3 -c "import json;d=json.load(open('autoresearch/spacetime/data/records.json'));[print(k,round(v['score'],4),v.get('tag')) for k,v in sorted(d.items(),key=lambda x:-x[1]['score'])]"`

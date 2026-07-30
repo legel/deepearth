@@ -53,7 +53,7 @@ focus, opportunities the inspiration.
 ## The loop
 1. Read `results.tsv` + the per-benchmark profile; form a hypothesis grounded in `science.md`.
 2. Edit a model/config/data file; `git commit` (report every benchmark score in order + the means).
-3. Train (`python -m deepearth.autoresearch.main.instrument.train`); budget is set in `deepcal.yaml` (`time_budget_s`).
+3. Train (`python -m deepearth.autoresearch.main.editable_files.harness.train`); budget is set in `deepcal.yaml` (`time_budget_s`).
 4. Read `grep "^net_score:" run.log`; empty ⇒ crash (`tail -50`), fix at the root or revert.
 5. Append to `results.tsv`. Keep the commit if the mean rose with no metric regressed; else revert.
 

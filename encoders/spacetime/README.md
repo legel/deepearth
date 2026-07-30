@@ -47,7 +47,7 @@ bash install.sh
 
 ```bash
 # From the repository root: pinned real data, strict split audit, train-only baselines
-python3 -m autoresearch.spacetime.harness.science_gate \
+python3 -m autoresearch.spacetime.editable_files.lib.science_gate \
   --download --json-out data/lfmc/earth4d_science_gate_dev.json
 ```
 

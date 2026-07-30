@@ -61,9 +61,12 @@ Thumbs.db
 # Logs
 *.log
 
-# Environment variables
+# Environment variables — credentials. The Ensue token lives in autoresearch/.env; the bare
+# `.env` pattern matches at any depth, but spell it out so nobody has to wonder.
 .env
 .env.local
+autoresearch/.env
+**/.env
 # autoresearch working state (local only)
 # results.tsv = per-experiment scores; autoresearch.md defines it as untracked local state
 *.pt

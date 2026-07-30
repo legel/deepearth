@@ -13,7 +13,7 @@ REPO_PARENT = str(Path(__file__).resolve().parents[2])
 if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
-from autoresearch.spacetime.harness.trace import (
+from autoresearch.spacetime.editable_files.harness.trace import (
     CAPABILITIES,
     DEFAULT_PROBE_MODULE,
     EXCLUDED_CAPABILITIES,
@@ -23,8 +23,8 @@ from autoresearch.spacetime.harness.trace import (
     _read_records,
     _record_gate,
 )
-from autoresearch.main.harness.perception_diag import _macro_accuracy, probe_genus_from_semantic
-from autoresearch.spacetime.instrument.recurrence import (
+from autoresearch.main.editable_files.harness.perception_diag import _macro_accuracy, probe_genus_from_semantic
+from autoresearch.spacetime.editable_files.lib.recurrence import (
     TRACE_AUTH_FD_ENV,
     normalize_forecast_time,
     phenology_feature_set,
@@ -286,7 +286,7 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
 
     def test_canonical_probe_rejects_unrecorded_direct_call(self):
         result = self.run_module(
-            "deepearth.autoresearch.spacetime.instrument.probe"
+            "deepearth.autoresearch.spacetime.editable_files.harness.probe"
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("would never be recorded", result.stdout)
@@ -298,8 +298,8 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
         They must now be reachable; the only gate is that a run be recordable.
         """
         modules = (
-            "instrument.probe",
-            "instrument.calib_probe",
+            "editable_files.harness.probe",
+            "editable_files.lib.calib_probe",
         )
         for name in modules:
             with self.subTest(module=name):
@@ -313,7 +313,7 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
 
     def test_lfmc_science_gate_remains_runnable(self):
         result = self.run_module(
-            "deepearth.autoresearch.spacetime.harness.science_gate",
+            "deepearth.autoresearch.spacetime.editable_files.lib.science_gate",
             "--help",
         )
         self.assertEqual(result.returncode, 0, result.stdout)

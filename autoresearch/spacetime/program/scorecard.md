@@ -13,8 +13,8 @@ A different mode or shard count is a different target, not a better score.
 
 | source of truth | holds |
 |---|---|
-| `autoresearch/main/state/champion_scores.json` | Layer 1 champion scores (full model) |
-| `autoresearch/spacetime/state/records.json` | Layer 2 probe records (gitignored, lives on the box) |
+| `autoresearch/main/data/champion_scores.json` | Layer 1 champion scores (full model) |
+| `autoresearch/spacetime/data/records.json` | Layer 2 probe records (gitignored, lives on the box) |
 | `autoresearch/main/program/BENCHMARKS.md` | committed reference baseline, reproduction command |
 | this file | the canonical registry — capability ⇄ bench ⇄ probe mode ⇄ probeability |
 
