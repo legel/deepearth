@@ -26,6 +26,13 @@ THIS PROBE answers two questions, reusing the EXISTING probe.py loaders + phenol
 
 Reports absolute skill + deltas vs coordinate-PE controls, multi-seed, over the SAME query set.
 """
+if __name__ == "__main__":
+    raise SystemExit(
+        "satforecast.py is retired because its per-seed transforms and joint "
+        "split leak test information. probe_sat.py is also legacy-closed under "
+        "the current directive; use the validation-only LFMC evidence program."
+    )
+
 import argparse, glob, time, json
 import numpy as np, torch
 from pathlib import Path
@@ -96,8 +103,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     raise SystemExit(
         "satforecast.py is retired because its per-seed transforms and joint "
-        "split leak test information. Use probe_sat.py, whose strict split "
-        "embargoes cross-quadrants and fits transforms on train only."
+        "split leak test information. probe_sat.py is also legacy-closed under "
+        "the current directive; use the validation-only LFMC evidence program."
     )
     dev = a.device if torch.cuda.is_available() else "cpu"
     seeds = [int(s) for s in a.seeds.split(",")]
