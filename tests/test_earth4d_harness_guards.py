@@ -233,7 +233,7 @@ class CausalTargetQuarantineTests(unittest.TestCase):
                 argv=argv,
             )
             self.assertNotIn(TRACE_AUTH_FD_ENV, os.environ)
-        with self.assertRaisesRegex(ValueError, "direct legacy GBIF probes are closed"):
+        with self.assertRaisesRegex(ValueError, "would never be recorded"):
             require_recorded_entrypoint(
                 "probe.py",
                 module=DEFAULT_PROBE_MODULE,

@@ -93,8 +93,19 @@ Reads:
 - **calibration** reports no fair baseline, so its bottleneck is undiagnosable and 0.5910 is barely
   above the 0.5 useless floor. Its stored probe uses `--feature/--ensemble`, which belong to
   `calib_probe.py`, not `probe.py` — the record cannot currently be reproduced through the harness.
-- **family_from_spacetime** 0.1914 was set by an automated run (`exp58_..._causal_clock_second_jet`,
-  2026-07-30T06:34), not a deliberate swing. Treat as unconfirmed until re-run with intent.
+- **family_from_spacetime** 0.1914 is **unreproducible under current code**. It was set by an automated
+  run (`exp58_..._causal_clock_second_jet`, 2026-07-30T06:34) claiming `fair_baseline=trained_rff`, but
+  no probe mode in the tree emits a `trained_rff` gain, and replaying its exact stored command
+  (`--forecast --target family --head_hidden 256 --n_shards 12 --steps 800`) yields `st_gain(vs RFF)
+  +0.0481`, not +0.0917. The code that produced the board's headline encoder-vs-PE number is gone.
+  Treat 0.1914 / +0.0917 as unverified until re-run deliberately.
+- **flowering_peak_month**'s stored probe passes `--pheno_env`, which is **silently ignored**: in
+  `probe.py` the `if a.phenology:` block returns before the `--pheno_env/--pheno_disttarget/
+  --pheno_taxon` and `--pheno_densefield` blocks can run. Verified — `--phenology --forecast` with
+  `--pheno_env`, with `--pheno_taxon family`, and with `--pheno_densefield` all produce a byte-identical
+  `PHENOLOGY-FUTURE` header, the same 98,304 obs / 19,662 queries, and the same +0.0087. So this record
+  measures the plain temporal path, not an env-channel phenology probe, and ~120 lines of pheno modes
+  are unreachable whenever `--phenology` is set.
 - **community_from_env / species_from_env** carry large fair-gains on *fused env channels*, not on the
   coordinate encoder alone. Label them as such.
 
