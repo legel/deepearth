@@ -76,6 +76,11 @@ from deepearth.autoresearch.programs.spacetime.recurrence import (
 )
 
 
+PHENO_RAW_REASON = (
+    "this phenology direction runs on RAW spatial features only (Earth4D settled neutral here), "
+    "so its numbers cannot speak to the encoder"
+)
+
 RAW_PE_REASON = (
     "this mode evaluates propagator architectures on RAW coordinate features only -- Earth4D is "
     "not in the comparison, so its numbers cannot speak to the encoder"
@@ -131,6 +136,7 @@ def declare(capability, mode, metric, value, gains=None, baselines=None, split="
         diagnostic=bool(diagnostic),
         diagnostic_reason=diagnostic_reason,
     ).validate()
+    print(result.render(), flush=True)          # the ONE human-readable block, derived from the result
     if _RESULT_SINK["path"]:
         result.write(_RESULT_SINK["path"])
         print(f"[probe] result -> {_RESULT_SINK['path']}  identity={result.identity_digest()}",
@@ -697,7 +703,6 @@ def main(argv=None):
     if a.env_construct:
         r = env_construct(a.cache_dir, seed=a.seed, construct=a.construct,
                           feature=a.construct_feature, holdout=a.holdout, shuffle=a.construct_shuffle, only=a.construct_only)
-        print(f"=== SPACETIME | ENV-CONSTRUCT | {r['construct']} <- {r['feature']} | shuffle={r['shuffle_null']} seed={r['seed']} ===")
         print(f"  n_labeled_used={r['n_labeled_used']} n_classes={r['n_classes']} held_out={r['held_out']}")
         print(f"  FLOOR acc {r['floor_acc']:.4f} bacc {r['floor_bacc']:.4f}  |  FEAT acc {r['acc']:.4f} bacc {r['bacc']:.4f}  |  Spearman(ord) {r['spearman_ord']:+.4f}")
         print(f"  univar Spearman: {r['univar_spearman']}")
@@ -718,7 +723,6 @@ def main(argv=None):
         r = cooccur_routing(a.cache_dir, thresh=a.cooccur_thresh, seed=a.seed,
                             mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file,
                             env_channels=a.cooccur_channels)
-        print(f"=== SPACETIME encoder | mode=COOCCUR-ROUTING | mech={r['mechanism']} thresh={r['thresh']} file={r['cooccur_file']} ===")
         print(f"  query_sp={r['n_query_sp']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
         print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
         print(f"  [leak-guard] {r['leak_guard']}")
@@ -740,7 +744,6 @@ def main(argv=None):
         import sys as _sys; _sys.path.insert(0, '/workspace')
         from deepearth.autoresearch.programs.spacetime.dyntargets import sdm_presence
         r = sdm_presence(a.cache_dir, seed=a.seed, mechanism=a.cooccur_mech, cooccur_file=a.cooccur_file)
-        print(f"=== SPACETIME encoder | mode=SDM-PRESENCE(env->species@cell) | mech={r['mechanism']} ===")
         print(f"  query_cells={r['n_query_cells']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
         print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
         print(f"  [leak-guard] {r['leak_guard']}")
@@ -772,8 +775,6 @@ def main(argv=None):
         aps = _np.array([x['micro_AP_feat'] for x in runs])
         gns = _np.array([x['gain_over_prevalence'] for x in runs])
         r0 = runs[0]
-        print(f"=== SPACETIME | SDM-HARD | mech={r0['mechanism']} chans={r0['env_channels']} time={r0['add_time']} "
-              f"grid={r0['cell_deg']}deg holdout={r0['holdout_mode']}({r0['block_deg']}deg) seeds={a.sdm_seeds} ===")
         print(f"  query_cells={r0['n_query_cells']} train_cells={r0['n_train_cells']} cand_sp={r0['n_cand_sp']} "
               f"feat_dim={r0['feat_dim']} base_rate={r0['micro_AP_baserate']:.4f}")
         print(f"  micro-AP(feat) {aps.mean():.4f} +/- {aps.std():.4f} | prevalence {r0['micro_AP_prevalence']:.4f} | "
@@ -965,7 +966,6 @@ def main(argv=None):
         dt = time.time() - dt0
         vals = [r[1] for r in rows if r[1] == r[1]]
         mean_rho = float(np.mean(vals)) if vals else float("nan")
-        print(f"=== SPACETIME encoder | mode=ENV->NICHE-TRAIT | agg={a.env_agg} extra={a.env_extra} head={a.env_head} env_dim={ENV.shape[1]} species_covered={int((npsp>0).sum())} ===")
         if PHY is not None:
             phyvals = [r[3] for r in rows if r[3] == r[3]]
             phy_mean = float(np.mean(phyvals)) if phyvals else float("nan")
@@ -980,7 +980,6 @@ def main(argv=None):
             for key, rho, nte, prho in rows:
                 print(f"  {key:18s} spearman {rho:+.3f}   held-out_species_n={nte}")
             print(f"  mean_spearman_over_traits {mean_rho:+.4f}   ({dt:.1f}s)")
-        print(f"  [profile] agg={a.env_agg} extra={a.env_extra} head={a.env_head} mlp_hidden={a.env_mlp_hidden} steps={a.steps} env_dim={ENV.shape[1]}")
         results["mean_spearman"] = mean_rho
         results["env_dim"] = int(ENV.shape[1]); results["agg"] = a.env_agg
         results["head"] = a.env_head; results["extra"] = bool(a.env_extra); results["seconds"] = dt
@@ -1018,12 +1017,7 @@ def main(argv=None):
         dt = time.time() - t0
         best_coord = max(raw_acc, rff_acc, e4d_acc)              # best coordinate-only PE
         mode = ("FORECAST(future+newplace)" if a.forecast_spatial else "FORECAST(past->future)") if a.forecast else "spatial-block"
-        print(f"=== SPACETIME encoder (standalone) | mode=ENV({mode}) obs={len(lat)} held-out={int(test.sum())} families={n_fam} env_dim={env.shape[1]} ===")
         print(f"  held-out family acc | raw {raw_acc:.4f} | RFF {rff_acc:.4f} | Earth4D {e4d_acc:.4f} || ENV {env_acc:.4f} | Earth4D+ENV {fus_acc:.4f}")
-        print(f"    st_gain(ENV vs best-coord-PE) {env_acc - best_coord:+.4f}   st_gain(fused vs best-coord-PE) {fus_acc - best_coord:+.4f}   (best-coord-PE={best_coord:.4f})")
-        print(f"  held-out top5 acc   | raw {raw_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f} || ENV {env_t5:.4f} | Earth4D+ENV {fus_t5:.4f}")
-        print(f"  [profile] earth4d_dim={e4d.shape[1]} env_dim={env.shape[1]} frac_held={test.mean():.3f} head_hidden={a.head_hidden} steps={a.steps} forecast={a.forecast}")
-        print(f"  {len(lat)} obs in {dt:.1f}s")
         # The record's primary for family_from_env is the FUSED Earth4D+ENV accuracy; the old harness
         # recovered it by matching r"Earth4D\+ENV\s+([\d.]+)" against the first line that happened to
         # contain it, which is the top1 row only because top1 prints before top5.
@@ -1073,11 +1067,7 @@ def main(argv=None):
         dt = time.time() - t0
         ctrl = max(mlp_acc, rff_acc)
         mode = ("FORECAST(future+newplace)" if a.forecast_spatial else "FORECAST(past->future)") if a.forecast else "spatial-block"
-        print(f"=== SPACETIME encoder (standalone) | mode=ENV-DECODE({mode}) obs={len(lat)} held-out={n_te} families={n_fam} aux_w={a.env_aux_weight} ===")
-        print(f"  held-out family acc | mlp {mlp_acc:.4f} | RFF {rff_acc:.4f} | Earth4D {e4d_acc:.4f}   st_gain(vs mlp) {e4d_acc - mlp_acc:+.4f}  st_gain(vs best-ctrl) {e4d_acc - ctrl:+.4f}")
         print(f"  env-recon val R2ish | mlp {mlp_er:.4f} | RFF {rff_er:.4f} | Earth4D {e4d_er:.4f}   (aux env-field fit quality)")
-        print(f"  held-out top5 acc   | mlp {mlp_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f}")
-        print(f"  [profile] earth4d_dim={fdim} held={n_te} steps={a.steps} env_decode=True aux_w={a.env_aux_weight}")
         print(f"  {len(lat)} obs, {a.steps}-step env-decode in {dt:.1f}s")
         declare(
             capability="family_from_env",
@@ -1120,10 +1110,6 @@ def main(argv=None):
         dt = time.time() - t0
         ctrl = max(mlp_acc, rff_acc)
         mode = "FIELD-DECODE(future+newplace)" if a.forecast_spatial else ("FIELD-DECODE(past->future)" if a.forecast else "FIELD-DECODE(spatial-block)")
-        print(f"=== SPACETIME encoder (standalone) | mode={mode} obs={len(lat)} held-out={n_te} families={n_fam} ===")
-        print(f"  held-out family acc | mlp {mlp_acc:.4f} | RFF {rff_acc:.4f} | Earth4D {e4d_acc:.4f}   st_gain(vs mlp) {e4d_acc - mlp_acc:+.4f}  st_gain(vs RFF) {e4d_acc - rff_acc:+.4f}  st_gain(vs best-ctrl) {e4d_acc - ctrl:+.4f}")
-        print(f"  held-out top5 acc   | mlp {mlp_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f}   top5_gain(vs mlp) {e4d_t5 - mlp_t5:+.4f}  top5_gain(vs RFF) {e4d_t5 - rff_t5:+.4f}")
-        print(f"  [profile] earth4d_dim={fdim}  held={n_te}  spatial_levels={a.spatial_levels} steps={a.steps} field_decode=True trained_encoder=True")
         print(f"  {len(lat)} obs, {a.steps}-step decode in {dt:.1f}s")
         declare(
             capability="family_from_spacetime",
@@ -1226,7 +1212,6 @@ def main(argv=None):
             pg_raw_sp_mae, pg_raw_sp_acc = pg("raw", "sp")
             best_prop_raw_mae = max(best_prop_raw_mae, pg_raw_sp_mae)
         pheno_mode = phenology_mode(a.forecast_spatial, a.pheno_spatial)
-        print(f"=== SPACETIME encoder (standalone) | mode={pheno_mode}(day-of-year, non-stationary) obs={len(lat)} forecast-queries={n_te} tol=+/-{a.pheno_tol:.0f}d K={a.rec_k} hops={a.gnn_hops} attn={a.pheno_attn} ===")
         for ft in ("raw", "rff", "e4d"):
             d = r[ft]
             attn_s = f" | ATTN MAE {d.get('attn_mae', float('nan')):6.2f}d acc {d.get('attn_acc', float('nan')):.4f} (prop {d['static_mae']-d.get('attn_mae', float('nan')):+.2f}d)" if a.pheno_attn else ""
@@ -1247,7 +1232,6 @@ def main(argv=None):
         _e4d_best, _rff_best = _best_acc("e4d"), _best_acc("rff")
         if _e4d_best == _e4d_best and _rff_best == _rff_best:
             print(f"  st_gain(Earth4D vs RFF, best-head within-tol acc) {_e4d_best - _rff_best:+.4f}   (Earth4D {_e4d_best:.4f}  RFF {_rff_best:.4f})")
-        print(f"  [profile] forecast_queries={n_te} K={a.rec_k} hidden={a.rec_hidden} hops={a.gnn_hops} steps={a.steps}")
         print(f"  {len(lat)} obs, {a.steps}-step phenology in {dt:.1f}s")
         # The record metric here is Earth4D's BEST-HEAD within-tolerance accuracy vs the generic trained
         # PE's -- NOT propagator_gain, which is a propagation-vs-static quantity on RAW features and so
@@ -1297,6 +1281,14 @@ def main(argv=None):
             print("  %s n=%6d | static MAE %6.2fd  LSTM MAE %6.2fd  gain %+.2fd" % (_lab, d.get("n", 0), d.get("static_mae", float("nan")), d.get("lstm_mae", float("nan")), d.get("gain", float("nan"))))
         print("  LEAK-GUARD: query feat SPACE-ONLY(t=0); edge SPATIAL-only(no dt); query cell EXCLUDED from own window (surrounding cells only)")
         print("  %d obs in %.1fs" % (len(lat), dt))
+        declare(
+            capability="", mode="PHENO-DENSEFIELD(mean-DOY, same-cell-EXCLUDED)", metric="MAEd",
+            value=float((r.get("all") or {}).get("static_mae", float("nan"))),
+            diagnostic=True, diagnostic_reason=PHENO_RAW_REASON,
+            split=SPLIT, obs=len(lat), queries=r.get("n_te"), pool_n=r.get("pool_n"),
+            block=a.densefield_block, drop_cell_frac=a.densefield_drop, K=a.rec_k, seconds=dt,
+            cells={k: r.get(k) for k in ("all", "empty", "occ")},
+        )
         return {"pheno_densefield": True, "split": SPLIT, "block": a.densefield_block, "drop_cell_frac": a.densefield_drop,
                 "n_te": r.get("n_te", 0), "pool_n": r.get("pool_n", 0),
                 "all": r.get("all"), "empty": r.get("empty"), "occ": r.get("occ"), "seconds": dt}
@@ -1335,6 +1327,14 @@ def main(argv=None):
                     "neighbourenv_mae": r["neighbourenv_mae"], "envonly_mae": r["envonly_mae"],
                     "gain_neighbour": gain_nbr, "gain_neighbourenv": gain_env, "gain_envonly": gain_only,
                     "env_lift_over_neighbour": env_lift, "seconds": dt})
+            declare(
+                capability="", mode="PHENO-ENV(mean-DOY)", metric="MAEd",
+                value=float(r.get("static_mae", float("nan"))),
+                diagnostic=True, diagnostic_reason=PHENO_RAW_REASON,
+                split=SPLIT, obs=len(lat), queries=r.get("n_te"), env_dim=r.get("env_dim"),
+                tol_days=a.pheno_tol, K=a.rec_k, lstm_mae=r.get("lstm_mae"), gain=r.get("gain"),
+                seconds=dt,
+            )
             return res
 
         if a.pheno_disttarget:
@@ -1349,6 +1349,13 @@ def main(argv=None):
             res.update({"pheno_disttarget": a.pheno_disttarget, "n_te": r["n_te"],
                     "static_mae": r["static_mae"], "gnn_mae": r["gnn_mae"], "lstm_mae": r["lstm_mae"],
                     "gnn_gain": gnn_gain, "lstm_gain": lstm_gain, "seconds": dt})
+            declare(
+                capability="", mode=f"PHENO-DISTTARGET({a.pheno_disttarget})", metric="MAEd",
+                value=float(r.get("static_mae", float("nan"))),
+                diagnostic=True, diagnostic_reason=PHENO_RAW_REASON,
+                split=SPLIT, obs=len(lat), queries=r.get("n_te"), tol_days=a.pheno_tol, K=a.rec_k,
+                lstm_mae=r.get("lstm_mae"), gain=r.get("gain"), seconds=dt,
+            )
             return res
 
         if a.pheno_taxon:
@@ -1372,6 +1379,13 @@ def main(argv=None):
             res.update({"pheno_taxon": col, "n_te": r["n_te"],
                     "groups": [{"name": str(names[row["group"]]), "n_te": row["n_te"], "static_mae": row["static_mae"], "lstm_mae": row["lstm_mae"], "gain": row["gain"]} for row in r["groups"]],
                     "seconds": dt})
+            declare(
+                capability="", mode=f"PHENO-BY-TAXON({col})", metric="MAEd",
+                value=float(r["groups"][0]["static_mae"]) if r.get("groups") else float("nan"),
+                diagnostic=True, diagnostic_reason=PHENO_RAW_REASON,
+                split=SPLIT, obs=len(lat), queries=r.get("n_te"), tol_days=a.pheno_tol, K=a.rec_k,
+                n_groups=len(r.get("groups", [])), seconds=dt,
+            )
             return res
 
     if a.ar_rollout:
@@ -1750,13 +1764,11 @@ def main(argv=None):
         to_m.eval()
         with torch.no_grad(): leak_mae, leak_r2 = _reg_skill(to_m(tq_te), yl_te, yl_te)
 
-        print(f"=== SPACETIME breadth probe | {_tn} | raw PE | obs={len(lat_a)} q={n_te} K={K} win={win:.0f}d lead={lead:.0f}d Sdim={S} ===")
         s_mae, s_r2 = results["static"]; l_mae, l_r2 = results["lstm2"]
         print(f"  static-floor        | MAE {s_mae:7.4f}  absR2 {s_r2:+.4f}")
         print(f"  deepLSTM-2L         | MAE {l_mae:7.4f}  absR2 {l_r2:+.4f}  (dR2 vs static {l_r2 - s_r2:+.4f})")
         print(f"  LEAK-GUARD time-only| MAE {leak_mae:7.4f}  absR2 {leak_r2:+.4f}  (must be ~0/negative = no time leak)")
         dt = time.time() - t0
-        print(f"  [profile] q={n_te} K={K} hidden={H} steps={a.steps}")
         print(f"  {len(lat_a)} obs, {a.steps}-step breadth in {dt:.1f}s")
         declare(
             capability="", mode=f"BREADTH({_tn})", metric="absR2", value=s_r2,
@@ -1886,7 +1898,6 @@ def main(argv=None):
 
         _tgtn = "ABUND-DELTA(dlog)" if a.abund_delta else "ABUND-LEVEL(log-count)"
         _mv = " MULTIVAR-nstate[abund|doy|occ]" if a.abund_multivar else ""
-        print(f"=== SPACETIME propagator-ARCH probe | {_tgtn}{_mv} | raw PE | obs={len(lat_a)} q={n_te} K={K} win={a.abund_win:.0f}d lead={a.abund_lead:.0f}d Sdim={S} ===")
         s_mae, s_r2 = results["static"]
         print(f"  static-floor        | MAE {s_mae:7.3f}  absR2 {s_r2:+.4f}")
         for key in ("lstm1", "lstm2", "lstm3", "lstm4", "attn", "mv"):
@@ -1895,7 +1906,6 @@ def main(argv=None):
                 mae, r2 = results[key]
                 print(f"  {nm:<18}| MAE {mae:7.3f}  absR2 {r2:+.4f}  (dR2 vs static {r2 - s_r2:+.4f})")
         dt = time.time() - t0
-        print(f"  [profile] q={n_te} K={K} hidden={H} steps={a.steps} attn_heads={a.prop_attn_heads} attn_layers={a.prop_attn_layers}")
         print(f"  {len(lat_a)} obs, {a.steps}-step prop-arch in {dt:.1f}s")
         declare(
             capability="", mode=f"PROPAGATOR-ARCH({_tgtn})", metric="absR2", value=s_r2,
@@ -1933,13 +1943,11 @@ def main(argv=None):
             g_raw_gnn = pg("raw", "gnn"); g_raw_lstm = pg("raw", "lstm")
             g_e4d_gnn = pg("e4d", "gnn"); g_rff_gnn = pg("rff", "gnn")
             best = max(g_raw_gnn, g_raw_lstm)
-            print(f"=== SPACETIME encoder (standalone) | mode={name}(dynamic, future+newplace) obs={len(lat)} forecast-queries={n_te} K={a.rec_k} hops={a.gnn_hops} {tol_line} ===")
             for ft in ("raw", "rff", "e4d"):
                 d = r[ft]
                 print(f"  {ft:>4} | static {unit} {d['static_mae']:7.3f} acc/R2 {d['static_acc']:+.4f} -> GNN {unit} {d['gnn_mae']:7.3f} acc/R2 {d['gnn_acc']:+.4f} (prop {d['static_mae']-d['gnn_mae']:+.3f}) | LSTM {unit} {d['lstm_mae']:7.3f} acc/R2 {d['lstm_acc']:+.4f} (prop {d['static_mae']-d['lstm_mae']:+.3f})")
             print(f"  BEST propagator_gain (raw features, {unit} reduction; POSITIVE=propagation helps) GNN {g_raw_gnn:+.3f}  LSTM {g_raw_lstm:+.3f}  best {best:+.3f}")
             print(f"  ENCODER control (GNN {unit} reduction vs static, per PE): raw {g_raw_gnn:+.3f} | RFF {g_rff_gnn:+.3f} | Earth4D {g_e4d_gnn:+.3f}  (Earth4D-vs-raw GNN {unit} {r['raw']['gnn_mae']-r['e4d']['gnn_mae']:+.3f}: +=E4D better)")
-            print(f"  [profile] forecast_queries={n_te} K={a.rec_k} hidden={a.rec_hidden} hops={a.gnn_hops} steps={a.steps}")
             return {"target": name, "static_mae_raw": r["raw"]["static_mae"], "gnn_mae_raw": r["raw"]["gnn_mae"],
                     "lstm_mae_raw": r["raw"]["lstm_mae"], "propagator_gain_mae": best,
                     "propagator_gain_gnn_mae": g_raw_gnn, "propagator_gain_lstm_mae": g_raw_lstm,
@@ -2011,12 +2019,9 @@ def main(argv=None):
         # propagator-vs-none PER feature type (apples-to-apples: each GNN vs its OWN static floor).
         pg_raw = raw_r["gnn_acc"] - raw_r["static_acc"]; pg_raw5 = raw_r["gnn_top5"] - raw_r["static_top5"]
         pg_e4d = e4d_r["gnn_acc"] - e4d_r["static_acc"]; pg_rff = rff_r["gnn_acc"] - rff_r["static_acc"]
-        print(f"=== SPACETIME encoder (standalone) | mode=GNN(message-passing propagator, future+newplace) obs={len(lat)} forecast-queries={n_te} families={n_fam} K={a.rec_k} hops={a.gnn_hops} ===")
         print(f"  ABSOLUTE top1 | raw: static {raw_r['static_acc']:.4f} -> GNN {raw_r['gnn_acc']:.4f} (prop {pg_raw:+.4f}) | RFF: static {rff_r['static_acc']:.4f} -> GNN {rff_r['gnn_acc']:.4f} (prop {pg_rff:+.4f}) | E4D: static {e4d_r['static_acc']:.4f} -> GNN {e4d_r['gnn_acc']:.4f} (prop {pg_e4d:+.4f})")
         print(f"  ABSOLUTE top5 | raw: static {raw_r['static_top5']:.4f} -> GNN {raw_r['gnn_top5']:.4f} (prop {pg_raw5:+.4f}) | RFF: static {rff_r['static_top5']:.4f} -> GNN {rff_r['gnn_top5']:.4f} | E4D: static {e4d_r['static_top5']:.4f} -> GNN {e4d_r['gnn_top5']:.4f}")
         print(f"  BEST propagator_gain (raw features: GNN vs its no-prop floor) top1 {pg_raw:+.4f}  top5 {pg_raw5:+.4f}   (does causal propagation forecast forward?)")
-        print(f"  st_gain(GNN Earth4D vs RFF) {e4d_r['gnn_acc'] - rff_r['gnn_acc']:+.4f}  (GNN Earth4D vs raw) {e4d_r['gnn_acc'] - raw_r['gnn_acc']:+.4f}   (mechanism vs encoder control)")
-        print(f"  [profile] earth4d_dim={e4d.shape[1]} forecast_queries={n_te} K={a.rec_k} hidden={a.rec_hidden} hops={a.gnn_hops} steps={a.steps}")
         print(f"  {len(lat)} obs, {a.steps}-step GNN in {dt:.1f}s")
         # The mechanism (GNN propagation) and the encoder are separate questions. propagator_gain
         # measures propagation-vs-static; the ENCODER gain is Earth4D's GNN accuracy against the
@@ -2077,10 +2082,6 @@ def main(argv=None):
             e4d_acc, e4d_t5, _ = run_recurrence_timecond(feat_e4d, e4d.shape[1], fam, days, coords_ll, test, n_fam, dev,
                                                          K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tag="earth4d")
             dt = time.time() - t0
-            print(f"=== SPACETIME encoder (standalone) | mode=RECURRENCE-TIMECOND(query-cell forward-in-time) obs={len(lat)} rollout-queries={n_te} families={n_fam} K={a.rec_k} ===")
-            print(f"  forecast family acc | raw-coords {raw_acc:.4f} | RFF {rff_acc:.4f} | Earth4D {e4d_acc:.4f}   st_gain(vs raw) {e4d_acc - raw_acc:+.4f}  st_gain(vs RFF) {e4d_acc - rff_acc:+.4f}")
-            print(f"  forecast top5 acc   | raw-coords {raw_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f}   top5_gain(vs raw) {e4d_t5 - raw_t5:+.4f}  top5_gain(vs RFF) {e4d_t5 - rff_t5:+.4f}")
-            print(f"  [profile] earth4d_dim={e4d.shape[1]}  rollout_queries={n_te}  K={a.rec_k} hidden={a.rec_hidden} spatial_levels={a.spatial_levels} steps={a.steps} time_cond=True")
             print(f"  {len(lat)} obs, {a.steps}-step rollout in {dt:.1f}s")
             return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc,
                     "raw_acc": raw_acc, "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "recurrence": True, "time_cond": True}
@@ -2092,10 +2093,6 @@ def main(argv=None):
         e4d_acc, e4d_t5, _ = run_recurrence(e4d, fam, days, coords_ll, test, n_fam, dev,
                                             K=a.rec_k, steps=a.steps, lr=a.lr, hidden=a.rec_hidden, tag="earth4d")
         dt = time.time() - t0
-        print(f"=== SPACETIME encoder (standalone) | mode=RECURRENCE(4D-LSTM rollout past->future) obs={len(lat)} rollout-queries={n_te} families={n_fam} K={a.rec_k} ===")
-        print(f"  forecast family acc | raw-coords {raw_acc:.4f} | RFF {rff_acc:.4f} | Earth4D {e4d_acc:.4f}   st_gain(vs raw) {e4d_acc - raw_acc:+.4f}  st_gain(vs RFF) {e4d_acc - rff_acc:+.4f}")
-        print(f"  forecast top5 acc   | raw-coords {raw_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f}   top5_gain(vs raw) {e4d_t5 - raw_t5:+.4f}")
-        print(f"  [profile] earth4d_dim={e4d.shape[1]}  rollout_queries={n_te}  K={a.rec_k} hidden={a.rec_hidden} spatial_levels={a.spatial_levels} steps={a.steps}")
         print(f"  {len(lat)} obs, {a.steps}-step rollout in {dt:.1f}s")
         declare(
             capability="family_from_spacetime",
@@ -2120,10 +2117,6 @@ def main(argv=None):
                        evaluate(e4d, fam_t, test, n_fam, dev, a.steps, a.lr, "earth4d", a.head_hidden, a.seed))
     dt = time.time() - t0
     mode = ("FORECAST(future+newplace)" if a.forecast_spatial else "FORECAST(past->future)") if a.forecast else "spatial-block"
-    print(f"=== SPACETIME encoder (standalone) | mode={mode} obs={len(lat)} held-out={int(test.sum())} families={n_fam} ===")
-    print(f"  held-out family acc | raw-coords {raw_acc:.4f} | RFF {rff_acc:.4f} | Earth4D {e4d_acc:.4f}   st_gain(vs raw) {e4d_acc - raw_acc:+.4f}  st_gain(vs RFF) {e4d_acc - rff_acc:+.4f}")
-    print(f"  held-out top5 acc   | raw-coords {raw_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f}   top5_gain(vs raw) {e4d_t5 - raw_t5:+.4f}")
-    print(f"  [profile] earth4d_dim={e4d.shape[1]}  frac_held={test.mean():.3f}  spatial_levels={a.spatial_levels} temporal_levels={a.temporal_levels} log2_hashmap={a.log2_hashmap} forecast={a.forecast}")
     print(f"  {len(lat)} obs, {a.steps}-step probe in {dt:.1f}s")
     # The shared coordinate/forecast tail. --target selects WHICH capability this is; the old harness
     # could not tell family_from_spacetime from species_from_spacetime here because both print the same

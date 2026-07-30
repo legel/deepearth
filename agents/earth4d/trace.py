@@ -39,6 +39,7 @@ from deepearth.autoresearch.programs.spacetime.probe_contract import (  # noqa: 
     ContractError,
     ProbeResult,
 )
+from deepearth.autoresearch.programs.spacetime import probe_registry  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]                 # .../deepearth
 RECORDS = Path(__file__).resolve().parent / "records.json"  # the machine record (fill scorecard by breaking these)
@@ -321,6 +322,12 @@ def main() -> None:
     if a.metric not in CAPABILITIES:
         sys.exit("[trace] --metric %r is not an encoder-probeable capability. one of:\n  %s"
                  % (a.metric, "\n  ".join(CAPABILITIES)))
+    modes = probe_registry.for_capability(a.metric)
+    if not modes:
+        sys.exit(f"[trace] no recording probe mode measures {a.metric!r}. "
+                 f"See probe_registry --all.")
+    print(f"[trace] {a.metric}: {len(modes)} mode(s) can set this record — "
+          + ", ".join(m.mode for m in modes), flush=True)
     records_snapshot, preflight_records = _read_records()
 
     tag = a.tag or ("e4d_" + re.sub(r"\W+", "_", a.probe)[:24].strip("_"))
@@ -348,6 +355,12 @@ def main() -> None:
     if result.capability != a.metric:
         sys.exit(f"[trace] probe measured {result.capability!r} but --metric declared {a.metric!r}; "
                  f"refusing to record a different question's answer")
+
+    known = {m.mode for m in modes}
+    if result.mode not in known and not any(result.mode.startswith(k.split("(")[0]) for k in known):
+        print(f"[trace] *** UNREGISTERED MODE {result.mode!r} for {a.metric}. Registered: "
+              f"{sorted(known)}. Recording it, but add it to probe_registry so the next agent can "
+              f"find it.", flush=True)
 
     primary = result.primary.value
     fair, fair_base = result.fair_gain(FAIR_ORDER)
