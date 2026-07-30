@@ -5,8 +5,8 @@
   editable_files/          THE ONLY CODE AN EXPERIMENT MAY EDIT
       harness/               the loop: probe.py, modes, trace.py, contract, registry
       lib/                   auxiliary: propagators, phenology, targets, channels, gate
-  data/inputs/             EDITABLE — the DATA lever: channels, densification, new sources
-  data/records/            records.json, traces/, ledgers. Never hand-edited.
+  data/             EDITABLE — the DATA lever: channels, densification, new sources
+  data/            records.json, traces/, ledgers. Never hand-edited.
 ```
 
 | path | contains | notes |
@@ -29,9 +29,9 @@
 | `editable_files/lib/calib_probe.py` | the calibration capability (own CLI; not yet on the contract) | |
 | `editable_files/lib/lfmc_recurrent.py` | the registered LFMC evidence experiment (draft, unrun) | |
 | `editable_files/lib/science_gate.py` | LFMC split/baseline gate | |
-| `data/inputs/` | the channels that feed the encoder | **editable — the DATA lever.** `family_from_env` and `family_from_spacetime` both read INPUT-LIMITED right now, so this is where their next move lives |
-| `data/records/records.json` | the board: one record per capability + ledger of history and dead-ends | single owner, gitignored |
-| `data/records/traces/` | per-run log + `.trace.json` + `.result.json` | |
+| `data/` | the channels that feed the encoder | **editable — the DATA lever.** `family_from_env` and `family_from_spacetime` both read INPUT-LIMITED right now, so this is where their next move lives |
+| `data/records.json` | the board: one record per capability + ledger of history and dead-ends | single owner, gitignored |
+| `data/traces/` | per-run log + `.trace.json` + `.result.json` | |
 
 ## An experiment is an edit on a branch
 

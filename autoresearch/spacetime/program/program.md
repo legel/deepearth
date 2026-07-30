@@ -1,6 +1,12 @@
 # Earth4D Agent — program
 
-Discover, then confirm, what Earth4D earns from space-time coordinates and environmental channels.
+**This loop owns one probe: Earth4D over space-time coordinates and environmental channels.** Its job is
+to *recover a real signal* on one capability at a time and prove the signal is the encoder's — not
+borrowed from a frozen pretrained embedding, and not an artefact of the split. A signal that survives
+this loop's validation is what later earns a place in the fusion layer (`autoresearch/main/`); the full
+model runs last, after the science in `science.md` is filled out. Raising an aggregate is not this loop's
+job.
+
 Two co-equal lever families: **DATA** (what signal feeds the encoder) · **ARCHITECTURE** (how it
 represents it).
 

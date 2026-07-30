@@ -42,7 +42,7 @@ from deepearth.autoresearch.spacetime.editable_files.harness.probe_contract impo
 from deepearth.autoresearch.spacetime.editable_files.harness import probe_registry  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[5]                 # .../deepearth
-RECORDS = Path(__file__).resolve().parents[2] / "data" / "records" / "records.json"  # the machine record (fill scorecard by breaking these)
+RECORDS = Path(__file__).resolve().parents[2] / "data" / "records.json"  # the machine record (fill scorecard by breaking these)
 DEFAULT_PROBE_MODULE = "deepearth.autoresearch.spacetime.editable_files.harness.probe"
 TRACE_AUTH_FD_ENV = "EARTH4D_TRACE_AUTH_FD"
 
@@ -381,7 +381,7 @@ def main() -> None:
     records_snapshot, preflight_records = _read_records()
 
     tag = a.tag or ("e4d_" + re.sub(r"\W+", "_", a.probe)[:24].strip("_"))
-    log_path = a.log or str(Path(__file__).resolve().parents[2] / "data" / "records" / "traces" / f"{tag}.log")
+    log_path = a.log or str(Path(__file__).resolve().parents[2] / "data" / "traces" / f"{tag}.log")
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
 
     print(f"[trace] OBJECTIVE={a.metric}  probe='{a.probe}'  tag={tag}", flush=True)

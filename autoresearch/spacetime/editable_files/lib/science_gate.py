@@ -11,7 +11,7 @@ at least the spatiotemporal split. Neither split alone proves autoregression.
 Example:
 
     python3 -m autoresearch.spacetime.editable_files.lib.science_gate \
-        --download --json-out data/lfmc/earth4d_science_gate_dev.json
+        --download --json-out autoresearch/spacetime/data/lfmc/earth4d_science_gate_dev.json
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ OFFICIAL_LFMC_URL = (
 OFFICIAL_LFMC_SHA256 = (
     "b44bf99dab6a136fd6e66df3ba8f91f7614f2cc436bdef14a924b640a9bce3a6"
 )
-DEFAULT_DATA_PATH = Path("data/lfmc/lfmc_data_conus.csv")
+DEFAULT_DATA_PATH = Path("autoresearch/spacetime/data/lfmc/lfmc_data_conus.csv")
 MAX_LFMC_VALUE = 302.0
 DEFAULT_TRAIN_END = pd.Timestamp("2020-12-31")
 DEFAULT_VALIDATION_END = pd.Timestamp("2021-12-31")
