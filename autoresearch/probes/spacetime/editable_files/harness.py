@@ -120,6 +120,8 @@ class ProbeResult:
     gains: Dict[str, float] = field(default_factory=dict)     # baseline label -> Earth4D minus baseline
     baselines: Dict[str, float] = field(default_factory=dict)  # baseline label -> its absolute score
     flags: str = ""
+    # The probe's CONFIG block: the levers that used to be flags. Part of identity — see config_digest.
+    config: Dict[str, Any] = field(default_factory=dict)
     extras: Dict[str, Any] = field(default_factory=dict)
     # A diagnostic measures something that is NOT a scorecard capability, or measures it without
     # Earth4D in the comparison at all (several dynamics modes run on raw PE only). It is legitimate
@@ -130,6 +132,16 @@ class ProbeResult:
     contract_version: int = CONTRACT_VERSION
 
     # -- identity ---------------------------------------------------------------------------------
+    def config_digest(self) -> str:
+        """Hash of the probe's CONFIG block — what the encoder was actually built and trained as.
+
+        With the levers moved out of the CLI and into the file, two experiments run with the SAME
+        command line. Identity therefore has to include what was built, or the gate would compare a
+        rewired encoder against the control as though they were the same measurement.
+        """
+        return hashlib.sha256(
+            json.dumps(self.config, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
     def identity(self) -> Dict[str, Any]:
         """The tuple that decides comparability. Two runs whose identities differ measure different
         things, however similar their scores look."""
@@ -140,6 +152,7 @@ class ProbeResult:
             "n_shards": self.n_shards,
             "protocol": self.protocol,
             "metric": self.primary.name,
+            "config": self.config_digest(),
         }
 
     def identity_digest(self) -> str:
@@ -156,7 +169,9 @@ class ProbeResult:
         for key in ("mode", "metric"):
             if mine[key] != other.get(key):
                 return False
-        for key in ("capability", "split", "n_shards", "protocol"):
+        # `config` is skipped only when the stored record predates it — a legacy record cannot assert
+        # what it was built as. When both sides have one, a different build is a different measurement.
+        for key in ("capability", "split", "n_shards", "protocol", "config"):
             if key in other and other[key] is not None and mine[key] != other[key]:
                 return False
         return True
@@ -287,9 +302,16 @@ _RESULT_SINK = {"path": "", "capability": "", "protocol": "", "flags": "", "seed
                 "steps": None, "n_shards": None, "trained_encoder": False}
 
 
-def _set_result_sink(path, capability, protocol, args):
-    """Arm the result contract for this run. Called once, right after parse_args."""
+def _set_result_sink(path, capability, protocol, args, config=None):
+    """Arm the result contract for this run. Called once, right after parse_args.
+
+    `config` is the probe's CONFIG block — the levers that used to be CLI flags. It must reach the
+    identity: with the levers in the file, two experiments have IDENTICAL command lines, so without a
+    digest of what was actually built the gate would treat a rewired encoder as the same measurement as
+    the control and let one 'beat' the other.
+    """
     _RESULT_SINK.update({
+        "config": dict(config or {}),
         "path": path or "", "capability": capability or "", "protocol": protocol,
         "flags": " ".join(sys.argv[1:]), "seed": getattr(args, "seed", None),
         "steps": getattr(args, "steps", None), "n_shards": getattr(args, "n_shards", None),
@@ -324,6 +346,7 @@ def declare(capability, mode, metric, value, gains=None, baselines=None, split="
         steps=_RESULT_SINK["steps"],
         trained_encoder=(_RESULT_SINK["trained_encoder"] if trained_encoder is None
                          else bool(trained_encoder)),
+        config=dict(_RESULT_SINK.get("config") or {}),
         gains=dict(gains or {}),
         baselines=dict(baselines or {}),
         flags=_RESULT_SINK["flags"],

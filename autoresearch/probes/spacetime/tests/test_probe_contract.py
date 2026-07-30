@@ -62,7 +62,7 @@ class IdentityTests(unittest.TestCase):
     def test_identity_covers_the_full_comparability_tuple(self):
         self.assertEqual(
             set(result().identity()),
-            {"capability", "mode", "split", "n_shards", "protocol", "metric"},
+            {"capability", "mode", "split", "n_shards", "protocol", "metric", "config"},
         )
 
     def test_different_mode_is_never_comparable(self):
@@ -353,3 +353,32 @@ class FairBaselineTests(unittest.TestCase):
         scaled_all, _, _ = self.fair_rff(self.rn, 64)
         self.assertFalse(self.np.allclose(scaled_train, scaled_all),
                          "train-fitted extent must differ from all-rows extent")
+
+
+class ConfigIdentityTests(unittest.TestCase):
+    """With levers in the file instead of the CLI, identity must hash what was BUILT.
+
+    33 flags moved into probe.py's CONFIG block, so two different experiments now run with identical
+    command lines. Without a config digest in the identity the gate would compare a rewired encoder
+    against the control as the same measurement and let one 'beat' the other.
+    """
+
+    def test_two_configs_are_not_the_same_measurement(self):
+        a = result(config={"fourier_scale": 10})
+        b = result(config={"fourier_scale": 6400})
+        self.assertNotEqual(a.config_digest(), b.config_digest())
+        self.assertFalse(b.comparable_to(a.identity()))
+
+    def test_the_same_config_is_comparable(self):
+        a = result(config={"fourier_scale": 6400, "head_hidden": 512})
+        b = result(config={"head_hidden": 512, "fourier_scale": 6400})   # order must not matter
+        self.assertEqual(a.config_digest(), b.config_digest())
+        self.assertTrue(b.comparable_to(a.identity()))
+
+    def test_config_travels_with_the_result(self):
+        import tempfile, json as _json
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _P(tmp) / "r.json"
+            result(config={"fourier_scale": 6400}).write(path)
+            self.assertEqual(ProbeResult.read(path).config["fourier_scale"], 6400)
