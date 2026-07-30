@@ -43,8 +43,14 @@ and stop — do not change it yourself.
 
 ## Hard rules
 
-- **An experiment is an EDIT on a BRANCH, not a new flag.** A flag is what a change earns when it
-  graduates. Do not add a flag to try an idea. Do not copy a file to try an idea.
+- **An experiment is an EDIT on a BRANCH. There are no flags to try an idea with.** The probe's CLI is
+  four arguments — capability, seed, device, result-json — and every lever lives in the `CONFIG` block
+  at the top of `probe.py`. Change CONFIG, or change `earth4d.py`, commit on a branch, run. Do not add a
+  flag. Do not copy a file. `config_digest` puts what you built into the measurement identity, so a
+  rewired encoder is never compared against the control as the same measurement.
+- **CONFIG starts at the standing champion**, so a run with no edits reproduces the record. If your run
+  scores wildly differently before you have changed anything, you have changed the measurement, not the
+  result — check what you edited.
 - **Screen at ONE seed. Go broad.** GPU is precious and the goal is breakthroughs, so spend it on many
   different hypotheses, not on measuring one hypothesis five times. The noise barrier already refuses
   noise — that is its job — so a screening run needs no repeats. Flat at one seed IS your answer:
@@ -78,17 +84,17 @@ cd /workspace/deepearth && export PYTHONPATH=/workspace
 python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness \
     --list-modes --capability <metric>
 
-# SCREEN one idea (default 1 seed), recorded and published
+# SCREEN one idea (default 1 seed). The experiment is your CONFIG / earth4d.py diff, not a flag.
 python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness \
-    --metric <metric> --probe "<flags>" --tag <tag> --device cuda:0 --ensue
+    --metric <metric> --tag <tag> --device cuda:0 --ensue
 
 # CONFIRM a candidate that cleared the barrier — only then is 5x the compute justified
 python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness \
-    --metric <metric> --probe "<flags>" --seeds 5 --tag <tag>_confirm --device cuda:0 --ensue
+    --metric <metric> --seeds 5 --tag <tag>_confirm --device cuda:0 --ensue
 
 # measure WITHOUT recording (parity checks, smoke tests)
 EARTH4D_ALLOW_UNRECORDED=1 python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.probe \
-    <flags> --device cuda:0 --result-json /tmp/r.json
+    --capability <metric> --seed 0 --device cuda:0 --result-json /tmp/r.json
 ```
 
 Both GPUs are usable; check `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader`
