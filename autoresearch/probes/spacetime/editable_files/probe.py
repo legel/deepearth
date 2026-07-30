@@ -186,8 +186,8 @@ CONFIG = {
     "conj": 0,                 # explicit space x time degree-2 sketch
     "elm": 0,                  # frozen random nonlinear expansion of the encoder's own output
     "elm_scale": 1.0,
-    "stencil": 1,              # local field average of the spatial lookup instead of a point sample
-    "stencil_radius": 0.001,
+    "stencil": 0,              # local field average of the spatial lookup instead of a point sample
+    "stencil_radius": 0.002,
 }
 @dataclass
 class _DynamicsCtx:
