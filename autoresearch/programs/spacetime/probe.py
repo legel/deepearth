@@ -90,7 +90,8 @@ def _set_result_sink(path, capability, protocol, args):
     })
 
 
-def declare(capability, mode, metric, value, gains=None, baselines=None, split="", **extras):
+def declare(capability, mode, metric, value, gains=None, baselines=None, split="",
+            trained_encoder=None, **extras):
     """Declare WHAT this run measured, in the contract's terms.
 
     A mode calls this immediately before returning. Fields the run already knows (seed, steps, shard
@@ -99,6 +100,11 @@ def declare(capability, mode, metric, value, gains=None, baselines=None, split="
 
     `--capability` from the harness wins over the mode's natural default when both are present: the
     harness declared the objective, and any mismatch is the harness's to detect.
+
+    `trained_encoder` defaults to the --train_encoder FLAG, but some modes (FIELD-DECODE, ENV-DECODE)
+    train the encoder end-to-end unconditionally, so they pass it explicitly. Only the trained protocol
+    can support a claim about learned hash state, so this field must describe what actually happened
+    rather than what was requested.
     """
     from deepearth.autoresearch.programs.spacetime.probe_contract import Primary, ProbeResult
 
@@ -111,7 +117,8 @@ def declare(capability, mode, metric, value, gains=None, baselines=None, split="
         n_shards=_RESULT_SINK["n_shards"],
         seed=_RESULT_SINK["seed"],
         steps=_RESULT_SINK["steps"],
-        trained_encoder=_RESULT_SINK["trained_encoder"],
+        trained_encoder=(_RESULT_SINK["trained_encoder"] if trained_encoder is None
+                         else bool(trained_encoder)),
         gains=dict(gains or {}),
         baselines=dict(baselines or {}),
         flags=_RESULT_SINK["flags"],
@@ -1042,6 +1049,20 @@ def main(argv=None):
         print(f"  held-out top5 acc   | mlp {mlp_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f}")
         print(f"  [profile] earth4d_dim={fdim} held={n_te} steps={a.steps} env_decode=True aux_w={a.env_aux_weight}")
         print(f"  {len(lat)} obs, {a.steps}-step env-decode in {dt:.1f}s")
+        declare(
+            capability="family_from_env",
+            mode=f"ENV-DECODE({mode})",
+            metric="family_top1_accuracy",
+            trained_encoder=True,          # trains the encoder against an auxiliary env field
+            value=e4d_acc,
+            split=mode,
+            gains={"vs mlp": e4d_acc - mlp_acc, "vs best-ctrl": e4d_acc - ctrl},
+            baselines={"mlp": mlp_acc, "RFF": rff_acc, "best-ctrl": ctrl},
+            obs=len(lat), held_out=n_te, earth4d_dim=fdim, seconds=dt,
+            env_aux_weight=a.env_aux_weight,
+            env_recon_r2={"mlp": mlp_er, "rff": rff_er, "earth4d": e4d_er},
+            top5={"mlp": mlp_t5, "rff": rff_t5, "earth4d": e4d_t5},
+        )
         return {"st_gain": e4d_acc - mlp_acc, "st_gain_bestctrl": e4d_acc - ctrl, "earth4d_acc": e4d_acc,
                 "mlp_acc": mlp_acc, "rff_acc": rff_acc, "earth4d_envR2": e4d_er, "obs": len(lat),
                 "seconds": dt, "env_decode": True}
@@ -1074,6 +1095,19 @@ def main(argv=None):
         print(f"  held-out top5 acc   | mlp {mlp_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f}   top5_gain(vs mlp) {e4d_t5 - mlp_t5:+.4f}  top5_gain(vs RFF) {e4d_t5 - rff_t5:+.4f}")
         print(f"  [profile] earth4d_dim={fdim}  held={n_te}  spatial_levels={a.spatial_levels} steps={a.steps} field_decode=True trained_encoder=True")
         print(f"  {len(lat)} obs, {a.steps}-step decode in {dt:.1f}s")
+        declare(
+            capability="family_from_spacetime",
+            mode=mode,                     # already reads "FIELD-DECODE(...)"; do not wrap it again
+            metric="family_top1_accuracy",
+            trained_encoder=True,          # run_field_decode trains end-to-end, flag or no flag
+            value=e4d_acc,
+            split=mode,
+            gains={"vs mlp": e4d_acc - mlp_acc, "vs RFF": e4d_acc - rff_acc,
+                   "vs best-ctrl": e4d_acc - ctrl},
+            baselines={"mlp": mlp_acc, "RFF": rff_acc, "best-ctrl": ctrl},
+            obs=len(lat), held_out=n_te, families=n_fam, earth4d_dim=fdim, seconds=dt,
+            top5={"mlp": mlp_t5, "rff": rff_t5, "earth4d": e4d_t5},
+        )
         return {"st_gain": e4d_acc - mlp_acc, "st_gain_rff": e4d_acc - rff_acc, "st_gain_bestctrl": e4d_acc - ctrl,
                 "earth4d_acc": e4d_acc, "mlp_acc": mlp_acc, "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "field_decode": True}
 
@@ -1925,6 +1959,23 @@ def main(argv=None):
         print(f"  st_gain(GNN Earth4D vs RFF) {e4d_r['gnn_acc'] - rff_r['gnn_acc']:+.4f}  (GNN Earth4D vs raw) {e4d_r['gnn_acc'] - raw_r['gnn_acc']:+.4f}   (mechanism vs encoder control)")
         print(f"  [profile] earth4d_dim={e4d.shape[1]} forecast_queries={n_te} K={a.rec_k} hidden={a.rec_hidden} hops={a.gnn_hops} steps={a.steps}")
         print(f"  {len(lat)} obs, {a.steps}-step GNN in {dt:.1f}s")
+        # The mechanism (GNN propagation) and the encoder are separate questions. propagator_gain
+        # measures propagation-vs-static; the ENCODER gain is Earth4D's GNN accuracy against the
+        # generic PE's GNN accuracy. Declaring both keeps them from being confused for one another.
+        declare(
+            capability="family_from_spacetime",
+            mode="GNN(message-passing propagator)",
+            metric="family_top1_accuracy",
+            value=e4d_r["gnn_acc"],
+            split="FORECAST(past->future)",
+            gains={"GNN Earth4D vs RFF": e4d_r["gnn_acc"] - rff_r["gnn_acc"],
+                   "GNN Earth4D vs raw": e4d_r["gnn_acc"] - raw_r["gnn_acc"]},
+            baselines={"raw_gnn": raw_r["gnn_acc"], "RFF_gnn": rff_r["gnn_acc"],
+                       "raw_static": raw_r["static_acc"]},
+            obs=len(lat), forecast_queries=n_te, K=a.rec_k, hops=a.gnn_hops,
+            earth4d_dim=int(e4d.shape[1]), seconds=dt,
+            propagator_gain_raw=pg_raw, propagator_gain_e4d=pg_e4d, propagator_gain_rff=pg_rff,
+        )
         return {"gnn_acc_raw": raw_r["gnn_acc"], "gnn_top5_raw": raw_r["gnn_top5"],
                 "static_acc_raw": raw_r["static_acc"], "static_top5_raw": raw_r["static_top5"],
                 "propagator_gain": pg_raw, "propagator_gain_top5": pg_raw5,
@@ -1987,6 +2038,18 @@ def main(argv=None):
         print(f"  forecast top5 acc   | raw-coords {raw_t5:.4f} | RFF {rff_t5:.4f} | Earth4D {e4d_t5:.4f}   top5_gain(vs raw) {e4d_t5 - raw_t5:+.4f}")
         print(f"  [profile] earth4d_dim={e4d.shape[1]}  rollout_queries={n_te}  K={a.rec_k} hidden={a.rec_hidden} spatial_levels={a.spatial_levels} steps={a.steps}")
         print(f"  {len(lat)} obs, {a.steps}-step rollout in {dt:.1f}s")
+        declare(
+            capability="family_from_spacetime",
+            mode="RECURRENCE(4D-LSTM rollout past->future)",
+            metric="family_top1_accuracy",
+            value=e4d_acc,
+            split="FORECAST(past->future)",
+            gains={"vs raw": e4d_acc - raw_acc, "vs RFF": e4d_acc - rff_acc},
+            baselines={"raw": raw_acc, "RFF": rff_acc},
+            obs=len(lat), rollout_queries=n_te, families=n_fam, K=a.rec_k, hidden=a.rec_hidden,
+            earth4d_dim=int(e4d.shape[1]), seconds=dt,
+            top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5},
+        )
         return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc,
                 "raw_acc": raw_acc, "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "recurrence": True}
 
