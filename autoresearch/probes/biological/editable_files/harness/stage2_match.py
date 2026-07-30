@@ -9,7 +9,7 @@ import numpy as np
 import torch, open_clip, torch.nn.functional as F
 from ensue_log import log_stage
 
-D = Path("/workspace/deepearth/data/deepcal")
+D = Path("/workspace/deepearth/autoresearch/data/deepcal")
 DER = D / "derived"
 DEV = "cuda:0"
 

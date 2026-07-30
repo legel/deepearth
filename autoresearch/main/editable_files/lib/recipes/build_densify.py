@@ -1,5 +1,5 @@
 import numpy as np, glob
-D = "/workspace/deepearth/data/deepcal"
+D = "/workspace/deepearth/autoresearch/data/deepcal"
 chunks = sorted(glob.glob(f"{D}/gbif_tokens/chunk0*.npz"))
 lat0 = np.concatenate([np.load(f)["lat"] for f in chunks])
 lon0 = np.concatenate([np.load(f)["lon"] for f in chunks])

@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, "/workspace/deepearth/autoresearch/probes/biological")
 from ensue_log import log_stage
 
-D = Path("/workspace/deepearth/data/deepcal")
+D = Path("/workspace/deepearth/autoresearch/data/deepcal")
 DER = D / "derived"; DER.mkdir(exist_ok=True)
 
 z = np.load(D / "gbif_pollinator_dist.npz", allow_pickle=True)

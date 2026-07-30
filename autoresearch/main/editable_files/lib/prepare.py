@@ -7,8 +7,8 @@ Run from the repo's PARENT directory (the one containing ``deepearth/``) so the 
 
 It ensures, in order:
   1. DATA   -- the fully pre-processed DeepCal cache (embeddings, tokens, tree, splits) is present under
-     ``deepearth/data/deepcal/`` (or an existing local cache), downloading + extracting the NERSC-hosted zips if not.
-  2. KERNEL -- the Earth4D hash-grid CUDA kernel is importable, compiling it (``encoders/spacetime/install.sh``) if not.
+     ``deepearth/autoresearch/data/deepcal/`` (or an existing local cache), downloading + extracting the NERSC-hosted zips if not.
+  2. KERNEL -- the Earth4D hash-grid CUDA kernel is importable, compiling it (``autoresearch/probes/spacetime/editable_files/install.sh``) if not.
   3. PREPARED -- the assembled dataset (glob + KD-tree neighbor index, ~2.7 min to build) is cached to a single
      ``.pt`` so every training run / experiment spins up in ~1 second.
   4. TEST I/O -- a small held-out inference bundle is materialized so the benchmark harness is ready to score.

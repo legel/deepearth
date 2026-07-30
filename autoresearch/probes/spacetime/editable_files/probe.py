@@ -24,7 +24,7 @@ THE LEVERS. Two families, and the fair-gain tells you which one you are on:
                    --env_decode [--env_aux_weight]                      env-supervised field
     priors         --fourier[_scale] --spatial_siren[--siren_*] --spatial_cline[--cline_scale]
                    --time_harmonics --time_film --causal_lags[--causal_lag_span]
-    encoder itself encoders/spacetime/earth4d.py  ← the real architecture lever
+    encoder itself autoresearch/probes/spacetime/editable_files/earth4d.py  ← the real architecture lever
     end-to-end     --train_encoder [--enc_lr_mult --enc_warmup --enc_c2f]
 
   CAPACITY (tunes a winner; not a move) ────────────────────────────────────────────────
@@ -70,7 +70,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from deepearth.encoders.spacetime.earth4d import Earth4D
+from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
 from deepearth.autoresearch.probes.spacetime.editable_files.harness import (
     _set_result_sink,
     declare,
@@ -596,7 +596,7 @@ def sdm_hard_mode(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cache_dir", default="data/deepcal")
+    ap.add_argument("--cache_dir", default="autoresearch/data/deepcal")
     ap.add_argument("--n_shards", type=int, default=8)         # ~65k obs; the lever for coverage/speed
     ap.add_argument("--steps", type=int, default=800)
     ap.add_argument("--lr", type=float, default=3e-3)

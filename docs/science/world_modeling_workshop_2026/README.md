@@ -191,7 +191,7 @@ pdflatex deepearth.tex
 ## Related Links
 
 - **DeepEarth Repository:** [github.com/legel/deepearth](https://github.com/legel/deepearth)
-- **Earth4D Encoder:** [github.com/legel/deepearth/tree/main/encoders/spacetime](https://github.com/legel/deepearth/tree/main/encoders/spacetime)
+- **Earth4D Encoder:** [github.com/legel/deepearth/tree/main/autoresearch/probes/spacetime/editable_files](https://github.com/legel/deepearth/tree/main/autoresearch/probes/spacetime/editable_files)
 - **World Modeling Workshop:** [world-model-mila.github.io](https://world-model-mila.github.io/)
 
 ## License

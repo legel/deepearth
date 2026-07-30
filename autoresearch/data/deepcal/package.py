@@ -11,7 +11,7 @@ from pathlib import Path
 from collections import defaultdict
 import numpy as np
 
-HERE = Path(__file__).resolve().parent                      # .../data/deepcal
+HERE = Path(__file__).resolve().parent                      # .../autoresearch/data/deepcal
 
 
 # ============================================================================ package_dataset

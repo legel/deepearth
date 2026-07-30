@@ -41,8 +41,8 @@ SSL shapes the representation; the head only reads it, and imagined-vs-real test
 the representation itself carries the signal. Keep head grad light (small weight, optionally stop-grad) so it never
 hard-codes a supervised shortcut into the shared representation.
 
-**Fair game (edit + commit):** `autoresearch/main/editable_files/fusion/fusion.py` (main target), `encoders/spacetime/earth4d.py`,
-`encoders/biological/phylogenomic.py`, `deepcal.yaml`, `evaluate.py` (benchmark definitions + heads),
+**Fair game (edit + commit):** `autoresearch/main/editable_files/fusion/fusion.py` (main target), `autoresearch/probes/spacetime/editable_files/earth4d.py`,
+`autoresearch/probes/biological/editable_files/phylogenomic.py`, `deepcal.yaml`, `evaluate.py` (benchmark definitions + heads),
 `data.py`/`prepare.py` (integrate new datasets). Architecture, encoders, fusion, operators, Bayesian priors/posteriors,
 GNN autoregressive rollout (GraphCast/GenCast), diffusion/recurrent decoding, optimizer, schedule, hyperparameters, and
 the DATA itself are all in scope. Never tune a scoring definition to inflate a result — improve the model.

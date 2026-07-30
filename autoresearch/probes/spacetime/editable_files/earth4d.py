@@ -686,7 +686,7 @@ class Earth4D(nn.Module):
 
 if __name__ == "__main__":
     # https://github.com/legel/deepearth
-    from deepearth.encoders.spacetime.earth4d import Earth4D
+    from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
     world_model = Earth4D()
     embeddings = world_model(
         (51.9976, -0.7416, 110, "1941-06-01 09:00 GMT"),      # Bletchley Park (Turing breaks Enigma, 1941)

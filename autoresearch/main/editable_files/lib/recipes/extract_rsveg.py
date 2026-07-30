@@ -60,7 +60,7 @@ med = np.nanmedian(feat, axis=0)
 miss = ~np.isfinite(feat); feat[miss] = np.take(med, np.where(miss)[1])
 cov = np.isfinite(ndvi).any(1).mean()
 print(f"coverage {cov:.3f}; feat shape {feat.shape}; medians {np.round(med,3)}", flush=True)
-np.savez_compressed("/workspace/deepearth/data/deepcal/gbif_rsveg_tokens.npz",
+np.savez_compressed("/workspace/deepearth/autoresearch/data/deepcal/gbif_rsveg_tokens.npz",
                     gbifID=gid, rsveg=feat,
                     feat_names=np.array(["ndvi_mean","ndvi_amp","ndvi_std","ndvi_peak","ndvi_min","evi_mean","evi_amp"]))
 print("wrote gbif_rsveg_tokens.npz", flush=True)

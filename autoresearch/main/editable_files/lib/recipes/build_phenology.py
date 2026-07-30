@@ -1,5 +1,5 @@
 import numpy as np, glob, os, subprocess, netCDF4
-cache="/workspace/deepearth/data/deepcal"
+cache="/workspace/deepearth/autoresearch/data/deepcal"
 # obs coords
 gid,lat,lon=[],[],[]
 for f in sorted(glob.glob(f"{cache}/gbif_tokens/*.npz")):

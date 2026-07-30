@@ -8,7 +8,7 @@ Objective (standalone `bio_gain`): family-NN accuracy of the graph-refined speci
 seed, on held-out species reconstructed from relatives (rule-25 mask). >0 ⟹ the phylogeny adds
 family-discriminative structure the seed lacks. Reuses SpeciesGraph unchanged (no core edit).
 
-  python -m deepearth.autoresearch.probes.biological.editable_files.harness.probe --cache_dir data/deepcal --steps 400
+  python -m deepearth.autoresearch.probes.biological.editable_files.harness.probe --cache_dir autoresearch/data/deepcal --steps 400
 """
 import argparse
 import csv
@@ -20,7 +20,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from deepearth.encoders.biological.phylogenomic import SpeciesGraph, build_tree_buffers
+from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import SpeciesGraph, build_tree_buffers
 
 
 def load_species(cache: str):
@@ -331,7 +331,7 @@ def run_interaction(a, dev):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cache_dir", default="data/deepcal")
+    ap.add_argument("--cache_dir", default="autoresearch/data/deepcal")
     ap.add_argument("--d_model", type=int, default=256)
     ap.add_argument("--steps", type=int, default=400)
     ap.add_argument("--mask_frac", type=float, default=0.15)   # rule-25 withhold rate (the lever to sweep)

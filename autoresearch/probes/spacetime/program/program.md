@@ -12,7 +12,7 @@ represents it).
 
 | | |
 |---|---|
-| **Surface** | `encoders/spacetime/earth4d.py` + `autoresearch/probes/spacetime/` probes + the channels they feed. Never the fusion model. |
+| **Surface** | `autoresearch/probes/spacetime/editable_files/earth4d.py` + `autoresearch/probes/spacetime/` probes + the channels they feed. Never the fusion model. |
 | **Shared state** | **Ensue** (swarm-wide) ⇄ `records.json` (per-run ledger) ⇄ `scorecard.md` (the board) |
 | **Ops** | box, GPUs, token, commit identity → `autoresearch/probes/spacetime/program/box-operations.md` |
 
@@ -127,7 +127,7 @@ are not the move.
 
 ```
    ① branch          git worktree add ../e4d-<tag> -b exp/<tag>
-   ② EDIT in place   change probe/ and encoders/spacetime/earth4d.py directly. No copy, no new
+   ② EDIT in place   change probe/ and autoresearch/probes/spacetime/editable_files/earth4d.py directly. No copy, no new
                      module, no gated flag. The branch is the isolation.
    ③ sweep           run it; the diff IS the experiment
    ④ dies            delete the branch. The edit vanishes with it; Ensue keeps the reason.

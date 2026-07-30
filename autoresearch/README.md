@@ -16,7 +16,7 @@ recovered signals get plugged into the fusion layer — the full model comes las
             └─────────────────────────────▲─────────────────────────────┘
                                           │ develops
                           ┌───────────────┴──────────────────────────┐
-   LEAVES                 │  encoders/spacetime/   encoders/biological/ │
+   LEAVES                 │  autoresearch/probes/spacetime/editable_files/   autoresearch/probes/biological/editable_files/ │
    the artifacts          │  the thing each probe loop is researching   │
                           └──────────────────────────────────────────┘
 ```
@@ -25,9 +25,9 @@ Read it bottom-up: an **encoder is a leaf** — the artifact under development. 
 its encoder and is the only thing that changes it. **`main` is the apex**: it will consume each probe's
 finished encoder, and it runs last. Dependencies point *upward only*. A probe importing a sibling probe,
 or a probe importing `main`, is a cycle or a hidden coupling, and
-[`tests/test_loop_independence.py`](../tests/test_loop_independence.py) fails on both.
+[`autoresearch/tests/test_loop_independence.py`](../autoresearch/tests/test_loop_independence.py) fails on both.
 
-`encoders/` is still top-level rather than inside its probe loop. That consolidation waits until the
+each probe loop's `editable_files/` is still top-level rather than inside its probe loop. That consolidation waits until the
 scientific performance is filled out — moving a CUDA build and its ABI-specific `.so` mid-campaign buys
 nothing. The dependency direction is already correct; only the file location is provisional.
 
@@ -63,7 +63,7 @@ autoresearch/
         └── records/           harness-written: board, traces, ledgers. Never hand-edited.
 ```
 
-The shared dataset lives at the repo root `data/deepcal`: all three loops read it, so it belongs to no
+The shared dataset lives at the repo root `autoresearch/data/deepcal`: all three loops read it, so it belongs to no
 single loop. Loop-specific data lives with its loop (`spacetime/data/lfmc/`).
 
 ## The three roles
@@ -116,7 +116,7 @@ own commit with its own tests, separate from any result.
 - **Each loop is independent CODE.** No loop imports another loop. If two loops need the same loader,
   each keeps its own copy — a cross-loop import means a change in one loop silently moves another loop's
   numbers with no record saying so. Sharing is allowed only *downward*, into code no loop owns
-  (`encoders/`, and `autoresearch/main/editable_files/fusion/` for the fusion loop alone). `tests/test_loop_independence.py` enforces this,
+  (each probe loop's `editable_files/`, and `autoresearch/main/editable_files/fusion/` for the fusion loop alone). `autoresearch/tests/test_loop_independence.py` enforces this,
   plus the identical four directories and the presence of each loop's program.
 - **Each loop optimizes its own metric under its own evals.** A loop's program declares what it is
   raising and what would falsify it. No loop is scored on another's number, and no loop's result is
@@ -129,10 +129,10 @@ own commit with its own tests, separate from any result.
 
 1. Clone `github.com/legel/deepearth` (branch `deepcal`).
 2. `pip install -r requirements.txt`, then build the Earth4D CUDA hash encoder against your torch:
-   `cd encoders/spacetime && bash install.sh` (the shipped .so is ABI-specific — you MUST rebuild it).
+   `cd autoresearch/probes/spacetime/editable_files && bash install.sh` (the shipped .so is ABI-specific — you MUST rebuild it).
 3. Read `science.md` (binding), then the `program/` of the loop you are running.
 4. `python -m deepearth.autoresearch.main.editable_files.lib.prepare` — downloads and extracts the audited
-   dataset (deepcal_data.zip) from NERSC into `data/deepcal/`.
+   dataset (deepcal_data.zip) from NERSC into `autoresearch/data/deepcal/`.
 5. `python -m deepearth.autoresearch.main.editable_files.harness.train autoresearch/main/editable_files/harness/deepcal.yaml --steps 8000 --device cuda:0`
    (batch 512 needs ~27GB; on a 24GB card set `batch: 256` + `pollinator_top_k: 32`). Score against
    `main/program/BENCHMARKS.md`, edit, repeat.

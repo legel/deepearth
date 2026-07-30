@@ -454,7 +454,7 @@ def cmd_build_species_dist(argv):
 """B34 Live Fuel Moisture Content label from field measurements (fire/lfmc_data_conus.csv). Per-species MEDIAN LFMC
 (%) over the California measurements, mapped onto the plant vocab by binomial.
 
-    python -m deepearth.data.deepcal.build_plant build_lfmc            # cache = data/deepcal (DEEPCAL_DATA_DIR override)
+    python -m deepearth.data.deepcal.build_plant build_lfmc            # cache = autoresearch/data/deepcal (DEEPCAL_DATA_DIR override)
 """
 _LFMC_LO, _LFMC_HI = 10.0, 400.0    # physical LFMC % window (drop bad / fresh-growth readings)
 
@@ -778,7 +778,7 @@ def _patristic_cophenetic(cparent, cblen, nsp, n):
 def cmd_build_patristic_ref(argv):
     argparse.ArgumentParser(prog="build_plant build_patristic_ref").parse_args(argv)
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))       # parent of the `deepearth` package -> importable
-    from deepearth.encoders.biological.phylogenomic import build_tree_buffers
+    from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import build_tree_buffers
     cache = Path(os.environ.get("DEEPCAL_DATA_DIR", Path(__file__).resolve().parent))
     rows = list(csv.DictReader(open(cache / "derived/species_index.csv")))
     tree_toks = set(re.findall(r"[^(),:;\s]+", open(cache / "ca_subtree.dated.nwk").read()))
@@ -890,7 +890,7 @@ def cmd_plant_dated_distance(argv):
         w = csv.writer(f); w.writerow(["model_idx", "tip_label"])
         for i, t in enumerate(tips): w.writerow([i, t])
     # cophenetic in R (ape) over the tree-covered model species
-    r = subprocess.run([_PLANT_RSCRIPT, "deepearth/data/deepcal/plant_dated_patristic.R"],
+    r = subprocess.run([_PLANT_RSCRIPT, "deepearth/autoresearch/data/deepcal/plant_dated_patristic.R"],
                        cwd=str(pd_here.parents[2]), capture_output=True, text=True)
     sys.stdout.write(r.stdout);  sys.stderr.write(r.stderr)
     if "PLANT_DATED_PATRISTIC_DONE" not in r.stdout:

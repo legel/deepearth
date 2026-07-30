@@ -3,7 +3,7 @@
 concurrent, keep vocab species only -> gbif_densify_bulk.npz (gbifID, species_local, lat, lon)."""
 import urllib.request, json, numpy as np, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-vocab=np.load("/workspace/deepearth/data/deepcal/gbif_vocab.npz",allow_pickle=True)
+vocab=np.load("/workspace/deepearth/autoresearch/data/deepcal/gbif_vocab.npz",allow_pickle=True)
 def norm(s):
     p=str(s).split(); return (p[0]+" "+p[1]).lower() if len(p)>=2 else str(s).lower()
 V={norm(b):i for i,b in enumerate(vocab["binomial"])}
@@ -39,7 +39,7 @@ with ThreadPoolExecutor(max_workers=32) as ex:
 seen=set(); uniq=[r for r in rows if not(r[0] in seen or seen.add(r[0]))]
 a=np.array(uniq,dtype=np.float64)
 print(f"DONE {len(a)} unique vocab-species CA occurrences ({time.time()-t0:.0f}s)",flush=True)
-np.savez_compressed("/workspace/deepearth/data/deepcal/gbif_densify_bulk.npz",
+np.savez_compressed("/workspace/deepearth/autoresearch/data/deepcal/gbif_densify_bulk.npz",
     gbifID=a[:,0].astype(np.int64),species_local=a[:,1].astype(np.int32),
     lat=a[:,2].astype(np.float32),lon=a[:,3].astype(np.float32))
 print("wrote gbif_densify_bulk.npz",flush=True)

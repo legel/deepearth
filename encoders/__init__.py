@@ -1,1 +1,0 @@
-"""DeepEarth encoders: extract embeddings from various data modalities."""

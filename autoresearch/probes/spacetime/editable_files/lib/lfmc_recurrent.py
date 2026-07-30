@@ -210,7 +210,7 @@ def default_earth4d_factory(train_coords: np.ndarray, horizon_days: int, device,
 
     Imported lazily so CPU-only guard tests can collect this module without CUDA.
     """
-    from deepearth.encoders.spacetime.earth4d import Earth4D, GeoAdaptiveRange
+    from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D, GeoAdaptiveRange
 
     lat, lon, elev, day = (train_coords[:, i] for i in range(4))
     pad = 0.05
@@ -571,8 +571,8 @@ def main(argv=None):
     ap.add_argument("--horizons", type=int, nargs="+", default=[PRIMARY_HORIZON, SECONDARY_HORIZON])
     ap.add_argument("--arms", nargs="+", default=list(REQUIRED_ARMS))
     ap.add_argument("--comparator", default="persistence")
-    ap.add_argument("--ledger", type=Path, default=Path("autoresearch/probes/spacetime/editable_files/data/lfmc/earth4d_recurrent_ledger.jsonl"))
-    ap.add_argument("--json-out", type=Path, default=Path("autoresearch/probes/spacetime/editable_files/data/lfmc/earth4d_recurrent.json"))
+    ap.add_argument("--ledger", type=Path, default=Path("autoresearch/probes/spacetime/../../data/lfmc/earth4d_recurrent_ledger.jsonl"))
+    ap.add_argument("--json-out", type=Path, default=Path("autoresearch/probes/spacetime/../../data/lfmc/earth4d_recurrent.json"))
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
     device = torch.device(a.device if torch.cuda.is_available() else "cpu")

@@ -10,7 +10,7 @@ from ensue_log import log_stage
 from deepearth.autoresearch.probes.biological import probe as P
 
 def run(poll_dist, seed, steps=400):
-    argv = ["--objective", "interaction", "--cache_dir", "/workspace/deepearth/data/deepcal",
+    argv = ["--objective", "interaction", "--cache_dir", "/workspace/deepearth/autoresearch/data/deepcal",
             "--poll_dist", poll_dist, "--bidir_mask", "--seed", str(seed),
             "--steps", str(steps), "--device", "cuda:0"]
     return P.main(argv)

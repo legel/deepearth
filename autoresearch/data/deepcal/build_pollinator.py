@@ -25,7 +25,7 @@ inductive OU distance from congeners (else text-nearest). Idempotent. Backs up t
 
     python -m deepearth.data.deepcal.build_pollinator add_pollinator_species
 """
-_APS_D = Path(os.environ.get("DEEPCAL", "/home/legel/deepcal/data/deepcal"))
+_APS_D = Path(os.environ.get("DEEPCAL", "/home/legel/deepcal/autoresearch/data/deepcal"))
 
 def _aps_gbif_taxonomy(name):
     import requests
@@ -125,7 +125,7 @@ pollinator_taxon_text_emb_clean.npy. GBIF taxonomy cached to disk.
 
     python -m deepearth.data.deepcal.build_pollinator build_pollinator_text --device cuda:1
 """
-_BPT_D = Path(os.environ.get("POLL_DIR", "/home/photon/ecological/sandbox/deepearth/data/deepcal/pollinator"))
+_BPT_D = Path(os.environ.get("POLL_DIR", "/home/photon/ecological/sandbox/deepearth/autoresearch/data/deepcal/pollinator"))
 _BPT_CACHE = _BPT_D / "gbif_taxonomy_cache.json"
 _BPT_API = "https://api.gbif.org/v1/species/match?name="
 
@@ -207,7 +207,7 @@ def _cpv_normalize(t):
 def cmd_clean_pollinator_vocab(argv):
     argparse.ArgumentParser(prog="build_pollinator clean_pollinator_vocab").parse_args(argv)
     SRC = Path(os.environ.get("POLL_VOCAB",
-          "/home/photon/ecological/sandbox/deepearth/data/deepcal/pollinator/pollinator_vocab.csv"))
+          "/home/photon/ecological/sandbox/deepearth/autoresearch/data/deepcal/pollinator/pollinator_vocab.csv"))
     OUT = SRC.parent
     rows = list(csv.DictReader(open(SRC)))
     # known animal genera (from Animalia/Metazoa rows) — for empty-kingdom recovery
@@ -283,7 +283,7 @@ def _grp_match(name):
 def cmd_gbif_resolve_pollinators(argv):
     argparse.ArgumentParser(prog="build_pollinator gbif_resolve_pollinators").parse_args(argv)
     SRC = Path(os.environ.get("UNRESOLVED",
-          "/home/photon/ecological/sandbox/deepearth/data/deepcal/pollinator/pollinator_vocab_unresolved.csv"))
+          "/home/photon/ecological/sandbox/deepearth/autoresearch/data/deepcal/pollinator/pollinator_vocab_unresolved.csv"))
     OUT = SRC.parent
     rows = list(csv.DictReader(open(SRC)))
     recovered, non_animal, unmatched = [], 0, 0
@@ -310,7 +310,7 @@ are written to pending_pollinator_missing.json for add_pollinator_species. Idemp
 
 def cmd_map_pollinator_species(argv):
     argparse.ArgumentParser(prog="build_pollinator map_pollinator_species").parse_args(argv)
-    D = Path("/home/legel/deepcal/data/deepcal")
+    D = Path("/home/legel/deepcal/autoresearch/data/deepcal")
     pv = {}
     for r in csv.reader(open(D/"pollinator/pollinator_vocab.csv")):
         if r and r[0].isdigit(): pv[r[1].strip().lower()] = int(r[0])
@@ -339,7 +339,7 @@ pollinator_vocab_final.csv + pollinator_vocab_final_map.json.
     python -m deepearth.data.deepcal.build_pollinator merge_pollinator_vocab
 """
 _MPV_D = Path(os.environ.get("POLL_DIR",
-    "/home/photon/ecological/sandbox/deepearth/data/deepcal/pollinator"))
+    "/home/photon/ecological/sandbox/deepearth/autoresearch/data/deepcal/pollinator"))
 
 def cmd_merge_pollinator_vocab(argv):
     argparse.ArgumentParser(prog="build_pollinator merge_pollinator_vocab").parse_args(argv)
@@ -375,11 +375,11 @@ to the CLEANED one, via pollinator_vocab_final_map.json. Writes gbif_pollinator_
 
     python -m deepearth.data.deepcal.build_pollinator remap_pollinator_interactions
 """
-_RPI_MAP = Path("/home/photon/ecological/sandbox/deepearth/data/deepcal/pollinator/pollinator_vocab_final_map.json")
+_RPI_MAP = Path("/home/photon/ecological/sandbox/deepearth/autoresearch/data/deepcal/pollinator/pollinator_vocab_final_map.json")
 
 def cmd_remap_pollinator_interactions(argv):
     argparse.ArgumentParser(prog="build_pollinator remap_pollinator_interactions").parse_args(argv)
-    D = Path(os.environ.get("DEEPCAL_DATA_DIR", "/home/photon/4tb/deepcal_dogfood/data/deepcal"))
+    D = Path(os.environ.get("DEEPCAL_DATA_DIR", "/home/photon/4tb/deepcal_dogfood/autoresearch/data/deepcal"))
     z = dict(np.load(D / "gbif_pollinator_dist.npz", allow_pickle=True))
     m = {int(k): v for k, v in json.load(open(_RPI_MAP)).items()}             # old_idx -> final_idx | None
     W = z["marg_poll_idx"].shape[1]                                          # top-K width (40)

@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from ensue_log import log_stage
 
-D = Path("/workspace/deepearth/data/deepcal")
+D = Path("/workspace/deepearth/autoresearch/data/deepcal")
 DER = D / "derived"
 
 # ---- reconstruct poll_used EXACTLY as probe.load_interactions does (global variant: all in-vocab plants) ----

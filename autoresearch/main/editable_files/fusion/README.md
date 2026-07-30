@@ -1,9 +1,9 @@
 > **Moved here from the repository root `core/` (2026-07-30).** It was imported by exactly one loop —
 > main's `train.py` and `evaluate.py` — so a top-level `core/` read as shared while being owned by the
-> fusion loop. It now lives with its owner. `encoders/` stayed top-level for the opposite reason: all
+> fusion loop. It now lives with its owner. each probe loop's `editable_files/` stayed top-level for the opposite reason: all
 > three loops import it, because it is the interface a probe loop improves and fusion consumes.
 >
-> Probe loops must not import this directory; `tests/test_loop_independence.py` enforces that.
+> Probe loops must not import this directory; `autoresearch/tests/test_loop_independence.py` enforces that.
 
 # DeepEarth core
 
@@ -17,10 +17,10 @@ from deepearth.autoresearch.main.editable_files.fusion.fusion import DeepEarth
 
 `fusion.py` is the whole core. It composes two learnable encoders and fuses everything through latent attention:
 
-- **Space-time** — `deepearth.encoders.spacetime.earth4d.Earth4D`: a CUDA hash-grid over (lat, lon, elev, time) with
+- **Space-time** — `deepearth.autoresearch.probes.spacetime.editable_files.earth4d.Earth4D`: a CUDA hash-grid over (lat, lon, elev, time) with
   an *absolute* channel (coarse regional memory) and a *relative* channel (neighbor offsets, transferable across
   place and time).
-- **Phylogenomic** — `deepearth.encoders.biological.phylogenomic.SpeciesGraph`: a learnable per-species
+- **Phylogenomic** — `deepearth.autoresearch.probes.biological.editable_files.phylogenomic.SpeciesGraph`: a learnable per-species
   representation refined over the evolutionary tree, so an observation of one species informs its relatives.
 
 ## How it works

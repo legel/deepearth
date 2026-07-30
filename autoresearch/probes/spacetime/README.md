@@ -36,7 +36,7 @@
 ## An experiment is an edit on a branch
 
 Not a new file, not a new flag. `git worktree add ../e4d-<tag> -b exp/<tag>`, edit
-`editable_files/**` and `encoders/spacetime/earth4d.py` in place, sweep, and let the branch hold the
+`editable_files/**` and `autoresearch/probes/spacetime/editable_files/earth4d.py` in place, sweep, and let the branch hold the
 isolation. A flag is what you add when something **graduates**; a dead flag is a bug. Gating at
 conception instead is what produced 113 flags, a 1,552-line `main()`, 21 `champion_*.yaml` variants and
 a pile of `diag*.py` copies — and cost every later agent the reading.

@@ -2,7 +2,7 @@
 
 **READ THIS FIRST.** v1 of this blueprint (commit 6f9bcc7) contained numbers measured on a BROKEN data
 foundation and are now corrected below. A data-integrity audit found 2 mislabeled arrays + 5 missing
-files; all 6 are repaired (`data/deepcal/derived/*_rebuilt.*`, alignment-verified, non-destructive).
+files; all 6 are repaired (`autoresearch/data/deepcal/derived/*_rebuilt.*`, alignment-verified, non-destructive).
 Several v1 conclusions changed when re-tested on correct data. All findings remain probe-level; champion
 bench 0.6153 is unchanged (nothing graduated). Numbers below are on the CORRECTED foundation.
 

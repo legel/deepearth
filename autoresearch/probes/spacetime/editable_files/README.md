@@ -37,7 +37,7 @@ and held-site gate in `autoresearch/probes/spacetime/program/program.md`.
 ```bash
 # Clone DeepEarth repository
 git clone https://github.com/legel/deepearth.git
-cd deepearth/encoders/spacetime
+cd deepearth/autoresearch/probes/spacetime/editable_files
 
 # Install dependencies
 bash install.sh
@@ -48,7 +48,7 @@ bash install.sh
 ```bash
 # From the repository root: pinned real data, strict split audit, train-only baselines
 python3 -m autoresearch.probes.spacetime.editable_files.lib.science_gate \
-  --download --json-out autoresearch/probes/spacetime/editable_files/data/lfmc/earth4d_science_gate_dev.json
+  --download --json-out autoresearch/probes/spacetime/../../data/lfmc/earth4d_science_gate_dev.json
 ```
 
 This command does not train Earth4D; its artifact explicitly records `earth4d_evaluated=false`.
@@ -244,7 +244,7 @@ Earth4D enables research in:
 ## Project Structure
 
 ```
-encoders/spacetime/
+autoresearch/probes/spacetime/editable_files/
 ├── earth4d.py          # Main Earth4D encoder module
 ├── training.py         # Generic training infrastructure with Protocol classes
 ├── coordinates.py      # Coordinate transformation utilities

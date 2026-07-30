@@ -25,7 +25,7 @@ The CHAMPION baseline to beat is `text graph`. A source wins iff its `graph` (or
 score exceeds `text graph` by > floor across seeds. Reuses SpeciesGraph unchanged; edits nothing in core/.
 
     python -m deepearth.autoresearch.probes.biological.editable_files.lib.traitprobe \
-        --cache_dir data/deepcal --trait_key multi_flower_color --steps 400 --seeds 0 1 2
+        --cache_dir autoresearch/data/deepcal --trait_key multi_flower_color --steps 400 --seeds 0 1 2
 """
 import argparse
 import glob
@@ -39,7 +39,7 @@ import torch.nn.functional as F
 from deepearth.autoresearch.probes.biological.editable_files.harness.probe import (
     load_species, load_trait, nn_trait_acc, nn_trait_ap, nn_trait_num,
 )
-from deepearth.encoders.biological.phylogenomic import SpeciesGraph, build_tree_buffers
+from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import SpeciesGraph, build_tree_buffers
 
 
 # --- vision seeds: mean (cached npz) and medoid (built once, cached) -----------------------------
@@ -1790,7 +1790,7 @@ def run_usda(a, dev):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cache_dir", default="data/deepcal")
+    ap.add_argument("--cache_dir", default="autoresearch/data/deepcal")
     ap.add_argument("--d_model", type=int, default=256)
     ap.add_argument("--steps", type=int, default=400)
     ap.add_argument("--mask_frac", type=float, default=0.15)

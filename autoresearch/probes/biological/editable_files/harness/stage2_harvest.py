@@ -7,7 +7,7 @@ sys.path.insert(0, "/workspace/deepearth/autoresearch/probes/biological")
 from pathlib import Path
 from ensue_log import log_stage
 
-DER = Path("/workspace/deepearth/data/deepcal/derived")
+DER = Path("/workspace/deepearth/autoresearch/data/deepcal/derived")
 OUT = DER / "pollinator_candidates.jsonl"
 GBIF = "https://api.gbif.org/v1"
 

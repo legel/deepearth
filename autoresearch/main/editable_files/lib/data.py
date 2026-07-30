@@ -252,7 +252,7 @@ class California:
         if not nwk.exists():
             return None, None
         import re, torch as _t
-        from deepearth.encoders.biological.phylogenomic import build_tree_buffers
+        from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import build_tree_buffers
         toks = set(re.findall(r"[^(),:;\s]+", open(nwk).read()))
         pairs = [(i, tl) for i, tl in enumerate(self._tip_labels) if tl in toks]   # (species-local idx, tip_label)
         if not pairs:
@@ -266,7 +266,7 @@ class California:
         nwk = cache / "ca_subtree.dated.nwk"
         if not nwk.exists():
             return None
-        from deepearth.encoders.biological.phylogenomic import build_tree_buffers
+        from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import build_tree_buffers
         try:
             return build_tree_buffers(str(nwk), self._tip_labels)
         except KeyError as e:                              # inductively-placed species (rules 25/26) aren't in the dated tree

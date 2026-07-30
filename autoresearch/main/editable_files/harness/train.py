@@ -85,7 +85,7 @@ def train_and_evaluate(config, device):
         rel_extra["n_heads"] = m["n_heads"]
     poll_kw = {}                                           # rule 27: pollinator species graph (bilinear cross-tree interaction)
     if m.get("poll_weight", 0.0) > 0 and getattr(source, "pollinator_text", None) is not None and m.get("pollinator_graph", True):
-        from deepearth.encoders.biological.phylogenomic import SpeciesGraph
+        from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import SpeciesGraph
         cdir = Path(d["cache_dir"]); cdir = cdir if cdir.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
         pdp = cdir / "pollinator_distance.npy"             # real OpenTree patristic (tree-covered) + BioCLIP-2.5 text shadow (rest)
         pdist = torch.tensor(np.load(pdp), device=device) if pdp.exists() \

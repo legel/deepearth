@@ -5,7 +5,7 @@ DeepEarth is a [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_l
 
 ![DeepEarth v.0.01 preview of architecture](docs/deepearth.png)
 
-DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen above). It uses a novel space-time positional encoder, [Earth4D](encoders/spacetime/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
+DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen above). It uses a novel space-time positional encoder, [Earth4D](autoresearch/probes/spacetime/editable_files/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
 
 ![Earth4D space-time encoder](docs/earth4d.png) 
 
@@ -21,29 +21,42 @@ signal for one part of the science in [`autoresearch/science.md`](autoresearch/s
 those signals are established do they get plugged into the fusion layer — the full model comes last.
 
 ```
-                          ┌──────────────────────────────────────────┐
-   APEX                   │  autoresearch/main/       FUSION         │  runs LAST
-   consumes probe results │  integrates finished encoders            │
-                          └───────────────▲──────────────────────────┘
-                                          │ depends on (later, once the science is in)
+                       ┌─────────────────────────────────────────────┐
+   APEX                │  autoresearch/main/            FUSION       │   runs LAST
+   consumes the        │  integrates the finished encoders           │
+   probes' output      └──────────────────▲──────────────────────────┘
+                                          │  depends on — the one legitimate edge,
+                                          │  taken once the science is filled out
             ┌─────────────────────────────┴─────────────────────────────┐
-   PROBE    │ autoresearch/probes/spacetime/   autoresearch/probes/biological/ │
-   LOOPS    │ one probe · own data · own metric · own evals · independent code │
+   PROBE    │  autoresearch/probes/spacetime/    autoresearch/probes/biological/
+   LOOPS    │  one probe · own data · own metric · own evals · own tests
+            │  independent code · NEVER import a sibling
             └─────────────────────────────▲─────────────────────────────┘
-                                          │ develops
-                          ┌───────────────┴──────────────────────────┐
-   LEAVES                 │  encoders/spacetime/   encoders/biological/ │
-   the artifacts          │  the thing each probe loop is researching   │
-                          └──────────────────────────────────────────┘
+                                          │  develops
+            ┌─────────────────────────────┴─────────────────────────────┐
+   LEAVES   │  .../spacetime/editable_files/   (Earth4D + CUDA hash)
+            │  .../biological/editable_files/  (phylogenomic)
+            └───────────────────────────────────────────────────────────┘
 ```
+
+Read it bottom-up. An **encoder is a leaf** — the artifact under development — and it lives *inside* the
+probe loop that develops it, because a leaf belongs to exactly one loop. A **probe loop** is the only
+thing that changes its encoder, and never touches a sibling's. **`main` is the apex**: it consumes each
+probe's finished encoder and runs last.
+
+Dependencies point **upward only**. `main → probes` is legitimate and expected; `probe → sibling probe`
+or `probe → main` is a cycle or a hidden coupling, and
+[`autoresearch/tests/test_loop_independence.py`](autoresearch/tests/test_loop_independence.py) fails on
+either. Everything a loop owns lives under it: its program, its editable code, its encoder, its data, its
+records, its tests. Nothing about a loop sits at the repository root.
 
 Read it bottom-up: an **encoder is a leaf** — the artifact under development. A **probe loop** sits above
 its encoder and is the only thing that changes it. **`main` is the apex**: it will consume each probe's
 finished encoder, and it runs last. Dependencies point *upward only*. A probe importing a sibling probe,
 or a probe importing `main`, is a cycle or a hidden coupling, and
-[`tests/test_loop_independence.py`](tests/test_loop_independence.py) fails on both.
+[`autoresearch/tests/test_loop_independence.py`](autoresearch/tests/test_loop_independence.py) fails on both.
 
-`encoders/` is still top-level rather than inside its probe loop. That consolidation waits until the
+each probe loop's `editable_files/` is still top-level rather than inside its probe loop. That consolidation waits until the
 scientific performance is filled out — moving a CUDA build and its ABI-specific `.so` mid-campaign buys
 nothing. The dependency direction is already correct; only the file location is provisional.
 
@@ -68,7 +81,7 @@ autoresearch/<loop>/
   records/                harness-written board, traces, ledgers — never hand-edited
 ```
 
-`encoders/` stays top-level because it is the **interface** between the loops: a probe loop improves an
+each probe loop's `editable_files/` stays top-level because it is the **interface** between the loops: a probe loop improves an
 encoder, the fusion loop consumes it. Anything owned by one loop lives inside it — which is why the
 fusion model moved from `core/` to `autoresearch/main/editable_files/fusion/`.
 
@@ -81,7 +94,7 @@ explains what the rows mean.
 one probe per loop · no loop imports another loop's code · only the fusion loop touches the fusion
 model · an experiment is an edit on a branch, never a new file or a new flag · a record from an
 unpushed commit is discovery-only · `main` is reached only by a result that cleared its loop's evidence
-bar. `tests/test_loop_independence.py` enforces the structural ones.
+bar. `autoresearch/tests/test_loop_independence.py` enforces the structural ones.
 
 ## Exciting News:
 
@@ -92,10 +105,10 @@ bar. `tests/test_loop_independence.py` enforces the structural ones.
   **Poster at World Modeling Workshop.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) will present DeepEarth at the [2026 World Modeling Workshop](https://world-model-mila.github.io/). See [_poster_](docs/science/world_modeling_workshop_2026/poster/DeepEarth_2026_World_Modeling_Workshop_Poster.pdf).
 
 - _January 14, 2026_  
-  **Historical geospatial experiment.** A refined (_x_, _y_, _z_, _t_) = (_latitude_, _longitude_, _elevation_, _time_) coordinate system in [Earth4D](encoders/spacetime) showed a 4% exploratory benchmark gain; it still requires clean confirmation. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
+  **Historical geospatial experiment.** A refined (_x_, _y_, _z_, _t_) = (_latitude_, _longitude_, _elevation_, _time_) coordinate system in [Earth4D](autoresearch/probes/spacetime/editable_files) showed a 4% exploratory benchmark gain; it still requires clean confirmation. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
 
 - _December 22, 2025_  
-  **10x faster.** Following historical [Earth4D](encoders/spacetime/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [_commit_](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3).
+  **10x faster.** Following historical [Earth4D](autoresearch/probes/spacetime/editable_files/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [_commit_](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3).
 
 - _December 19, 2025_  
   **Supercomputing award.** US DOE [National Energy Research Scientific Computing Center](https://www.nersc.gov) has awarded a DeepEarth team with supercomputing access in 2026 through [BER](https://science.osti.gov/ber).
@@ -104,10 +117,10 @@ bar. `tests/test_loop_independence.py` enforces the structural ones.
   **Peer-reviewed presentation in top venue.** Accepted to the [2026 World Modeling Workshop](https://world-model-mila.github.io/) at the [Mila Quebec AI Institute](https://mila.quebec/en), alongside keynote talks by [Yoshua Bengio](https://yoshuabengio.org/) and [Yann LeCun](http://yann.lecun.com/). See [_paper_](docs/deepearth.pdf). 
   
 - _November 17, 2025_  
-  **Historical 99% parameter reduction, 4× speedup experiment.** [Earth4D](encoders/spacetime) with [learned hash probing](https://arxiv.org/abs/2312.17241) was explored on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6); exactness and accuracy must be revalidated under the current gate.
+  **Historical 99% parameter reduction, 4× speedup experiment.** [Earth4D](autoresearch/probes/spacetime/editable_files) with [learned hash probing](https://arxiv.org/abs/2312.17241) was explored on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6); exactness and accuracy must be revalidated under the current gate.
 
 - _November 16, 2025_  
-  **Historical 23% error-reduction result.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](encoders/spacetime). The reported benchmark R² was selected on test and is now treated as exploratory. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
+  **Historical 23% error-reduction result.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](autoresearch/probes/spacetime/editable_files). The reported benchmark R² was selected on test and is now treated as exploratory. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
 
 - _October 29, 2025_  
   **Predicting risk of fires.**  [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather), [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based), and [Lance Legel](https://www.linkedin.com/in/legel/) presented on simulating [live fuel moisture content](https://www.nature.com/articles/s41597-024-03159-6) through NSF's [Institute for Geospatial Understanding](http://i-guide.io/). See [_event_](https://i-guide.io/i-guide-vco/geospatial-simulation-of-fire-ecology-with-deepearth/).

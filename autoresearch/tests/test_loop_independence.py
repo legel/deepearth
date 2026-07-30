@@ -8,10 +8,11 @@ Sharing is allowed only DOWNWARD, into code no loop owns: encoders/, and (for th
 core/. Anything else is a copy, deliberately.
 """
 import ast
+import os
 import unittest
 from pathlib import Path
 
-AUTORESEARCH = Path(__file__).resolve().parents[1] / "autoresearch"
+AUTORESEARCH = Path(__file__).resolve().parents[1]        # this file lives in autoresearch/tests/
 PROBES = ("probes/biological", "probes/spacetime")     # leaves: independent, siblings
 FUSION = "main"                                        # apex: consumes probe results, runs last
 LOOPS = PROBES + (FUSION,)
@@ -42,25 +43,28 @@ class LoopIndependenceTests(unittest.TestCase):
         """
         for probe in PROBES:
             for path in (AUTORESEARCH / probe).rglob("*.py"):
-                if "__pycache__" in str(path):
+                if "__pycache__" in str(path) or f"{os.sep}tests{os.sep}" in str(path):
                     continue
                 for module in imported_modules(path):
                     self.assertNotIn("autoresearch.main", module,
                                      f"{path.name}: a probe must not depend on the fusion loop it feeds")
 
-    def test_no_loop_imports_another_loops_code(self):
+    def test_no_probe_imports_a_SIBLING_probe(self):
+        """Siblings must not touch each other. `main` importing a probe's finished encoder is the ONE
+        legitimate edge (see the DAG test) and is not flagged here. A loop's own tests may reach across
+        to assert the DAG itself, so tests/ is excluded."""
         offenders = []
-        for loop in LOOPS:
-            root = AUTORESEARCH / loop
+        for probe in PROBES:
+            root = AUTORESEARCH / probe
             if not root.exists():
                 continue
             for path in root.rglob("*.py"):
-                if "__pycache__" in str(path):
+                if "__pycache__" in str(path) or f"{os.sep}tests{os.sep}" in str(path):
                     continue
                 for module in imported_modules(path):
-                    for other in LOOPS:
-                        mod_other = "autoresearch." + other.replace("/", ".") + "."
-                        if other != loop and mod_other in module:
+                    for sibling in PROBES:
+                        mod_sibling = "autoresearch." + sibling.replace("/", ".") + "."
+                        if sibling != probe and mod_sibling in module:
                             offenders.append(f"{path.relative_to(AUTORESEARCH)} imports {module}")
         self.assertEqual(offenders, [], "cross-loop imports break loop independence:\n  "
                                        + "\n  ".join(offenders))
@@ -81,14 +85,15 @@ class LoopIndependenceTests(unittest.TestCase):
     def test_every_loop_has_the_same_directories(self):
         """Identical layout in every loop, so scope is never ambiguous.
 
-        `editable_files/data` is the DATA lever — sources added, moved and removed by the signal they
-        provide. `records/` sits OUTSIDE editable_files because it is the one thing an experiment must
-        not touch: hand-editing a score forges a result.
+        `records/` sits outside `editable_files/` because it is the one thing an experiment must not
+        touch: hand-editing a score forges a result. The corpus is NOT per-loop — one
+        `autoresearch/data/` with a directory per source, because three empty per-loop data directories
+        held nothing but a README.
         """
+        self.assertTrue((AUTORESEARCH / "data").is_dir(), "the shared corpus autoresearch/data/ is missing")
         for loop in LOOPS:
             root = AUTORESEARCH / loop
-            for required in ("program", "editable_files", "editable_files/lib",
-                             "editable_files/data", "records"):
+            for required in ("program", "editable_files", "editable_files/lib", "records"):
                 self.assertTrue((root / required).is_dir(), f"{loop}/ is missing {required}/")
             # The harness may be ONE FILE (the target shape — spacetime is there) or still a package.
             harness = root / "editable_files" / "harness"

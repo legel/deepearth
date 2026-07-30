@@ -3,7 +3,7 @@ condition_on:
 - vision_bio
 data:
   adapter: california
-  cache_dir: /workspace/deepearth/data/deepcal
+  cache_dir: /workspace/deepearth/autoresearch/data/deepcal
   n_neighbors: 16
   time_axis: true
 model:

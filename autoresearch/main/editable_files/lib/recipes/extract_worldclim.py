@@ -11,7 +11,7 @@ location cue (their has_worldclim stays False and the loader masks them)."""
 import numpy as np, glob, os, rasterio
 from rasterio.transform import rowcol
 
-CACHE = os.environ.get("CACHE", "/workspace/deepearth/data/deepcal")
+CACHE = os.environ.get("CACHE", "/workspace/deepearth/autoresearch/data/deepcal")
 WC_DIR = os.environ.get("WC_DIR", "/tmp/worldclim")
 OUT = os.environ.get("OUT", f"{CACHE}/gbif_worldclim_tokens.npz")
 

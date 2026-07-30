@@ -17,7 +17,7 @@ modeling/uncertainty choice layered on top of the same held-out predictions.
 
 Usage on newbox (real Earth4D held-out logits, reuses probe.py loaders + head):
   CUDA_VISIBLE_DEVICES=0 python -m deepearth.autoresearch.probes.spacetime.editable_files.lib.calib_probe \
-      --cache_dir data/deepcal --feature env --steps 400 --seed 0
+      --cache_dir autoresearch/data/deepcal --feature env --steps 400 --seed 0
 
 If the token cache is absent (e.g. code-only checkout), pass --surrogate to run the IDENTICAL
 calibration machinery on a nature-structured surrogate SDM task (spatially-blocked families with
@@ -272,7 +272,7 @@ def _train_head_logits(feats, fam, n_fam, test_mask, dev, steps, lr, dropout=0.0
 def _real_features(cache, feature, n_shards, dev, seed):
     """Reuse probe.py loaders for genuine encoder/env features. Returns (feats, fam, n_fam, lat, lon)."""
     from deepearth.autoresearch.probes.spacetime.editable_files.harness import probe as P
-    from deepearth.encoders.spacetime.earth4d import Earth4D
+    from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
     lat, lon, fam, n_fam, _, gid, _sp = P.load_obs(cache, n_shards, with_gid=(feature == "env"))
     if feature == "raw":
         feats = np.stack([lat, lon], 1).astype(np.float32)
@@ -302,7 +302,7 @@ def _real_pollinator(cache, feature, n_shards, dev, seed, topk=40):
     same way family SDM is a bounded-class problem. This is the low-data, phylogenetically-packed
     B53 regime -- fewer obs, pollinator (not plant-family) classes -- measured on real data."""
     from deepearth.autoresearch.probes.spacetime.editable_files.harness import probe as P
-    from deepearth.encoders.spacetime.earth4d import Earth4D
+    from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
     lat, lon, fam, n_fam0, _, gid, _sp = P.load_obs(cache, n_shards, with_gid=True)
     sp = P.load_species(cache, n_shards)                       # plant species_local per obs
     d = np.load(f"{cache}/gbif_pollinator_dist.npz", allow_pickle=True)
@@ -368,7 +368,7 @@ def _surrogate(n=20000, n_fam=40, dev="cpu", seed=0, overconf=True, niche=1.2, n
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cache_dir", default="data/deepcal")
+    ap.add_argument("--cache_dir", default="autoresearch/data/deepcal")
     ap.add_argument("--feature", default="env", choices=["env", "raw", "earth4d"])
     ap.add_argument("--n_shards", type=int, default=8)
     ap.add_argument("--steps", type=int, default=400)
