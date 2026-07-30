@@ -191,8 +191,8 @@ CONFIG = {
     "coord_shrink": 1.0,       # <1 coarsens every hash level at once (directed follow-up to extent_fit)
     "spatial_ensemble": 0,     # spend the space-time budget on three purely SPATIAL tables instead
     "whiten": False,           # PCA-whiten the encoder output (fit on train rows)
-    "standardize": False,      # per-dimension mean/std of the encoder output (fit on train rows)
-    "geographic": True,       # hash (lat, lon, elev) directly instead of ECEF
+    "standardize": True,      # per-dimension mean/std of the encoder output (fit on train rows)
+    "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
 }
 @dataclass
 class _DynamicsCtx:
