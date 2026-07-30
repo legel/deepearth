@@ -59,11 +59,17 @@ class LoopIndependenceTests(unittest.TestCase):
                         offenders.append(str(path.relative_to(AUTORESEARCH)))
         self.assertEqual(offenders, [], "probe loops must not import the fusion model: " + str(offenders))
 
-    def test_every_loop_has_the_same_four_directories(self):
+    def test_every_loop_has_the_same_directories(self):
+        """Identical layout in every loop, so scope is never ambiguous.
+
+        `editable_files/data` is the DATA lever — sources added, moved and removed by the signal they
+        provide. `records/` sits OUTSIDE editable_files because it is the one thing an experiment must
+        not touch: hand-editing a score forges a result.
+        """
         for loop in LOOPS:
             root = AUTORESEARCH / loop
             for required in ("program", "editable_files", "editable_files/harness",
-                             "editable_files/lib", "data"):
+                             "editable_files/lib", "editable_files/data", "records"):
                 self.assertTrue((root / required).is_dir(), f"{loop}/ is missing {required}/")
 
     def test_every_loop_states_its_own_program(self):
@@ -75,3 +81,21 @@ class LoopIndependenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordPathTests(unittest.TestCase):
+    """The board must resolve inside its own loop.
+
+    A parents[] off-by-one once pointed RECORDS at `autoresearch/records/records.json` instead of
+    `autoresearch/spacetime/records/records.json`. trace.py then created a fresh empty board, found no
+    prior record, and reported "RECORD = YES (new best!) prev_record = None" for a run that had beaten
+    nothing. A path bug that silently mints records is worth a test.
+    """
+
+    def test_spacetime_board_resolves_inside_its_loop(self):
+        import importlib
+        module = importlib.import_module(
+            "deepearth.autoresearch.spacetime.editable_files.harness.trace")
+        expected = AUTORESEARCH / "spacetime" / "records" / "records.json"
+        self.assertEqual(module.RECORDS.resolve(), expected.resolve(),
+                         f"board resolved to {module.RECORDS} — outside its loop")

@@ -170,7 +170,7 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     <result> --save`: the commit headline states the net score BEFORE->AFTER (harmonic mean + arithmetic), the body
     describes what changed / why / how, and an enumerated list reports every benchmark's before->after (delta) with an
     explicit regressions summary — no individual metric may regress. The helper diffs against the committed
-    `autoresearch/main/data/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
+    `autoresearch/main/records/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
 
 31. **Heads are DETACHED read-outs by default; the universal self-supervised reconstruction is inviolable.** The core
     learns ONE representation whose dense, always-available capabilities (species, family, vision, environment) are

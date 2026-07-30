@@ -5,7 +5,7 @@
     "official_commit": "65e84f4f697645b023bcdee6576fb3b114d187df",
     "official_hash_verified": true,
     "official_url": "https://raw.githubusercontent.com/allenai/lfmc/65e84f4f697645b023bcdee6576fb3b114d187df/data/labels/lfmc_data_conus.csv",
-    "path": "/Users/andromeda/deepcal-archive/deepearth/autoresearch/spacetime/data/lfmc/lfmc_data_conus.csv",
+    "path": "/Users/andromeda/deepcal-archive/deepearth/autoresearch/spacetime/editable_files/data/lfmc/lfmc_data_conus.csv",
     "raw_rows": 89830,
     "removed_rows": 1086,
     "sha256": "b44bf99dab6a136fd6e66df3ba8f91f7614f2cc436bdef14a924b640a9bce3a6"

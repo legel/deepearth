@@ -15,7 +15,7 @@ The full-suite net_score is untouched -- this is an added lens, not a replacemen
 
 Usage:
   python -m deepearth.autoresearch.main.editable_files.harness.score --log run.log [--encoder biological|spacetime|both]
-         [--champion autoresearch/main/data/champion_scores.json] [--json out.json] [--ensue-tag biological]
+         [--champion autoresearch/main/records/champion_scores.json] [--json out.json] [--ensue-tag biological]
 """
 from __future__ import annotations
 import argparse

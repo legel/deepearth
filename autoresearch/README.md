@@ -40,8 +40,9 @@ autoresearch/
         ├── editable_files/    ← THE ONLY CODE AN EXPERIMENT MAY EDIT
         │     ├── harness/       the loop itself
         │     └── lib/           auxiliary code the loop calls
-        └── data/              this loop's data. Input channels are EDITABLE (the DATA lever);
-                               harness-written records and traces are not.
+        │     └── data/          the DATA lever: sources added, moved and removed by the signal
+        │                        they provide. One source per directory.
+        └── records/           harness-written: board, traces, ledgers. Never hand-edited.
 ```
 
 The shared dataset lives at the repo root `data/deepcal`: all three loops read it, so it belongs to no
@@ -74,19 +75,19 @@ own commit with its own tests, separate from any result.
 
 ## Per-loop contents
 
-| loop | program/ | editable_files/harness/ | editable_files/lib/ | data/ |
+| loop | program/ | editable_files/harness/ | editable_files/lib/ | records/ |
 |---|---|---|---|---|
 | `main/` | `autoresearch.md`, `BENCHMARKS.md`, `CHAMPION_REPORT.md`, `audit.md`, `GRADUATION_BLUEPRINT.md` | `train.py`, `run_experiment.py`, `evaluate.py`, `score.py`, `score_encoders.py`, `champion_report.py`, `hooks.py`, `perception_diag.py`, `deepcal.yaml`, `champion.yaml` | `data.py`, `prepare.py`, `recipes/` | `champion_scores.json` |
 | `biological/` | `program.md` | `probe.py`, `stage1…stage4`, `ensue_log.py` | `traitprobe.py` | — |
-| `spacetime/` | `program.md`, `scorecard.md`, `lfmc_gate.md`, `box-operations.md` | `probe.py`, `probe_modes_tables.py`, `trace.py`, `probe_contract.py`, `probe_emit.py`, `probe_registry.py` | `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py`, `lfmc_recurrent.py`, `science_gate.py` | `records.json`, `traces/`, `lfmc/` |
+| `spacetime/` | `program.md`, `scorecard.md`, `lfmc_gate.md`, `box-operations.md` | `probe.py`, `probe_modes_tables.py`, `trace.py`, `probe_contract.py`, `probe_emit.py`, `probe_registry.py` | `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py`, `lfmc_recurrent.py`, `science_gate.py` | `records.json`, `traces/` |
 
 ## Boundaries between the loops
 
 | loop | objective | instrument | state it owns |
 |---|---|---|---|
-| `main/` | integrate established signals; B1..B60 means, no metric regressing | full 799M fusion model | `main/data/champion_scores.json`, `champion.yaml` |
+| `main/` | integrate established signals; B1..B60 means, no metric regressing | full 799M fusion model | `main/records/champion_scores.json`, `champion.yaml` |
 | `biological/` | recover signal on the biological capabilities | biological probe pipeline | its own logs |
-| `spacetime/` | recover signal on one capability at a time (`spacetime/program/scorecard.md`) | Earth4D + light head, minutes per run | `spacetime/data/records.json`, Ensue `LOOP-earth4d-<capability>` |
+| `spacetime/` | recover signal on one capability at a time (`spacetime/program/scorecard.md`) | Earth4D + light head, minutes per run | `spacetime/records/records.json`, Ensue `LOOP-earth4d-<capability>` |
 
 - **Only `main/` trains the full fusion model, and it runs LAST.** A probe loop trains a light head on
   encoder features in minutes. A probe record is not a champion result; it is a candidate signal that
@@ -102,7 +103,7 @@ own commit with its own tests, separate from any result.
 - **Each loop optimizes its own metric under its own evals.** A loop's program declares what it is
   raising and what would falsify it. No loop is scored on another's number, and no loop's result is
   promoted by another loop's evidence.
-- **No loop writes another loop's `data/`.**
+- **No loop writes another loop's `records/`.**
 - **One program per surface.** Two definitions of the same surface means one is stale — reconcile before
   running anything. (`spacetime/program/lfmc_gate.md` is a gate record, not a second program.)
 

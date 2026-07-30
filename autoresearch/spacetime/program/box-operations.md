@@ -33,4 +33,4 @@ this is the "how to actually run it on the box" layer. **Not committed** (holds 
 
 ## Report each check-in
 Iterations since last, any new records (old→new + receipt), and the full current-best scorecard:
-`python3 -c "import json;d=json.load(open('autoresearch/spacetime/data/records.json'));[print(k,round(v['score'],4),v.get('tag')) for k,v in sorted(d.items(),key=lambda x:-x[1]['score'])]"`
+`python3 -c "import json;d=json.load(open('autoresearch/spacetime/records/records.json'));[print(k,round(v['score'],4),v.get('tag')) for k,v in sorted(d.items(),key=lambda x:-x[1]['score'])]"`

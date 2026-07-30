@@ -49,8 +49,9 @@ autoresearch/<loop>/
   editable_files/
      harness/             the loop itself
      lib/                 auxiliary code the loop calls
-  data/                   input channels (editable — the DATA lever) +
-                          harness-written records and traces (never hand-edited)
+     data/                the DATA lever: sources added, moved and removed
+                          based on the signal they provide
+  records/                harness-written board, traces, ledgers — never hand-edited
 ```
 
 **Rules that hold across every loop** — see [`autoresearch/README.md`](autoresearch/README.md):

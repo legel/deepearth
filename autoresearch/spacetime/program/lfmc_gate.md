@@ -47,7 +47,7 @@ Start the real-data split and baseline audit on the official Globe-LFMC table wi
 
 ```bash
 python3 -m autoresearch.spacetime.editable_files.lib.science_gate \
-  --download --json-out autoresearch/spacetime/data/lfmc/earth4d_science_gate_dev.json
+  --download --json-out autoresearch/spacetime/editable_files/data/lfmc/earth4d_science_gate_dev.json
 python3 -m unittest discover -s tests -p 'test_earth4d_*.py'
 ```
 

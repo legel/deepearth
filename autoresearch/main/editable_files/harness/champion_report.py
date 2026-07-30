@@ -1,7 +1,7 @@
 """champion_report.py — the STANDARD way to save champion benchmark scores and format a git-commit report.
 
 Every time a benchmark run becomes the new champion, run this. It (1) reads the run's scores, (2) diffs them
-against the previous champion record (autoresearch/main/data/champion_scores.json), (3) prints a ready-to-paste commit
+against the previous champion record (autoresearch/main/records/champion_scores.json), (3) prints a ready-to-paste commit
 message — a headline with the net score BEFORE -> AFTER, then an enumerated per-benchmark BEFORE -> AFTER list —
 and (4) with --save, promotes the run to the new champion record (the "before" for the next upgrade).
 

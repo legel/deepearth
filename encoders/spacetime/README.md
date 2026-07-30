@@ -48,7 +48,7 @@ bash install.sh
 ```bash
 # From the repository root: pinned real data, strict split audit, train-only baselines
 python3 -m autoresearch.spacetime.editable_files.lib.science_gate \
-  --download --json-out autoresearch/spacetime/data/lfmc/earth4d_science_gate_dev.json
+  --download --json-out autoresearch/spacetime/editable_files/data/lfmc/earth4d_science_gate_dev.json
 ```
 
 This command does not train Earth4D; its artifact explicitly records `earth4d_evaluated=false`.
