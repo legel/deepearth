@@ -76,6 +76,11 @@ from deepearth.autoresearch.programs.spacetime.recurrence import (
 )
 
 
+RAW_PE_REASON = (
+    "this mode evaluates propagator architectures on RAW coordinate features only -- Earth4D is "
+    "not in the comparison, so its numbers cannot speak to the encoder"
+)
+
 _RESULT_SINK = {"path": "", "capability": "", "protocol": "", "flags": "", "seed": None,
                 "steps": None, "n_shards": None, "trained_encoder": False}
 
@@ -91,7 +96,7 @@ def _set_result_sink(path, capability, protocol, args):
 
 
 def declare(capability, mode, metric, value, gains=None, baselines=None, split="",
-            trained_encoder=None, **extras):
+            trained_encoder=None, diagnostic=False, diagnostic_reason="", **extras):
     """Declare WHAT this run measured, in the contract's terms.
 
     A mode calls this immediately before returning. Fields the run already knows (seed, steps, shard
@@ -123,6 +128,8 @@ def declare(capability, mode, metric, value, gains=None, baselines=None, split="
         baselines=dict(baselines or {}),
         flags=_RESULT_SINK["flags"],
         extras=dict(extras),
+        diagnostic=bool(diagnostic),
+        diagnostic_reason=diagnostic_reason,
     ).validate()
     if _RESULT_SINK["path"]:
         result.write(_RESULT_SINK["path"])
@@ -694,6 +701,15 @@ def main(argv=None):
         print(f"  n_labeled_used={r['n_labeled_used']} n_classes={r['n_classes']} held_out={r['held_out']}")
         print(f"  FLOOR acc {r['floor_acc']:.4f} bacc {r['floor_bacc']:.4f}  |  FEAT acc {r['acc']:.4f} bacc {r['bacc']:.4f}  |  Spearman(ord) {r['spearman_ord']:+.4f}")
         print(f"  univar Spearman: {r['univar_spearman']}")
+        declare(
+            capability="", mode=f"ENV-CONSTRUCT({r['construct']}<-{r['feature']})", metric="acc",
+            value=r["acc"],
+            diagnostic=True,
+            diagnostic_reason=f"{r['construct']} is a species-level construct, not a scorecard capability",
+            floor_acc=r["floor_acc"], floor_bacc=r["floor_bacc"], bacc=r["bacc"],
+            spearman_ord=r["spearman_ord"], n_labeled_used=r["n_labeled_used"],
+            n_classes=r["n_classes"], held_out=r["held_out"], shuffle_null=r["shuffle_null"],
+        )
         return r
 
     if a.cooccur:
@@ -968,6 +984,14 @@ def main(argv=None):
         results["mean_spearman"] = mean_rho
         results["env_dim"] = int(ENV.shape[1]); results["agg"] = a.env_agg
         results["head"] = a.env_head; results["extra"] = bool(a.env_extra); results["seconds"] = dt
+        declare(
+            capability="", mode=f"ENV->NICHE-TRAIT(agg={a.env_agg})", metric="mean_spearman",
+            value=mean_rho,
+            diagnostic=True,
+            diagnostic_reason="trait Spearman over species aggregates is not a scorecard capability",
+            env_dim=int(ENV.shape[1]), agg=a.env_agg, head=a.env_head, extra=bool(a.env_extra),
+            seconds=dt,
+        )
         return results
 
     if a.env:
@@ -1728,6 +1752,13 @@ def main(argv=None):
         dt = time.time() - t0
         print(f"  [profile] q={n_te} K={K} hidden={H} steps={a.steps}")
         print(f"  {len(lat_a)} obs, {a.steps}-step breadth in {dt:.1f}s")
+        declare(
+            capability="", mode=f"BREADTH({_tn})", metric="absR2", value=s_r2,
+            diagnostic=True,
+            diagnostic_reason=f"{_tn} is not a scorecard capability; " + RAW_PE_REASON,
+            obs=len(lat_a), queries=n_te, K=K, win=win, lead=lead, seconds=dt,
+            static_mae=s_mae, lstm_absR2=l_r2, leak_guard_absR2=leak_r2,
+        )
         return {"breadth_target": a.breadth_target, "target": _tn, "static_absR2": s_r2,
                 "lstm2_absR2": l_r2, "leak_absR2": leak_r2, "win": win, "lead": lead, "K": K,
                 "n_te": n_te, "seconds": dt}
@@ -1860,6 +1891,13 @@ def main(argv=None):
         dt = time.time() - t0
         print(f"  [profile] q={n_te} K={K} hidden={H} steps={a.steps} attn_heads={a.prop_attn_heads} attn_layers={a.prop_attn_layers}")
         print(f"  {len(lat_a)} obs, {a.steps}-step prop-arch in {dt:.1f}s")
+        declare(
+            capability="", mode=f"PROPAGATOR-ARCH({_tgtn})", metric="absR2", value=s_r2,
+            diagnostic=True,
+            diagnostic_reason="propagator-architecture comparison; " + RAW_PE_REASON,
+            obs=len(lat_a), queries=n_te, K=K, hidden=H, seconds=dt,
+            static_mae=s_mae, prop_arch=a.prop_arch,
+        )
         return {"abund_prop_arch": True, "target": _tgtn, "static_absR2": s_r2,
                 "results": {k: {"mae": v[0], "absR2": v[1]} for k, v in results.items()},
                 "abund_lead": a.abund_lead, "abund_win": a.abund_win, "abund_delta": a.abund_delta,
@@ -1917,6 +1955,13 @@ def main(argv=None):
             res = _report("FIRST_ARRIVAL(onset-DOY)", "MAEd", r, f"tol=+/-{a.pheno_tol:.0f}d")
             dt = time.time() - t0
             print(f"  {len(lat)} obs, {a.steps}-step first-arrival in {dt:.1f}s")
+            declare(
+                capability="", mode="FIRST-ARRIVAL(onset-DOY)", metric="MAE",
+                value=res.get("static_mae_raw", float("nan")),
+                diagnostic=True,
+                diagnostic_reason="first-arrival is not a scorecard capability; " + RAW_PE_REASON,
+                obs=len(lat), seconds=dt, win=a.abund_win, lead=a.abund_lead,
+            )
             return res | {"seconds": dt, "first_arrival": True}
 
         if a.abundance:
@@ -1929,6 +1974,14 @@ def main(argv=None):
             res = res | {"abund_lead": a.abund_lead, "abund_win": a.abund_win, "abund_delta": a.abund_delta}
             dt = time.time() - t0
             print(f"  {len(lat)} obs, {a.steps}-step abundance in {dt:.1f}s")
+            declare(
+                capability="", mode=_nm,   # _nm already reads "ABUNDANCE(...)"
+                metric="MAE",
+                value=res.get("static_mae_raw", float("nan")),
+                diagnostic=True,
+                diagnostic_reason="abundance is not a scorecard capability; " + RAW_PE_REASON,
+                obs=len(lat), seconds=dt, win=a.abund_win, lead=a.abund_lead, delta=a.abund_delta,
+            )
             return res | {"seconds": dt, "abundance": True}
 
     if a.gnn:

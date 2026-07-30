@@ -148,5 +148,35 @@ class RenderTests(unittest.TestCase):
         self.assertIn("encoder=trained", result(trained_encoder=True).render())
 
 
+
+class DiagnosticTests(unittest.TestCase):
+    """Six of the 19 probe modes measure targets that are not scorecard capabilities, and four of
+    those run on raw PE only -- Earth4D is not in the comparison. They must not be forced into a
+    capability slot just to fit the board."""
+
+    def test_diagnostic_may_omit_capability_but_must_give_a_reason(self):
+        d = ProbeResult(
+            capability="", mode="breadth probe(occupancy)",
+            primary=Primary("absR2", 0.12), protocol="v2-leakfix",
+            diagnostic=True, diagnostic_reason="raw PE only; occupancy is not a scorecard capability")
+        self.assertIs(d.validate(), d)
+        self.assertFalse(d.records())
+
+    def test_diagnostic_without_a_reason_is_refused(self):
+        with self.assertRaisesRegex(ContractError, "WHY it cannot set a record"):
+            ProbeResult(capability="", mode="breadth probe", primary=Primary("absR2", 0.1),
+                        protocol="v2-leakfix", diagnostic=True).validate()
+
+    def test_a_capability_result_records(self):
+        self.assertTrue(result().records())
+
+    def test_render_marks_a_diagnostic(self):
+        text = ProbeResult(
+            capability="", mode="propagator-ARCH", primary=Primary("absR2", 0.1),
+            protocol="v2-leakfix", diagnostic=True,
+            diagnostic_reason="raw PE only").render()
+        self.assertIn("DIAGNOSTIC (cannot set a record)", text)
+        self.assertIn("capability=DIAGNOSTIC", text)
+
 if __name__ == "__main__":
     unittest.main()

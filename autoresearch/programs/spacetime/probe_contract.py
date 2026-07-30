@@ -71,6 +71,12 @@ class ProbeResult:
     baselines: Dict[str, float] = field(default_factory=dict)  # baseline label -> its absolute score
     flags: str = ""
     extras: Dict[str, Any] = field(default_factory=dict)
+    # A diagnostic measures something that is NOT a scorecard capability, or measures it without
+    # Earth4D in the comparison at all (several dynamics modes run on raw PE only). It is legitimate
+    # research output, but it can never set a record, and saying so here is better than inventing a
+    # capability for it so that it fits a slot on the board.
+    diagnostic: bool = False
+    diagnostic_reason: str = ""
     contract_version: int = CONTRACT_VERSION
 
     # -- identity ---------------------------------------------------------------------------------
@@ -157,7 +163,9 @@ class ProbeResult:
     # -- validation -------------------------------------------------------------------------------
     def validate(self) -> "ProbeResult":
         problems = []
-        if not self.capability:
+        if self.diagnostic and not self.diagnostic_reason:
+            problems.append("a diagnostic must say WHY it cannot set a record")
+        if not self.capability and not self.diagnostic:
             problems.append("capability is empty")
         if not self.mode:
             # The old harness let this through as mode=None, which made unrelated runs mutually
@@ -181,6 +189,10 @@ class ProbeResult:
         return self
 
     # -- rendering --------------------------------------------------------------------------------
+    def records(self) -> bool:
+        """Whether this result is eligible to be compared against a record at all."""
+        return not self.diagnostic
+
     def render(self) -> str:
         """The single human-readable block, DERIVED from the result.
 
@@ -188,7 +200,7 @@ class ProbeResult:
         here can never change what gets recorded -- which was the whole hazard of the old design.
         """
         lines = [
-            f"=== SPACETIME | capability={self.capability} | mode={self.mode} "
+            f"=== SPACETIME | capability={self.capability or 'DIAGNOSTIC'} | mode={self.mode} "
             f"| split={self.split or 'n/a'} | n_shards={self.n_shards} | protocol={self.protocol} "
             f"| encoder={'trained' if self.trained_encoder else 'frozen-random'} ===",
             f"  {self.primary.name} = {self.primary.value:.6f}",
@@ -199,5 +211,7 @@ class ProbeResult:
         if self.gains:
             lines.append("  gains:     " + "  ".join(
                 f"{label} {value:+.4f}" for label, value in sorted(self.gains.items())))
+        if self.diagnostic:
+            lines.append(f"  DIAGNOSTIC (cannot set a record): {self.diagnostic_reason}")
         lines.append(f"  identity={self.identity_digest()}  seed={self.seed}  steps={self.steps}")
         return "\n".join(lines)
