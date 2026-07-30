@@ -179,8 +179,8 @@ CONFIG = {
     "rec_fast": False,
     "env_aux_weight": 1.0,
     # ---- ARCHITECTURE ARMS (earth4d.py). Default-off: the champion path is byte-identical. ----
-    "seasonal_time": 1,        # 1 = space-time planes hash annual PHASE; 2 = absolute planes + seasonal planes
-    "drop_spatiotemporal": False,
+    "seasonal_time": 0,        # 1 = space-time planes hash annual PHASE; 2 = absolute planes + seasonal planes
+    "drop_spatiotemporal": True,
     "extent_fit": False,       # scale the ECEF axes to the TRAIN extent, not to the globe
     "nystrom": 0,              # RBF features against N train-drawn space-time anchors
     "conj": 0,                 # explicit space x time degree-2 sketch
