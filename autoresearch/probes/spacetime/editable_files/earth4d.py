@@ -287,7 +287,10 @@ class Earth4D(nn.Module):
                  coord_shrink: float = 1.0,
                  spatial_ensemble: int = 0,
                  whiten: bool = False,
-                 standardize: bool = False):
+                 standardize: bool = False,
+                 tile: int = 0,
+                 tile_levels: int = 18,
+                 tile_replace: bool = False):
         super().__init__()
         self.verbose = verbose; self.enable_learned_probing = enable_learned_probing
         self.probing_range = probing_range; self.index_codebook_size = index_codebook_size
@@ -545,6 +548,11 @@ class Earth4D(nn.Module):
         # concatenation are dominated by whichever block is largest. A frozen PCA whitening fit on TRAIN
         # rows makes the output isotropic, changing the geometry the head actually sees.
         self.whiten = bool(whiten); self.standardize = bool(standardize)
+        self.tile = int(tile); self.tile_levels = int(tile_levels); self.tile_replace = bool(tile_replace)
+        if self.tile > 0:
+            if self.tile_replace:
+                self.output_dim = self.output_dim - self.spatial_dim - self.spatiotemporal_dim
+            self.output_dim = self.output_dim + self.tile * self.tile_levels
         self._wh_mean = None; self._wh_W = None
         self._mean = None; self._std = None
 
@@ -614,6 +622,26 @@ class Earth4D(nn.Module):
             return torch.cat([self._triplane(xyz, abs_t),
                               self._triplane(xyz, self._seasonal_t(xyzt[..., 3:]))], dim=-1)
         return self._triplane(xyz, abs_t)
+
+    def _tile(self, norm_coords: torch.Tensor) -> torch.Tensor:
+        """TILE CODING: a sparse one-hot code of the containing cell, per level.
+
+        The hash grid hands the head an INTERPOLATED 2-float embedding per level, so cell identity has
+        to be squeezed through two numbers of a frozen random table and the head can only read it
+        linearly. Tile coding is the other classical answer to the same problem: emit the cell INDEX as
+        a sparse indicator over a small per-level codebook, and the head's first layer becomes a
+        per-cell lookup table it can actually learn -- which is exactly the shape of "which species
+        occur in this cell". Same multi-resolution ladder, categorical instead of interpolated.
+        """
+        xyz = norm_coords[..., :3]
+        out = []
+        for lvl in range(self.tile_levels):
+            res = self.base_spatial_resolution * (self.growth_factor ** lvl)
+            cell = torch.floor((xyz + 1.0) * 0.5 * res).long()
+            h = (cell[..., 0] * 73856093) ^ (cell[..., 1] * 19349663) ^ (cell[..., 2] * 83492791)
+            out.append(torch.nn.functional.one_hot(
+                (h + lvl * 2654435761) % self.tile, num_classes=self.tile).float())
+        return torch.cat(out, dim=-1)
 
     def _learnable_freq(self, norm: torch.Tensor) -> torch.Tensor:
         """Learnable per-axis frequency (scale + center), bounded to [-0.9, 0.9] by tanh."""
@@ -742,8 +770,13 @@ class Earth4D(nn.Module):
         if self.time_film > 0:
             gate = 1.0 + torch.tanh(self._film_harmonics(norm_coords) @ self._film_W + self._film_b)
             spatial = spatial * gate                             # space x time interaction (FiLM)
-        feats = (spatial if self.drop_spatiotemporal
-                 else torch.cat([spatial, self._encode_spatiotemporal(norm_coords)], dim=-1))
+        if self.tile > 0 and self.tile_replace:
+            feats = self._tile(norm_coords)
+        else:
+            feats = (spatial if self.drop_spatiotemporal
+                     else torch.cat([spatial, self._encode_spatiotemporal(norm_coords)], dim=-1))
+            if self.tile > 0:
+                feats = torch.cat([feats, self._tile(norm_coords)], dim=-1)
         if self.nystrom > 0:
             feats = torch.cat([feats, self._nystrom(norm_coords)], dim=-1)
         if self.conj > 0:
