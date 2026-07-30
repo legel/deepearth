@@ -182,8 +182,8 @@ CONFIG = {
     "seasonal_time": 0,        # 1 = space-time planes hash annual PHASE; 2 = absolute planes + seasonal planes
     "drop_spatiotemporal": False,
     "extent_fit": False,       # scale the ECEF axes to the TRAIN extent, not to the globe
-    "nystrom": 1024,              # RBF features against N train-drawn space-time anchors
-    "conj": 0,                 # explicit space x time degree-2 sketch
+    "nystrom": 0,              # RBF features against N train-drawn space-time anchors
+    "conj": 1024,                 # explicit space x time degree-2 sketch
     "elm": 0,                  # frozen random nonlinear expansion of the encoder's own output
     "elm_scale": 1.0,
     "stencil": 0,              # local field average of the spatial lookup instead of a point sample
