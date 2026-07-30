@@ -190,8 +190,8 @@ CONFIG = {
     "stencil_radius": 0.002,
     "coord_shrink": 1.0,       # <1 coarsens every hash level at once (directed follow-up to extent_fit)
     "spatial_ensemble": 0,     # spend the space-time budget on three purely SPATIAL tables instead
-    "whiten": True,           # PCA-whiten the encoder output (fit on train rows)
-    "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
+    "whiten": False,           # PCA-whiten the encoder output (fit on train rows)
+    "geographic": True,       # hash (lat, lon, elev) directly instead of ECEF
 }
 @dataclass
 class _DynamicsCtx:
