@@ -711,7 +711,17 @@ PROTOCOL = "v5-encoder-only"
 # Only explicitly identified, audited protocols may be migrated automatically.
 # Absence of a protocol is not evidence that a hand-restored or pre-gate record
 # belongs to the known v1 measurement regime.
-REBASELINE_PROTOCOLS = frozenset({"v1-prefix", "v2-leakfix"})
+# Every protocol this board has ever run under, oldest first. APPEND on each bump; never reorder.
+PROTOCOL_HISTORY = ("v1-prefix", "v2-leakfix", "v3-fairbaseline", "v4-fixedcontrol", "v5-encoder-only")
+assert PROTOCOL in PROTOCOL_HISTORY, f"PROTOCOL {PROTOCOL!r} missing from PROTOCOL_HISTORY"
+
+# A record under any SUPERSEDED protocol may be re-baselined by the current one -- that is what a
+# protocol bump means. This was a hand-maintained allowlist frozen at {"v1-prefix", "v2-leakfix"}, so
+# after the v3 bump nothing could migrate a v3 record: the v5 baseline run scored 0.0367 against a
+# stored 0.0955 that measured a different object entirely, and was WITHHELD for "protocol migration
+# mismatch" instead of re-baselining. The board could never have moved off v3. Derived from the history
+# now, so bumping PROTOCOL is a one-line change that cannot half-apply.
+REBASELINE_PROTOCOLS = frozenset(PROTOCOL_HISTORY[:PROTOCOL_HISTORY.index(PROTOCOL)])
 
 # Fair-baseline preference: Earth4D must beat a TRAINED generic PE, not just raw coords.
 # THE fair control. One entry, because there is one encoder question: does Earth4D beat a
