@@ -1,3 +1,5 @@
+import importlib
+import inspect
 import json
 import os
 import subprocess
@@ -335,6 +337,31 @@ class LegacyEntryPointWiringTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertNotIn("retired", result.stdout)
+
+    def test_calib_probe_can_reach_the_corpus_loader_and_seeds_the_encoder(self):
+        """Two bugs that made every calibration number meaningless, guarded together.
+
+        (1) `_real_features` imported `probe` from `...editable_files.harness` -- a MODULE, not a
+            package -- so the import raised ImportError on EVERY run and the probe fell silently back
+            to its synthetic surrogate, which ignores --feature entirely. The board's 0.5910
+            calibration record was therefore not an Earth4D measurement, and `earth4d` and `raw` arms
+            were literally the same task.
+        (2) `--seed` reached the head and the RFF control but never `Earth4D()`, whose tables come from
+            the global torch RNG. Same command, same seed, three runs: 0.5375 / 0.5682 / 0.6062,
+            against a 0.0118 noise barrier, while the seeded controls were byte-identical.
+        """
+        root = Path(__file__).resolve().parents[1]
+        src = (root / "editable_files" / "lib" / "calib_probe.py").read_text()
+        self.assertNotIn("editable_files.harness import probe", src)
+        importlib.import_module(
+            "deepearth.autoresearch.probes.spacetime.editable_files.probe"
+        )
+        calib = importlib.import_module(
+            "deepearth.autoresearch.probes.spacetime.editable_files.lib.calib_probe"
+        )
+        seeding = inspect.getsource(calib.main)
+        self.assertIn("torch.manual_seed(a.seed)", seeding)
+        self.assertIn("np.random.seed(a.seed)", seeding)
 
     def test_lfmc_science_gate_remains_runnable(self):
         result = self.run_module(

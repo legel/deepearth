@@ -35,8 +35,14 @@ if __name__ == "__main__":
     )
 
     _require_recorded("calib_probe.py", module=_MODULE_NAME, argv=_entry_sys.argv[1:])
+    # The harness's authorization is ONE-SHOT: it is handed over a pipe and consumed by the first
+    # reader. main() then asked for it a second time, found it already spent, and raised "was invoked
+    # directly" -- so calib_probe could never actually run through the harness, which is why this
+    # capability has no contract-era record at all. Remember that the gate already passed here.
+    _ENTRY_AUTHORIZED = True
 
 import argparse
+import sys
 import time
 
 import numpy as np
@@ -45,6 +51,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence import (
+    normalize_time_from_train,
     require_recorded_entrypoint,
 )
 
@@ -269,25 +276,60 @@ def _train_head_logits(feats, fam, n_fam, test_mask, dev, steps, lr, dropout=0.0
     return logits, yte, mc_var
 
 
-def _real_features(cache, feature, n_shards, dev, seed):
-    """Reuse probe.py loaders for genuine encoder/env features. Returns (feats, fam, n_fam, lat, lon)."""
-    from deepearth.autoresearch.probes.spacetime.editable_files.harness import probe as P
+def _spatial_block_split(lat, lon, seed, holdout, block=0.5):
+    """probe.py's spatial-block holdout, hoisted so the SPLIT exists before features are built.
+
+    Everything fitted on data -- the time origin/span, the control's extent, the standardizer -- has to
+    be fitted on train rows alone, and that is impossible while the split is computed after
+    featurization (which is what this file used to do). Returns the rng too, because the caller
+    continues to draw from it to pick the CAL blocks and that sequence must not change.
+    """
+    blk = (np.floor(lat / block).astype(np.int64) * 100000 + np.floor(lon / block).astype(np.int64))
+    ublk = np.unique(blk)
+    rng = np.random.default_rng(seed)
+    rng.shuffle(ublk)
+    held = set(ublk[: int(len(ublk) * holdout)].tolist())
+    test_all = np.array([b in held for b in blk])
+    return blk, test_all, held, rng
+
+
+def _load_real(cache, n_shards, with_time):
+    """Occurrence coordinates + family labels (+ event day) from the corpus."""
+    from deepearth.autoresearch.probes.spacetime.editable_files import probe as P
+    lat, lon, fam, n_fam, days, gid, _sp = P.load_obs(cache, n_shards, with_time=with_time,
+                                                      with_gid=True)
+    if with_time:                       # gbif_eventtime does not cover every gbifID
+        ok = np.isfinite(days)
+        lat, lon, fam, days, gid = (x[ok] for x in (lat, lon, fam, days, gid))
+    return lat, lon, fam, n_fam, days, gid
+
+
+def _encode_real(feature, cache, lat, lon, gid, tnorm, train_mask, dev):
+    """Turn the loaded observations into the arm's feature map. `tnorm` is the DATA lever.
+
+    The calibration probe has always fed Earth4D `[lat, lon, 0, 0]`: elevation constant AND time
+    constant. Three of the encoder's four tri-planes are space-TIME planes, so with t pinned at zero
+    they are re-encodings of one or two spatial axes, and the space-time machinery the encoder exists
+    for is switched off. `tnorm` (train-fit normalized event day) turns it on.
+    """
+    from deepearth.autoresearch.probes.spacetime.editable_files import probe as P
     from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
-    lat, lon, fam, n_fam, _, gid, _sp = P.load_obs(cache, n_shards, with_gid=(feature == "env"))
     if feature == "raw":
         feats = np.stack([lat, lon], 1).astype(np.float32)
-        feats = (feats - feats.mean(0)) / (feats.std(0) + 1e-6)
-    elif feature == "env":
-        feats = P.load_env(cache, gid)
-    elif feature == "earth4d":
+        if tnorm is not None:
+            feats = np.concatenate([feats, tnorm[:, None]], 1).astype(np.float32)
+        mu, sd = feats[train_mask].mean(0), feats[train_mask].std(0)
+        return ((feats - mu) / (sd + 1e-6)).astype(np.float32)
+    if feature == "env":
+        return P.load_env(cache, gid)
+    if feature == "earth4d":
         e4d = Earth4D().to(dev).eval()
         la = torch.as_tensor(lat, device=dev); lo = torch.as_tensor(lon, device=dev)
-        t = torch.zeros_like(la)
+        z = torch.zeros_like(la)
+        t = z if tnorm is None else torch.as_tensor(tnorm.astype(np.float32), device=dev)
         with torch.no_grad():
-            feats = e4d(torch.stack([la, lo, t, t], 1)).cpu().numpy().astype(np.float32)
-    else:
-        raise ValueError(feature)
-    return feats, fam, n_fam, lat, lon
+            return e4d(torch.stack([la, lo, z, t], 1)).cpu().numpy().astype(np.float32)
+    raise ValueError(feature)
 
 
 
@@ -301,7 +343,7 @@ def _real_pollinator(cache, feature, n_shards, dev, seed, topk=40):
     restricted to the topk most frequent pollinators (rest dropped) so the head is well-posed, the
     same way family SDM is a bounded-class problem. This is the low-data, phylogenetically-packed
     B53 regime -- fewer obs, pollinator (not plant-family) classes -- measured on real data."""
-    from deepearth.autoresearch.probes.spacetime.editable_files.harness import probe as P
+    from deepearth.autoresearch.probes.spacetime.editable_files import probe as P
     from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
     lat, lon, fam, n_fam0, _, gid, _sp = P.load_obs(cache, n_shards, with_gid=True)
     sp = P.load_species(cache, n_shards)                       # plant species_local per obs
@@ -335,6 +377,75 @@ def _real_pollinator(cache, feature, n_shards, dev, seed, topk=40):
     else:
         raise ValueError(feature)
     return feats, poll, n_poll, lat, lon
+
+
+def _fair_baseline_arms(coord, fam, n_fam, test_all, is_cal, dev, a, ref_dim):
+    """The SAME measurement -- single-model softmax conf->correctness AUROC -- on generic features.
+
+    This is what the calibration row never had. Its record was stored with `gains={'vs chance': ...}`
+    only, so `fair_gain` found nothing in FAIR_ORDER and the board read NO-FAIR-BASELINE: nobody could
+    say whether Earth4D contributed anything, because no control had ever been run through the same
+    head, split, seed and recipe.
+
+    Two controls, both paired to the record arm in EVERY respect except the feature map:
+      * RFF   -- the trained generic positional encoding from lib/fair_baseline.py: train-extent
+                 normalized (the same courtesy GeoAdaptiveRange gives the encoder) with its bandwidth
+                 SELECTED over a sweep on the same split the arms are scored on. Deliberately generous:
+                 a gain that survives a tuned control is not an artefact of a straw-man control. The
+                 degenerate fixed-sigma form is not used -- it lost to raw coordinates and inflated
+                 every gain measured against it.
+      * raw   -- standardized lat/lon, the floor a positional encoder has to be worth more than.
+    Feature width is matched to the record arm's (`ref_dim`), so the head has identical capacity and
+    this is an encoding comparison rather than a capacity comparison. `coord` is the SAME coordinate
+    matrix the encoder was fed (lat, lon [, normalized event day]), so when the encoder gets a time
+    channel the controls get it too -- otherwise a DATA win would be scored as an encoder win.
+    """
+    from deepearth.autoresearch.probes.spacetime.editable_files.lib.fair_baseline import (
+        fair_rff, _rff_features,
+    )
+
+    def _arm(X):
+        """Train the paired head once; score the CAL half (for selection) and the TEST half (reported).
+
+        The two halves are disjoint SPATIAL BLOCKS of the held-out set -- the same CAL/TEST division
+        temperature scaling and isotonic already fit on -- so selecting on CAL and reporting TEST is a
+        clean select-on-validation / evaluate-once procedure, not a peek."""
+        L, y, _ = _train_head_logits(X, fam, n_fam, test_all, dev, a.steps, a.lr,
+                                     dropout=a.dropout, seed=a.seed, overconf=a.overconf)
+        Pt_ = _softmax(L[~is_cal]); yt_ = y[~is_cal]
+        Pc_ = _softmax(L[is_cal]); yc_ = y[is_cal]
+        return conf_error_auroc(Pt_, yt_), accuracy(Pt_, yt_), conf_error_auroc(Pc_, yc_)
+
+    scaled, base, bandwidths = fair_rff(np.asarray(coord, np.float32), ref_dim,
+                                        train_mask=~test_all, seed=a.seed)
+    sweep = {}
+    for sigma in bandwidths:
+        sweep[float(sigma)] = _arm(_rff_features(scaled, base, sigma).numpy())
+    # Select the bandwidth on the CAL split, report TEST.
+    #
+    # fair_baseline.py picks sigma by "the control's own held-out fit", and everywhere else on this
+    # board that fit IS the scored statistic, so argmax-on-the-metric is the same thing and the note
+    # that this is "generous by design" holds. Here it does not hold. conf_auroc is a rank statistic on
+    # ~2.3k TEST rows and it swings ~0.18 across the six bandwidths at a fixed seed (measured, seed 0:
+    # 0.4905 .. 0.5752), so its argmax on TEST is an ORACLE pick worth ~+0.035 to the control by
+    # selection alone -- which is more than the whole effect being measured and flips the sign of
+    # fair-gain by itself (5-seed mean: -0.0445 oracle-selected vs +0.0071 CAL/accuracy-selected).
+    # Selecting on CAL costs nothing (the head is already trained) and removes the bias, so the number
+    # the board reads is not an artefact of how the control was tuned. The oracle value is still
+    # reported as `rff_oracle` so the choice stays auditable.
+    best_sigma = max(sweep, key=lambda s: sweep[s][2])
+    rff_auc, rff_acc, _ = sweep[best_sigma]
+    oracle_sigma = max(sweep, key=lambda s: sweep[s][0])
+    rff_oracle = sweep[oracle_sigma][0]
+
+    raw = np.asarray(coord, np.float32)
+    raw = ((raw - raw[~test_all].mean(0)) / (raw[~test_all].std(0) + 1e-6)).astype(np.float32)
+    raw_auc, raw_acc, _ = _arm(raw)
+    return {"rff_auc": rff_auc, "rff_acc": rff_acc, "rff_sigma": best_sigma,
+            "rff_oracle": rff_oracle, "rff_oracle_sigma": oracle_sigma,
+            "raw_auc": raw_auc, "raw_acc": raw_acc, "dim": ref_dim,
+            "sweep": {s: v[0] for s, v in sweep.items()},
+            "sweep_cal": {s: v[2] for s, v in sweep.items()}}
 
 
 def _surrogate(n=20000, n_fam=40, dev="cpu", seed=0, overconf=True, niche=1.2, noise=0.4):
@@ -384,6 +495,11 @@ def main(argv=None):
     ap.add_argument("--surrogate", action="store_true")
     ap.add_argument("--topk", type=int, default=40)  # B53: number of pollinator classes (real regime)
     ap.add_argument("--regime", default="plant", choices=["plant", "pollinator"])  # B23 (many obs, separated niches) vs B53 (few obs, packed niches)
+    # DATA LEVER. Off = the historical path, [lat, lon, 0, 0]: the space-time encoder is fed a constant
+    # time. On = the observation's real event day, train-fit normalized, in the encoder's time axis --
+    # and, for fairness, in the RFF and raw controls' inputs as well. It changes the mode string, so an
+    # arm with time is a different measurement identity, not a better score on the same one.
+    ap.add_argument("--time_channel", action="store_true")
     ap.add_argument("--label", default="")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--result-json", dest="result_json", default="",
@@ -392,8 +508,22 @@ def main(argv=None):
                     help="the capability the harness declared as its objective")   # accepted for harness compat; GPU selected via CUDA_VISIBLE_DEVICES
     a = ap.parse_args(argv)
     require_recorded_entrypoint("calib_probe.py", module=_MODULE_NAME,
-                               argv=(argv if argv is not None else sys.argv[1:]))
+                                argv=(argv if argv is not None else sys.argv[1:]),
+                                trace_authorized=globals().get("_ENTRY_AUTHORIZED", None))
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    # SEED THE PROCESS -- probe.py:main does this on line 1 and this module never did.
+    #
+    # `--seed` reached only the head (`_train_head_logits` calls torch.manual_seed itself) and the
+    # control's projection (`fair_rff` takes it). It never reached `Earth4D()`, whose hash tables are
+    # initialized from the global torch RNG, so the ENCODER was drawn fresh from an unseeded generator
+    # on every run. Measured, same command, same --seed 0, three consecutive runs: conf_auroc 0.5375,
+    # 0.5682, 0.6062 -- a range of 0.069 against a noise barrier of 0.0118 -- while the RFF control
+    # (0.5752) and raw control (0.5607) were byte-identical every time, because those two were seeded.
+    # Every calibration number ever recorded, the 0.5910 record included, is one draw from that spread.
+    np.random.seed(a.seed)
+    torch.manual_seed(a.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(a.seed)
     t0 = time.time()
 
     # regime presets: plant/B23 = many obs, well-separated niches, low noise (SDM);
@@ -403,6 +533,7 @@ def main(argv=None):
     else:
         sk = dict(n=20000, niche=1.2, noise=0.4)
 
+    feats = split = None
     if a.surrogate:
         feats, fam, n_fam, lat, lon = _surrogate(seed=a.seed, dev=dev, **sk)
         src = f"surrogate:{a.regime}"
@@ -412,20 +543,37 @@ def main(argv=None):
                 feats, fam, n_fam, lat, lon = _real_pollinator(a.cache_dir, a.feature, a.n_shards, dev, a.seed, topk=a.topk)
                 src = f"real-pollinator:{a.feature}"
             else:
-                feats, fam, n_fam, lat, lon = _real_features(a.cache_dir, a.feature, a.n_shards, dev, a.seed)
-                src = f"real:{a.feature}"
+                lat, lon, fam, n_fam, days, gid = _load_real(a.cache_dir, a.n_shards,
+                                                             with_time=a.time_channel)
+                split = _spatial_block_split(lat, lon, a.seed, a.holdout)
+                tnorm = None
+                if a.time_channel:
+                    # horizon=1.0: this split is SPATIAL, so train already spans the whole calendar
+                    # range and no headroom above t=1 has to be reserved for a held-out future.
+                    tnorm, _tmin, _tspan = normalize_time_from_train(days, ~split[1], horizon=1.0)
+                feats = _encode_real(a.feature, a.cache_dir, lat, lon, gid, tnorm, ~split[1], dev)
+                src = f"real:{a.feature}" + ("+eventday" if a.time_channel else "")
         except Exception as e:                                  # cache absent -> honest fallback
+            # This fallback silently produced the board's calibration record. `_real_features` imported
+            # `probe` from `...editable_files.harness`, which is a MODULE, not a package, so the import
+            # raised ImportError on every single run and every "--feature earth4d" calibration number
+            # was in fact measured on the synthetic surrogate -- a task Earth4D never touches, and one
+            # that ignores --feature entirely, so `earth4d` and `raw` arms were the same number. The
+            # import is fixed; the fallback now also refuses to record (see `declare(diagnostic=...)`),
+            # because a data-loading failure must never be able to mint a capability record again.
             print(f"[calib] real features unavailable ({type(e).__name__}: {e}); using surrogate")
             feats, fam, n_fam, lat, lon = _surrogate(seed=a.seed, dev=dev, **sk)
             src = f"surrogate:{a.regime}(fallback)"
+            split, tnorm = None, None
 
     # spatial-block holdout (probe.py logic, inlined to avoid importing when cache absent)
-    block = 0.5
-    blk = (np.floor(lat / block).astype(np.int64) * 100000 + np.floor(lon / block).astype(np.int64))
-    ublk = np.unique(blk)
-    rng = np.random.default_rng(a.seed); rng.shuffle(ublk)
-    held = set(ublk[: int(len(ublk) * a.holdout)].tolist())
-    test_all = np.array([b in held for b in blk])
+    if split is None:
+        split = _spatial_block_split(lat, lon, a.seed, a.holdout)
+        tnorm = None
+    blk, test_all, held, rng = split
+    coord = np.stack([lat, lon], 1).astype(np.float32)
+    if tnorm is not None:
+        coord = np.concatenate([coord, tnorm[:, None]], 1).astype(np.float32)
 
     # train head on TRAIN, get held-out logits; split held-out into CAL/TEST (by block, no leakage)
     logits_all, y_all, mc_var = _train_head_logits(
@@ -525,6 +673,19 @@ def main(argv=None):
         print(f"[MC-DROPOUT p={a.dropout}]  predvar->correctness AUROC="
               f"{_var_auroc(mc_var_t, correct0):.4f}  (softmax-conf AUROC={auc0:.4f})")
 
+    # ---- (4) FAIR BASELINE -- the same statistic on a generic trained PE and on raw coordinates ----
+    fb = _fair_baseline_arms(coord, fam, n_fam, test_all, is_cal, dev, a, ref_dim=feats.shape[1])
+    print(f"\n[FAIR BASELINE dim={fb['dim']}]  conf_auroc: {a.feature}={auc0:.4f} | "
+          f"RFF(sigma={fb['rff_sigma']:g})={fb['rff_auc']:.4f} | raw-coords={fb['raw_auc']:.4f}")
+    print("           RFF bandwidth sweep (test | cal, selected on cal): "
+          + "  ".join(f"s={s:g}:{v:.4f}|{fb['sweep_cal'][s]:.4f}"
+                      for s, v in sorted(fb["sweep"].items())))
+    print(f"           RFF oracle (argmax conf_auroc, sigma={fb['rff_oracle_sigma']:g}) = "
+          f"{fb['rff_oracle']:.4f}  <- selection-biased, reported not used")
+    print(f"           acc: {a.feature}={acc0:.4f} | RFF={fb['rff_acc']:.4f} | raw={fb['raw_acc']:.4f}")
+    print(f"           FAIR-GAIN vs RFF = {auc0 - fb['rff_auc']:+.4f}   "
+          f"share = {(auc0 - fb['rff_auc']) / auc0 if auc0 else float('nan'):+.3f}")
+
     # ---- SUMMARY line (grep-able) ----
     print(f"\nSUMMARY {src} feat={a.feature} seed={a.seed} "
           f"acc={acc0:.4f} ECE_raw={ece0:.4f} ECE_temp={eceT:.4f} ECE_iso={eceI:.4f} "
@@ -532,6 +693,8 @@ def main(argv=None):
           f"conf_auroc={auc0:.4f} conf_auroc_ens={auc_ens_conf:.4f} conf_auroc_ent={auc_ent:.4f} "
           f"conf_auroc_bald={auc_bald:.4f} conf_auroc_ensvar={auc_ensvar:.4f} "
           f"conformal_cov={cov:.4f} setsize={sz:.3f} T={T:.3f} "
+          f"conf_auroc_rff={fb['rff_auc']:.4f} conf_auroc_raw={fb['raw_auc']:.4f} "
+          f"rff_sigma={fb['rff_sigma']:g} fair_gain={auc0 - fb['rff_auc']:+.4f} "
           f"t={time.time() - t0:.1f}s")
 
     # The result contract. calibration was the one capability the harness could not run: this module
@@ -544,17 +707,31 @@ def main(argv=None):
     #
     # 0.5 is the useless floor for a rank statistic, so that -- not zero -- is the fair baseline: a
     # gain of +0.09 on 0.59 means the confidence signal is barely better than coin-flipping.
-    from deepearth.autoresearch.probes.spacetime.editable_files.harness import declare, _set_result_sink
-    _set_result_sink(getattr(a, "result_json", ""), getattr(a, "capability", ""), "v2-leakfix", a)
+    from deepearth.autoresearch.probes.spacetime.editable_files.harness import (
+        PROTOCOL, declare, _set_result_sink,
+    )
+    _set_result_sink(getattr(a, "result_json", ""), getattr(a, "capability", ""), PROTOCOL, a)
+    surrogate = src.startswith("surrogate")
     declare(
         capability="calibration",
         mode=f"CALIBRATION({src},feat={a.feature})",
         metric="conf_auroc_softmax",
         value=auc0,
         split=src,
-        gains={"vs chance (0.5)": auc0 - 0.5},
-        baselines={"chance": 0.5, "ens_mean_conf": auc_ens_conf, "entropy": auc_ent,
+        # `vs RFF` is what makes this row diagnosable: FAIR_ORDER prefers it, so the harness now reads a
+        # real share instead of NO-FAIR-BASELINE. `vs chance` stays for context but can never be the
+        # fair baseline -- 0.5 is a floor, not a control.
+        gains={"vs RFF": auc0 - fb["rff_auc"], "vs raw-coords": auc0 - fb["raw_auc"],
+               "vs chance (0.5)": auc0 - 0.5},
+        baselines={"chance": 0.5, "rff": fb["rff_auc"], "rff_oracle": fb["rff_oracle"],
+                   "raw_coords": fb["raw_auc"],
+                   "ens_mean_conf": auc_ens_conf, "entropy": auc_ent,
                    "bald": auc_bald, "ens_var": auc_ensvar},
+        diagnostic=surrogate,
+        diagnostic_reason=("this run measured the SYNTHETIC surrogate, not the corpus: --feature is "
+                           "inert there, so the number says nothing about Earth4D" if surrogate else ""),
+        rff_sigma=fb["rff_sigma"], rff_acc=fb["rff_acc"], raw_acc=fb["raw_acc"],
+        feature=a.feature,
         accuracy=acc0, ece_raw=ece0, ece_temp=eceT, ece_iso=eceI, brier_raw=br0,
         conformal_cov=cov, set_size=sz, temperature=T, ensemble=getattr(a, "ensemble", None),
         seconds=time.time() - t0,
