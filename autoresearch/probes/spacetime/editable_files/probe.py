@@ -296,7 +296,7 @@ CAPABILITY_CONFIG = {
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
         "fourier": 0, "time_harmonics": 0,
-        "env_channels": "ae_wb",   # ARM aewb
+        "env_channels": "ae_wb_ph",   # ARM aewbph
     },
     "species_from_env": {
         "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
