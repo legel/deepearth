@@ -1032,9 +1032,14 @@ def _code_provenance() -> dict:
                                   timeout=10).stdout.strip()
         except Exception:
             return ""
+    # records/ is EXCLUDED: the harness writes the board and the scorecard on every run, so counting
+    # them would make every result permanently "dirty" and the flag would mean nothing. Dirty here means
+    # the CODE that produced the number is uncommitted.
+    changed = [l for l in git("status", "--porcelain").splitlines()
+               if l.strip() and "/records/" not in l and "/program/scorecard.txt" not in l]
     return {"commit": git("rev-parse", "HEAD")[:12],
             "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
-            "dirty": bool(git("status", "--porcelain"))}
+            "dirty": bool(changed)}
 
 
 def post_ensue(trace: dict) -> None:
