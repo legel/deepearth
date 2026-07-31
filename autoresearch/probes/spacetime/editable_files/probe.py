@@ -271,9 +271,22 @@ CAPABILITY_CONFIG = {
         "pheno_attn": False, "pheno_species": False, "pheno_spatial": False,
         "forecast_spatial": False, "recurrence": False, "gnn": False, "train_encoder": False,
     },
+    # The standing record (0.1423, tag v2_baseline_famenv) was set by the PRE-REFACTOR CLI as
+    #     --env --env_channels alphaearth --n_shards 12
+    # and NOTHING else, so every unstated lever took that CLI's argparse DEFAULT. The reconstructed
+    # block below was missing four of them, and one of those -- `target` -- silently changed WHAT IS
+    # MEASURED: CONFIG's default is the species_from_spacetime champion's "species", so the env path
+    # compacted sp_obs into a 1364-way SPECIES target while still declaring metric
+    # family_top1_accuracy. The control scored 0.0556 against a 166-family record of 0.1423; that is a
+    # different target, not a regression. Defaults verified verbatim against probe.py at e2b062c^
+    # (the commit that turned the 33 flags into CONFIG): --target family, --head_hidden 0 (LINEAR
+    # head), --fourier 0, --time_harmonics 0, --fourier_scale 10.0, --spatial_cline 0, --tile 0.
     "family_from_env": {
         "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
+        "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
+        "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
+        "fourier": 0, "time_harmonics": 0,
     },
     "species_from_env": {
         "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
