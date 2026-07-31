@@ -181,14 +181,24 @@ class ProbeResult:
     def fair_gain(self, order) -> tuple:
         """The honest marginal: the gain against the STRONGEST fair baseline present.
 
-        Returns (value, label) or (None, None). The preference order is the harness's, not the probe's,
-        so a mode cannot nominate a flattering baseline for itself.
+        Returns (value, label) or (None, None). `order` decides which labels COUNT as fair; it is the
+        harness's list, not the probe's, so a mode cannot nominate a flattering baseline for itself.
+
+        Among those, the strongest baseline is the one with the SMALLEST gain -- every gain is
+        `earth4d_score - baseline_score`, so min gain <=> max baseline. This used to return the first
+        label matching the preference order instead, which is a different and much friendlier quantity:
+        with "RFF" ahead of "raw" in the order, a mode that reported both got its gain-vs-RFF even when
+        raw coordinates beat Earth4D outright. flowering_peak_month published `+0.0128 vs RFF` while
+        raw scored 0.19933 against Earth4D's 0.19728 -- a real gain of -0.0021. The row read
+        ENCODER-LIMITED when the honest read was INPUT-LIMITED, and the same silent flattery was
+        available to every capability that declared more than one control.
         """
-        for preference in order:
-            for label, value in self.gains.items():
-                if preference.lower() in label.lower():
-                    return value, label
-        return (None, None)
+        fair = [(value, label) for label, value in self.gains.items()
+                if any(preference.lower() in label.lower() for preference in order)
+                and value is not None]
+        if not fair:
+            return (None, None)
+        return min(fair, key=lambda pair: pair[0])
 
     # -- serialization ----------------------------------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:

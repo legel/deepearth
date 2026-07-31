@@ -93,10 +93,24 @@ class IdentityTests(unittest.TestCase):
 
 class FairGainTests(unittest.TestCase):
     def test_strongest_fair_baseline_wins_not_the_flattering_one(self):
+        """This test's own fixture proves the point: raw scores 0.1345 and RFF 0.0997, so RAW is the
+        stronger control and the honest marginal is 0.0424, not 0.0772.
+
+        It previously asserted 0.0772/"vs RFF" -- the name was right and the assertion was the
+        flattering one, because fair_gain returned the first label matching the preference order rather
+        than the smallest gain. Every gain is `earth4d - baseline`, so min gain <=> max baseline. Live
+        consequence: flowering_peak_month published +0.0128 vs RFF while raw coordinates beat Earth4D
+        outright (0.19933 vs 0.19728), so the row read ENCODER-LIMITED instead of INPUT-LIMITED.
+        """
         order = ["best-ctrl", "RFF", "mlp", "GAIN", "best-coord", "raw"]
         value, label = result().fair_gain(order)
-        self.assertEqual(label, "vs RFF")
-        self.assertEqual(value, 0.0772)
+        self.assertEqual(label, "vs raw")
+        self.assertEqual(value, 0.0424)
+
+    def test_labels_outside_the_fair_order_cannot_become_the_baseline(self):
+        order = ["RFF"]
+        value, label = result(gains={"vs RFF": 0.05, "vs chance": -9.0}).fair_gain(order)
+        self.assertEqual((value, label), (0.05, "vs RFF"))
 
     def test_absent_fair_baseline_is_none_not_zero(self):
         """calibration's live record carries no fair baseline at all. That must read as 'undiagnosable',
