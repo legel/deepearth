@@ -292,7 +292,7 @@ CAPABILITY_CONFIG = {
     # head), --fourier 0, --time_harmonics 0, --fourier_scale 10.0, --spatial_cline 0, --tile 0.
     "family_from_env": {
         "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
-        "env_rff": 512, "env_rff_scale": 0.1,   # ARM famenv_envrff_narrow (2048@0.5 was 0.0736: too high-frequency)
+        "env_rff": 1024, "env_rff_scale": 0.1,   # ARM famenv_envrff sweep
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
