@@ -54,6 +54,9 @@ variants and a pile of `diag*.py` copies — and cost every later agent the read
 ## Running
 
 ```bash
+# what has already been tried, and why it stopped?  (READ THIS FIRST)
+python -m deepearth.autoresearch.probes.spacetime.harness --insights --metric family_from_spacetime
+
 # where do I edit to move this capability?
 python -m deepearth.autoresearch.scoring.definitions --capability family_from_spacetime
 

@@ -1365,6 +1365,87 @@ def _determinism_check(device: str = "cuda:0", n: int = 200_000, repeats: int = 
     print("\nEXIT 1: backward is nondeterministic. Rerun with EARTH4D_DETERMINISTIC=1.")
     return 1
 
+
+# ============================================================================================================
+# PRIOR LEARNINGS  (harness.py --insights)
+# ============================================================================================================
+#
+# 2,531 recorded runs and 123 dead-ends with their reasons sit in this board, and until now NOTHING read
+# them back. Step (1) of the loop says "pull Ensue keys + records.json, skip logged dead-ends" and there
+# was no command that did it, so every agent re-derived what the last one had already paid for.
+#
+# v5 voids the SCORES -- they measured a tile coder at 0.17% encoder content, against a fair-gain column
+# that mixed three different quantities. It does NOT void the HYPOTHESES. "--recurrence -0.0180",
+# "--gnn -0.0261", "extent_fit -0.0199", "tri-plane conjunction ~0", "17 capacity-sweep rows bought
+# nothing" are all still information about which levers are worth a run, and re-buying them under the
+# new regime is pure waste.
+#
+# So this prints the attempts and their reasons, with every pre-v5 number explicitly marked void so
+# nobody compares against one. Ensue is queried too when a token is present, because the swarm's board
+# carries attempts this checkout never ran.
+def _ensue_fetch(key: str):
+    """Read one Ensue key. Returns its value string, or None if unavailable."""
+    tok = _ensue_token()
+    if not tok:
+        return None
+    for tool, args in (("get_memory", {"key_name": key}),
+                       ("search_memories", {"query": key})):
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                   "params": {"name": tool, "arguments": args}}
+        req = urllib.request.Request("https://api.ensue-network.ai/", data=json.dumps(payload).encode(),
+                                     headers={"Authorization": f"Bearer {tok}",
+                                              "Content-Type": "application/json",
+                                              "Accept": "application/json, text/event-stream"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                body = r.read().decode()
+            if '"error"' not in body and key in body:
+                return body
+        except Exception:
+            continue
+    return None
+
+
+def _insights(capability: str = "", ensue: bool = True) -> int:
+    _raw, recs = _read_records()
+    caps = [capability] if capability else sorted(recs)
+    if capability and capability not in recs:
+        print(f"[insights] no ledger for {capability!r}. known: {', '.join(sorted(recs))}")
+        return 1
+
+    print("=" * 108)
+    print("PRIOR LEARNINGS — what has already been tried on this board")
+    print("=" * 108)
+    print("Every SCORE below predates protocol v5 and is VOID: it measured a feature vector that was")
+    print("0.17% encoder, scored against a fair-gain column that mixed encoder / env-channel / class-prior")
+    print("gains. Do not compare a v5 number to one. The HYPOTHESES and their reasons are still valid --")
+    print("that is the point of reading this before you pick.\n")
+
+    for cap in caps:
+        v = recs.get(cap) or {}
+        led = v.get("ledger") or {}
+        dead = led.get("deadends", {})
+        hist = led.get("records", [])
+        print("-" * 108)
+        print(f"{cap}   runs={led.get('runs', 0)}   dead-ends={len(dead)}   "
+              f"pre-v5 record={v.get('score')} (VOID)   protocol={v.get('protocol')}")
+        if hist:
+            print("  record history (void): " + " -> ".join(f"{r.get('tag')}:{r.get('score')}" for r in hist[-6:]))
+        if dead:
+            print("  attempts and why they stopped:")
+            for tag, x in sorted(dead.items(), key=lambda kv: -(kv[1].get("seq") or 0))[:24]:
+                why = (x.get("why") or "").replace("\n", " ")
+                print(f"    {tag[:44]:46} {str(x.get('score'))[:8]:9} {why[:52]}")
+        if ensue:
+            got = _ensue_fetch(f"LOOP-earth4d-{cap}")
+            print(f"  ensue: {'fetched — swarm board may carry attempts this checkout never ran' if got else 'unavailable (no token, or key absent)'}")
+    print("-" * 108)
+    print("Before picking: skip anything above whose REASON still applies under v5. A lever that failed")
+    print("because it was drowned in 18,432 tile-code dims is NOT settled -- it was never measured on the")
+    print("encoder. A lever that failed on its own mechanics (extent_fit -0.0199, capacity sweeps) is.")
+    return 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Earth4D legacy probe ledger — exact audited protocol migrations only"
@@ -1631,6 +1712,12 @@ def main() -> None:
 if __name__ == "__main__":
     # Two entry points, one file: `--list-modes` answers "what can move this capability, and where do I
     # edit?" without running anything; anything else runs the loop.
+    if "--insights" in sys.argv:
+        sys.argv.remove("--insights")
+        _cap = ""
+        if "--metric" in sys.argv:
+            _i = sys.argv.index("--metric"); _cap = sys.argv[_i + 1]; del sys.argv[_i:_i + 2]
+        raise SystemExit(_insights(_cap, ensue="--no-ensue" not in sys.argv))
     if "--determinism" in sys.argv:
         sys.argv.remove("--determinism")
         raise SystemExit(_determinism_check())

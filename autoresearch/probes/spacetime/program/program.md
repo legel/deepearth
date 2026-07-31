@@ -66,13 +66,33 @@ verified bit-identical on all four encoders, and 4.5% *faster*. Check it any tim
 
 | step | do | rule |
 |---|---|---|
-| ① READ | pull Ensue keys + `records/records.json` from disk | never reason from a cached board; skip logged dead-ends |
+| ① READ | `harness.py --insights [--metric <cap>]` — 2,531 prior runs and 123 dead-ends with their reasons, plus the Ensue key | **mandatory before picking.** Never reason from a cached board; skip a lever whose recorded reason still applies |
 | ② PICK | one capability from `scorecard.md` Layer 1, **with intention** | no run without a declared `--metric` |
 | ③ DIAGNOSE | fair-gain + signal-capture → lever family | diagnose before you swing |
 | ④ RUN | `EARTH4D_DETERMINISTIC=1 python -m deepearth.autoresearch.probes.spacetime.harness --metric <cap> --tag <id> --device cuda:N --ensue` | **change whatever the hypothesis needs**; one variable per run; SCREEN at one seed and go broad |
 | ⑤ MEASURE | score · fair-gain · signal-captured · Δ vs baseline | native probe metrics only |
 | ⑥ DECIDE | keep if beyond the noise barrier with no registered regression | probe = discovery; science needs the gate |
 | ⑦ WRITE | `--ensue` on **every** run — win or dead-end | a run that isn't published didn't happen |
+
+### ① READ — the old board is void, its reasons are not
+
+v5 voids every stored SCORE: they measured a feature vector that was 0.17% encoder, against a fair-gain
+column that mixed encoder / env-channel / class-prior gains. It does **not** void the hypotheses. 123
+dead-ends carry the reason they stopped, and re-buying them under the new regime is pure waste.
+
+```bash
+python -m deepearth.autoresearch.probes.spacetime.harness --insights --metric <capability>
+```
+
+Read the reason, not the number, and sort each into one of two piles:
+
+| the lever failed because... | status under v5 |
+|---|---|
+| its own mechanics — `extent_fit -0.0199`, the 17-row `fc_hh*_ff*_th*` capacity sweep, `--gnn -0.0261` | **settled.** Don't re-run it. |
+| it was drowned in 18,432 tile-code dims, or judged by a `share` that moved with output width, or scored against the class prior | **never measured.** It is a fresh hypothesis on the encoder. |
+
+That second pile is the alpha the clean regime unlocks — most of the architecture arms in `earth4d.py`
+were rejected while contributing a fraction of a percent of the signal.
 
 **Where do I edit?** `python -m deepearth.autoresearch.scoring.definitions --capability <cap>` names the
 files. It is the one routing table, it lives in the harness, and an experiment cannot widen its own scope
