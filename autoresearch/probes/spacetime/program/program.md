@@ -116,6 +116,14 @@ classes, chance ≈0.006) at 0.1769 both tripped it. Acting on that sent four co
 changes at a capability whose encoder was already contributing 84% of its score — `--recurrence`
 −0.0180, `--gnn` −0.0261, `--train_encoder` +0.0037, a tri-plane conjunction edit −0.0001.
 
+> **None of those four numbers is a point estimate, and the `train_encoder` one is not even a draw from
+> a fixed distribution.** The trained path is nondeterministic AT FIXED SEED — five runs at seed 0 with
+> identical code and config gave 0.1873 / 0.1925 / 0.1867 / 0.1872 / 0.1952 (sd 0.0038), from atomicAdd
+> in the hash-grid backward. That within-seed spread is as large as the entire across-seed spread and
+> comparable to the row's whole fair-gain budget, so **any single trained run is worth ±0.008** and
+> `+0.0037` is indistinguishable from zero. The frozen path IS bit-reproducible. Never publish a trained
+> number from one run; report a paired mean over matched seeds with its spread, and say so explicitly.
+
 A share is comparable across targets of any difficulty and answers the question the lever choice turns
 on: is the encoder doing the work, or barely beating a generic positional encoding?
 

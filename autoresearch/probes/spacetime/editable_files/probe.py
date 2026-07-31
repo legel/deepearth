@@ -831,10 +831,31 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
         tot = sum(1 for v in moved.values() if v > 1e-6)
         print(f"  [train_encoder] {tot}/{len(moved)} encoder tensors moved; "
               f"rel-delta " + ", ".join(f"{n.split('.')[-1]}={v:.3g}" for n, v in list(moved.items())[:6]), flush=True)
-        logits = torch.cat([
-            head(enc(Cte[i:i + 8192]) if Ste is None
-                 else torch.cat([enc(Cte[i:i + 8192]), Ste[i:i + 8192]], 1))
-            for i in range(0, Cte.shape[0], 8192)])
+        def _feat(C, S):
+            f = enc(C)
+            return f if S is None else torch.cat([f, S], 1)
+        Fte = torch.cat([_feat(Cte[i:i + 8192], None if Ste is None else Ste[i:i + 8192])
+                         for i in range(0, Cte.shape[0], 8192)])
+        logits = head(Fte)
+        # ESTIMATOR PARITY with evaluate(): the frozen champion path adds a soft k-NN class log-vote
+        # over the TRAIN rows (knn_vote=0.5 for family_from_spacetime). Omitting it here made A-vs-B a
+        # comparison of two ESTIMATORS, not of frozen-vs-trained hash tables. Same K/tau/cosine, over
+        # the TRAINED features. No-op when knn_vote == 0, so every other capability is byte-identical.
+        if CONFIG["knn_vote"]:
+            Ftr = torch.cat([_feat(Ctr[i:i + 8192], None if Str is None else Str[i:i + 8192])
+                             for i in range(0, Ctr.shape[0], 8192)])
+            _K, _tau = int(CONFIG["knn_vote_k"]), float(CONFIG["knn_vote_tau"])
+            _Xn = F.normalize(Ftr, dim=-1)
+            _out = []
+            for i in range(0, Fte.shape[0], 2048):
+                _sim = F.normalize(Fte[i:i + 2048], dim=-1) @ _Xn.t()
+                _v, _j = _sim.topk(min(_K, _sim.shape[1]), dim=-1)
+                _w = torch.softmax(_v / _tau, dim=-1)
+                _pr = torch.zeros(_j.shape[0], n_fam, device=dev)
+                _pr.scatter_add_(1, ytr[_j], _w)
+                _out.append((_pr + 1e-6).log())
+            logits = logits + CONFIG["knn_vote"] * torch.cat(_out)
+            del Ftr, _Xn
         acc = (logits.argmax(-1) == yte).float().mean().item()
         top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
     return acc, top5
