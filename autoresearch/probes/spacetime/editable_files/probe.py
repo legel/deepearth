@@ -188,6 +188,13 @@ CONFIG = {
     "env_rff": 0,
     "env_rff_scale": 1.0,
     "knn_readout": 0,          # k for the non-parametric local-frequency readout (0 = trained linear head)
+    # Soft k-NN class log-vote ADDED to the head logits in evaluate() (cosine, K, tau). 1 = on, the
+    # species_from_spacetime champion (0.0787 -> 0.0860). It was introduced UNGATED, which silently
+    # changed the estimator for every other capability -- including capabilities whose standing record
+    # was set before it existed, whose control can then never reproduce. Gated here, default = champion.
+    "knn_vote": 1,
+    "knn_vote_k": 256,
+    "knn_vote_tau": 0.02,
     # ---- ARCHITECTURE ARMS (earth4d.py). Default-off: the champion path is byte-identical. ----
     "seasonal_time": 0,        # 1 = space-time planes hash annual PHASE; 2 = absolute planes + seasonal planes
     "drop_spatiotemporal": False,
@@ -257,9 +264,22 @@ CAPABILITY_CONFIG = {
         "head_hidden": 512, "fourier": 1024, "fourier_scale": 6400.0, "time_harmonics": 8,
         "spatial_cline": 64, "n_shards": 12, "tile": 64, "tile_offsets": 4,
     },
+    # The standing record (0.1769) was set by the PRE-REFACTOR CLI as
+    #     --forecast --head_hidden 256 --fourier 1024 --time_harmonics 8 --n_shards 12
+    # and NOTHING else, so every unstated lever took that CLI's argparse DEFAULT. The reconstructed
+    # block below carried only the five STATED levers, so it silently inherited CONFIG's defaults --
+    # which are the species_from_spacetime champion: fourier_scale 6400 (old default 10), spatial_cline
+    # 64 (old default 0), tile 64 / tile_offsets 4 (did not exist pre-refactor), and, after the k-NN
+    # class-vote landed ungated, a DIFFERENT ESTIMATOR than the one that set the record. Five unstated
+    # changes stacked on a control is not a control. Defaults verified verbatim against probe.py at
+    # e2b062c^ (the commit that turned the 33 flags into CONFIG): --fourier_scale 10.0, --spatial_cline
+    # 0, --train_encoder off, --target family, --spatial_siren 0, --time_film 0, --causal_lags 0.
     "family_from_spacetime": {
-        "forecast": True, "target": "family", "phenology": False,
-        "head_hidden": 256, "fourier": 1024, "time_harmonics": 8, "n_shards": 12,
+        "forecast": True, "target": "family", "phenology": False, "head_hidden": 256, "fourier": 1024,
+        "time_harmonics": 8, "n_shards": 12, "fourier_scale": 10.0, "spatial_cline": 0,
+        "cline_scale": 1.0, "spatial_siren": 0, "time_film": 0, "causal_lags": 0,
+        "train_encoder": False, "tile": 0, "tile_offsets": 1, "tile_replace": False, "tile_time": False,
+        "tile_quantile": False, "knn_vote": 0.5, "knn_vote_tau": 0.005, "nystrom": 128,
     },
     # The standing record (0.0521, tag v2_exact_migration_phenology) was set by the PRE-REFACTOR CLI as
     #     --phenology --forecast --pheno_env --pheno_feats e4d --n_shards 12
@@ -719,7 +739,7 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
     else:
         head = nn.Linear(feats.shape[1], n_fam).to(dev)
 
-    def _knn_logp(Q, K=256, tau=0.02, chunk=2048):
+    def _knn_logp(Q, K=int(CONFIG["knn_vote_k"]), tau=float(CONFIG["knn_vote_tau"]), chunk=2048):
         """Soft k-NN class log-posterior of Q against the TRAIN rows, cosine similarity."""
         Xn = F.normalize(Xtr, dim=-1)
         out = []
@@ -737,7 +757,7 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
         loss = F.cross_entropy(head(Xtr[idx]), ytr[idx])
         opt.zero_grad(); loss.backward(); opt.step()
     with torch.no_grad():
-        logits = head(Xte) + 1 * _knn_logp(Xte)
+        logits = head(Xte) + (CONFIG["knn_vote"] * _knn_logp(Xte) if CONFIG["knn_vote"] else 0.0)
         acc = (logits.argmax(-1) == yte).float().mean().item()
         top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
     return acc, top5
