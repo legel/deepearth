@@ -282,7 +282,9 @@ CAPABILITY_CONFIG = {
     # (the commit that turned the 33 flags into CONFIG): --target family, --head_hidden 0 (LINEAR
     # head), --fourier 0, --time_harmonics 0, --fourier_scale 10.0, --spatial_cline 0, --tile 0.
     "family_from_env": {
-        "env": True, "env_channels": "alphaearth+terrain", "forecast": False, "phenology": False,
+        "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
+        "vision": True, "vision_feats": "dino",   # ARM famenv_vision_dino: BORROWED frozen DINO morphology
+                                     # (env = where, vision = which). Replaces the env channel on this path.
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
