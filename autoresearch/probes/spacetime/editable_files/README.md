@@ -47,8 +47,6 @@ bash install.sh
 
 ```bash
 # From the repository root: pinned real data, strict split audit, train-only baselines
-python3 -m autoresearch.probes.spacetime.editable_files.lib.science_gate \
-  --download --json-out autoresearch/probes/spacetime/../../data/lfmc/earth4d_science_gate_dev.json
 ```
 
 This command does not train Earth4D; its artifact explicitly records `earth4d_evaluated=false`.
@@ -253,7 +251,6 @@ autoresearch/probes/spacetime/editable_files/
 │   ├── hashgrid.py     # PyTorch interface
 │   └── src/            # CUDA source files
 └── ../../autoresearch/probes/spacetime/
-    └── science_gate.py # Pinned Globe-LFMC split/baseline audit
 ```
 
 ## Key Technical Foundations

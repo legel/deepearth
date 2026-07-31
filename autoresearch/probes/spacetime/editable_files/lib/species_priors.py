@@ -6,7 +6,7 @@ loop's code. Each autoresearch loop must stand alone: its own probe, its own dat
 change in one loop can never move another loop's numbers without anyone noticing.
 
 If the underlying cache format changes, both copies need updating. That is the cost of independence, and
-it is cheaper than a cross-loop coupling nobody can see. `autoresearch/tests/test_loop_independence.py` enforces it.
+it is cheaper than a cross-loop coupling nobody can see.
 """
 import csv
 import re
@@ -19,7 +19,6 @@ import torch
 # build_tree_buffers is copied in below rather than imported from the biological encoder. Under the
 # dependency DAG a probe loop may depend on its OWN leaf and on nothing sideways: importing the
 # biological encoder from the spacetime loop is a sibling edge, and a change there would silently move
-# this loop's numbers. See autoresearch/tests/test_loop_independence.py.
 
 
 def load_species(cache: str):

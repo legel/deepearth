@@ -3,7 +3,7 @@
 > fusion loop. It now lives with its owner. each probe loop's `editable_files/` stayed top-level for the opposite reason: all
 > three loops import it, because it is the interface a probe loop improves and fusion consumes.
 >
-> Probe loops must not import this directory; `autoresearch/tests/test_loop_independence.py` enforces that.
+> Probe loops must not import this directory.
 
 # DeepEarth core
 

@@ -13,7 +13,6 @@
 |---|---|---|
 | `program/program.md` | the loop: pick → diagnose → run → measure → decide → write | read every cycle |
 | `program/scorecard.md` | the board: 7 probeable capabilities, and what is excluded and why | pick your metric here |
-| `program/lfmc_gate.md` | pinned LFMC gate + split provenance | a gate record, not a program |
 | `program/box-operations.md` | box, GPUs, token location, commit identity | gitignored |
 | `editable_files/harness/probe.py` | the probe: shared loading, dispatch, the recording modes | edit in place, on a branch |
 | `editable_files/harness/probe_modes_tables.py` | the four encoder-free modes (env → identity from tables) | DATA lever only |
@@ -27,8 +26,6 @@
 | `editable_files/lib/dyntargets.py` | target builders for cooccur / SDM / pheno modes | |
 | `editable_files/lib/env_field.py` | env-field decode | |
 | `editable_files/lib/calib_probe.py` | the calibration capability (own CLI; not yet on the contract) | |
-| `editable_files/lib/lfmc_recurrent.py` | the registered LFMC evidence experiment (draft, unrun) | |
-| `editable_files/lib/science_gate.py` | LFMC split/baseline gate | |
 | `data/` | the channels that feed the encoder | **editable — the DATA lever.** `family_from_env` and `family_from_spacetime` both read INPUT-LIMITED right now, so this is where their next move lives |
 | `data/records.json` | the board: one record per capability + ledger of history and dead-ends | single owner, gitignored |
 | `data/traces/` | per-run log + `.trace.json` + `.result.json` | |

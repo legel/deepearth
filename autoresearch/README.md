@@ -25,7 +25,6 @@ Read it bottom-up: an **encoder is a leaf** — the artifact under development. 
 its encoder and is the only thing that changes it. **`main` is the apex**: it will consume each probe's
 finished encoder, and it runs last. Dependencies point *upward only*. A probe importing a sibling probe,
 or a probe importing `main`, is a cycle or a hidden coupling, and
-[`autoresearch/tests/test_loop_independence.py`](../autoresearch/tests/test_loop_independence.py) fails on both.
 
 each probe loop's `editable_files/` is still top-level rather than inside its probe loop. That consolidation waits until the
 scientific performance is filled out — moving a CUDA build and its ABI-specific `.so` mid-campaign buys
@@ -97,7 +96,7 @@ own commit with its own tests, separate from any result.
 |---|---|---|---|---|
 | `main/` | `autoresearch.md`, `BENCHMARKS.md`, `CHAMPION_REPORT.md`, `audit.md`, `GRADUATION_BLUEPRINT.md` | `train.py`, `run_experiment.py`, `evaluate.py`, `score.py`, `score_encoders.py`, `champion_report.py`, `hooks.py`, `perception_diag.py`, `deepcal.yaml`, `champion.yaml` | `data.py`, `prepare.py`, `recipes/` | `champion_scores.json` |
 | `probes/biological/` | `program.md` | `probe.py`, `stage1…stage4`, `ensue_log.py` | `traitprobe.py` | — |
-| `probes/spacetime/` | `program.md`, `scorecard.md`, `lfmc_gate.md`, `box-operations.md` | `probe.py`, `probe_modes_tables.py`, `trace.py`, `probe_contract.py`, `probe_emit.py`, `probe_registry.py` | `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py`, `lfmc_recurrent.py`, `science_gate.py` | `records.json`, `traces/` |
+| `probes/spacetime/` | `program.md`, `scorecard.md`, `box-operations.md` | `probe.py`, `probe_modes_tables.py`, `trace.py`, `probe_contract.py`, `probe_emit.py`, `probe_registry.py` | `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py` | `records.json`, `traces/` |
 
 ## Boundaries between the loops
 
@@ -116,14 +115,13 @@ own commit with its own tests, separate from any result.
 - **Each loop is independent CODE.** No loop imports another loop. If two loops need the same loader,
   each keeps its own copy — a cross-loop import means a change in one loop silently moves another loop's
   numbers with no record saying so. Sharing is allowed only *downward*, into code no loop owns
-  (each probe loop's `editable_files/`, and `autoresearch/main/editable_files/fusion/` for the fusion loop alone). `autoresearch/tests/test_loop_independence.py` enforces this,
+  (each probe loop's `editable_files/`, and `autoresearch/main/editable_files/fusion/` for the fusion loop alone).
   plus the identical four directories and the presence of each loop's program.
 - **Each loop optimizes its own metric under its own evals.** A loop's program declares what it is
   raising and what would falsify it. No loop is scored on another's number, and no loop's result is
   promoted by another loop's evidence.
 - **No loop writes another loop's `records/`.**
 - **One program per surface.** Two definitions of the same surface means one is stale — reconcile before
-  running anything. (`spacetime/program/lfmc_gate.md` is a gate record, not a second program.)
 
 ## Setup
 

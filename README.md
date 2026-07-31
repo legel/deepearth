@@ -46,7 +46,6 @@ probe's finished encoder and runs last.
 
 Dependencies point **upward only**. `main → probes` is legitimate and expected; `probe → sibling probe`
 or `probe → main` is a cycle or a hidden coupling, and
-[`autoresearch/tests/test_loop_independence.py`](autoresearch/tests/test_loop_independence.py) fails on
 either. Everything a loop owns lives under it: its program, its editable code, its encoder, its data, its
 records, its tests. Nothing about a loop sits at the repository root.
 
@@ -54,7 +53,6 @@ Read it bottom-up: an **encoder is a leaf** — the artifact under development. 
 its encoder and is the only thing that changes it. **`main` is the apex**: it will consume each probe's
 finished encoder, and it runs last. Dependencies point *upward only*. A probe importing a sibling probe,
 or a probe importing `main`, is a cycle or a hidden coupling, and
-[`autoresearch/tests/test_loop_independence.py`](autoresearch/tests/test_loop_independence.py) fails on both.
 
 each probe loop's `editable_files/` is still top-level rather than inside its probe loop. That consolidation waits until the
 scientific performance is filled out — moving a CUDA build and its ABI-specific `.so` mid-campaign buys
@@ -94,7 +92,7 @@ explains what the rows mean.
 one probe per loop · no loop imports another loop's code · only the fusion loop touches the fusion
 model · an experiment is an edit on a branch, never a new file or a new flag · a record from an
 unpushed commit is discovery-only · `main` is reached only by a result that cleared its loop's evidence
-bar. `autoresearch/tests/test_loop_independence.py` enforces the structural ones.
+bar.
 
 ## Exciting News:
 
