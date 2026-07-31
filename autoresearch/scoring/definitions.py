@@ -790,10 +790,13 @@ def _audit_scoring(A: _Audit) -> None:
     try:
         from deepearth.autoresearch.main.harness import score as sc
         from deepearth.autoresearch.main.harness import evaluate as ev
-        A.check(sc.is_diagnostic is is_diagnostic, "score.is_diagnostic IS definitions.is_diagnostic")
-        A.check(sc._net_value is net_value, "score._net_value IS definitions.net_value")
-        A.check(ev.is_diagnostic is is_diagnostic, "evaluate.is_diagnostic IS definitions.is_diagnostic")
-        A.check(ev._net_value is net_value, "evaluate._net_value IS definitions.net_value")
+        # Compare against the IMPORTED module, not this module's globals: under `python -m` this file
+        # is `__main__`, a second module object whose functions would never be `is` the imported ones.
+        from deepearth.autoresearch.scoring import definitions as D
+        A.check(sc.is_diagnostic is D.is_diagnostic, "score.is_diagnostic IS definitions.is_diagnostic")
+        A.check(sc._net_value is D.net_value, "score._net_value IS definitions.net_value")
+        A.check(ev.is_diagnostic is D.is_diagnostic, "evaluate.is_diagnostic IS definitions.is_diagnostic")
+        A.check(ev._net_value is D.net_value, "evaluate._net_value IS definitions.net_value")
     except Exception as exc:                                      # noqa: BLE001
         A.check(False, "champion scorers import the shared definitions", f"{type(exc).__name__}: {exc}")
 

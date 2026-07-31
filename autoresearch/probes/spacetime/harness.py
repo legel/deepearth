@@ -1289,7 +1289,7 @@ def post_ensue(trace: dict) -> None:
 
 
 
-def _det_det_one_backward(enc: Earth4D, coords: torch.Tensor, seed: int):
+def _det_one_backward(enc: Earth4D, coords: torch.Tensor, seed: int):
     """One forward+backward at a fixed seed. Returns (output, per-encoder embedding grads)."""
     torch.manual_seed(seed)
     for p in enc.parameters():
@@ -1305,7 +1305,7 @@ def _det_det_one_backward(enc: Earth4D, coords: torch.Tensor, seed: int):
     return out.detach().clone(), grads
 
 
-def _det_det_report(name: str, a: torch.Tensor, b: torch.Tensor) -> bool:
+def _det_report(name: str, a: torch.Tensor, b: torch.Tensor) -> bool:
     same = torch.equal(a, b)
     if same:
         print(f"  {name:<34} BIT-IDENTICAL")
