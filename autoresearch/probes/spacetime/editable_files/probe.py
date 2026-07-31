@@ -124,6 +124,12 @@ CONFIG = {
     "fourier_scale": 6400.0,
     "time_harmonics": 0,
     "train_encoder": True,
+    # Encoder-training hyperparameters, restored: the arm-deletion purge removed them along with the
+    # dead bolt-on keys, and probe.py:1533 reads all three. Values are evaluate_trainable's own
+    # defaults, so behaviour is unchanged from before the purge.
+    "enc_lr_mult": 0.05,       # the encoder gets its own param group at lr * this, no weight decay
+    "enc_warmup": 0.15,        # fraction of steps before the encoder starts moving
+    "enc_c2f": 0.5,            # coarse-to-fine: fraction of steps over which fine levels come online
     # literal, not the imported constant: CONFIG is read at module load, before that import.
     # Must stay equal to lib/recurrence.py DEFAULT_TIME_HORIZON.
     "time_horizon": 2.0,
