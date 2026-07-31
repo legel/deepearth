@@ -215,6 +215,15 @@ CONFIG = {
     "tile_offsets": 4,         # CMAC-style overlapping tilings per level
     "tile_quantile": False,    # equal-occupancy tiles (train empirical CDF warp)
     "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
+    "pheno_ntime": False,      # ARM flw_ntime: encode NEIGHBOURS at their observed event time
+    # Bandwidth for the phenology RFF control. PINNED, not selected: the classification path sweeps
+    # `bandwidths` and lets the control keep its best score, but the phenology head costs ~31s per fit,
+    # so sweeping it every run is not affordable. 4.0 won a manual sweep over {1,4,16,64} on THIS corpus
+    # at THIS output dim (144): RFF 0.1906 at sigma=4 vs 0.1854 at sigma=8. Change the corpus, the
+    # region, or e4d's output width and this number is stale -- and a stale bandwidth silently turns the
+    # control back into the handicap the fix above removed. Re-sweep before trusting a gain after any
+    # such change.
+    "pheno_rff_sigma": 4.0,
 }
 @dataclass
 class _DynamicsCtx:
@@ -1249,9 +1258,15 @@ def main(argv=None):
         # Neighbours legitimately carry their OBSERVED past DOY as explicit node state (that IS the propagation).
         rn_sp = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
         raw_sp = torch.tensor(rn_sp)
-        _rng = np.random.default_rng(0)
-        _proj = rn_sp @ (_rng.normal(0, 8.0, (2, e4d.shape[1] // 2)).astype(np.float32))
-        rff_sp = torch.tensor(np.concatenate([np.sin(_proj), np.cos(_proj)], 1).astype(np.float32))
+        # FAIR-BASELINE FIX (phenology path). This control was `rn_sp @ N(0, 8)` on GLOBE-normalized
+        # (lat/90, lon/180) -- exactly the configuration lib/fair_baseline.py documents as degenerate on a
+        # regional corpus ("not a control; it is a handicap"). The fix landed in the CLASSIFICATION path
+        # (fair_rff: train-extent normalization + bandwidth selection) but never here, so every
+        # flowering_peak_month `vs RFF` gain was measured against the known-broken control.
+        _sc, _bs, _ = fair_rff(rn_sp, e4d.shape[1], train_mask=~test, seed=a.seed)
+        rff_sp = _rff_features(_sc, _bs, CONFIG["pheno_rff_sigma"])
+        print("  [fair-baseline/pheno] RFF sigma=%g on train-extent coords (was sigma=8 on globe coords)"
+              % CONFIG["pheno_rff_sigma"])
         coords_sp = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), np.zeros_like(lat)], 1).astype(np.float32))  # t=0: no time leak
         with torch.no_grad():
             e4d_sp = enc(coords_sp.to(dev)).cpu()
@@ -1279,6 +1294,26 @@ def main(argv=None):
             for _f in sorted(_glob.glob(str(_Path(CONFIG["cache_dir"]) / "gbif_tokens/*.npz")))[:CONFIG["n_shards"]]:
                 _sp.append(np.load(_f)["species_local"])
             sp_all = np.concatenate(_sp).astype(np.int64)[obs_index]
+        # ARM flw_ntime -----------------------------------------------------------------------------
+        # The record-setting head is LSTMDOY, which consumes ONLY neighbour features -- and every bank
+        # above encodes neighbours at t=0, so Earth4D space-time tri-planes are switched off on the one
+        # path that sets the score. A neighbour event time is PAST-ONLY under the causal window and is
+        # already handed to the propagator explicitly as ndoy, so putting it into the encoder basis adds
+        # no information the model did not already have -- it only lets Earth4D represent WHERE-AND-WHEN.
+        # The QUERY bank stays space-only: the query own day-of-year IS the target.
+        nfeat_src = None
+        if CONFIG["pheno_ntime"]:
+            coords_nb = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), tnorm], 1).astype(np.float32))
+            with torch.no_grad():
+                e4d_nb = enc(coords_nb.to(dev)).cpu()
+            rn_nb = np.concatenate([rn_sp, tnorm[:, None].astype(np.float32)], 1)
+            raw_nb = torch.tensor(rn_nb)
+            _rng2 = np.random.default_rng(0)
+            _proj2 = rn_nb @ (_rng2.normal(0, 8.0, (3, e4d.shape[1] // 2)).astype(np.float32))
+            rff_nb = torch.tensor(np.concatenate([np.sin(_proj2), np.cos(_proj2)], 1).astype(np.float32))
+            nfeat_src = {"e4d": e4d_nb, "rff": rff_nb, "raw": raw_nb}
+            print("  [flw_ntime] neighbour banks carry event time: e4d %s rff %s raw %s; queries stay space-only"
+                  % (tuple(e4d_nb.shape), tuple(rff_nb.shape), tuple(raw_nb.shape)))
         _feats = phenology_feature_set(CONFIG["pheno_feats"], CONFIG["pheno_nofair"])
         # FAIR-BASELINE GUARD: a single-feature run (e.g. --pheno_feats e4d) left the RFF control untrained, so the
         # trace could report NO fair gain at all and still set a record -- this capability's records were being
@@ -1288,7 +1323,7 @@ def main(argv=None):
                               K=CONFIG["rec_k"], steps=CONFIG["steps"], lr=CONFIG["lr"], hidden=CONFIG["rec_hidden"], hops=CONFIG["gnn_hops"], tol_days=CONFIG["pheno_tol"],
                               attn=CONFIG["pheno_attn"], attn_heads=CONFIG["attn_heads"], attn_layers=CONFIG["attn_layers"], sp=sp_all,
                               block_deg=CONFIG["rec_block_deg"], fast=CONFIG["rec_fast"],
-                              feats=_feats)
+                              feats=_feats, nfeat_src=nfeat_src)
         dt = time.time() - t0
         n_te = r["raw"]["n_te"]
         def pg(ft, prop):

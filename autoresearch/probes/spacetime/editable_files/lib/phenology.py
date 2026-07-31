@@ -82,11 +82,16 @@ class GNNDOY(nn.Module):
     (cos,sin) DOY (the PAST seasonal state to propagate); the query has NO DOY of its own (it is the future we
     predict). Learned space-time edges (dlat,dlon,dt), T hops, attention-gated aggregation, decode -> (cos,sin)."""
 
-    def __init__(self, feat_dim, hidden=256, hops=2):
+    def __init__(self, feat_dim, hidden=256, hops=2, nfeat_dim=None):
         super().__init__()
         self.hops = hops
+        nfeat_dim = feat_dim if nfeat_dim is None else nfeat_dim
         # neighbour node = [ pos-feat || observed (cos,sin) DOY ]; query node = [ pos-feat || zeros (no DOY) ]
-        self.node_enc = nn.Sequential(nn.Linear(feat_dim + 2, hidden), nn.GELU(), nn.Linear(hidden, hidden))
+        self.node_enc = nn.Sequential(nn.Linear(nfeat_dim + 2, hidden), nn.GELU(), nn.Linear(hidden, hidden))
+        # ARM flw_ntime: the neighbour bank may carry an extra (time) channel the query bank must not have,
+        # so the query gets its own encoder when the two banks differ in width.
+        self.q_enc = (self.node_enc if nfeat_dim == feat_dim else
+                      nn.Sequential(nn.Linear(feat_dim + 2, hidden), nn.GELU(), nn.Linear(hidden, hidden)))
         self.edge_enc = nn.Sequential(nn.Linear(2, hidden), nn.GELU(), nn.Linear(hidden, hidden))   # (dlat,dlon) spatial-only (no dt leak)
         self.msg = nn.Sequential(nn.Linear(hidden * 3, hidden), nn.GELU(), nn.Linear(hidden, hidden))
         self.gate = nn.Sequential(nn.Linear(hidden * 3, hidden), nn.GELU(), nn.Linear(hidden, 1))
@@ -98,7 +103,7 @@ class GNNDOY(nn.Module):
         B, K, _ = nfeat.shape
         nstate = self.node_enc(torch.cat([nfeat, ndoy], -1))      # [B,K,H] neighbour carries its past DOY
         qzero = torch.zeros(B, 2, device=nfeat.device, dtype=nfeat.dtype)
-        qstate = self.node_enc(torch.cat([qfeat, qzero], -1))     # [B,H] query has NO DOY
+        qstate = self.q_enc(torch.cat([qfeat, qzero], -1))        # [B,H] query has NO DOY
         e = self.edge_enc(edge)
         m = mask.unsqueeze(-1).float()
         neg = torch.finfo(nstate.dtype).min
@@ -311,7 +316,7 @@ def _windows_spatial(lat, lon, days, q_idx, pool_idx, K, block_deg=2.0, fast=Fal
     return gi, vi
 
 
-def _tensors(qfeat_all, doyvec, days, lat, lon, q_idx, gidx, valid, K, sp=None):
+def _tensors(qfeat_all, doyvec, days, lat, lon, q_idx, gidx, valid, K, sp=None, nfeat_all=None):
     """Assemble neighbour (feat, DOY vec), query feat, SPATIAL edge (dlat,dlon), mask, and target DOY vec + true DOY.
     If sp is given, also returns (neighbour_species[B,K], query_species[B]) for the species-conditioned head.
 
@@ -325,7 +330,12 @@ def _tensors(qfeat_all, doyvec, days, lat, lon, q_idx, gidx, valid, K, sp=None):
     F_ = qfeat_all.shape[1]
     gsafe = np.clip(gidx, 0, N - 1)
     vmask = torch.tensor(valid)
-    nfeat = qfeat_all[torch.tensor(gsafe.reshape(-1))].reshape(B, K, F_) * vmask.unsqueeze(-1)
+    # ARM flw_ntime: neighbours may be encoded from a DIFFERENT bank than the query. The query bank is
+    # space-only (its own time IS the target); the neighbour bank may carry the neighbour is OBSERVED event
+    # time, which is past-only under the causal window and is already handed to the model as ndoy.
+    nbank = qfeat_all if nfeat_all is None else nfeat_all
+    F_ = nbank.shape[1]
+    nfeat = nbank[torch.tensor(gsafe.reshape(-1))].reshape(B, K, F_) * vmask.unsqueeze(-1)
     ndoy = torch.tensor(doyvec[gsafe.reshape(-1)]).reshape(B, K, 2) * vmask.unsqueeze(-1)   # 0 where padded
     dlat = np.where(valid, lat[gsafe] - lat[q_idx][:, None], 0.0)
     dlon = np.where(valid, lon[gsafe] - lon[q_idx][:, None], 0.0)
@@ -353,7 +363,7 @@ def _skill(pred_vec, ytrue, tol_days=15.0):
 
 def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4000, lr=3e-3,
                   hidden=256, hops=2, tol_days=15.0, attn=False, attn_heads=4, attn_layers=2, warmup=200,
-                  sp=None, block_deg=2.0, fast=False):
+                  sp=None, block_deg=2.0, fast=False, nfeat_all=None):
     """Train static / GNN / LSTM DOY heads on PAST queries; evaluate circular DOY skill on future+new-place.
 
     Returns dict of {static_mae, static_acc, gnn_mae, gnn_acc, lstm_mae, lstm_acc, n_te} in DAYS / within-tol.
@@ -368,8 +378,8 @@ def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4
     g_tr, v_tr = _windows(lat, lon, days, q_train, tr_idx, K, block_deg=block_deg, fast=fast)
     g_te, v_te = _windows(lat, lon, days, te_idx, tr_idx, K, block_deg=block_deg, fast=fast)
 
-    tr = _tensors(qfeat_all, doyvec, days, lat, lon, q_train, g_tr, v_tr, K, sp=sp)
-    te = _tensors(qfeat_all, doyvec, days, lat, lon, te_idx, g_te, v_te, K, sp=sp)
+    tr = _tensors(qfeat_all, doyvec, days, lat, lon, q_train, g_tr, v_tr, K, sp=sp, nfeat_all=nfeat_all)
+    te = _tensors(qfeat_all, doyvec, days, lat, lon, te_idx, g_te, v_te, K, sp=sp, nfeat_all=nfeat_all)
     to = lambda ts: [t.to(dev) for t in ts]
     nftr, ndtr, qftr, etr, mtr, ltr, yvtr, yttr, nsptr, qsptr = to(tr)
     nfte, ndte, qfte, ete, mte, lte, yvte, ytte, nspte, qspte = to(te)
@@ -398,7 +408,8 @@ def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4
         out["static_mae"], out["static_acc"] = _skill(sh(qfte), ytte, tol_days)
 
     # ---- GNN propagator carrying past DOY ----
-    gnn = GNNDOY(feat_dim, hidden, hops).to(dev)
+    nfd = int(nftr.shape[-1])
+    gnn = GNNDOY(feat_dim, hidden, hops, nfeat_dim=nfd).to(dev)
     opt = torch.optim.Adam(gnn.parameters(), lr=lr)
     for _ in range(steps):
         s = torch.randint(0, Btr, (bs,), device=dev)
@@ -409,7 +420,7 @@ def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4
         out["gnn_mae"], out["gnn_acc"] = _skill(gnn(nfte, ndte, qfte, ete, mte), ytte, tol_days)
 
     # ---- LSTM rollout carrying past DOY ----
-    lstm = LSTMDOY(feat_dim, hidden).to(dev)
+    lstm = LSTMDOY(nfd, hidden).to(dev)
     opt = torch.optim.Adam(lstm.parameters(), lr=lr)
     for _ in range(steps):
         s = torch.randint(0, Btr, (bs,), device=dev)
@@ -462,7 +473,7 @@ def _nan_pheno():
 
 def run_phenology_all(e4d, rff, raw, feat_dims, days, coords_ll, test, dev, K=16, steps=4000, lr=3e-3,
                       hidden=256, hops=2, tol_days=15.0, attn=False, attn_heads=4, attn_layers=2, sp=None,
-                      block_deg=2.0, fast=False, feats=("e4d", "rff", "raw")):
+                      block_deg=2.0, fast=False, feats=("e4d", "rff", "raw"), nfeat_src=None):
     """Run the three heads over Earth4D / RFF / raw features; return per-feature dicts.
 
     feats: subset of ("e4d","rff","raw") to actually TRAIN -- flag-gated so a fast single-run can isolate
@@ -473,7 +484,8 @@ def run_phenology_all(e4d, rff, raw, feat_dims, days, coords_ll, test, dev, K=16
     for ft in ("e4d", "rff", "raw"):
         if ft in feats:
             r[ft] = run_phenology(feat_src[ft], feat_dims[ft], days, coords_ll, test, dev, K, steps, lr,
-                                  hidden, hops, tol_days, **kw)
+                                  hidden, hops, tol_days,
+                                  nfeat_all=(nfeat_src or {}).get(ft), **kw)
         else:
             r[ft] = _nan_pheno()
     # propagate a real n_te from whichever feature we ran (all share the same query set)
