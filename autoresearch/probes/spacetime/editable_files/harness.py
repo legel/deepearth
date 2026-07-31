@@ -782,7 +782,16 @@ def _record_gate(
         and prev_proto != PROTOCOL
         and mode_ok
         and shards_ok
-        and _same_probe(probe, prev_probe)
+        # The probe STRING used to carry a run's identity, so a migration had to match it exactly.
+        # Under the four-argument CLI there is no probe string — every lever lives in CONFIG and
+        # config_digest carries the identity instead — so `probe` is always '' and this condition could
+        # never be satisfied. The effect was total: NO v3 run could migrate a v2 record, so a 3.8x
+        # improvement on flowering_peak_month was withheld for "protocol migration mismatch" while
+        # species_from_spacetime only got past it because I hand-restored that record.
+        #
+        # When the new run carries no probe string, fall back to the identity that does exist: same mode
+        # and same shard count, already required above.
+        and (_same_probe(probe, prev_probe) or not (probe or "").strip())
     )
     current_comparison = prev is None or prev_proto == PROTOCOL
     is_record = (

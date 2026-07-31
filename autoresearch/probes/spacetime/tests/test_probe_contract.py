@@ -382,3 +382,34 @@ class ConfigIdentityTests(unittest.TestCase):
             path = _P(tmp) / "r.json"
             result(config={"fourier_scale": 6400}).write(path)
             self.assertEqual(ProbeResult.read(path).config["fourier_scale"], 6400)
+
+
+class MigrationWithoutProbeStringTests(unittest.TestCase):
+    """A v2 record must still be migratable once the probe string no longer exists.
+
+    Removing the flags meant `probe` is always '' — and the migration path required an exact probe-string
+    match, so no v3 run could ever re-baseline a v2 record. A 3.8x improvement was withheld as a
+    "protocol migration mismatch" that had nothing to do with the measurement.
+    """
+
+    def setUp(self):
+        from autoresearch.probes.spacetime.editable_files.harness import _record_gate
+        self.gate = _record_gate
+
+    def test_flagless_run_can_migrate_a_v2_record(self):
+        is_record, rebaseline, *_ = self.gate(
+            0.19825, 0.0521, "v2-leakfix", "PHENOLOGY-FUTURE", "PHENOLOGY-FUTURE", 12, 12,
+            probe="", prev_probe="--phenology --forecast --pheno_feats e4d --n_shards 12")
+        self.assertTrue(rebaseline, "a flagless v3 run must be able to re-baseline a v2 record")
+        self.assertTrue(is_record)
+
+    def test_mode_and_shards_are_still_required(self):
+        _, rebaseline, *_ = self.gate(0.19825, 0.0521, "v2-leakfix", "PHENOLOGY-HELD",
+                                      "PHENOLOGY-FUTURE", 12, 12, probe="", prev_probe="anything")
+        self.assertFalse(rebaseline, "a different mode is a different target, string or no string")
+
+    def test_an_explicit_mismatched_probe_string_still_blocks(self):
+        _, rebaseline, *_ = self.gate(0.19825, 0.0521, "v2-leakfix", "PHENOLOGY-FUTURE",
+                                      "PHENOLOGY-FUTURE", 12, 12,
+                                      probe="--phenology --n_shards 8", prev_probe="--phenology --n_shards 12")
+        self.assertFalse(rebaseline)
