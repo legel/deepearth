@@ -572,7 +572,7 @@ LEVER_SITES = {
         "autoresearch/probes/spacetime/editable_files/earth4d.py: __init__, forward, training objective (the encoder itself)",
         "autoresearch/probes/spacetime/editable_files/lib/recurrence.py: run_recurrence, propagators",
         "CONFIG levers: recurrence, forecast, fourier, "
-        "--spatial_siren, --time_harmonics",
+        "--time_harmonics",
     ],
 }
 

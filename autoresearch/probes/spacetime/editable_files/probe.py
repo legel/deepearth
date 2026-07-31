@@ -22,8 +22,6 @@ THE LEVERS. Two families, and the fair-gain tells you which one you are on:
                    --gnn [--gnn_hops]                                   message passing
                    --field_decode                                       dense-field decode
                    --env_decode [--env_aux_weight]                      env-supervised field
-    priors         --fourier[_scale] --spatial_siren[--siren_*] --spatial_cline[--cline_scale]
-                   --time_harmonics --time_film --causal_lags[--causal_lag_span]
     encoder itself autoresearch/probes/spacetime/editable_files/earth4d.py  ← the real architecture lever
     end-to-end     --train_encoder [--enc_lr_mult --enc_warmup --enc_c2f]
 
@@ -42,7 +40,7 @@ to 113 flags and 19 modes; the diagnostics that could never set a record have be
 
 PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.editable_files.probe"
 # Must match autoresearch/probes/spacetime/harness.py PROTOCOL. Bump both when a change alters what a run MEASURES.
-PROTOCOL_VERSION = "v4-fixedcontrol"
+PROTOCOL_VERSION = "v5-encoder-only"
 
 import os
 import argparse
@@ -274,7 +272,6 @@ CAPABILITY_CONFIG = {
     # class-vote landed ungated, a DIFFERENT ESTIMATOR than the one that set the record. Five unstated
     # changes stacked on a control is not a control. Defaults verified verbatim against probe.py at
     # e2b062c^ (the commit that turned the 33 flags into CONFIG): --fourier_scale 10.0, --spatial_cline
-    # 0, --train_encoder off, --target family, --spatial_siren 0, --time_film 0, --causal_lags 0.
     "family_from_spacetime": {
         "forecast": True, "target": "family", "phenology": False, "head_hidden": 256, "fourier": 0,
         "time_harmonics": 0, "n_shards": 12, "fourier_scale": 10.0, "spatial_cline": 0,

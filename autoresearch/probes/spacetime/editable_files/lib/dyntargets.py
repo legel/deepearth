@@ -37,6 +37,11 @@ _DOY = 365.25
 # ---------------------------------------------------------------------------------------------------------
 # circular helpers (shared with phenology's day-of-year encoding)
 # ---------------------------------------------------------------------------------------------------------
+# NOTE: _fit_eval, run_pheno_env, run_pheno_by_taxon and run_pheno_densefield were DELETED here.
+# They referenced StaticVec / GNNVec / LSTMVec / LSTMVecEnv / StaticVecEnv -- model classes that do not
+# exist anywhere in this repo -- so they could only ever have raised NameError. Nothing called them.
+# ~500 lines of editable_files/ that no agent could run and every agent had to read.
+
 def doy_of(days):
     return np.mod(np.asarray(days, dtype=np.float64), _DOY).astype(np.float32)
 
@@ -101,51 +106,6 @@ def _assemble(qfeat_all, nstate_all, days, lat, lon, q_idx, gidx, valid, target,
     return nfeat[ok], nstate[ok], qfeat[ok], edge[ok], vmask[ok], lengths[ok], y[ok], y[ok]
 
 
-def _fit_eval(qfeat_all, feat_dim, nstate_all, days, lat, lon, test, dev, target, out_dim,
-              state_dim, K, steps, lr, hidden, hops, skill_fn, loss_fn):
-    N = qfeat_all.shape[0]
-    tr_idx = np.where(~test)[0]
-    te_idx = np.where(test)[0]
-    rng = np.random.default_rng(0)
-    q_train = tr_idx if len(tr_idx) <= 6000 else rng.choice(tr_idx, 6000, replace=False)
-    g_tr, v_tr = _windows(lat, lon, days, q_train, tr_idx, K)
-    g_te, v_te = _windows(lat, lon, days, te_idx, tr_idx, K)
-    tr = _assemble(qfeat_all, nstate_all, days, lat, lon, q_train, g_tr, v_tr, target, K, out_dim)
-    te = _assemble(qfeat_all, nstate_all, days, lat, lon, te_idx, g_te, v_te, target, K, out_dim)
-    to = lambda ts: [t.to(dev) for t in ts]
-    nftr, nstr, qftr, etr, mtr, ltr, ytr, yttr = to(tr)
-    nfte, nste, qfte, ete, mte, lte, yte, ytte = to(te)
-    n_te = int(nfte.shape[0])
-    keys = ("static", "gnn", "lstm")
-    out = {"n_te": n_te}
-    if nftr.shape[0] == 0 or n_te == 0:
-        return {f"{k}_{m}": float("nan") for k in keys for m in ("mae", "acc")} | {"n_te": n_te}
-    Btr = nftr.shape[0]
-    bs = min(2048, Btr)
-
-    def train(model, fwd_tr):
-        opt = torch.optim.Adam(model.parameters(), lr=lr)
-        for _ in range(steps):
-            s = torch.randint(0, Btr, (bs,), device=dev)
-            loss = loss_fn(fwd_tr(model, s), ytr[s])
-            opt.zero_grad(); loss.backward(); opt.step()
-        model.eval()
-
-    sh = StaticVec(feat_dim, hidden, out_dim).to(dev)
-    train(sh, lambda m, s: m(qftr[s]))
-    with torch.no_grad():
-        out["static_mae"], out["static_acc"] = skill_fn(sh(qfte), yte, ytte)
-
-    gnn = GNNVec(feat_dim, hidden, hops, state_dim, out_dim).to(dev)
-    train(gnn, lambda m, s: m(nftr[s], nstr[s], qftr[s], etr[s], mtr[s]))
-    with torch.no_grad():
-        out["gnn_mae"], out["gnn_acc"] = skill_fn(gnn(nfte, nste, qfte, ete, mte), yte, ytte)
-
-    lstm = LSTMVec(feat_dim, hidden, state_dim, out_dim).to(dev)
-    train(lstm, lambda m, s: m(nftr[s], nstr[s], etr[s], ltr[s]))
-    with torch.no_grad():
-        out["lstm_mae"], out["lstm_acc"] = skill_fn(lstm(nfte, nste, ete, lte), yte, ytte)
-    return out
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -312,71 +272,6 @@ def _community_activity_target(lat, lon, days, block=0.5, win=180.0, lead=180.0)
 
 
 
-def run_pheno_env(qfeat_all, feat_dim, days, coords_ll, env, test, dev,
-                  K=16, steps=4000, lr=3e-3, hidden=256, tol_days=15.0):
-    """ENV-conditioning ablation for mean-DOY: neighbour-only vs neighbour+env vs env-only(static) + plain static
-    floor. Per-obs env [N,D] joined by caller. Returns per-mode {mae,acc} + n_te + env_dim. Leak-guards intact."""
-    lat = coords_ll[:, 0].numpy(); lon = coords_ll[:, 1].numpy()
-    N, F_ = qfeat_all.shape
-    E = env.shape[1]
-    tr_idx = np.where(~test)[0]; te_idx = np.where(test)[0]
-    rng = np.random.default_rng(0)
-    q_train = tr_idx if len(tr_idx) <= 6000 else rng.choice(tr_idx, 6000, replace=False)
-    g_tr, v_tr = _windows(lat, lon, days, q_train, tr_idx, K)
-    g_te, v_te = _windows(lat, lon, days, te_idx, tr_idx, K)
-    doyv = doy_to_vec(doy_of(days))
-
-    def pack(q_idx, gidx, valid):
-        B = len(q_idx); gsafe = np.clip(gidx, 0, N - 1); vmask = torch.tensor(valid)
-        nfeat = qfeat_all[torch.tensor(gsafe.reshape(-1))].reshape(B, K, F_) * vmask.unsqueeze(-1)
-        ndoy = torch.tensor(doyv[gsafe.reshape(-1)]).reshape(B, K, 2) * vmask.unsqueeze(-1)
-        nenv = torch.tensor(env[gsafe.reshape(-1)]).reshape(B, K, E).float() * vmask.unsqueeze(-1)
-        dlat = np.where(valid, lat[gsafe] - lat[q_idx][:, None], 0.0)
-        dlon = np.where(valid, lon[gsafe] - lon[q_idx][:, None], 0.0)
-        edge = torch.tensor(np.stack([dlat / 90.0, dlon / 180.0], -1)).float()
-        qfeat = qfeat_all[torch.tensor(q_idx)]
-        qenv = torch.tensor(env[q_idx]).float()
-        ytrue = torch.tensor(doy_of(days[q_idx])); yvec = torch.tensor(doyv[q_idx])
-        ok = vmask.any(1); lengths = vmask.sum(1)
-        return [t[ok] for t in (nfeat, ndoy, qfeat, edge, vmask, lengths, nenv, qenv, yvec, ytrue)]
-
-    to = lambda ts: [t.to(dev) for t in ts]
-    nftr, ndtr, qftr, etr, mtr, ltr, netr, qetr, yvtr, yttr = to(pack(q_train, g_tr, v_tr))
-    nfte, ndte, qfte, ete, mte, lte, nete, qete, yvte, ytte = to(pack(te_idx, g_te, v_te))
-    n_te = int(nfte.shape[0])
-    out = {"n_te": n_te, "env_dim": E}
-    if nftr.shape[0] == 0 or n_te == 0:
-        return {"static_mae": float("nan"), "static_acc": float("nan"), "neighbour_mae": float("nan"),
-                "neighbour_acc": float("nan"), "neighbourenv_mae": float("nan"), "neighbourenv_acc": float("nan"),
-                "envonly_mae": float("nan"), "envonly_acc": float("nan"), "n_te": n_te, "env_dim": E}
-    Btr = nftr.shape[0]; bs = min(2048, Btr)
-    vloss = lambda pred, tgt: (1.0 - (pred * tgt).sum(-1)).mean()
-
-    def run(model, fwd_tr, fwd_te):
-        opt = torch.optim.Adam(model.parameters(), lr=lr)
-        for _ in range(steps):
-            s = torch.randint(0, Btr, (bs,), device=dev)
-            opt.zero_grad(); vloss(fwd_tr(s), yvtr[s]).backward(); opt.step()
-        model.eval()
-        with torch.no_grad():
-            return _circ_skill(fwd_te(), yvte, ytte, tol_days)
-
-    base = LSTMVec(F_, hidden, 2, 2).to(dev)
-    out["neighbour_mae"], out["neighbour_acc"] = run(
-        base, lambda s: base(nftr[s], ndtr[s], etr[s], ltr[s]), lambda: base(nfte, ndte, ete, lte))
-
-    ne = LSTMVecEnv(F_, E, hidden, use_nenv=True).to(dev)
-    out["neighbourenv_mae"], out["neighbourenv_acc"] = run(
-        ne, lambda s: ne(nftr[s], ndtr[s], etr[s], netr[s], qetr[s], ltr[s]),
-        lambda: ne(nfte, ndte, ete, nete, qete, lte))
-
-    se = StaticVecEnv(F_, E, hidden).to(dev)
-    out["envonly_mae"], out["envonly_acc"] = run(
-        se, lambda s: se(qftr[s], qetr[s]), lambda: se(qfte, qete))
-
-    sh = StaticVec(F_, hidden, 2).to(dev)
-    out["static_mae"], out["static_acc"] = run(sh, lambda s: sh(qftr[s]), lambda: sh(qfte))
-    return out
 
 
 # ------- (3) DISTRIBUTIONAL-TIMING TARGET CLASS: distributional (phase centroid / peak week) vs mean-DOY -------
@@ -425,104 +320,9 @@ def _peak_week_doy(lat, lon, days, block=0.5, win=14.0, train_mask=None):
     return np.array([peak.get(kk, np.nan) for kk in keys], dtype=np.float32)
 
 
-def run_pheno_disttarget(qfeat_all, feat_dim, days, coords_ll, test, dev, target="phase_centroid",
-                         K=16, steps=4000, lr=3e-3, hidden=256, hops=2, tol_days=15.0):
-    """Distributional-timing target class: static floor vs GNN vs LSTM on phase_centroid / peak_week / mean_doy."""
-    lat = coords_ll[:, 0].numpy(); lon = coords_ll[:, 1].numpy()
-    # HARD LEAK GUARD for CELL-AGGREGATE targets. phase_centroid / peak_week assign ONE value per 0.5deg cell,
-    # so if any cell contains both train and test rows the label is directly readable from the train rows in
-    # that cell and a spatial feature just memorizes cell->label. Building the statistic from train rows only
-    # does NOT fix this (verified: it scored 0.672 with static MAE 17.6d, propagation NEGATIVE). The only sound
-    # split for these targets is SPATIAL -- test cells disjoint from train cells.
-    if target in ("phase_centroid", "peak_week"):
-        _tst = np.asarray(test, bool)
-        _cid = np.floor(lat / 0.5).astype(np.int64) * 100000 + np.floor(lon / 0.5).astype(np.int64)
-        _shared = np.intersect1d(np.unique(_cid[_tst]), np.unique(_cid[~_tst]))
-        if len(_shared):
-            raise SystemExit(
-                f"[dyntargets] --pheno_disttarget {target} is a CELL-AGGREGATE target and {len(_shared)} cells "
-                f"contain both train and test rows -> every test label is readable off the train rows in its own "
-                f"cell (cell->label lookup, not a forecast). Re-run with a SPATIAL holdout (--pheno_spatial) so "
-                f"test cells are disjoint from train cells, or use --pheno_disttarget mean_doy (per-obs target).")
-    train_mask = ~np.asarray(test, bool)                     # LEAK GUARD: cell stats from TRAIN rows only
-    if target == "phase_centroid":
-        tgt = _phase_centroid_doy(lat, lon, days, train_mask=train_mask)
-    elif target == "peak_week":
-        tgt = _peak_week_doy(lat, lon, days, train_mask=train_mask)
-    else:
-        tgt = doy_of(days)
-    valid = ~np.isnan(tgt)                                   # drop rows whose cell has no train support
-    if not valid.all():
-        import torch as _t
-        vt = _t.as_tensor(valid)
-        qfeat_all = qfeat_all[vt]; coords_ll = coords_ll[vt]
-        days = days[valid]; lat = lat[valid]; lon = lon[valid]
-        test = np.asarray(test, bool)[valid]; tgt = tgt[valid]
-    nstate = doy_to_vec(doy_of(days))
-    skill = lambda p, yv, yt: _circ_skill(p, yv, yt, tol_days)
-    loss = lambda pred, tgt_: (1.0 - (pred * tgt_).sum(-1)).mean()
-    return _fit_eval(qfeat_all, feat_dim, nstate, days, lat, lon, test, dev, tgt, 2, 2,
-                     K, steps, lr, hidden, hops, skill, loss)
 
 
 # ------- (4) PER-TAXON breakdown of the mean-DOY propagator gain -------
-def run_pheno_by_taxon(qfeat_all, feat_dim, days, coords_ll, group, test, dev,
-                       K=16, steps=4000, lr=3e-3, hidden=256, tol_days=15.0, min_te=200):
-    """group[N] int per-obs taxon-group id. Trains static + LSTM on the full mean-DOY set; reports per-group
-    (static_mae, lstm_mae, gain, n_te) on each group's test subset. Leak-guards identical to phenology."""
-    lat = coords_ll[:, 0].numpy(); lon = coords_ll[:, 1].numpy()
-    N, F_ = qfeat_all.shape
-    tr_idx = np.where(~test)[0]; te_idx = np.where(test)[0]
-    rng = np.random.default_rng(0)
-    q_train = tr_idx if len(tr_idx) <= 6000 else rng.choice(tr_idx, 6000, replace=False)
-    g_tr, v_tr = _windows(lat, lon, days, q_train, tr_idx, K)
-    g_te, v_te = _windows(lat, lon, days, te_idx, tr_idx, K)
-    doyv = doy_to_vec(doy_of(days))
-
-    def pack(q_idx, gidx, valid):
-        B = len(q_idx); gsafe = np.clip(gidx, 0, N - 1); vmask = torch.tensor(valid)
-        nfeat = qfeat_all[torch.tensor(gsafe.reshape(-1))].reshape(B, K, F_) * vmask.unsqueeze(-1)
-        ndoy = torch.tensor(doyv[gsafe.reshape(-1)]).reshape(B, K, 2) * vmask.unsqueeze(-1)
-        dlat = np.where(valid, lat[gsafe] - lat[q_idx][:, None], 0.0)
-        dlon = np.where(valid, lon[gsafe] - lon[q_idx][:, None], 0.0)
-        edge = torch.tensor(np.stack([dlat / 90.0, dlon / 180.0], -1)).float()
-        qfeat = qfeat_all[torch.tensor(q_idx)]
-        ytrue = torch.tensor(doy_of(days[q_idx])); yvec = torch.tensor(doyv[q_idx])
-        ok = vmask.any(1); lengths = vmask.sum(1); grp = torch.tensor(group[q_idx])
-        return [t[ok] for t in (nfeat, ndoy, qfeat, edge, vmask, lengths, yvec, ytrue, grp)]
-
-    to = lambda ts: [t.to(dev) for t in ts[:-1]] + [ts[-1]]
-    tr = pack(q_train, g_tr, v_tr); te = pack(te_idx, g_te, v_te)
-    nftr, ndtr, qftr, etr, mtr, ltr, yvtr, yttr, _ = to(tr)
-    nfte, ndte, qfte, ete, mte, lte, yvte, ytte, gte = to(te)
-    n_te = int(nfte.shape[0])
-    if nftr.shape[0] == 0 or n_te == 0:
-        return {"groups": [], "n_te": n_te}
-    Btr = nftr.shape[0]; bs = min(2048, Btr)
-    vloss = lambda pred, tgt: (1.0 - (pred * tgt).sum(-1)).mean()
-
-    sh = StaticVec(F_, hidden, 2).to(dev); opt = torch.optim.Adam(sh.parameters(), lr=lr)
-    for _ in range(steps):
-        s = torch.randint(0, Btr, (bs,), device=dev)
-        opt.zero_grad(); vloss(sh(qftr[s]), yvtr[s]).backward(); opt.step()
-    lstm = LSTMVec(F_, hidden, 2, 2).to(dev); opt = torch.optim.Adam(lstm.parameters(), lr=lr)
-    for _ in range(steps):
-        s = torch.randint(0, Btr, (bs,), device=dev)
-        opt.zero_grad(); vloss(lstm(nftr[s], ndtr[s], etr[s], ltr[s]), yvtr[s]).backward(); opt.step()
-    sh.eval(); lstm.eval()
-    with torch.no_grad():
-        s_err = circ_err_days(vec_to_doy(sh(qfte)), ytte).cpu().numpy()
-        l_err = circ_err_days(vec_to_doy(lstm(nfte, ndte, ete, lte)), ytte).cpu().numpy()
-    gnp = gte.cpu().numpy(); rows = []
-    for gid in np.unique(gnp):
-        m = gnp == gid
-        if int(m.sum()) < min_te:
-            continue
-        rows.append({"group": int(gid), "n_te": int(m.sum()),
-                     "static_mae": float(s_err[m].mean()), "lstm_mae": float(l_err[m].mean()),
-                     "gain": float(s_err[m].mean() - l_err[m].mean())})
-    rows.sort(key=lambda d: -d["n_te"])
-    return {"groups": rows, "n_te": n_te}
 
 # ---------------------------------------------------------------------------------------------------------
 # LOOP-spacetime rule-24 DENSE-FIELD interpolation on the mean-DOY graduation target (additive, default-off)
@@ -555,63 +355,6 @@ def _windows_nocell(lat, lon, days, q_idx, pool_idx, K, block):
     return out, out >= 0
 
 
-def run_pheno_densefield(qfeat_all, feat_dim, days, coords_ll, test, dev, block=0.5, drop_cell_frac=0.0,
-                         K=16, steps=800, lr=3e-3, hidden=256, hops=2, tol_days=15.0, seed=0):
-    """rule-24 dense-field: mean-DOY interpolation at query points whose OWN cell is excluded from the window.
-    Static floor vs LSTM propagator; MAE-gain reported for EMPTY-cell vs OCCUPIED-cell query subsets."""
-    lat = coords_ll[:, 0].numpy(); lon = coords_ll[:, 1].numpy()
-    target = doy_of(days)
-    nstate_all = doy_to_vec(target)
-    N = qfeat_all.shape[0]
-    tr_idx = np.where(~test)[0]; te_idx = np.where(test)[0]
-    rng = np.random.default_rng(seed)
-    pool = tr_idx
-    if drop_cell_frac > 0:                                               # thin the pool by whole cells
-        pcells = np.unique(_cellid(lat[tr_idx], lon[tr_idx], block))
-        rng.shuffle(pcells)
-        drop = set(pcells[: int(len(pcells) * drop_cell_frac)].tolist())
-        keepm = np.array([c not in drop for c in _cellid(lat[tr_idx], lon[tr_idx], block)])
-        pool = tr_idx[keepm]
-    q_train = tr_idx if len(tr_idx) <= 6000 else rng.choice(tr_idx, 6000, replace=False)
-    g_tr, v_tr = _windows_nocell(lat, lon, days, q_train, pool, K, block)
-    g_te, v_te = _windows_nocell(lat, lon, days, te_idx, pool, K, block)
-    tr = _assemble(qfeat_all, nstate_all, days, lat, lon, q_train, g_tr, v_tr, target, K, 2)
-    # keep the ok-mask alignment for test so we can label empty/occupied on the SAME rows _assemble kept
-    okte = torch.tensor(v_te).any(1).numpy()
-    te = _assemble(qfeat_all, nstate_all, days, lat, lon, te_idx, g_te, v_te, target, K, 2)
-    to = lambda ts: [t.to(dev) for t in ts]
-    nftr, nstr, qftr, etr, mtr, ltr, yvtr, yttr = to(tr)
-    nfte, nste, qfte, ete, mte, lte, yvte, ytte = to(te)
-    n_te = int(nfte.shape[0])
-    if nftr.shape[0] == 0 or n_te == 0:
-        return {"n_te": n_te, "empty_n": 0, "occ_n": 0}
-    # EMPTY vs OCCUPIED label per kept test row: is the query's cell present anywhere in the (thinned) pool?
-    poolcells = set(np.unique(_cellid(lat[pool], lon[pool], block)).tolist())
-    te_kept = te_idx[okte]
-    qcell_te = _cellid(lat[te_kept], lon[te_kept], block)
-    is_empty = np.array([c not in poolcells for c in qcell_te])          # True = genuinely empty query cell
-    Btr = nftr.shape[0]; bs = min(2048, Btr)
-    vloss = lambda pred, tgt_: (1.0 - (pred * tgt_).sum(-1)).mean()
-
-    def fit(model, fwd):
-        opt = torch.optim.Adam(model.parameters(), lr=lr)
-        for _ in range(steps):
-            s = torch.randint(0, Btr, (bs,), device=dev)
-            opt.zero_grad(); vloss(fwd(model, s), yvtr[s]).backward(); opt.step()
-        model.eval()
-
-    sh = StaticVec(feat_dim, hidden, 2).to(dev); fit(sh, lambda m, s: m(qftr[s]))
-    lstm = LSTMVec(feat_dim, hidden, 2, 2).to(dev); fit(lstm, lambda m, s: m(nftr[s], nstr[s], etr[s], ltr[s]))
-    with torch.no_grad():
-        s_err = circ_err_days(vec_to_doy(sh(qfte)), ytte).cpu().numpy()
-        l_err = circ_err_days(vec_to_doy(lstm(nfte, nste, ete, lte)), ytte).cpu().numpy()
-    def stat(mask):
-        if int(mask.sum()) == 0:
-            return {"n": 0, "static_mae": float("nan"), "lstm_mae": float("nan"), "gain": float("nan")}
-        sm = float(s_err[mask].mean()); lm = float(l_err[mask].mean())
-        return {"n": int(mask.sum()), "static_mae": sm, "lstm_mae": lm, "gain": sm - lm}
-    return {"n_te": n_te, "block": block, "drop_cell_frac": drop_cell_frac, "pool_n": int(len(pool)),
-            "all": stat(np.ones(n_te, bool)), "empty": stat(is_empty), "occ": stat(~is_empty)}
 
 
 # =====================================================================================================
