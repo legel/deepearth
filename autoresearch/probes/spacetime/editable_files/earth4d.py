@@ -359,15 +359,6 @@ class Earth4D(nn.Module):
             base_resolution=temporal_base_res, log2_hashmap_size=temporal_log2_hashmap_size,
             desired_resolution=xzt_max_res, enable_learned_probing=enable_learned_probing,
             probing_range=probing_range, index_codebook_size=index_codebook_size)
-        if spatial_ensemble:
-            # same three tables, same budget -- but purely spatial, at coarse/medium/fine base resolutions
-            self.xyt_encoder, self.yzt_encoder, self.xzt_encoder = (
-                HashEncoder(input_dim=3, num_levels=temporal_levels, level_dim=features_per_level,
-                            per_level_scale=growth_factor, base_resolution=br,
-                            log2_hashmap_size=temporal_log2_hashmap_size,
-                            enable_learned_probing=enable_learned_probing, probing_range=probing_range,
-                            index_codebook_size=index_codebook_size)
-                for br in (8, 128, 1024))
         # a relative-only field never reads the four absolute projections, so it can opt out of carrying them
         self.enable_absolute = enable_absolute
         if not enable_absolute:

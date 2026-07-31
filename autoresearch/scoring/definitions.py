@@ -31,7 +31,12 @@ Two things live here:
 from __future__ import annotations
 
 import argparse
+import ast
+import builtins
+import json
 import math
+import os
+import re
 import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
@@ -453,7 +458,7 @@ def describe(m: Metric) -> str:
     return "\n".join(out)
 
 
-def audit() -> str:
+def _routing_report() -> str:
     lines = ["routing audit — the registry against the tree", "=" * 74, ""]
 
     missing = sorted({s for m in METRICS for s in m.surface if not (AUTORESEARCH / s).exists()})
@@ -514,6 +519,457 @@ def audit() -> str:
               "A metric with no probe row can only be moved by a 10-minute champion run."]
     return "\n".join(lines)
 
+
+# ==================================================================================================
+# 3b. THE AUDIT — the one command that PROVES this repo is sane
+# ==================================================================================================
+#
+# `--audit` used to be a routing REPORT: counts a human had to read and judge. A report is not a
+# check. The v5 surgery that cut earth4d.py from 977 to 719 lines shipped `if spatial_ensemble:` --
+# an unconditional NameError in Earth4D.__init__ -- straight past a green report, because nothing
+# below the counts ASSERTED anything. Everything here is an assertion with a PASS/FAIL line that
+# names the file and the symbol, and `--audit` exits 1 when any of them fails, so a human and an
+# agent get the same verdict from the same command.
+#
+# Nothing in this section may import torch or touch a GPU: the audit has to run on a laptop while the
+# box is busy with a baseline. The two GPU-only modules (earth4d.py, probe.py) are therefore checked
+# STATICALLY, by AST -- which is strictly better anyway, since a successful `import earth4d` would
+# not have caught `spatial_ensemble` either. It is a constructor-time name, not an import-time one.
+
+CHAMPION_NET = 0.32413703851749265   # net_score(main/records/champion_scores.json) — moving it re-baselines every board
+
+# The arms and methods the v5 regex surgery removed. A survivor in CODE is a NameError waiting for the
+# next run; a survivor in PROSE is a lever an agent will read, try to pull, and find does not exist.
+DELETED_ARMS = ("time_film", "spatial_siren", "siren_layers", "siren_w0", "causal_lags",
+                "causal_lag_span", "elm_scale", "stencil_radius", "coord_shrink",
+                "spatial_ensemble", "tile_replace", "tile_time", "tile_quantile")
+DELETED_METHODS = ("_siren", "_causal_state", "_film_harmonics", "fit_whiten", "fit_standardize",
+                   "fit_tile_quantiles", "fit_extent")
+
+# What each loop's editable tree is allowed to weigh. CEILINGS, checked as an inequality: this repo
+# was cleaned specifically to stop file proliferation, so a directory that grows past its budget has
+# to raise the number in the same commit that grows it, where a reviewer sees it.
+EDITABLE_BUDGET = {"probes/spacetime/editable_files": 11,
+                   "probes/biological/editable_files": 12,
+                   "main/editable_files": 13}
+
+# A scoring definition inside an editable_files/ is an experiment grading its own homework.
+SCORING_DEFS = ("net_value", "net_score", "noise_barrier", "signal_capture", "science_axes",
+                "is_diagnostic")
+
+# Modules that must import on any box. earth4d/probe are excluded on purpose — they pull the CUDA
+# extension in at import time, so off-box they are covered by the static checks instead.
+CORE_MODULES = ("deepearth.autoresearch.scoring.definitions",
+                "deepearth.autoresearch.scoring.graduation",
+                "deepearth.autoresearch.main.harness.evaluate",
+                "deepearth.autoresearch.main.harness.score",
+                "deepearth.autoresearch.main.harness.hooks",
+                "deepearth.autoresearch.main.harness.champion_report",
+                "deepearth.autoresearch.probes.spacetime.harness")
+
+_E4D_REL = "probes/spacetime/editable_files/earth4d.py"
+_PROBE_REL = "probes/spacetime/editable_files/probe.py"
+# The files v5 touched. Every one gets the undefined-name sweep.
+CHANGED_FILES = (_E4D_REL, _PROBE_REL, "scoring/definitions.py", "scoring/graduation.py",
+                 "main/harness/evaluate.py", "main/harness/score.py", "probes/spacetime/harness.py",
+                 "probes/spacetime/editable_files/hashencoder/hashgrid.py")
+
+
+class _Audit:
+    """PASS/FAIL accumulator. A failure prints the file and the symbol, never just a count."""
+
+    def __init__(self) -> None:
+        self.lines: List[str] = []
+        self.failures: List[str] = []
+
+    def section(self, title: str) -> None:
+        self.lines += ["", title, "-" * len(title)]
+
+    def check(self, ok: bool, name: str, detail: str = "") -> None:
+        self.lines.append(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  —  {detail}" if detail else ""))
+        if not ok:
+            self.failures.append(name)
+
+    def info(self, name: str, detail: str = "") -> None:
+        self.lines.append(f"  ....  {name}" + (f"  —  {detail}" if detail else ""))
+
+    def warn(self, name: str, detail: str = "") -> None:
+        self.lines.append(f"  WARN  {name}" + (f"  —  {detail}" if detail else ""))
+
+    def bullet(self, text: str) -> None:
+        self.lines.append(f"          {text}")
+
+
+# -- static analysis helpers (AST only: no import, no torch, no GPU) -------------------------------
+
+def _tree(rel: str) -> ast.AST:
+    return ast.parse((AUTORESEARCH / rel).read_text(), rel)
+
+
+def _scope_bindings(node) -> set:
+    """Every name a scope binds, flow-insensitively. Deliberately over-generous: the point is zero
+    false alarms on a check whose FAIL line accuses a specific symbol of not existing."""
+    out = set()
+    args = getattr(node, "args", None)
+    if args is not None:
+        out |= {a.arg for a in args.posonlyargs + args.args + args.kwonlyargs}
+        out |= {a.arg for a in (args.vararg, args.kwarg) if a}
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+            out.add(n.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out.add(n.name)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            out |= {(al.asname or al.name).split(".")[0] for al in n.names}
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            out.add(n.name)
+        elif isinstance(n, (ast.Global, ast.Nonlocal)):
+            out |= set(n.names)
+    return out
+
+
+def undefined_names(rel: str) -> List[Tuple[int, str]]:
+    """Names read in `rel` that no enclosing scope, module global, or builtin binds.
+
+    This is the check that would have caught `spatial_ensemble` -- the deleted constructor parameter
+    that regex surgery left behind as a live `if` test in Earth4D.__init__. It runs without importing
+    anything, which is the only way to check a CUDA-linked module from a laptop.
+    """
+    hits, tree = [], _tree(rel)
+
+    def visit(node, enclosing: set) -> None:
+        scope = enclosing | _scope_bindings(node)
+        stack = list(ast.iter_child_nodes(node))
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                visit(n, scope)
+                continue
+            if (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                    and n.id not in scope and not hasattr(builtins, n.id)):
+                hits.append((n.lineno, n.id))
+            stack.extend(ast.iter_child_nodes(n))
+
+    visit(tree, {"__file__", "__name__", "__doc__"})
+    return sorted(set(hits))
+
+
+def _literal_dict(rel: str, name: str) -> Dict[str, object]:
+    """A module-level dict literal, read WITHOUT importing the module."""
+    for n in _tree(rel).body:
+        if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == name for t in n.targets):
+            return {k.value: ast.literal_eval(v) for k, v in zip(n.value.keys, n.value.values)
+                    if isinstance(k, ast.Constant)}
+    return {}
+
+
+def _e4d_defaults() -> Dict[str, object]:
+    """Earth4D.__init__'s keyword defaults, by AST — the encoder's shape without constructing it."""
+    cls = next(c for c in _tree(_E4D_REL).body if isinstance(c, ast.ClassDef) and c.name == "Earth4D")
+    init = next(m for m in cls.body if getattr(m, "name", None) == "__init__")
+    a = init.args
+    names = [x.arg for x in a.posonlyargs + a.args][-len(a.defaults):] if a.defaults else []
+    out = {}
+    for k, d in zip(names, a.defaults):
+        try:
+            out[k] = ast.literal_eval(d)
+        except ValueError:
+            out[k] = None
+    return out
+
+
+def encoder_output_dim(cfg: Dict[str, object]) -> int:
+    """output_dim Earth4D would report under `cfg`, computed from source rather than from a GPU.
+
+    Mirrors __init__'s accounting exactly: one xyz block, three space-time projections, then each
+    bolt-on basis. It exists so FAIR_CONTROL_DIM can be asserted equal to the encoder's real width --
+    the control must be the same size as the thing it controls, and nothing checked that either.
+    """
+    d = _e4d_defaults()
+    fpl = int(d.get("features_per_level", 2))
+    get = lambda k, dflt=0: int(cfg.get(k, dflt) or 0)
+    dim = get("spatial_levels") * fpl
+    if not cfg.get("drop_spatiotemporal"):
+        dim += get("temporal_levels") * fpl * 3
+    dim += 2 * get("fourier") + 2 * get("time_harmonics")
+    if get("spatial_cline"):
+        dim += 3 + 2 * get("spatial_cline")
+    dim += get("nystrom") * len(d.get("nystrom_scales") or (0.25, 1.0, 4.0))
+    dim += get("tile") * int(cfg.get("tile_levels", d.get("tile_levels", 18))) * get("tile_offsets", 1)
+    return dim
+
+
+def _guarded_by(fn, needle: str) -> set:
+    """`self.X` attributes guarding an `if` whose body mentions `needle`."""
+    out = set()
+    for n in ast.walk(fn):
+        if isinstance(n, ast.If) and needle in ast.dump(ast.Module(body=n.body, type_ignores=[])):
+            out |= {a.attr for a in ast.walk(n.test) if isinstance(a, ast.Attribute)}
+    return out
+
+
+def _declare_sites(tree) -> List[Tuple[int, object, List[str], bool]]:
+    """(line, capability, gain labels, declares itself diagnostic) for every declare() in probe.py."""
+    out = []
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Call) and getattr(n.func, "id", None) == "declare"):
+            continue
+        kw = {k.arg: k.value for k in n.keywords}
+        cap = kw.get("capability")
+        cap = cap.value if isinstance(cap, ast.Constant) else None
+        labels = [k.value for g in ast.walk(kw["gains"]) if isinstance(g, ast.Dict)
+                  for k in g.keys if isinstance(k, ast.Constant)] if "gains" in kw else []
+        diag = isinstance(kw.get("diagnostic"), ast.Constant) and kw["diagnostic"].value is True
+        out.append((n.lineno, cap, labels, diag))
+    return out
+
+
+def _py_files(rel: str) -> List[Path]:
+    return [p for p in sorted((AUTORESEARCH / rel).rglob("*.py")) if "__pycache__" not in str(p)]
+
+
+_PATH_RE = re.compile(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+\.(?:py|md|json|yaml|yml|cu|cuh|h))")
+
+
+def _md_path_exists(md: Path, ref: str) -> bool:
+    """A path named in prose resolves if it resolves from ANY root a reader would try."""
+    stripped = ref[len("autoresearch/"):] if ref.startswith("autoresearch/") else ref
+    roots = (AUTORESEARCH, AUTORESEARCH / "probes/spacetime", AUTORESEARCH / "probes/spacetime/editable_files",
+             AUTORESEARCH / "probes/biological/editable_files", AUTORESEARCH / "main/editable_files", md.parent)
+    return any((r / c).exists() for r in roots for c in (ref, stripped))
+
+
+# -- the sections ----------------------------------------------------------------------------------
+
+def _audit_core(A: _Audit) -> None:
+    A.section("CORE — does it load, and does the north star still read the same number?")
+    import importlib
+    for mod in CORE_MODULES:
+        try:
+            importlib.import_module(mod)
+            A.check(True, f"import {mod}")
+        except Exception as exc:                                  # noqa: BLE001 — any failure is a failure
+            A.check(False, f"import {mod}", f"{type(exc).__name__}: {exc}")
+    # earth4d/probe link the CUDA extension at import; off-box that is expected, not a regression.
+    for mod, rel in (("...editable_files.earth4d", _E4D_REL), ("...editable_files.probe", _PROBE_REL)):
+        A.info(f"import {mod}", "GPU-linked — covered by the static checks below, not by import")
+
+    rec = AUTORESEARCH / "main/records/champion_scores.json"
+    if not rec.exists():
+        A.check(False, "champion record present", f"{rec} is missing")
+        return
+    scores = json.loads(rec.read_text()).get("scores", {})
+    got = net_score(scores, BENCHMARKS_or_none())
+    A.check(got == CHAMPION_NET, "net_score(champion_scores.json)",
+            f"{got!r}" + ("" if got == CHAMPION_NET else f" != {CHAMPION_NET!r} — scoring has been redefined"))
+
+
+def BENCHMARKS_or_none():
+    """evaluate.BENCHMARKS if it imports, else None (net_score's permissive mode)."""
+    try:
+        from deepearth.autoresearch.main.harness.evaluate import BENCHMARKS
+        return BENCHMARKS
+    except Exception:                                             # noqa: BLE001
+        return None
+
+
+def _audit_scoring(A: _Audit) -> None:
+    A.section("SCORING CONSISTENCY — one owner for every number")
+    try:
+        from deepearth.autoresearch.probes.spacetime import harness as ph
+        A.check(list(ph.FAIR_ORDER) == ["vs RFF"], "harness.FAIR_ORDER == ['vs RFF']", repr(ph.FAIR_ORDER))
+        cfg = _literal_dict(_PROBE_REL, "CONFIG")
+        want = encoder_output_dim(cfg)
+        A.check(ph.FAIR_CONTROL_DIM == want, "FAIR_CONTROL_DIM == encoder output_dim under v5 CONFIG",
+                f"control {ph.FAIR_CONTROL_DIM} vs encoder {want}")
+    except Exception as exc:                                      # noqa: BLE001
+        A.check(False, "probe harness constants readable", f"{type(exc).__name__}: {exc}")
+
+    # score.py used to HAND-COPY these under a comment saying "keep byte-identical". Identity, not
+    # equality: a copy that agrees today is a copy that drifts tomorrow.
+    try:
+        from deepearth.autoresearch.main.harness import score as sc
+        from deepearth.autoresearch.main.harness import evaluate as ev
+        A.check(sc.is_diagnostic is is_diagnostic, "score.is_diagnostic IS definitions.is_diagnostic")
+        A.check(sc._net_value is net_value, "score._net_value IS definitions.net_value")
+        A.check(ev.is_diagnostic is is_diagnostic, "evaluate.is_diagnostic IS definitions.is_diagnostic")
+        A.check(ev._net_value is net_value, "evaluate._net_value IS definitions.net_value")
+    except Exception as exc:                                      # noqa: BLE001
+        A.check(False, "champion scorers import the shared definitions", f"{type(exc).__name__}: {exc}")
+
+    # A SECOND module-level def of a primitive is the drift this module exists to end. Not fatal --
+    # some are deliberate suite-pinned wrappers -- but it must never be invisible.
+    here = Path(__file__).resolve()
+    for p in AUTORESEARCH.rglob("*.py"):
+        if "__pycache__" in str(p) or p.resolve() == here:
+            continue
+        for n in _tree(str(p.relative_to(AUTORESEARCH))).body:
+            if isinstance(n, ast.FunctionDef) and n.name in SCORING_DEFS:
+                A.warn(f"second definition of {n.name}()",
+                       f"{p.relative_to(AUTORESEARCH)}:{n.lineno} — definitions.py is the owner")
+
+    # Every probe row must publish exactly one fair gain, and none may pre-declare itself diagnostic:
+    # `strongest_fair_gain` picks the MINIMUM over labels matching FAIR_ORDER, so two "vs RFF" entries
+    # silently change which baseline a record was gated on.
+    for line, cap, labels, diag in sorted(_declare_sites(_tree(_PROBE_REL))):
+        name = f"probe.py:{line} declare({cap or '<computed>'})"
+        A.check(labels.count("vs RFF") == 1, f"{name} has exactly one 'vs RFF' gain", f"gains={labels}")
+        A.check(not diag, f"{name} is not diagnostic=True")
+
+
+def _audit_propagation(A: _Audit) -> None:
+    A.section("PROPAGATION — can a probe finding actually reach a champion score?")
+    try:
+        from deepearth.autoresearch.main.harness.evaluate import BENCHMARKS
+        from deepearth.autoresearch.scoring import graduation as gr
+    except Exception as exc:                                      # noqa: BLE001
+        A.check(False, "graduation/evaluate import", f"{type(exc).__name__}: {exc}")
+        return
+
+    tree = _tree(_PROBE_REL)
+    literal = {c for _, c, _, _ in _declare_sites(tree) if c}
+    # One declare() computes its capability from CONFIG["target"]; resolve it from the module's own
+    # string constants rather than pretending the row does not exist.
+    known = {c for caps in gr.CAPABILITY_BENCH.values() for c in caps}
+    strings = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    declared = literal | (strings & known)
+
+    for loop, caps in gr.CAPABILITY_BENCH.items():
+        for cap, bench in caps.items():
+            A.check(bench in BENCHMARKS, f"{loop}:{cap} -> {bench} is a declared benchmark")
+            if loop == "spacetime":
+                A.check(cap in declared, f"{loop}:{cap} is produced by a probe declare() site",
+                        "" if cap in declared else "no declare(capability=...) in probe.py emits it")
+
+    ghosts = [m.name for m in METRICS if m.name not in BENCHMARKS]
+    A.check(not ghosts, "every Metric row names a real benchmark", ", ".join(ghosts))
+    orphans = unowned(BENCHMARKS)
+    A.info("benchmarks with NO Metric row", f"{len(orphans)}/{len(BENCHMARKS)} — nothing says which file moves them")
+
+
+def _audit_assumptions(A: _Audit) -> None:
+    A.section("ASSUMPTIONS — does the prose still describe the tree?")
+    bad = []
+    for md in sorted(AUTORESEARCH.glob("probes/spacetime/**/*.md")):
+        for ref in sorted(set(_PATH_RE.findall(md.read_text()))):
+            if not _md_path_exists(md, ref):
+                bad.append(f"{md.relative_to(AUTORESEARCH)} -> {ref}")
+    A.check(not bad, "every path named in probes/spacetime/**/*.md exists on disk")
+    for b in bad:
+        A.bullet(b)
+
+
+def _audit_conciseness(A: _Audit) -> None:
+    A.section("CONCISENESS — the anti-bloat budget")
+    for rel, budget in EDITABLE_BUDGET.items():
+        files = _py_files(rel)
+        loc = sum(len(p.read_text().splitlines()) for p in files)
+        A.check(len(files) <= budget, f"{rel} within its file budget",
+                f"{len(files)} .py files (budget {budget}), {loc:,} lines")
+    for rel in ("scoring", "main/harness", "probes/spacetime"):
+        files = [p for p in _py_files(rel) if "editable_files" not in str(p)]
+        A.info(f"{rel} (harness side)",
+               f"{len(files)} .py files, {sum(len(p.read_text().splitlines()) for p in files):,} lines")
+
+    # A scoring definition inside an editable_files/ is an experiment grading its own homework.
+    strays = []
+    for p in AUTORESEARCH.rglob("editable_files/**/*.py"):
+        if "__pycache__" in str(p):
+            continue
+        for n in ast.walk(_tree(str(p.relative_to(AUTORESEARCH)))):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in SCORING_DEFS:
+                strays.append(f"{p.relative_to(AUTORESEARCH)}:{n.lineno} def {n.name}()")
+    A.check(not strays, "no scoring definition lives under an editable_files/")
+    for s in strays:
+        A.bullet(s)
+
+
+def _audit_structure(A: _Audit) -> None:
+    A.section("DIRECTORY STRUCTURE — the judge and the judged stay apart")
+    leaks = sorted({str(p.relative_to(AUTORESEARCH)) for p in AUTORESEARCH.rglob("editable_files/**/harness*")
+                    if "__pycache__" not in str(p) and (p.is_dir() or p.suffix == ".py")})
+    A.check(not leaks, "no harness/ directory or module inside any editable_files/")
+    for l in leaks:
+        A.bullet(f"{l} — an editable tree cannot contain its own judge")
+
+    probe_words = ("earth4d", "phenology", "dyntargets", "traitprobe", "phylogenomic", "probe", "fusion")
+    stray = [p.name for p in _py_files("scoring") if any(w in p.stem.lower() for w in probe_words)]
+    A.check(not stray, "scoring/ contains no probe-specific module", ", ".join(stray))
+
+
+def _audit_hygiene(A: _Audit) -> None:
+    A.section("HYGIENE — what the regex surgery left behind")
+    for rel in CHANGED_FILES:
+        hits = undefined_names(rel)
+        A.check(not hits, f"{rel} has no undefined names",
+                ", ".join(f"line {ln}: {nm}" for ln, nm in hits))
+
+    # Deleted arms/methods, in code and in prose. A dead flag in a docstring is a lever an agent will
+    # try to pull; a dead `self.X` is the next NameError.
+    dead = []
+    for p in sorted(AUTORESEARCH.rglob("*")):
+        if p.suffix not in (".py", ".md", ".yaml", ".yml") or "__pycache__" in str(p):
+            continue
+        for i, line in enumerate(p.read_text(errors="ignore").splitlines(), 1):
+            for sym in DELETED_ARMS:
+                if f"--{sym}" in line or f"self.{sym}" in line or f'CONFIG["{sym}"]' in line:
+                    dead.append(f"{p.relative_to(AUTORESEARCH)}:{i}  {sym}")
+            for sym in DELETED_METHODS:
+                if f"self.{sym}(" in line or f"def {sym}(" in line:
+                    dead.append(f"{p.relative_to(AUTORESEARCH)}:{i}  {sym}")
+    A.check(not dead, "no reference to a deleted arm or method survives")
+    for d in dead:
+        A.bullet(d)
+
+    # Every CONFIG key the probe READS must be a key the probe DEFINES. Regex surgery deleted flags
+    # and left their reads; CONFIG["enc_lr_mult"] is a KeyError on a path train_encoder=True always takes.
+    cfg = _literal_dict(_PROBE_REL, "CONFIG")
+    missing = sorted({(n.lineno, n.slice.value) for n in ast.walk(_tree(_PROBE_REL))
+                      if isinstance(n, ast.Subscript) and getattr(n.value, "id", None) == "CONFIG"
+                      and isinstance(n.slice, ast.Constant) and n.slice.value not in cfg})
+    A.check(not missing, "every CONFIG[...] read in probe.py is a defined CONFIG key")
+    for ln, k in missing:
+        A.bullet(f"probe.py:{ln}  CONFIG[{k!r}] — KeyError at runtime")
+    preset_bad = sorted({(cap, k) for cap, d in _literal_dict(_PROBE_REL, "CAPABILITY_CONFIG").items()
+                         for k in d if k not in cfg})
+    A.check(not preset_bad, "every CAPABILITY_CONFIG preset key exists in CONFIG",
+            ", ".join(f"{c}:{k}" for c, k in preset_bad))
+
+    # output_dim accounting vs what _forward_tensor actually concatenates. These two drifted apart
+    # once already (the `self.tile*` delete), and a mismatch is a silent shape bug at the head.
+    cls = next(c for c in _tree(_E4D_REL).body if isinstance(c, ast.ClassDef) and c.name == "Earth4D")
+    init = next(m for m in cls.body if getattr(m, "name", None) == "__init__")
+    fwd = next(m for m in cls.body if getattr(m, "name", None) == "_forward_tensor")
+    counted, concatenated = _guarded_by(init, "output_dim"), _guarded_by(fwd, "'cat'")
+    A.check(counted == concatenated, "earth4d output_dim accounting == _forward_tensor concatenation",
+            f"counted-not-concatenated {sorted(counted - concatenated)}, "
+            f"concatenated-not-counted {sorted(concatenated - counted)}")
+    A.info("earth4d arms accounted", ", ".join(sorted(counted)))
+    A.check(encoder_output_dim(cfg) > 0, "encoder output_dim under v5 CONFIG is computable",
+            f"{encoder_output_dim(cfg)} dims")
+
+
+_SECTIONS = (_audit_core, _audit_scoring, _audit_propagation, _audit_assumptions,
+             _audit_conciseness, _audit_structure, _audit_hygiene)
+
+
+def audit() -> Tuple[str, List[str]]:
+    """The whole verdict: the routing report, then every machine-checked assertion.
+
+    Returns (text, failures). A check that RAISES is a failure -- an audit that silently skips its
+    own broken section is exactly the green report this replaced.
+    """
+    A = _Audit()
+    for fn in _SECTIONS:
+        try:
+            fn(A)
+        except Exception as exc:                                  # noqa: BLE001
+            A.check(False, f"{fn.__name__} raised", f"{type(exc).__name__}: {exc}")
+    tail = ["", "=" * 74,
+            f"AUDIT: {len(A.failures)} FAILURE(S)" if A.failures else "AUDIT: ALL CHECKS PASS",
+            "=" * 74]
+    tail += [f"  FAIL  {f}" for f in A.failures]
+    return _routing_report() + "\n" + "\n".join(A.lines + tail), A.failures
 
 
 # ==================================================================================================
@@ -894,7 +1350,12 @@ def main(argv=None) -> None:
         print(coverage_report())
         return
     if a.audit:
-        print(audit())
+        text, failures = audit()
+        print(text)
+        # A non-zero exit is what makes this usable from a hook, a CI step, or an agent that cannot
+        # read prose. "Is the repo sane?" has to be answerable without a human in the loop.
+        if failures:
+            raise SystemExit(1)
         return
     picked: List[Metric] = []
     if a.metric:
