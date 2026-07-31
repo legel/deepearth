@@ -292,7 +292,7 @@ CAPABILITY_CONFIG = {
     # head), --fourier 0, --time_harmonics 0, --fourier_scale 10.0, --spatial_cline 0, --tile 0.
     "family_from_env": {
         "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
-        "tile": 64, "tile_offsets": 4,   # ARM tile64
+        "tile": 64, "tile_offsets": 4, "spatial_cline": 64,   # ARM tile64_cline
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
