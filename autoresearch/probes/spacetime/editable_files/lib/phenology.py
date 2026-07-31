@@ -191,7 +191,63 @@ class AttnDOY(nn.Module):
         return F.normalize(self.head(pooled.squeeze(1)), dim=-1)
 
 
+def _recency_windows(lat, lon, days, q_idx, pool_idx, K, block_deg=2.0):
+    """ARM (architecture, propagator receptive field): K MOST RECENT causal neighbours, not K
+    spatially-nearest ones.
+
+    build_causal_windows selects the K pool rows NEAREST IN SPACE among those with p_day < q_day, then
+    orders them in time. On a DOY target under a past->future split that is the wrong selection rule: the
+    spatially-nearest causal rows can be from any earlier month, so the window carries the LOCAL ANNUAL
+    MARGINAL of day-of-year rather than the seasonal state immediately preceding the query. What the
+    propagator actually needs is persistence -- the latest observed seasonal state near the query. This
+    builder keeps the identical candidate set (the query cell + its 8-cell ring at block_deg) and the
+    identical strict p_day < q_day causal filter, and only changes the ranking to most-recent-first.
+    Output contract is unchanged: [Nq, K] pool indices padded with -1, ordered past->present, + valid mask.
+    No dt is exposed to the model anywhere; only the neighbour's own observed DOY, as before.
+    """
+    import numpy as _np
+    from collections import defaultdict as _dd
+    q_lat = _np.asarray(lat[q_idx]); q_lon = _np.asarray(lon[q_idx]); q_day = _np.asarray(days[q_idx])
+    p_lat = _np.asarray(lat[pool_idx]); p_lon = _np.asarray(lon[pool_idx]); p_day = _np.asarray(days[pool_idx])
+
+    def cell(la, lo):
+        return (_np.floor(la / block_deg).astype(_np.int64), _np.floor(lo / block_deg).astype(_np.int64))
+
+    pci, pcj = cell(p_lat, p_lon)
+    buckets = _dd(list)
+    for k, (ci, cj) in enumerate(zip(pci.tolist(), pcj.tolist())):
+        buckets[(ci, cj)].append(k)
+    for key in buckets:
+        buckets[key] = _np.asarray(buckets[key], dtype=_np.int64)
+    qci, qcj = cell(q_lat, q_lon)
+    idx = _np.full((len(q_lat), K), -1, dtype=_np.int64)
+    for n in range(len(q_lat)):
+        cand = []
+        ci, cj = int(qci[n]), int(qcj[n])
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                b = buckets.get((ci + di, cj + dj))
+                if b is not None:
+                    cand.append(b)
+        if not cand:
+            continue
+        cand = _np.concatenate(cand)
+        past = cand[p_day[cand] < q_day[n]]                        # identical strict causal filter
+        if len(past) == 0:
+            continue
+        order = past[_np.argsort(-p_day[past])][:K]                # MOST RECENT first (the only change)
+        order = order[_np.argsort(p_day[order])]                   # then past->present, as before
+        idx[n, : len(order)] = order
+    valid = idx >= 0
+    gi = _np.where(valid, pool_idx[_np.clip(idx, 0, None)], -1)
+    return gi, valid
+
+
 def _windows(lat, lon, days, q_idx, pool_idx, K, block_deg=2.0, fast=False):
+    return _recency_windows(lat, lon, days, q_idx, pool_idx, K, block_deg=block_deg)
+
+
+def _windows_spatial(lat, lon, days, q_idx, pool_idx, K, block_deg=2.0, fast=False):
     qi, vi = build_causal_windows(lat[q_idx], lon[q_idx], days[q_idx],
                                   lat[pool_idx], lon[pool_idx], days[pool_idx], K,
                                   block_deg=block_deg, fast=fast)

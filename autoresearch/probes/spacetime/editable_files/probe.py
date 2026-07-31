@@ -133,7 +133,7 @@ CONFIG = {
     "forecast_spatial": False,
     "recurrence": False,
     "gnn": False,
-    "phenology": False,
+    "phenology": True,
     "pheno_nofair": False,
     "pheno_feats": "e4d,rff,raw",
     "pheno_spatial": False,
@@ -228,6 +228,52 @@ from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence impor
 
 
 
+
+
+
+# Per-capability CONFIG. CONFIG above holds the defaults; these override it for the capability the
+# harness declared, and are applied before anything runs.
+#
+# Without this, CONFIG starts at ONE capability's champion and every other capability's control is
+# silently wrong. Measured: with CONFIG at the species_from_spacetime champion, a flowering_peak_month
+# control scored 0.00285 against a standing record of 0.0521 — a 20x discrepancy that looks like a
+# catastrophic regression and is really just the wrong experiment. Any sweep run that way measures
+# nothing, and its arms would have been published as dead-ends that never happened.
+#
+# A run with no edits must reproduce ITS OWN capability's record. That is the invariant.
+CAPABILITY_CONFIG = {
+    "species_from_spacetime": {
+        "forecast": True, "target": "species", "phenology": False,
+        "head_hidden": 512, "fourier": 1024, "fourier_scale": 6400.0, "time_harmonics": 8,
+        "spatial_cline": 64, "n_shards": 12, "tile": 64, "tile_offsets": 4,
+    },
+    "family_from_spacetime": {
+        "forecast": True, "target": "family", "phenology": False,
+        "head_hidden": 256, "fourier": 1024, "time_harmonics": 8, "n_shards": 12,
+    },
+    "flowering_peak_month": {
+        "forecast": True, "phenology": True, "pheno_feats": "e4d", "pheno_nofair": False,
+        "n_shards": 12, "tile": 0, "tile_offsets": 0, "spatial_cline": 0, "fourier_scale": 10.0,
+    },
+    "family_from_env": {
+        "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
+        "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
+    },
+    "species_from_env": {
+        "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
+        "forecast": False, "phenology": False,
+    },
+    "community_from_env": {
+        "cooccur": True, "cooccur_mech": "both", "cooccur_channels": "all", "n_shards": 12,
+        "forecast": False, "phenology": False,
+    },
+}
+
+
+def apply_capability_config(capability: str) -> None:
+    """Point CONFIG at the declared capability's champion before the run starts."""
+    for k, v in CAPABILITY_CONFIG.get(capability, {}).items():
+        CONFIG[k] = v
 
 
 def load_obs(cache: str, n_shards: int, with_time: bool = False, with_gid: bool = False):
@@ -735,6 +781,7 @@ def main(argv=None):
     ap.add_argument("--capability", default="",
                     help="the capability the harness declared as its objective")
     a = ap.parse_args(argv)
+    apply_capability_config(a.capability)
     _set_result_sink(a.result_json, a.capability, PROTOCOL_VERSION, a, config=CONFIG)
     if not _TRACE_AUTHORIZED:
         authorization_argv = sys.argv[1:] if argv is None else list(argv)
