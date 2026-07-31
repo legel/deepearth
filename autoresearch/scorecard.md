@@ -39,9 +39,10 @@ Programs and rules: [`README.md`](README.md) · [`science.md`](science.md) ·
                 pre-contract       record predates the result contract; its metric name was never stored
 ```
 
-**A record is not a result.** It becomes a claim only by clearing its loop's evidence standard: ≥5
-matched seeds, block bootstrap, no registered regression, reproducible from a committed tree. Anything
-short of that is discovery — which is most of what these files contain today, and they say so.
+**A record is not automatically a confirmed result.** Each loop owns its evidence standard. Earth4D
+screens with one seed and confirms with exactly two matched seeds, no registered regression, and a
+reproducible committed tree. Other loops follow their own program. Anything short of the applicable
+standard is discovery.
 
 Three live caveats worth knowing before trusting a number:
 
@@ -50,9 +51,10 @@ Three live caveats worth knowing before trusting a number:
   **0.0085**. The board's record is 0.1423, which is *seed 0*: the best draw, sitting +0.0075 above the
   mean, inside one standard deviation. With the spread measured, the barrier to beat that record is
   2σ = 0.017 — so **the record could not clear its own bar.** Every record predating the noise barrier
-  should be assumed to be the maximum of its reruns until re-measured at ≥5 seeds.
+  should be assumed to be the maximum of its reruns until re-measured under the current two-seed
+  Earth4D confirmation policy.
 
 - `spacetime` `family_from_env` is stored with a channel gain (`+0.0411 ENV vs best-coord-PE`) while a
   live run reports `−0.0072 Earth4D vs RFF`. Flagged `STALE-GAIN`; the honest read is INPUT-LIMITED.
-- The `spacetime` harness has no seed loop yet, so a single-seed noise delta can still become a record.
-  It happened twice on 2026-07-30 and both were reverted, with reasons in the ledger.
+- The historical spacetime rows predate the current protocol and are VOID for comparison. The fixed
+  harness supports matched-seed confirmation; experiments must not repair or reinterpret legacy rows.

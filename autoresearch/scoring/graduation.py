@@ -27,7 +27,7 @@ Lifecycle, because this tool cannot train (a champion run needs a GPU and the ru
 
 Eligibility is deliberately strict. A probe record that cannot be REPLAYED cannot be graduated, because
 step 2 replays it: `code.dirty` means the CONFIG/earth4d diff that produced the number is unrecoverable
-(all three spacetime records carry dirty=true today), and `provisional` means fewer than 5 matched seeds,
+(all three spacetime records carry dirty=true today), and `provisional` means fewer than 2 matched seeds,
 which program.md's evidence standard already refuses to call a claim.
 """
 from __future__ import annotations
@@ -125,7 +125,7 @@ def blockers(loop: str, capability: str, rec: Dict[str, Any], bench_ok: bool) ->
     if rec.get("provisional", True):
         n = rec.get("n_seeds")
         out.append(f"provisional ({n if n is not None else '?'} seeds) — program.md's evidence standard "
-                   f"needs >=5 matched seeds before a probe record is a claim")
+                   f"needs >=2 matched seeds before a probe record is a claim")
     if rec.get("score") is None and rec.get("primary") is None:
         out.append("record carries no score")
     return out

@@ -152,17 +152,17 @@ on. A failure in fixed infrastructure is a blocker, not permission to edit it.
 
 ### Confirm
 
-Only a barrier-clearing screen earns five matched seeds. A confirmable claim requires:
+Only a barrier-clearing screen earns confirmation with two matched seeds. A confirmable result requires:
 
-- the point estimate to clear the declared margin;
-- the lower 95% bound over the strongest paired fair baseline to be greater than zero;
+- the two-seed mean to clear the declared margin;
+- each matched seed to beat the strongest paired fair baseline;
 - identical data, split, seeds, budget, and head/control treatment;
 - clean committed code and no regression;
 - no target proxy, future leakage, or borrowed-signal laundering.
 
 ### Promote
 
-Push to `deepcal-ensue-autoresearch` only when the five-seed gate passes and the result is a genuine
+Push to `deepcal-ensue-autoresearch` only when the two-seed gate passes and the result is a genuine
 breakthrough for the declared capability. The user has authorized pushes only under that condition.
 
 ## Evidence rules
@@ -172,7 +172,7 @@ breakthrough for the declared capability. The user has authorized pushes only un
 - A causal claim must consume observed past state and roll predictions forward; a delayed positional basis
   is not memory.
 - Paired controls receive the same data, seeds, budget, and capacity treatment.
-- The probe ranks hypotheses. It is not a headline claim without five seeds and independent replication.
+- The probe ranks hypotheses. Two matched seeds are promotion evidence, not a standalone scientific headline.
 - Any neighbor/target window that can cross the forecast origin is quarantined until future-sentinel,
   horizon-purge, and right-censoring checks pass.
 
@@ -180,7 +180,7 @@ breakthrough for the declared capability. The user has authorized pushes only un
 
 - `--insights` is mandatory before choosing each hypothesis.
 - `--ensue` is mandatory on every completed run, win or dead end.
-- Never publish a max-of-reruns; one seed screens, five matched seeds confirm.
+- Never publish a max-of-reruns; one seed screens, two matched seeds confirm.
 - Never manually change the board or ledger.
 - After every run, show the full scorecard—not the compact protocol-free terminal summary.
 

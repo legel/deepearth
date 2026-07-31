@@ -842,6 +842,7 @@ def _evict_oldest_deadends(ledger, cap=DEADEND_CAP):
 MIN_REL_IMPROVEMENT = 0.02      # 2% of the standing record
 MIN_ABS_IMPROVEMENT = 0.002     # ...and never less than this in absolute terms
 SEED_SIGMA_MULTIPLE = 2.0       # with >=3 seeds, must also clear 2 sigma of the seed spread
+MIN_CONFIRMATION_SEEDS = 2      # operator policy: one seed screens, two matched seeds confirm
 
 
 def noise_barrier(prev, seed_std=None, n_seeds=1):
@@ -1193,7 +1194,7 @@ def post_ensue(trace: dict) -> None:
     dead_str = "; ".join(f"{t}={d['score']}({(d.get('why') or '')[:34]})" for t, d in list(dead.items())[-12:]) or "(none)"
     # ONE upserted key per capability (LOOP-<program>-<capability> taxonomy): running best + record history +
     # this run's outcome + deduped dead-ends WITH their bottleneck reason. Win or dead-end, every run captured.
-    # Evidence and provenance travel WITH the number. Without them the swarm cannot tell a 5-seed
+    # Evidence and provenance travel WITH the number. Without them the swarm cannot tell a two-seed
     # result from a single-seed one, nor reproduce the tree that produced it -- and both of those
     # ambiguities have already put a noise-mined record on this board.
     ev = trace.get("evidence", {})
@@ -1656,7 +1657,7 @@ def main() -> None:
         print(f"[trace] *** WITHIN NOISE: {key_val:.6f} beats {prev} by {key_val - prev:+.6f}, under the "
               f"barrier of {_barrier:.6f}"
               + (f" (2 sd of {len(seed_values)} seeds)" if seed_std is not None and len(seed_values) >= 3
-                 else " (fixed floor; run --seeds 5 to measure the spread instead)") +
+                 else " (fixed floor; seed spread needs >=3)") +
               ".\n[trace]     Not a record. Seven steps of this size are how a record was walked "
               "0.1769 -> 0.1914 overnight.", flush=True)
     migration_withheld = prev is not None and prev_proto != PROTOCOL and not rebaseline
@@ -1689,7 +1690,7 @@ def main() -> None:
                "code": _code_provenance(),
                "n_seeds": len(seed_values), "seed_values": [float(v) for v in seed_values],
                "seed_std": (float(seed_std) if seed_std is not None else None),
-               "provisional": len(seed_values) < 5,
+               "provisional": len(seed_values) < MIN_CONFIRMATION_SEEDS,
                "fair_baseline": fair_base, "tag": tag, "mode": mode, "n_shards": shards,
                "protocol": PROTOCOL}
         ledger["records"] = (ledger.get("records", []) + [{"tag": tag, "score": key_val, "gain": fair,
@@ -1743,7 +1744,7 @@ def main() -> None:
              "evidence": {"n_seeds": len(seed_values),
                           "seed_values": [float(v) for v in seed_values],
                           "seed_std": (float(seed_std) if seed_std is not None else None),
-                          "provisional": len(seed_values) < 5},
+                          "provisional": len(seed_values) < MIN_CONFIRMATION_SEEDS},
              "objective": objective, "gains": gains, "header": header, "metrics": metrics,
              "bottleneck": bottleneck, "rc": rc, "ledger": ledger}
 

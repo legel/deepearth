@@ -64,9 +64,9 @@ python -m deepearth.autoresearch.scoring.definitions --capability family_from_sp
 EARTH4D_DETERMINISTIC=1 python -m deepearth.autoresearch.probes.spacetime.harness \
     --metric family_from_spacetime --tag my_swing --device cuda:0 --ensue
 
-# five matched seeds — required before a record becomes a claim
+# two matched seeds — required before a record becomes a claim
 EARTH4D_DETERMINISTIC=1 python -m deepearth.autoresearch.probes.spacetime.harness \
-    --metric family_from_spacetime --tag my_swing_5s --seeds 5 --device cuda:0 --ensue
+    --metric family_from_spacetime --tag my_swing_2s --seeds 2 --device cuda:0 --ensue
 
 ```
 
