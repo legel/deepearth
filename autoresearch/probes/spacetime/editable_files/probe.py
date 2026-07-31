@@ -292,12 +292,15 @@ CAPABILITY_CONFIG = {
     # (the commit that turned the 33 flags into CONFIG): --target family, --head_hidden 0 (LINEAR
     # head), --fourier 0, --time_harmonics 0, --fourier_scale 10.0, --spatial_cline 0, --tile 0.
     "family_from_env": {
-        "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
+        "env": True, "forecast": False, "phenology": False,
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
         "fourier": 0, "time_harmonics": 0,
-        "knn_readout": 200, "env_channels": "alphaearth+terrain",   # ARM knn200_terrain (BEST: 0.1489)
+        # ARM knn200_terrain. The linear-head champion was env_channels="alphaearth" + knn_readout=0
+        # (0.142318). Under the LINEAR head the terrain stack was a dead-end (0.1410); under the
+        # non-parametric readout it is the win (0.1489) -- the channel's value was masked by the readout.
+        "env_channels": "alphaearth+terrain", "knn_readout": 200,
     },
     "species_from_env": {
         "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
