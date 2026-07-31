@@ -723,15 +723,16 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     if side is not None:
         Str, Ste = side[train].to(dev), side[test].to(dev)
     with torch.no_grad():
-        fdim = enc(Ctr[:8]).shape[1] + (0 if side is None else Str.shape[1])
+        edim = enc(Ctr[:8]).shape[1]
+        fdim = edim + (0 if side is None else Str.shape[1])
     head = (nn.Sequential(nn.Linear(fdim, head_hidden), nn.ReLU(), nn.Linear(head_hidden, n_fam))
             if head_hidden > 0 else nn.Linear(fdim, n_fam)).to(dev)
     opt = torch.optim.Adam([{"params": head.parameters(), "lr": lr},
                             {"params": list(enc.parameters()), "lr": lr * enc_lr_mult, "weight_decay": 0.0}])
     # per-level feature mask over the SPATIAL block (levels are contiguous, features_per_level each)
-    fpl = getattr(enc, "features_per_level", 2); sdim = getattr(enc, "spatial_dim", fdim)
+    fpl = getattr(enc, "features_per_level", 2); sdim = getattr(enc, "spatial_dim", edim)
     n_lv = max(int(sdim // max(fpl, 1)), 1)
-    lvl_of = (torch.arange(fdim, device=dev) // max(fpl, 1)).clamp(max=n_lv - 1)
+    lvl_of = (torch.arange(edim, device=dev) // max(fpl, 1)).clamp(max=n_lv - 1)   # ENCODER dims only
     warm_n, c2f_n = max(int(steps * warmup), 1), max(int(steps * c2f), 1)
     _p0 = {n: q.detach().clone() for n, q in enc.named_parameters()}   # sanity: did the encoder ACTUALLY move?
     for it in range(steps):
