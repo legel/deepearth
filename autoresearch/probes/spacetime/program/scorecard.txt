@@ -8,9 +8,9 @@ species_from_env        0.6275  +0.4000    EARNING              478   1s?    v2-
 flowering_peak_month    0.1983  +0.0128    ENCODER-LIMITED      111   1s     v3-fairbaseline
 family_from_spacetime   0.1968  +0.0407    ENCODER-LIMITED      1232  1s     v3-fairbaseline
 family_from_env         0.1423  +0.0411    STALE-GAIN(channel)  495   1s?    v2-leakfix
-species_from_spacetime  0.0955  +0.0608    EARNING              34    1s     v3-fairbaseline
+species_from_spacetime  0.0369  -0.0049    INPUT-LIMITED        35    1s     v5-encoder-only
 ----------------------  ------  ---------  -------------------  ----  -----  ---------------
-probed 6/6   ·   earning (fair-gain > 0): 6
+probed 6/6   ·   earning (fair-gain > 0): 5
 
 read:  INPUT-LIMITED    loses to a matched-width RFF   -> DATA lever
        ENCODER-LIMITED  wins but contributes <25%      -> ARCHITECTURE lever

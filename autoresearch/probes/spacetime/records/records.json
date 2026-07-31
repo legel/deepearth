@@ -847,12 +847,12 @@
   },
   "species_from_spacetime": {
     "code": {
-      "branch": "deepcal-ensue-autoresearch",
-      "commit": "e448c62af246",
-      "dirty": true
+      "branch": "claude/current-earth4d-loop-20260731",
+      "commit": "db5fa15aca54",
+      "dirty": false
     },
     "fair_baseline": "vs RFF",
-    "fair_st_gain": 0.06082799285650253,
+    "fair_st_gain": -0.0049333758652210236,
     "ledger": {
       "deadend_seq": 21,
       "deadends": {
@@ -1069,23 +1069,28 @@
           "rebaseline_from": null,
           "score": 0.095463328063488,
           "tag": "sp2_cmac16_dropst_tau01_mainline"
+        },
+        {
+          "gain": -0.0049333758652210236,
+          "protocol": "v5-encoder-only",
+          "rebaseline_from": 0.095463328063488,
+          "score": 0.03687315434217453,
+          "tag": "v5_species_baseline_db5fa15"
         }
       ],
-      "runs": 34
+      "runs": 35
     },
     "mode": "FORECAST(past->future)",
     "n_seeds": 1,
     "n_shards": 12,
-    "primary": 0.095463328063488,
-    "probe": "",
-    "probe_module": "deepearth.autoresearch.probes.spacetime.editable_files.probe",
-    "protocol": "v3-fairbaseline",
+    "primary": 0.03687315434217453,
+    "protocol": "v5-encoder-only",
     "provisional": true,
-    "score": 0.095463328063488,
+    "score": 0.03687315434217453,
     "seed_std": null,
     "seed_values": [
-      0.095463328063488
+      0.03687315434217453
     ],
-    "tag": "sp2_cmac16_dropst_tau01_mainline"
+    "tag": "v5_species_baseline_db5fa15"
   }
 }
