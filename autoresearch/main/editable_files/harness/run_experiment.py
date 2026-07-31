@@ -16,7 +16,7 @@ def main():
     argv = [x for x in sys.argv[1:] if x != "--st-gain"]
     hooks.instrument(spacetime_gain=("--st-gain" in sys.argv))
     sys.argv = [sys.argv[0]] + argv          # hand the remaining args to train's argparse unchanged
-    from deepearth.autoresearch import train
+    from deepearth.autoresearch.main.editable_files.harness import train
     train.main()
 
 
