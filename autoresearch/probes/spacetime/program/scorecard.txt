@@ -21,6 +21,17 @@ READ:  share = fair-gain / score — how much of the score Earth4D contributes o
                          before trusting the read (family_from_env: board +0.0411, live -0.0072)
        pre-contract      record predates the result contract, so its metric name was never stored
 
+SHARE IS CONFOUNDED WITH ENCODER OUTPUT WIDTH — measured, not suspected.  probe.py builds the
+       control as fair_rff(rn, e4d.shape[1]), so the baseline is DIMENSION-MATCHED to the encoder,
+       and RFF accuracy is non-monotone in width. Padding the encoder output with columns of
+       LITERAL ZEROS — adding no information at all — moved family_from_spacetime's share from
+       20.7% (dim 2592) to 27.2% (dim 3024) and down to 15.1% (dim 3744). This legend called the
+       zero-padded encoder EARNING.
+       So: compare share ONLY between arms of EQUAL output dim, and treat a share change from any
+       arm that alters width as an artifact until a same-width zero-pad null fails to reproduce it.
+       Fixing this means fitting the control at a FIXED dimension, which re-baselines every row —
+       an operator decision, not an agent's.
+
 EVIDENCE:  a record set on fewer than 5 matched seeds is PROVISIONAL — discovery, not a claim.
            A new record must beat the standing one by more than the noise barrier: 2% of the record,
            never less than 0.002, and with >=3 seeds also 2 sigma of the measured spread.
