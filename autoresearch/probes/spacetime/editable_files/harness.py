@@ -494,7 +494,6 @@ LEVER_SITES = {
     ARCH: [
         "autoresearch/probes/spacetime/editable_files/earth4d.py: __init__, forward, training objective (the encoder itself)",
         "autoresearch/probes/spacetime/editable_files/lib/recurrence.py: run_recurrence, run_field_decode, propagators",
-        "autoresearch/probes/spacetime/editable_files/lib/gnn.py: message passing",
         "flags: --recurrence, --gnn, --forecast, --env_decode, --field_decode, --fourier, "
         "--spatial_siren, --time_harmonics",
     ],
