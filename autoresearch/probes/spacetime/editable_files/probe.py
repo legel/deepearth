@@ -271,7 +271,18 @@ CAPABILITY_CONFIG = {
     "species_from_spacetime": {
         "forecast": True, "target": "species", "phenology": False,
         "head_hidden": 512, "fourier": 1024, "fourier_scale": 6400.0, "time_harmonics": 8,
-        "spatial_cline": 64, "n_shards": 12, "tile": 64, "tile_offsets": 4,
+        "spatial_cline": 64, "n_shards": 12, "tile": 64,
+        # CHAMPION 0.095463 (was 0.085953, barrier 0.0020), tag sp2_cmac16_dropst_tau01.
+        # tile_offsets 4 -> 16 is the whole effect and it is NOT an output-width artifact: at an
+        # identical dim of 20771, offsets=16 scores 0.0925 against tile=128/offsets=8 at 0.0884 and
+        # tile=256/offsets=4 at 0.0881. What buys the gain is the NUMBER of overlapping CMAC tilings,
+        # not the column count.
+        "tile_offsets": 16,
+        "knn_vote_tau": 0.01,
+        # The space-time tri-planes measure inert on this row as they do on family_from_spacetime:
+        # deleting all 108 of those dims is free (+0.0003) and positive in combination. This FORECAST
+        # row is effectively a spatial model.
+        "drop_spatiotemporal": True,
     },
     # The standing record (0.1769) was set by the PRE-REFACTOR CLI as
     #     --forecast --head_hidden 256 --fourier 1024 --time_harmonics 8 --n_shards 12
@@ -343,9 +354,30 @@ CAPABILITY_CONFIG = {
 
 
 def apply_capability_config(capability: str) -> None:
-    """Point CONFIG at the declared capability's champion before the run starts."""
-    for k, v in CAPABILITY_CONFIG.get(capability, {}).items():
+    """Point CONFIG at the declared capability's champion before the run starts.
+
+    THE PRESET WINS OVER CONFIG, AND THAT SILENTLY VOIDS EXPERIMENTS. Since the flags were removed, an
+    experiment IS a diff of the CONFIG block -- but this runs after CONFIG is defined, so editing CONFIG
+    for any key the capability's preset also pins does nothing at all. An agent sweeping
+    time_harmonics on species_from_spacetime got the control's exact score AND the control's exact
+    identity_digest, because the preset overwrote the edit before the encoder was built.
+
+    The precedence is not changed here: flipping it would silently alter every capability's champion
+    mid-campaign. Instead the override is made LOUD, so a voided edit is impossible to mistake for a
+    null result. To experiment on a key the preset pins, edit the PRESET for that capability -- that
+    block IS the champion definition, and it registers in config_digest.
+    """
+    preset = CAPABILITY_CONFIG.get(capability, {})
+    overridden = [(k, CONFIG[k], v) for k, v in preset.items()
+                  if k in CONFIG and CONFIG[k] != v]
+    for k, v in preset.items():
         CONFIG[k] = v
+    if overridden:
+        print(f"  [capability-preset] {capability}: the preset OVERRODE {len(overridden)} CONFIG "
+              f"value(s). If you edited any of these in CONFIG, YOUR EDIT DID NOT TAKE EFFECT -- "
+              f"edit the CAPABILITY_CONFIG preset instead:")
+        for k, was, now in overridden:
+            print(f"      {k}: CONFIG={was!r} -> preset={now!r}")
 
 
 def load_obs(cache: str, n_shards: int, with_time: bool = False, with_gid: bool = False):
