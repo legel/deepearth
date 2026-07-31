@@ -36,7 +36,7 @@ and stop — do not change it yourself.
               EARNING (share ≥ 25%)         → the mechanism carries signal, push it further
 ③ HYPOTHESIZE  one change, stated as a falsifiable claim before you run it
 ④ EDIT      git worktree add ../e4d-<tag> -b exp/<tag>; edit earth4d.py / probe.py IN PLACE
-⑤ RUN       ONE seed, through the harness, on the box — breadth over depth
+⑤ RUN       ONE seed, through the harness, on the box — always, no exceptions
 ⑥ DECIDE    the harness applies the noise barrier — do not argue with it
 ⑦ PUBLISH   --ensue on EVERY run, win or dead-end, with its bottleneck reason
 ```
@@ -55,9 +55,9 @@ and stop — do not change it yourself.
   different hypotheses, not on measuring one hypothesis five times. The noise barrier already refuses
   noise — that is its job — so a screening run needs no repeats. Flat at one seed IS your answer:
   publish the dead-end and move to the next idea.
-- **Escalate to `--seeds 5` only for a candidate that CLEARED the barrier.** Confirmation is where seeds
-  earn their cost: there the barrier also becomes 2σ of the measured spread, and only then does the
-  record stop being PROVISIONAL. Never use seeds to convince yourself a flat arm was really flat.
+- **NEVER run `--seeds`. One seed, always.** The barrier is the filter. Clears it → record. Doesn't →
+  dead-end, publish, next idea. No confirmation runs, no re-running to be sure, no escalation. Every
+  second of GPU goes to a NEW hypothesis; re-measuring one you already have discovers nothing.
 - **Never edit `editable_files/harness.py` to make a run look better.** It decides what a number
   means. If the harness is genuinely wrong, fix it as its own commit with a test that fails before and
   passes after, and say so explicitly — never inside an experiment.
@@ -88,9 +88,7 @@ python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness \
 python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness \
     --metric <metric> --tag <tag> --device cuda:0 --ensue
 
-# CONFIRM a candidate that cleared the barrier — only then is 5x the compute justified
-python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness \
-    --metric <metric> --seeds 5 --tag <tag>_confirm --device cuda:0 --ensue
+
 
 # measure WITHOUT recording (parity checks, smoke tests)
 EARTH4D_ALLOW_UNRECORDED=1 python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.probe \

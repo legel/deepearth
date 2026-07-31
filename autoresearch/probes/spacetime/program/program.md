@@ -185,15 +185,13 @@ modes require `--forecast` through bare `assert`s buried mid-function.
 ### Screen wide at one seed; spend seeds only on a candidate
 
 ```
-   MANY hypotheses ──► 1 seed each ──► barrier (2% of record, floor 0.002) ──┬─ flat → dead-end, publish, next
-                                                                             └─ clears → --seeds 5 CONFIRM
-                                                                                          barrier also 2σ
-                                                                                          record stops being PROVISIONAL
+   MANY hypotheses ──► 1 seed each ──► barrier (2% of record, floor 0.002) ──┬─ clears → RECORD
+                                                                             └─ flat   → dead-end, publish, next
 ```
 
-Seeds are for **confirming** a candidate, never for finding one. Measuring one idea five times costs the
-same as screening five ideas once, and only the second finds a breakthrough. A flat arm at one seed is a
-complete answer — publish it and move on rather than re-running to be sure.
+**One seed. Always.** The barrier is the filter; that is what it is for. Measuring one idea five times
+costs the same as screening five ideas once, and only the second discovers anything. A flat arm at one
+seed is a complete answer — publish it and move on. There is no confirmation step.
 
 **Quarantine:** any lever whose neighbour state or target window can cross the forecast origin is
 unusable until future-sentinel, horizon-purge, and right-censoring tests pass. Log it against the lever
