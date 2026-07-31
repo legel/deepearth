@@ -68,7 +68,8 @@ void hash_encode_backward_precomputed(
     at::Tensor grad_embeddings,     // [total_embeddings, C] output
     const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L,
     const uint32_t N_p,
-    const uint32_t N_c
+    const uint32_t N_c,
+    const double fixed_scale        // >0 => deterministic int64 accumulation; <=0 => float atomics
 );
 
 // =============================================================================
