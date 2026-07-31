@@ -1,16 +1,16 @@
 EARTH4D SPACETIME PROBE — SCORECARD
-protocol v2-leakfix   ·   generated from records.json by harness.py   ·   DO NOT HAND-EDIT
+protocol v3-fairbaseline   ·   generated from records.json by harness.py   ·   DO NOT HAND-EDIT
 
-capability              record  metric                 fair-gain  vs baseline                               mode                    shards  read                 runs  evidence
-----------------------  ------  ---------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----  --------
-community_from_env      0.8845  pre-contract           +0.4570    GAIN                                      COOCCUR-ROUTING         12      EARNING              90    1 seed?
-species_from_env        0.6275  pre-contract           +0.4000    GAIN                                      SDM-PRESENCE            16      EARNING              478   1 seed?
-calibration             0.5910  pre-contract           —          —                                         —                       8       NO-FAIR-BASELINE     91    1 seed?
-family_from_spacetime   0.1769  family_top1_accuracy   +0.0772    vs RFF                                    FORECAST(past->future)  12      EARNING              1230  1 seed?
-family_from_env         0.1423  pre-contract           +0.0411    ENV vs best-coord-PE                      ENV                     12      STALE-GAIN(channel)  494   1 seed?
-species_from_spacetime  0.0618  species_top1_accuracy  +0.0548    vs RFF                                    FORECAST(past->future)  12      EARNING              17    5 seeds
-flowering_peak_month    0.0521  pre-contract           +0.0087    Earth4D vs RFF, best-head within-tol acc  PHENOLOGY-FUTURE        12      ENCODER-LIMITED      107   1 seed?
-----------------------  ------  ---------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----  --------
+capability              record  metric                fair-gain  vs baseline                               mode                    shards  read                 runs  evidence
+----------------------  ------  --------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----  --------
+community_from_env      0.8845  pre-contract          +0.4570    GAIN                                      COOCCUR-ROUTING         12      EARNING              90    1 seed?
+species_from_env        0.6275  pre-contract          +0.4000    GAIN                                      SDM-PRESENCE            16      EARNING              478   1 seed?
+calibration             0.5910  pre-contract          —          —                                         —                       8       NO-FAIR-BASELINE     91    1 seed?
+flowering_peak_month    0.1983  pre-contract          +0.0128    Earth4D vs RFF, best-head within-tol acc  PHENOLOGY-FUTURE        12      ENCODER-LIMITED      111   1 seed
+family_from_spacetime   0.1769  family_top1_accuracy  +0.0772    vs RFF                                    FORECAST(past->future)  12      EARNING              1230  1 seed?
+family_from_env         0.1423  pre-contract          +0.0411    ENV vs best-coord-PE                      ENV                     12      STALE-GAIN(channel)  494   1 seed?
+species_from_spacetime  0.0860  pre-contract          +0.0522    vs RFF                                    FORECAST(past->future)  12      EARNING              28    1 seed
+----------------------  ------  --------------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----  --------
 probed 7/7   ·   earning (fair-gain > 0): 6
 
 READ:  share = fair-gain / score — how much of the score Earth4D contributes over the fair baseline
