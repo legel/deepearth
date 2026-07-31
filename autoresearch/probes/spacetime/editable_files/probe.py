@@ -285,7 +285,10 @@ CAPABILITY_CONFIG = {
         "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
-        "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
+        "head_hidden": 256,          # ARM famenv_head256: was 0 (LINEAR). A softmax over standardized env
+                                     # cannot carve a NICHE (a region of env space); every channel swap
+                                     # being flat may be the READOUT, not the channel. Fair: every arm
+                                     # (raw/RFF/Earth4D/env/fused) gets the identical head.
         "fourier": 0, "time_harmonics": 0,
     },
     "species_from_env": {
