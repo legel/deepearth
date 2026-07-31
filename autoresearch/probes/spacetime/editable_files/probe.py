@@ -292,11 +292,11 @@ CAPABILITY_CONFIG = {
     # head), --fourier 0, --time_harmonics 0, --fourier_scale 10.0, --spatial_cline 0, --tile 0.
     "family_from_env": {
         "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
-        "train_encoder": True,   # ARM train_encoder
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
         "fourier": 0, "time_harmonics": 0,
+        "train_encoder": True,   # ARM fused_trained
     },
     "species_from_env": {
         "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
@@ -696,7 +696,7 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
 
 
 def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0,
-                       enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0):
+                       enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0, side=None):
     """Train the ENCODER end-to-end with the head, instead of reading a frozen random hash table.
 
     Every other probe path calls enc(coords) under no_grad on a freshly-initialized Earth4D, so its hash table
@@ -715,8 +715,15 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     train = ~test
     Ctr, ytr = coords[train].to(dev), fam[train].to(dev)
     Cte, yte = coords[test].to(dev), fam[test].to(dev)
+    # `side` = static per-observation features (the ENV channel) concatenated to the encoder output, so the
+    # FUSED arm can be trained end-to-end. Without it the fused arm always reads a frozen random hash table:
+    # train_encoder moved the Earth4D-alone arm 0.0938 -> 0.1105 and left the fused primary byte-identical at
+    # 0.142318, because `fused` was built from the frozen features before any training happened.
+    Str = Ste = None
+    if side is not None:
+        Str, Ste = side[train].to(dev), side[test].to(dev)
     with torch.no_grad():
-        fdim = enc(Ctr[:8]).shape[1]
+        fdim = enc(Ctr[:8]).shape[1] + (0 if side is None else Str.shape[1])
     head = (nn.Sequential(nn.Linear(fdim, head_hidden), nn.ReLU(), nn.Linear(head_hidden, n_fam))
             if head_hidden > 0 else nn.Linear(fdim, n_fam)).to(dev)
     opt = torch.optim.Adam([{"params": head.parameters(), "lr": lr},
@@ -735,6 +742,8 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
         f = enc(Ctr[idx])
         if keep < n_lv:
             f = f * (lvl_of < keep).to(f.dtype)
+        if Str is not None:
+            f = torch.cat([f, Str[idx]], 1)
         loss = F.cross_entropy(head(f), ytr[idx])
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(enc.parameters(), clip)
@@ -744,7 +753,10 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
         tot = sum(1 for v in moved.values() if v > 1e-6)
         print(f"  [train_encoder] {tot}/{len(moved)} encoder tensors moved; "
               f"rel-delta " + ", ".join(f"{n.split('.')[-1]}={v:.3g}" for n, v in list(moved.items())[:6]), flush=True)
-        logits = torch.cat([head(enc(Cte[i:i + 8192])) for i in range(0, Cte.shape[0], 8192)])
+        logits = torch.cat([
+            head(enc(Cte[i:i + 8192]) if Ste is None
+                 else torch.cat([enc(Cte[i:i + 8192]), Ste[i:i + 8192]], 1))
+            for i in range(0, Cte.shape[0], 8192)])
         acc = (logits.argmax(-1) == yte).float().mean().item()
         top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
     return acc, top5
@@ -1001,7 +1013,11 @@ def main(argv=None):
                            if CONFIG["train_encoder"] else
                            evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d", CONFIG["head_hidden"], a.seed))
         env_acc, env_t5 = evaluate(env_t, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "env", CONFIG["head_hidden"], a.seed)
-        fus_acc, fus_t5 = evaluate(fused, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "fused", CONFIG["head_hidden"], a.seed)
+        fus_acc, fus_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "fused",
+                                              CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'],
+                                              seed=a.seed, side=env_t)
+                           if CONFIG["train_encoder"] else
+                           evaluate(fused, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "fused", CONFIG["head_hidden"], a.seed))
         dt = time.time() - t0
         best_coord = max(raw_acc, rff_acc, e4d_acc)              # best coordinate-only PE
         mode = ("FORECAST(future+newplace)" if CONFIG["forecast_spatial"] else "FORECAST(past->future)") if CONFIG["forecast"] else "spatial-block"
