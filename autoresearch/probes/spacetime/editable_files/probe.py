@@ -68,7 +68,7 @@ from deepearth.autoresearch.probes.spacetime.harness import (
 )
 # Measurement definitions live in the non-editable scoring module, not here.
 from deepearth.autoresearch.scoring.definitions import (
-    autoregressive_rollout, field_interpolation, relative_transfer, science_axes,
+    autoregressive_rollout, enforce_determinism, field_interpolation, relative_transfer, science_axes,
     signal_capture)
 
 # ===================================================================================================
@@ -1060,6 +1060,10 @@ def sdm_hard_mode(a):
 
 
 def main(argv=None):
+    # A run that cannot be reproduced cannot set a record. The hash-kernel fix is necessary and not
+    # sufficient -- cuBLAS, TF32, cuDNN autotune and torch's scatter kernels all sit between the encoder
+    # and the loss. Pinned here, before anything allocates a CUDA context.
+    _DETERMINISM = enforce_determinism(0)
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=0)
     # ---- LOOP-spacetime NEW DIRECTIONS on the mean-DOY graduation target (additive, default-off) ----
