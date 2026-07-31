@@ -91,6 +91,57 @@ from deepearth.autoresearch.scoring.definitions import (
 #
 # The identity carries config_digest (see harness.py), so two runs with different CONFIG are never
 # treated as the same measurement even though their command lines are identical.
+# ===================================================================================================
+# CHANNELS — THE DATA LEVER, DECLARED. This encoder's data surface, by name.
+# ===================================================================================================
+#
+# program.md calls DATA co-equal with ARCHITECTURE. In practice an agent could not pull it: the corpus
+# is one flat bag of ~40 files shared with the biological loop and with fusion, nothing said which of
+# them THIS encoder consumes, and two of the levers the docs advertise -- `env_extra` and `densify` --
+# are not keys in CONFIG at all. "Change the channel" meant grep the loaders and guess.
+#
+# This is the data half of what scoring.METRICS did for metrics: pick a channel, get the file, the
+# switch that turns it on, and what it costs. Four states, one of which is a bug:
+#
+#   LIVE       a capability preset turns it on today
+#   AVAILABLE  files on disk and a loader reads them -- flip the switch and it works
+#   UNWIRED    files on disk and NO loader reads them. A real lever nobody can pull.
+#   MISSING    declared here, absent on disk. Either the corpus is incomplete or this row is fiction.
+#
+# `dims` is the width the channel adds to the head's input, so the cost is visible before it is paid.
+# Status is DERIVED from disk by `harness.py --channels`, never written here -- a hand-maintained
+# status is exactly how `env_extra` survived in the docs after it stopped existing.
+CHANNELS = {
+    # name           files (relative to CONFIG["cache_dir"])            dims  switch          what it is
+    "worldclim":    (("gbif_worldclim_tokens.npz",),                     19, "env_channels", "19 bioclim variables: temperature and precipitation normals"),
+    "soil":         (("gbif_soil_tokens.npz",),                           9, "env_channels", "SSURGO soil properties"),
+    "elev":         (("gbif_elev.npz",),                                  1, "env_channels", "elevation; always joined to worldclim/soil"),
+    "alphaearth":   (("gbif_alphaearth_tokens.npz",),                    64, "env_channels", "AlphaEarth learned geo embedding -- a foundation-model prior, not a measurement"),
+    "ae_wb":        (("gbif_ae_wb.npz",),                                64, "env_channels", "AlphaEarth + water balance"),
+    "ae_wb_ph":     (("gbif_ae_wb_ph.npz",),                             64, "env_channels", "AlphaEarth + water balance + soil pH"),
+    "modis":        (("gbif_phenology_tokens.npz",),                     16, "env_channels", "MODIS phenology: greenup / senescence timing"),
+    "terrain":      (("gbif_topo_tokens.npz", "gbif_hydro_tokens.npz"),  32, "env_channels", "3DEP microtopography + HydroSHEDS drainage; '+terrain' suffix"),
+    "vision_dino":  (("gbif_tokens/",),                                 768, "vision",       "DINOv3 embedding of the iNaturalist photo. BORROWED: a win here is the vision model's, not the encoder's"),
+    "vision_bio":   (("gbif_tokens/",),                                 768, "vision_feats", "BioCLIP-2 embedding of the same photo; same attribution warning"),
+    "pheno":        (("gbif_flower.npz",),                                1, "pheno_channel","observed flowering state"),
+    "species_dist": (("gbif_species_dist.npz",),                          0, "sdm_channels", "per-cell species distribution -- the SDM supervision target"),
+    "cooccur":      (("derived/cooccur_count_005.npy",),                  0, "cooccur_file", "species co-occurrence counts at 0.5 deg -- the community target"),
+}
+
+# The corpus carries repaired versions under derived/*_rebuilt.*. A data-integrity audit
+# (main/program/GRADUATION_BLUEPRINT.md) found 2 mislabeled arrays and 5 missing files, rebuilt them,
+# and made "activate the 6 rebuilt data files" graduation step 1. Activating one means copying it onto
+# its live name -- a champion-pipeline change, an operator decision. `harness.py --channels` reports
+# which are still un-activated, because a run against the un-repaired file measures the wrong corpus.
+REPAIRED = {
+    "gbif_species_dist.npz":      "derived/gbif_species_dist_rebuilt.npz",
+    "gbif_plant_dist.npz":        "derived/gbif_plant_dist_rebuilt.npz",
+    "gbif_mycorrhiza.npz":        "derived/gbif_mycorrhiza_rebuilt.npz",
+    "gbif_lfmc.npz":              "derived/gbif_lfmc_rebuilt.npz",
+    "bioclip_taxon_text_emb.npy": "derived/bioclip_taxon_text_emb_rebuilt.npy",
+}
+
+
 CONFIG = {
     # THE ENCODER, AS fusion.py INSTANTIATES IT. Nothing bolted on.
     #

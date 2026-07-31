@@ -1426,6 +1426,93 @@ def _insights(capability: str = "", ensue: bool = True) -> int:
     return 0
 
 
+
+# ============================================================================================================
+# THE DATA LEVER  (harness.py --channels)
+# ============================================================================================================
+#
+# program.md calls DATA co-equal with ARCHITECTURE, and until now an agent had no way to see it: the
+# corpus is one flat bag shared with the biological loop and fusion, and nothing said which files THIS
+# encoder can consume. Measured consequence -- five of six capabilities run on coordinates alone, two
+# advertised levers (`env_extra`, `densify`) are not CONFIG keys at all, and two channels that exist on
+# disk (topo, hydro) have no loader.
+#
+# probe.py declares CHANNELS; this derives their state from disk, so the table cannot claim a channel
+# the corpus does not have.
+def _channels(cap: str = "") -> int:
+    import ast as _ast
+    import re as _re
+    src = (LOOP / "editable_files" / "probe.py").read_text()
+    CH = _ast.literal_eval(_re.search(r"CHANNELS = (\{.*?\n\})", src, _re.S).group(1))
+    RP = _ast.literal_eval(_re.search(r"REPAIRED = (\{.*?\n\})", src, _re.S).group(1))
+    CFG = _ast.literal_eval(_re.search(r"CONFIG = (\{.*?\n\})", src, _re.S).group(1))
+    CAP = _ast.literal_eval(_re.search(r"CAPABILITY_CONFIG = (\{.*?\n\})", src, _re.S).group(1))
+    cache = Path(CFG["cache_dir"])
+    if not cache.is_absolute():
+        cache = REPO.parent / cache if (REPO.parent / cache).exists() else AUTORESEARCH.parent / cache
+
+    # a channel is LIVE if any capability preset (or CONFIG, for a bare switch) actually selects it
+    def live_in(name, switch):
+        for c, v in CAP.items():
+            if cap and c != cap:
+                continue
+            m = {**CFG, **v}
+            val = m.get(switch)
+            if val is True or (isinstance(val, str) and (name in val or val == "all")):
+                if switch != "env_channels" or m.get("env"):
+                    return c
+                if switch == "env_channels" and m.get("env"):
+                    return c
+        return ""
+
+    print("=" * 100)
+    print(f"DATA LEVER — channels this encoder can consume{f'  (capability: {cap})' if cap else ''}")
+    print("=" * 100)
+    print(f"corpus: {cache}\n")
+    print(f"  {'channel':<14} {'state':<10} {'dims':>5}  {'switch':<14} files")
+    n_unwired = n_missing = 0
+    for name, (files, dims, switch, what) in CH.items():
+        on_disk = all((cache / f).exists() for f in files)
+        wired = f'"{name}"' in src or f"'{name}'" in src
+        if not on_disk:
+            state = "MISSING"; n_missing += 1
+        elif live_in(name, switch):
+            state = "LIVE"
+        elif not wired:
+            state = "UNWIRED"; n_unwired += 1
+        else:
+            state = "AVAILABLE"
+        print(f"  {name:<14} {state:<10} {dims:>5}  {switch:<14} {', '.join(files)}")
+        print(f"  {'':14} {what}")
+    print()
+    print("  LIVE       a capability preset selects it today")
+    print("  AVAILABLE  on disk and a loader reads it -- flip the switch")
+    print("  UNWIRED    on disk and NO loader reads it. A real lever nobody can pull.")
+    print("  MISSING    declared but absent on disk")
+
+    print("\n" + "-" * 100)
+    print("REPAIRED CORPUS FILES — a run against an un-activated one measures the wrong data")
+    stale = 0
+    for live, rebuilt in RP.items():
+        lp, rp = cache / live, cache / rebuilt
+        if not rp.exists():
+            print(f"  {live:<30} no rebuilt version on disk")
+            continue
+        if not lp.exists():
+            print(f"  {live:<30} *** LIVE FILE MISSING, repair exists at {rebuilt}"); stale += 1
+        elif lp.stat().st_size != rp.stat().st_size:
+            print(f"  {live:<30} *** NOT ACTIVATED  live={lp.stat().st_size:,}  repaired={rp.stat().st_size:,}")
+            stale += 1
+        else:
+            print(f"  {live:<30} activated")
+    print("-" * 100)
+    print(f"{n_unwired} unwired · {n_missing} missing · {stale} un-activated repair(s)")
+    if stale:
+        print("Activating one is `cp derived/<x>_rebuilt.<ext> <x>.<ext>` -- a champion-pipeline change,")
+        print("so it is the OPERATOR's call, not an agent's. Until then those rows measure the old corpus.")
+    return 1 if (n_missing or stale) else 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Earth4D legacy probe ledger — exact audited protocol migrations only"
@@ -1692,6 +1779,12 @@ def main() -> None:
 if __name__ == "__main__":
     # Two entry points, one file: `--list-modes` answers "what can move this capability, and where do I
     # edit?" without running anything; anything else runs the loop.
+    if "--channels" in sys.argv:
+        sys.argv.remove("--channels")
+        _c = ""
+        if "--metric" in sys.argv:
+            _i = sys.argv.index("--metric"); _c = sys.argv[_i + 1]; del sys.argv[_i:_i + 2]
+        raise SystemExit(_channels(_c))
     if "--insights" in sys.argv:
         sys.argv.remove("--insights")
         _cap = ""
