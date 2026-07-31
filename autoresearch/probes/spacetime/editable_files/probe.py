@@ -874,7 +874,7 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     lvl_of = (torch.arange(edim, device=dev) // max(fpl, 1)).clamp(max=n_lv - 1)   # ENCODER dims only
     warm_n, c2f_n = max(int(steps * warmup), 1), max(int(steps * c2f), 1)
     _p0 = {n: q.detach().clone() for n, q in enc.named_parameters()}   # sanity: did the encoder ACTUALLY move?
-    for it in budgeted(steps, "recurrence"):
+    for it in budgeted(steps, tag):
         for gi, base in enumerate((lr, lr * enc_lr_mult)):
             opt.param_groups[gi]["lr"] = base * min(1.0, (it + 1) / warm_n)      # linear warmup
         keep = n_lv if it >= c2f_n else max(1, int(n_lv * (it + 1) / c2f_n))     # coarse-to-fine

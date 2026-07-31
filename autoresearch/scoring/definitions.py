@@ -572,7 +572,12 @@ _PROBE_REL = "probes/spacetime/editable_files/probe.py"
 # The files v5 touched. Every one gets the undefined-name sweep.
 CHANGED_FILES = (_E4D_REL, _PROBE_REL, "scoring/definitions.py", "scoring/graduation.py",
                  "main/harness/evaluate.py", "main/harness/score.py", "probes/spacetime/harness.py",
-                 "probes/spacetime/editable_files/hashencoder/hashgrid.py")
+                 "probes/spacetime/editable_files/hashencoder/hashgrid.py",
+                 # the probe's libraries: dead code with undefined names is still a landmine, and it
+                 # is the cheapest possible signal that a module has outlived its callers.
+                 "probes/spacetime/editable_files/lib/dyntargets.py",
+                 "probes/spacetime/editable_files/lib/phenology.py",
+                 "probes/spacetime/editable_files/lib/recurrence.py")
 
 
 class _Audit:
@@ -751,8 +756,8 @@ def _audit_core(A: _Audit) -> None:
         except Exception as exc:                                  # noqa: BLE001 — any failure is a failure
             A.check(False, f"import {mod}", f"{type(exc).__name__}: {exc}")
     # earth4d/probe link the CUDA extension at import; off-box that is expected, not a regression.
-    for mod, rel in (("...editable_files.earth4d", _E4D_REL), ("...editable_files.probe", _PROBE_REL)):
-        A.info(f"import {mod}", "GPU-linked — covered by the static checks below, not by import")
+    for rel in (_E4D_REL, _PROBE_REL):
+        A.info(f"import {rel}", "GPU-linked — covered by the static checks below, not by import")
 
     rec = AUTORESEARCH / "main/records/champion_scores.json"
     if not rec.exists():
@@ -984,6 +989,14 @@ def audit() -> Tuple[str, List[str]]:
 # knows about Earth4D, only about "a torch module" and "a categorical target over coordinates", so the
 # biological loop can call them unchanged.
 
+def _as_device(dev):
+    """Accept "cuda:0" or torch.device. probe.py passes the raw --device STRING, and an axis that
+    assumed the object died with AttributeError: 'str' has no attribute 'type'. Normalise once here so
+    every axis takes either."""
+    import torch
+    return dev if hasattr(dev, "type") else torch.device(dev)
+
+
 def science_axes(enc, coords, dev, warmup: int = 5, iters: int = 20) -> dict:
     """R5 (capacity) and R4/R21 (throughput). Both are cheap and both are currently unscored.
 
@@ -996,8 +1009,7 @@ def science_axes(enc, coords, dev, warmup: int = 5, iters: int = 20) -> dict:
     Reporting fwd+bwd wall-clock per 1k coords at least makes a speedup VISIBLE while the budget is
     still counted in steps.
     """
-    import time
-    import torch
+    dev = _as_device(dev)
     import time
     import torch
     n_params = sum(p.numel() for p in enc.parameters())
@@ -1006,12 +1018,12 @@ def science_axes(enc, coords, dev, warmup: int = 5, iters: int = 20) -> dict:
     x = coords[: min(len(coords), 65536)].to(dev)
     for _ in range(warmup):
         enc(x).sum().backward()
-    if dev.type == "cuda":
+    if torch.device(dev).type == "cuda":
         torch.cuda.synchronize()
     t0 = time.time()
     for _ in range(iters):
         enc(x).sum().backward()
-    if dev.type == "cuda":
+    if torch.device(dev).type == "cuda":
         torch.cuda.synchronize()
     ms_per_1k = (time.time() - t0) / iters / (len(x) / 1000.0) * 1000.0
     enc.zero_grad(set_to_none=True)
@@ -1139,6 +1151,7 @@ def field_interpolation(enc, coords, env, dev, cell_deg: float = 0.25, steps: in
     Control is NEAREST-NEIGHBOUR from the train cells: the interpolation any method gets for free. A
     gain over it is evidence of a learned field; at or below it, the encoder is a lookup table.
     """
+    dev = _as_device(dev)
     import torch
     torch.manual_seed(seed)
     lat, lon = np.asarray(coords[:, 0].cpu()), np.asarray(coords[:, 1].cpu())
@@ -1199,6 +1212,7 @@ def relative_transfer(enc, coords, fam, dev, steps: int = 400, lr: float = 3e-3,
 
     Requires enable_relative=True; without it the axis reports unmeasurable rather than a wrong number.
     """
+    dev = _as_device(dev)
     import torch
     if not getattr(enc, "enable_relative", False):
         return {"axis_R2b_measurable": False,
@@ -1276,6 +1290,7 @@ def autoregressive_rollout(enc, coords, fam, days, test, dev, K: int = 16, horiz
     Neighbours are drawn from TRAIN rows only and are strictly earlier in time, so no test label and no
     future information can enter the state.
     """
+    dev = _as_device(dev)
     import torch
     torch.manual_seed(seed)
     lat = np.asarray(coords[:, 0].cpu()); lon = np.asarray(coords[:, 1].cpu())
