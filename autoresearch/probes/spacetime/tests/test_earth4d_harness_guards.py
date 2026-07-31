@@ -84,6 +84,30 @@ class TraceProtocolGateTests(unittest.TestCase):
         self.assertTrue(better[0])
         self.assertFalse(better[1])
 
+    def test_pre_contract_bare_mode_matches_its_submoded_form(self):
+        """A pre-contract record stored the mode FAMILY; the contract appended the split as a submode.
+
+        family_from_env's record is mode "ENV" and every run since the contract declares
+        "ENV(spatial-block)" -- the same measurement, verified by a no-edit control reproducing
+        0.142318 against a stored 0.1423. Before this rule the capability could not be recorded at all:
+        the gate refused every run as not like-for-like, which is why its dead-end ledger is full of
+        RECORD WITHHELD entries whose only fault was the label.
+        """
+        migrated = _record_gate(0.2, 0.1423, "v2-leakfix", "ENV(spatial-block)", "ENV", 12, 12)
+        self.assertTrue(migrated[0])       # is_record
+        self.assertTrue(migrated[1])       # rebaseline
+        self.assertTrue(migrated[3])       # mode_ok
+        beats = _record_gate(0.2, 0.1423, PROTOCOL, "ENV(spatial-block)", "ENV", 12, 12)
+        self.assertTrue(beats[0])
+        # ...but it must not merge two submodes of one family, nor two different families.
+        two_submodes = _record_gate(
+            0.2, 0.1, PROTOCOL, "FORECAST(future+newplace)", "FORECAST(past->future)", 12, 12)
+        self.assertFalse(two_submodes[0])
+        self.assertFalse(two_submodes[3])
+        other_family = _record_gate(0.2, 0.1, PROTOCOL, "ENV-DECODE(spatial-block)", "ENV", 12, 12)
+        self.assertFalse(other_family[0])
+        self.assertFalse(other_family[3])
+
     def test_capability_registry_matches_the_scorecard_contract(self):
         """Every legal --metric must be parseable, and every refusal must carry a reason.
 

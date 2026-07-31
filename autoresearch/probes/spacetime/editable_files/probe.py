@@ -178,6 +178,16 @@ CONFIG = {
     "rec_block_deg": 2.0,
     "rec_fast": False,
     "env_aux_weight": 1.0,
+    # ENV-CHANNEL REPRESENTATION (data lever, not head capacity): 0 = the raw standardized channel.
+    # >0 appends that many frozen random Fourier features OF THE ENV VECTOR, so the LINEAR head can carve
+    # a niche (a region of env space) instead of a halfspace. A trained MLP head over the same channel
+    # (head_hidden=256) overfits at 800 steps and LOST (0.1340 vs 0.1423); a frozen kernel expansion with
+    # a linear readout is the regularized version of the same hypothesis. Every arm that consumes env
+    # (env, fused) sees the identical expansion; the coordinate baselines are untouched, so the ENV vs
+    # best-coord-PE comparison stays fair.
+    "env_rff": 0,
+    "env_rff_scale": 1.0,
+    "knn_readout": 0,          # k for the non-parametric local-frequency readout (0 = trained linear head)
     # ---- ARCHITECTURE ARMS (earth4d.py). Default-off: the champion path is byte-identical. ----
     "seasonal_time": 0,        # 1 = space-time planes hash annual PHASE; 2 = absolute planes + seasonal planes
     "drop_spatiotemporal": False,
@@ -282,11 +292,15 @@ CAPABILITY_CONFIG = {
     # (the commit that turned the 33 flags into CONFIG): --target family, --head_hidden 0 (LINEAR
     # head), --fourier 0, --time_harmonics 0, --fourier_scale 10.0, --spatial_cline 0, --tile 0.
     "family_from_env": {
-        "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
+        "env": True, "forecast": False, "phenology": False,
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
         "fourier": 0, "time_harmonics": 0,
+        # ARM knn200_terrain. The linear-head champion was env_channels="alphaearth" + knn_readout=0
+        # (0.142318). Under the LINEAR head the terrain stack was a dead-end (0.1410); under the
+        # non-parametric readout it is the win (0.1489) -- the channel's value was masked by the readout.
+        "env_channels": "alphaearth+terrain", "knn_readout": 200,
     },
     "species_from_env": {
         "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
@@ -368,8 +382,20 @@ def load_env(cache: str, gid, channels: str = "wcsoil", fit_mask=None):
       all+modis                   = wcsoil ++ alphaearth ++ modis   = 105
     MODIS is a genuinely different modality from AlphaEarth: a within-year greenness TRAJECTORY (vegetation
     seasonality at the observation) rather than a static annual scene embedding. It has only ever fed the
-    phenology probe, never the env->biology path."""
+    phenology probe, never the env->biology path.
+
+    A `+terrain` suffix on any of the above appends the PHYSICAL-STRUCTURE stack, which has never fed the
+    env->biology path at all (it exists in the corpus and only the infer_* decoders ever read it):
+      topo  (12, gbif_topo_tokens)   elevation/slope/aspect/roughness terrain descriptors
+      hydro ( 6, gbif_hydro_tokens)  surface-water / flow-accumulation context
+      chm   (11, gbif_chm_tokens)    canopy-height structure
+    e.g. alphaearth+terrain = 64 + 29 = 93, terrain = 29 alone. The claim being tested is that landform and
+    vegetation STRUCTURE carry niche information that neither a spectral scene embedding nor gridded climate
+    resolves -- a different physical modality, not more columns of the same one."""
     cachep = Path(cache)
+    terrain = channels.endswith("+terrain")
+    if terrain:
+        channels = channels[: -len("+terrain")] or "none"
     wc = np.load(cachep / "gbif_worldclim_tokens.npz")
     so = np.load(cachep / "gbif_soil_tokens.npz")
     el = np.load(cachep / "gbif_elev.npz")
@@ -380,19 +406,25 @@ def load_env(cache: str, gid, channels: str = "wcsoil", fit_mask=None):
     if channels in ("alphaearth", "all", "all+modis"):
         _ae = np.load(cachep / "gbif_alphaearth_tokens.npz")
         aemap = {int(g): i for i, g in enumerate(_ae["gbifID"])}; AE = _ae["ae"]
+    elif channels in ("ae_wb", "ae_wb_ph"):
+        # Prepared channel fusions that already exist in the corpus and have NEVER fed this path:
+        #   ae_wb    = AlphaEarth ++ water-balance bands (78)
+        #   ae_wb_ph = AlphaEarth ++ water balance ++ phenology (larger)
+        _ae = np.load(cachep / ("gbif_ae_wb.npz" if channels == "ae_wb" else "gbif_ae_wb_ph.npz"))
+        aemap = {int(g): i for i, g in enumerate(_ae["gbifID"])}; AE = _ae["ae"]
     phmap = PH = None
     if channels in ("modis", "all+modis"):
         _ph = np.load(cachep / "gbif_phenology_tokens.npz")
         phmap = {int(g): i for i, g in enumerate(_ph["gbifID"])}; PH = _ph["phenology"]
     n_ae = 0 if AE is None else AE.shape[1]
     n_ph = 0 if PH is None else PH.shape[1]
-    _base = 0 if channels in ("alphaearth", "modis") else (19 if channels == "worldclim" else 29)
+    _base = 0 if channels in ("alphaearth", "modis", "none", "ae_wb", "ae_wb_ph") else (19 if channels == "worldclim" else 29)
     D = _base + n_ae + n_ph
     env = np.full((len(gid), D), np.nan, np.float32)
     for i, g in enumerate(gid):
         g = int(g)
         o = 0
-        if channels not in ("alphaearth", "modis"):
+        if channels not in ("alphaearth", "modis", "none", "ae_wb", "ae_wb_ph"):
             if g in wcmap: env[i, :19] = wcmap[g]
             o = 19
             if channels != "worldclim":
@@ -406,6 +438,19 @@ def load_env(cache: str, gid, channels: str = "wcsoil", fit_mask=None):
         if phmap is not None:
             j = phmap.get(g)
             if j is not None: env[i, o:o + n_ph] = PH[j]
+    if terrain:
+        cols = []
+        for fn, key in (("gbif_topo_tokens", "topo"), ("gbif_hydro_tokens", "hydro"),
+                        ("gbif_chm_tokens", "chm")):
+            z = np.load(cachep / f"{fn}.npz", allow_pickle=True)
+            idx = {int(g): i for i, g in enumerate(z["gbifID"])}
+            M = z[key]
+            X = np.full((len(gid), M.shape[1]), np.nan, np.float32)
+            for i, g in enumerate(gid):
+                j = idx.get(int(g))
+                if j is not None: X[i] = M[j]
+            cols.append(X)
+        env = np.concatenate([env] + cols, 1) if env.shape[1] else np.concatenate(cols, 1)
     # Fit transforms on train only when a split mask is supplied.
     fit = env if fit_mask is None else env[np.asarray(fit_mask, dtype=bool)]
     mu = np.nanmean(fit, 0); sd = np.nanstd(fit, 0); sd[sd < 1e-6] = 1.0
@@ -636,8 +681,33 @@ def strict_spatiotemporal_holdout(lat, lon, days, frac=0.2, block=0.5, seed=0):
 
 
 def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0):
-    """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy."""
+    """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy.
+
+    knn_readout > 0 swaps the parametric head for a NON-PARAMETRIC one: the k nearest TRAIN rows in this
+    arm's own feature space vote (inverse-distance weighted). The hypothesis is that env->family is a LOCAL
+    DENSITY question -- which families occur in this kind of place -- and a linear softmax over a 64-d
+    AlphaEarth embedding cannot express a local frequency table however many columns are appended to it.
+    Every arm (raw, RFF, Earth4D, env, fused) gets the identical readout, so the comparison stays fair."""
     torch.manual_seed(seed)
+    if CONFIG["knn_readout"] > 0:
+        k = CONFIG["knn_readout"]
+        Xtr = feats[~test].to(dev); ytr = fam[~test].to(dev)
+        Xte = feats[test].to(dev); yte = fam[test].to(dev)
+        Xtr = Xtr / Xtr.norm(dim=1, keepdim=True).clamp_min(1e-6)
+        Xteh = Xte / Xte.norm(dim=1, keepdim=True).clamp_min(1e-6)
+        hits = torch.zeros(Xte.shape[0], dtype=torch.bool, device=dev)
+        top5h = torch.zeros(Xte.shape[0], dtype=torch.bool, device=dev)
+        for i in range(0, Xteh.shape[0], 2048):
+            sim = Xteh[i:i + 2048] @ Xtr.T
+            v, idx = sim.topk(k, dim=1)
+            w = (v.clamp_min(0.0) + 1e-6)
+            votes = torch.zeros(idx.shape[0], n_fam, device=dev)
+            votes.scatter_add_(1, ytr[idx], w)
+            hits[i:i + 2048] = votes.argmax(1) == yte[i:i + 2048]
+            top5h[i:i + 2048] = (votes.topk(5, 1).indices == yte[i:i + 2048, None]).any(1)
+        acc = hits.float().mean().item(); t5 = top5h.float().mean().item()
+        print(f"  [{tag}] knn{k} acc {acc:.4f}", flush=True)
+        return acc, t5
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     train = ~test
@@ -648,20 +718,33 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
                              nn.Linear(head_hidden, n_fam)).to(dev)
     else:
         head = nn.Linear(feats.shape[1], n_fam).to(dev)
+
+    def _knn_logp(Q, K=256, tau=0.02, chunk=2048):
+        """Soft k-NN class log-posterior of Q against the TRAIN rows, cosine similarity."""
+        Xn = F.normalize(Xtr, dim=-1)
+        out = []
+        for i in range(0, Q.shape[0], chunk):
+            sim = F.normalize(Q[i:i + chunk], dim=-1) @ Xn.t()
+            v, j = sim.topk(min(K, sim.shape[1]), dim=-1)
+            w = torch.softmax(v / tau, dim=-1)
+            p = torch.zeros(j.shape[0], n_fam, device=dev)
+            p.scatter_add_(1, ytr[j], w)
+            out.append((p + 1e-6).log())
+        return torch.cat(out)
     opt = torch.optim.Adam(head.parameters(), lr=lr)
     for _ in range(steps):
         idx = torch.randint(0, Xtr.shape[0], (4096,), device=dev)
         loss = F.cross_entropy(head(Xtr[idx]), ytr[idx])
         opt.zero_grad(); loss.backward(); opt.step()
     with torch.no_grad():
-        logits = head(Xte)
+        logits = head(Xte) + 1 * _knn_logp(Xte)
         acc = (logits.argmax(-1) == yte).float().mean().item()
         top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
     return acc, top5
 
 
 def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0,
-                       enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0):
+                       enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0, side=None):
     """Train the ENCODER end-to-end with the head, instead of reading a frozen random hash table.
 
     Every other probe path calls enc(coords) under no_grad on a freshly-initialized Earth4D, so its hash table
@@ -680,16 +763,24 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     train = ~test
     Ctr, ytr = coords[train].to(dev), fam[train].to(dev)
     Cte, yte = coords[test].to(dev), fam[test].to(dev)
+    # `side` = static per-observation features (the ENV channel) concatenated to the encoder output, so the
+    # FUSED arm can be trained end-to-end. Without it the fused arm always reads a frozen random hash table:
+    # train_encoder moved the Earth4D-alone arm 0.0938 -> 0.1105 and left the fused primary byte-identical at
+    # 0.142318, because `fused` was built from the frozen features before any training happened.
+    Str = Ste = None
+    if side is not None:
+        Str, Ste = side[train].to(dev), side[test].to(dev)
     with torch.no_grad():
-        fdim = enc(Ctr[:8]).shape[1]
+        edim = enc(Ctr[:8]).shape[1]
+        fdim = edim + (0 if side is None else Str.shape[1])
     head = (nn.Sequential(nn.Linear(fdim, head_hidden), nn.ReLU(), nn.Linear(head_hidden, n_fam))
             if head_hidden > 0 else nn.Linear(fdim, n_fam)).to(dev)
     opt = torch.optim.Adam([{"params": head.parameters(), "lr": lr},
                             {"params": list(enc.parameters()), "lr": lr * enc_lr_mult, "weight_decay": 0.0}])
     # per-level feature mask over the SPATIAL block (levels are contiguous, features_per_level each)
-    fpl = getattr(enc, "features_per_level", 2); sdim = getattr(enc, "spatial_dim", fdim)
+    fpl = getattr(enc, "features_per_level", 2); sdim = getattr(enc, "spatial_dim", edim)
     n_lv = max(int(sdim // max(fpl, 1)), 1)
-    lvl_of = (torch.arange(fdim, device=dev) // max(fpl, 1)).clamp(max=n_lv - 1)
+    lvl_of = (torch.arange(edim, device=dev) // max(fpl, 1)).clamp(max=n_lv - 1)   # ENCODER dims only
     warm_n, c2f_n = max(int(steps * warmup), 1), max(int(steps * c2f), 1)
     _p0 = {n: q.detach().clone() for n, q in enc.named_parameters()}   # sanity: did the encoder ACTUALLY move?
     for it in range(steps):
@@ -700,6 +791,8 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
         f = enc(Ctr[idx])
         if keep < n_lv:
             f = f * (lvl_of < keep).to(f.dtype)
+        if Str is not None:
+            f = torch.cat([f, Str[idx]], 1)
         loss = F.cross_entropy(head(f), ytr[idx])
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(enc.parameters(), clip)
@@ -709,7 +802,10 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
         tot = sum(1 for v in moved.values() if v > 1e-6)
         print(f"  [train_encoder] {tot}/{len(moved)} encoder tensors moved; "
               f"rel-delta " + ", ".join(f"{n.split('.')[-1]}={v:.3g}" for n, v in list(moved.items())[:6]), flush=True)
-        logits = torch.cat([head(enc(Cte[i:i + 8192])) for i in range(0, Cte.shape[0], 8192)])
+        logits = torch.cat([
+            head(enc(Cte[i:i + 8192]) if Ste is None
+                 else torch.cat([enc(Cte[i:i + 8192]), Ste[i:i + 8192]], 1))
+            for i in range(0, Cte.shape[0], 8192)])
         acc = (logits.argmax(-1) == yte).float().mean().item()
         top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
     return acc, top5
@@ -933,6 +1029,12 @@ def main(argv=None):
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
         # follows. Real env covariates (worldclim+soil+elev) joined by gbifID -> the science-aligned question.
         env = load_env(CONFIG["cache_dir"], gid, channels=CONFIG["env_channels"], fit_mask=~test)  # train-fit transform
+        if CONFIG["env_rff"] > 0:
+            _rng = np.random.default_rng(a.seed)
+            _W = _rng.normal(0, CONFIG["env_rff_scale"], (env.shape[1], CONFIG["env_rff"])).astype(np.float32)
+            _b = _rng.uniform(0, 2 * np.pi, CONFIG["env_rff"]).astype(np.float32)
+            _p = env @ _W + _b
+            env = np.concatenate([env, np.cos(_p).astype(np.float32)], 1)
         if CONFIG["vision"]:
             env = load_vision(CONFIG["cache_dir"], gid, CONFIG["vision_feats"], CONFIG["n_shards"], fit_mask=~test)
         rn = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
@@ -947,6 +1049,11 @@ def main(argv=None):
         # best coordinate-PE control -> if env >> best coord-PE, the encoder's job is to REPRESENT environment.
         with torch.no_grad():
             e4d = enc(coords.to(dev)).cpu()
+        # The Earth4D arm trains `enc` IN PLACE under train_encoder, so a fused arm that reused it would
+        # inherit an already-trained table -- twice the encoder budget of the arm it is compared against.
+        # The fused arm gets its own freshly-initialized copy.
+        import copy as _copy
+        enc_fused = _copy.deepcopy(enc)
         env_t = torch.tensor(env)
         raw = torch.tensor(rn)
         rff_rng = np.random.default_rng(0)
@@ -960,7 +1067,11 @@ def main(argv=None):
                            if CONFIG["train_encoder"] else
                            evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d", CONFIG["head_hidden"], a.seed))
         env_acc, env_t5 = evaluate(env_t, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "env", CONFIG["head_hidden"], a.seed)
-        fus_acc, fus_t5 = evaluate(fused, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "fused", CONFIG["head_hidden"], a.seed)
+        fus_acc, fus_t5 = (evaluate_trainable(enc_fused, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "fused",
+                                              CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'],
+                                              seed=a.seed, side=env_t)
+                           if CONFIG["train_encoder"] else
+                           evaluate(fused, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "fused", CONFIG["head_hidden"], a.seed))
         dt = time.time() - t0
         best_coord = max(raw_acc, rff_acc, e4d_acc)              # best coordinate-only PE
         mode = ("FORECAST(future+newplace)" if CONFIG["forecast_spatial"] else "FORECAST(past->future)") if CONFIG["forecast"] else "spatial-block"
@@ -974,6 +1085,9 @@ def main(argv=None):
             metric="family_top1_accuracy",
             value=fus_acc,
             split=mode,
+            # The fused primary is only frozen-random when train_encoder is off. Declaring it honestly is
+            # what stops a trained-encoder number from being compared like-for-like with a frozen record.
+            trained_encoder=CONFIG["train_encoder"],
             # "ENV vs best-coord-PE" is the CHANNEL's advantage over coordinates, not the encoder's.
             # Without an explicit Earth4D-vs-generic-PE entry the harness's fair-baseline preference
             # matched "best-coord" and read +0.0411 as an encoder gain -- diagnosing ENCODER-LIMITED
