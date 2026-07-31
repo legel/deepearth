@@ -623,8 +623,29 @@ def run_pheno_densefield(qfeat_all, feat_dim, days, coords_ll, test, dev, block=
 # species' partner-set from ENVIRONMENT + SPACE vs a non-spatial (prevalence) baseline. micro-AP + gain.
 # All leak-guards reported per run.
 # =====================================================================================================
+# ------------------------------------------------------------------------------------------------
+# COORD ENCODER ARM
+#
+# These three modes built their spatial feature from RAW coordinates (a species centroid, a cell
+# centroid). That is why they could only ever compare against the class prior: with no encoder in the
+# comparison, `gain_over_prevalence` says "features beat guessing", not "Earth4D beats a coordinate
+# encoder". community_from_env published +0.4570 and species_from_env +0.4000 in the same column as
+# species_from_spacetime's +0.0608 against a matched RFF, and the three were sorted against each other.
+#
+# `coord_encoder` replaces that raw block with an ENCODING of the identical coordinates. Pass Earth4D
+# for one arm and a matched-width RFF for the other, and the difference is an encoder-vs-encoder gain
+# on the same task, same split, same head -- the same quantity every other row reports.
+def _encode_coords(coord_encoder, lat, lon):
+    """coord_encoder(lat, lon) -> [N, D]. None returns the raw pair, i.e. the previous behaviour."""
+    import numpy as _np
+    if coord_encoder is None:
+        return _np.stack([lat, lon], 1).astype(_np.float32)
+    out = coord_encoder(_np.asarray(lat, _np.float64), _np.asarray(lon, _np.float64))
+    return _np.asarray(out, _np.float32)
+
+
 def cooccur_routing(cache, thresh=2, min_deg=5, seed=0, mechanism="env", n_shards_space=None,
-                    cooccur_file="cooccur_count_005.npy", env_channels="all"):
+                    cooccur_file="cooccur_count_005.npy", env_channels="all", coord_encoder=None):
     """Predict a species co-occurrence PARTNER-SET from per-species ENV/SPACE features (held-out species).
 
     Target: binary partner matrix P[S,S], P[i,j]=1 iff species i and j co-occur >= `thresh` times in a 0.5deg
@@ -689,6 +710,11 @@ def cooccur_routing(cache, thresh=2, min_deg=5, seed=0, mechanism="env", n_shard
     def _z(X, tr_):
         m = _np.nanmean(X[tr_], 0); sd = _np.nanstd(X[tr_], 0); sd[sd < 1e-6] = 1.0
         return _np.nan_to_num((X - m) / sd, nan=0.0).astype(_np.float32)
+    # GEO[:,0:2] is the species' occurrence centroid (lat, lon); [:,2:4] its spread. When a coord
+    # encoder is supplied the centroid is ENCODED and the spread kept alongside, so the Earth4D and RFF
+    # arms differ only in the encoder.
+    if coord_encoder is not None:
+        GEO = _np.concatenate([_encode_coords(coord_encoder, GEO[:, 0], GEO[:, 1]), GEO[:, 2:4]], 1)
     ENVz = _z(ENV, tr); GEOz = _z(GEO, tr)
     if env_channels == "worldclim":
         ENVz = ENVz[:, :19]
@@ -767,7 +793,8 @@ def cooccur_routing(cache, thresh=2, min_deg=5, seed=0, mechanism="env", n_shard
 # CELL from the cell's ENVIRONMENT (+ spatial position). Isolated niche/propagation mechanism at the probe
 # level (older full-model sweeps called this "saturated"). env-only vs space-only vs both.
 # =====================================================================================================
-def sdm_presence(cache, seed=0, mechanism="both", min_cell_obs=3, cooccur_file="cooccur_count_005.npy"):
+def sdm_presence(cache, seed=0, mechanism="both", min_cell_obs=3, cooccur_file="cooccur_count_005.npy",
+                 coord_encoder=None):
     """Multi-label species-presence at a CELL from env+space (held-out cells).
 
     Target: for each occupied 0.5deg cell, the binary species-presence vector Y[cell, species] over the 2141
@@ -814,6 +841,10 @@ def sdm_presence(cache, seed=0, mechanism="both", min_cell_obs=3, cooccur_file="
         import numpy as __np
         m = __np.nanmean(X[tr_], 0); sd = __np.nanstd(X[tr_], 0); sd[sd < 1e-6] = 1.0
         return __np.nan_to_num((X - m) / sd, nan=0.0).astype(_np.float32)
+    # LL is the cell centroid (lat, lon). With a coord encoder it becomes an ENCODING of that same
+    # centroid, so Earth4D and RFF arms differ only in the encoder.
+    if coord_encoder is not None:
+        LL = _encode_coords(coord_encoder, LL[:, 0], LL[:, 1])
     ENVz = _z(ENV, tr); LLz = _z(LL, tr)
     if mechanism == "env": FEAT = ENVz
     elif mechanism == "space": FEAT = LLz
@@ -858,7 +889,7 @@ def sdm_presence(cache, seed=0, mechanism="both", min_cell_obs=3, cooccur_file="
 # appended to env to test whether WHEN informs WHERE-WHO over env-only. Additive; original sdm_presence
 # untouched. Deterministic single-seed; caller loops seeds for CI.
 # =====================================================================================================
-def sdm_presence_hard(cache, seed=0, mechanism="env", min_cell_obs=3, cell_deg=0.1,
+def sdm_presence_hard(cache, seed=0, mechanism="env", min_cell_obs=3, cell_deg=0.1, coord_encoder=None,
                       holdout_mode="block", block_deg=2.0, holdout_frac=0.2,
                       env_channels="all", add_time=False, cooccur_file="cooccur_count_005.npy"):
     """Hardened multi-label species-presence@cell. See module header for the design.
@@ -942,6 +973,10 @@ def sdm_presence_hard(cache, seed=0, mechanism="env", min_cell_obs=3, cell_deg=0
         import numpy as __np
         m = __np.nanmean(X[tr_], 0); sd = __np.nanstd(X[tr_], 0); sd[sd < 1e-6] = 1.0
         return __np.nan_to_num((X - m) / sd, nan=0.0).astype(__np.float32)
+    # LL is the cell centroid (lat, lon). With a coord encoder it becomes an ENCODING of that same
+    # centroid, so Earth4D and RFF arms differ only in the encoder.
+    if coord_encoder is not None:
+        LL = _encode_coords(coord_encoder, LL[:, 0], LL[:, 1])
     ENVz = _z(ENV, tr); LLz = _z(LL, tr); TTz = _z(TT, tr)
     if mechanism == "env": FEAT = ENVz
     elif mechanism == "space": FEAT = LLz

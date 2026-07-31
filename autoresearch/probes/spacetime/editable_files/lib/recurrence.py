@@ -504,3 +504,62 @@ def run_recurrence_timecond(featurize, feat_dim, fam, days, coords_ll, test, n_f
         acc = (logits.argmax(-1) == yte).float().mean().item()
         top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
     return acc, top5, int(fte.shape[0])
+
+
+def run_field_decode(kind, coords4, rn_in, fam, test, n_fam, dev, enc=None, feat_dim=96,
+                     steps=4000, lr=3e-3, head_hidden=256, wd=0.0):
+    """rule 24 -- DENSE FIELD DECODE. Train an encoder END-TO-END to decode the family field from space-time,
+    fitting the field between sparse TRAIN obs, then forecast the strict held-out (future+new-place) set.
+
+    kind='earth4d' : trainable Earth4D encoder (enc) -> head            (the encoder learns field structure)
+    kind='mlp'     : trainable coord-MLP on (lat/90,lon/180,t) -> head  (generic learned PE, matched capacity)
+    kind='rff'     : FIXED random-Fourier features -> trainable head    (no learned encoder, positional control)
+
+    Fair test: does a TRAINED Earth4D field-decoder generalize the field to held-out space-time better than a
+    generic trainable PE (mlp) or a fixed PE (rff)? If not, the encoder's field carries no structure a plain
+    learned coordinate map lacks. All share head width, steps, lr, batch; only the encoder differs."""
+    coords4 = coords4.to(dev)
+    rn = torch.tensor(rn_in).to(dev)
+    y = torch.tensor(fam).long().to(dev)
+    tr = torch.tensor(~test); te = torch.tensor(test)
+    tr_i = torch.where(tr)[0].to(dev); te_i = torch.where(te)[0].to(dev)
+
+    if kind == "earth4d":
+        encoder = enc; enc_in = coords4; in_dim = feat_dim
+    elif kind == "mlp":
+        encoder = _CoordMLP(rn.shape[1], feat_dim).to(dev); enc_in = rn; in_dim = feat_dim
+    elif kind == "rff":
+        P = torch.tensor(np.random.default_rng(0).normal(0, 8.0, (rn.shape[1], feat_dim // 2)).astype(np.float32)).to(dev)
+        proj = rn @ P
+        rff_feats = torch.cat([torch.sin(proj), torch.cos(proj)], 1)
+        encoder = None; enc_in = rff_feats; in_dim = rff_feats.shape[1]
+    else:
+        raise ValueError(kind)
+
+    head = nn.Sequential(nn.Linear(in_dim, head_hidden), nn.GELU(), nn.Linear(head_hidden, n_fam)).to(dev)
+    params = list(head.parameters()) + (list(encoder.parameters()) if encoder is not None else [])
+    opt = torch.optim.Adam(params, lr=lr, weight_decay=wd)
+
+    def feats_of(idx):
+        if kind == "rff":
+            return enc_in[idx]
+        return encoder(enc_in[idx])
+
+    Ntr = tr_i.shape[0]
+    for _ in range(steps):
+        sel = tr_i[torch.randint(0, Ntr, (4096,), device=dev)]
+        logits = head(feats_of(sel))
+        loss = F.cross_entropy(logits, y[sel])
+        opt.zero_grad(); loss.backward(); opt.step()
+    if encoder is not None: encoder.eval()
+    head.eval()
+    with torch.no_grad():
+        # chunk held-out eval to bound memory
+        accs, t5s, tot = 0, 0, 0
+        for s in range(0, te_i.shape[0], 8192):
+            b = te_i[s:s + 8192]
+            logits = head(feats_of(b)); yy = y[b]
+            accs += (logits.argmax(-1) == yy).sum().item()
+            t5s += (logits.topk(5, -1).indices == yy[:, None]).any(-1).sum().item()
+            tot += b.shape[0]
+    return accs / tot, t5s / tot, tot

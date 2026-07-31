@@ -20,7 +20,7 @@ this is the "how to actually run it on the box" layer. **Not committed** (holds 
 ## Running experiments
 - No background driver. `loop.sh`/`start.sh` were removed (random 3-knob sampler, max-of-N records, hogged both GPUs).
 - Run one deliberate swing at a time:
-  `cd /workspace/deepearth && PYTHONPATH=/workspace python3.12 -m deepearth.autoresearch.probes.spacetime.editable_files.harness --metric <cap> --tag <id> --device cuda:N --ensue`
+  `cd /workspace/deepearth && PYTHONPATH=/workspace python3.12 -m deepearth.autoresearch.probes.spacetime.harness --metric <cap> --tag <id> --device cuda:N --ensue`
 - Check nothing is holding a GPU first: `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader`
   (empty = free; the util% counter shows a phantom 98% and means nothing).
 - Killing stragglers: use a self-excluding pattern — `pgrep -f "spacetime[.]probe" | xargs -r kill -9`.

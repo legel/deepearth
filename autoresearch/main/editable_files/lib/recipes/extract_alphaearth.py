@@ -2,7 +2,7 @@
 """Extract AlphaEarth (Google Satellite Embedding V1) 64-dim annual embeddings @10m for every GBIF observation.
 
 AlphaEarth is REQUIRED to reproduce the DeepCal champion (arith 0.6074): the model consumes it as a
-SatCLIP-style learned geo prior (``model.alphaearth_geo: true`` in ``autoresearch/main/editable_files/harness/champion.yaml``), added to
+SatCLIP-style learned geo prior (``model.alphaearth_geo: true`` in ``autoresearch/main/editable_files/champion.yaml``), added to
 the spatial position that every head reads. See ``autoresearch/main/editable_files/lib/recipes/README.md``.
 
 Prerequisites

@@ -3,6 +3,7 @@ from math import ceil
 from cachetools import cached
 import numpy as np
 
+import os
 import torch
 import torch.nn as nn
 from torch.autograd import Function
@@ -16,6 +17,40 @@ except ImportError:
     from torch.cuda.amp import custom_bwd, custom_fwd 
 
 from .backend import _backend
+
+# ------------------------------------------------------------------------------------------------
+# DETERMINISM
+#
+# float atomicAdd is not associative, so the backward's colliding writes land in scheduling order and
+# two identical runs disagree in the last bits. Measured on this encoder: five runs at seed 0, same
+# code and config, gave 0.1873 / 0.1925 / 0.1867 / 0.1872 / 0.1952 (sd 0.0038) -- as large as the whole
+# ACROSS-seed spread, and comparable to a capability's entire fair-gain budget. That is why every
+# standing probe record is frozen-encoder: the trained protocol could not be reproduced, so it could
+# not set a record.
+#
+# EARTH4D_DETERMINISTIC=1 routes those atomics through an int64 fixed-point sink instead. Integer
+# addition IS associative, so the sum no longer depends on arrival order.
+#
+# The scale is chosen HERE, from the upstream gradient's own magnitude, because Python already holds
+# the tensor and can reduce it without forcing an extra device sync inside the kernel launch. 2^36
+# below the max means the largest single term is ~6.9e10, leaving int64 room for ~1.3e8 accumulations
+# into one cell, while the quantum is finer than float32's own step at that magnitude.
+#
+# Default OFF: the champion path stays bit-identical until this is validated end-to-end
+# (probes/spacetime/determinism.py), per science.md rule 21 -- gate at graduation, not at conception.
+_FIXED_POINT_BITS = 36
+
+
+def _fixed_scale(grad: torch.Tensor) -> float:
+    """Fixed-point scale for this backward, or 0.0 to keep the original float-atomic path."""
+    if os.environ.get("EARTH4D_DETERMINISTIC", "") not in ("1", "true", "True"):
+        return 0.0
+    gmax = grad.detach().abs().max()
+    if not torch.isfinite(gmax) or gmax.item() <= 0.0:
+        return 0.0                              # all-zero or non-finite grad: nothing to accumulate
+    return float((2.0 ** _FIXED_POINT_BITS) / gmax.item())
+
+
 
 class _hash_encode(Function):
     @staticmethod
@@ -117,7 +152,7 @@ class _hash_encode_second_backward(Function):
         else:
             index_logits_f32 = index_logits
 
-        _backend.hash_encode_backward(grad, inputs, embeddings, offsets, grad_embeddings, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs_f32, probe_indices, index_logits_f32, grad_index_logits, N_f, N_p, N_c)
+        _backend.hash_encode_backward(grad, inputs, embeddings, offsets, grad_embeddings, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs_f32, probe_indices, index_logits_f32, grad_index_logits, N_f, N_p, N_c, _fixed_scale(grad))
 
         if inputs.dtype != embeddings.dtype:
             grad_inputs = grad_inputs_f32.to(inputs.dtype)
@@ -194,7 +229,7 @@ def _hash_encode_bwd_cuda(grad: torch.Tensor, inp: torch.Tensor, emb: torch.Tens
     grad_idx = (torch.zeros_like(idx_f32) if idx_f32.numel() > 0
                 else torch.empty(0, dtype=torch.float32, device=grad.device))
     _backend.hash_encode_backward(grad, inp, emb, off, grad_emb, B, D, C, L, pls_log2, base, calc, dy_dx,
-                                  grad_inp, probe, idx_f32, grad_idx, N_f, N_p, N_c)
+                                  grad_inp, probe, idx_f32, grad_idx, N_f, N_p, N_c, _fixed_scale(grad))
     return grad_inp, grad_emb, grad_idx
 
 

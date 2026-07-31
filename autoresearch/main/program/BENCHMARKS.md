@@ -2,10 +2,10 @@
 
 Reference scores for the /autoresearch pipeline. Reproduce, then push against these.
 
-**Config:** `autoresearch/main/editable_files/harness/deepcal.yaml` (default, pollinator subsystem ON), `operator: latent-clade`, `bioclip_init: true`, spatial holdout, bf16, **batch 256, 8000 steps** on a single RTX 3090 (24GB). 
+**Config:** `autoresearch/main/editable_files/deepcal.yaml` (default, pollinator subsystem ON), `operator: latent-clade`, `bioclip_init: true`, spatial holdout, bf16, **batch 256, 8000 steps** on a single RTX 3090 (24GB). 
 On a ≥40GB GPU use the default `batch: 512` for ~2–3% higher scores. Command:
 ```
-python -m deepearth.autoresearch.main.editable_files.harness.train autoresearch/main/editable_files/harness/deepcal.yaml --steps 8000 --device cuda:0
+python -m deepearth.autoresearch.main.editable_files.train autoresearch/main/editable_files/deepcal.yaml --steps 8000 --device cuda:0
 ```
 
 **NET SCORE — harmonic mean: 0.020421  |  arithmetic mean: 0.4461** (over the active B1–B55 suite; the harmonic is dragged by the hard low benchmarks — that is the honest full-suite number and the target to raise).

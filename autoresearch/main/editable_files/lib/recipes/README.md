@@ -1,6 +1,6 @@
 # Ensue data-channel recipes
 
-The champion config (`autoresearch/main/editable_files/harness/deepcal.yaml`) uses transferable environmental channels beyond the
+The champion config (`autoresearch/main/editable_files/deepcal.yaml`) uses transferable environmental channels beyond the
 standard data download. Bulk token files are NOT in git — reproduce them with these recipes. A channel that
 is not present in the cache is skipped automatically at train time (`build_variables` in `train.py`), so
 **every config stays runnable on the standard data download**; a recipe is only needed to *enable* the extra

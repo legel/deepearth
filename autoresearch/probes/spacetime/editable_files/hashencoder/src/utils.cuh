@@ -39,6 +39,35 @@
 // ATOMIC ADD FOR HALF PRECISION
 // =============================================================================
 
+// ---------------------------------------------------------------------------------------------
+// DETERMINISTIC ACCUMULATION
+//
+// float atomicAdd is NOT associative: two runs that schedule the same collisions in a different
+// order produce different bits. In a hash grid every coarse level has thousands of points landing
+// in the same cell, so the backward is a storm of colliding float atomics -- which is why the
+// trained path is nondeterministic AT FIXED SEED (five seed-0 runs: 0.1873/0.1925/0.1867/0.1872/
+// 0.1952, sd 0.0038, as large as the whole across-seed spread and comparable to a row's entire
+// fair-gain budget). A number that cannot be reproduced cannot be a record, so the trained protocol
+// has been unusable and every standing record is frozen-encoder.
+//
+// Integer addition IS associative and commutative, so an integer atomicAdd is order-independent and
+// therefore bit-reproducible. We accumulate into int64 fixed-point and convert once at the end.
+//
+// SCALE. The caller passes inv_scale = 1/scale where scale is chosen from the upstream gradient's
+// own magnitude (see hash_encode_backward): scale = 2^36 / max|grad|. Then
+//   * the largest single term maps to ~2^36 = 6.9e10, leaving int64 (9.2e18) room for ~1.3e8
+//     accumulations into one cell before overflow -- far beyond any real batch;
+//   * the quantum is max|grad| * 2^-36, FINER than float32's own 2^-24 relative step at that
+//     magnitude, so the dominant terms lose nothing and small terms are represented better than a
+//     running float sum would.
+// The conversion back is a single multiply, so the result is a correctly-rounded fixed-point sum --
+// deterministic, and closer to the exact sum than the float atomic path it replaces.
+static inline __device__ void atomicAddFixed(long long *address, float val, float scale) {
+    // llrintf: round-to-nearest-even, matching IEEE default rounding.
+    atomicAdd(reinterpret_cast<unsigned long long *>(address),
+              static_cast<unsigned long long>(static_cast<long long>(llrintf(val * scale))));
+}
+
 // half atomicAdd (CUDA>=10, ARCH>=70; slow vs float/__half2)
 static inline __device__ at::Half atomicAdd(at::Half *address, at::Half val) {
     return atomicAdd(reinterpret_cast<__half*>(address), val);

@@ -40,11 +40,11 @@ to 113 flags and 19 modes; the diagnostics that could never set a record have be
 """
 
 
-
 PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.editable_files.probe"
-# Must match autoresearch/probes/spacetime/editable_files/harness.py PROTOCOL. Bump both when a change alters what a run MEASURES.
+# Must match autoresearch/probes/spacetime/harness.py PROTOCOL. Bump both when a change alters what a run MEASURES.
 PROTOCOL_VERSION = "v4-fixedcontrol"
 
+import os
 import argparse
 import csv
 from dataclasses import dataclass
@@ -59,15 +59,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
-from deepearth.autoresearch.probes.spacetime.editable_files.lib.fair_baseline import (
+from deepearth.autoresearch.probes.spacetime.harness import (
     FAIR_CONTROL_DIM,
     _rff_features,
     fair_rff,
 )
-from deepearth.autoresearch.probes.spacetime.editable_files.harness import (
+from deepearth.autoresearch.probes.spacetime.harness import (
     _set_result_sink,
-    declare,
+    declare as _declare_raw,
 )
+# Measurement definitions live in the non-editable scoring module, not here.
+from deepearth.autoresearch.scoring.definitions import science_axes, signal_capture
 
 # ===================================================================================================
 # CONFIG — THE EXPERIMENT. Edit this, on a branch. There is no command-line flag for any of it.
@@ -90,18 +92,36 @@ from deepearth.autoresearch.probes.spacetime.editable_files.harness import (
 # The identity carries config_digest (see harness.py), so two runs with different CONFIG are never
 # treated as the same measurement even though their command lines are identical.
 CONFIG = {
-    # Starts at the STANDING CHAMPION for species_from_spacetime (0.095463, tag sp2_cmac16_dropst_tau01). A run with no edits must
-    # reproduce the record; if the defaults measured some other mode, every experiment would silently be
-    # compared against a different measurement.
+    # THE ENCODER, AS fusion.py INSTANTIATES IT. Nothing bolted on.
+    #
+    # These defaults used to be the tile-coding champion, and that made the probe measure the wrong
+    # object. Counted at tag sp2_cmac16_dropst_tau01: the head received 20,663 features, of which
+    # Earth4D's hash grid was 36 -- 0.17%. CMAC tile coding was 18,432 (89.2%), the RFF another 2,048
+    # (9.9%), and drop_spatiotemporal deleted the tri-planes outright. So `fair_gain vs RFF` was scoring
+    # a tile coder; "dropping the inert tri-planes" was free because they were 108 dims out of 20,663;
+    # and the question "does the hash grid earn anything" was unanswerable by construction.
+    #
+    # fusion.py:302 builds Earth4D(spatial_levels=18, temporal_levels=18, log2_hashmap=20,
+    # freq_log_scale_init=-2.5) and NOTHING ELSE. The probe now builds exactly that -- 36 spatial + 108
+    # tri-plane = 144 dims -- trained end to end, so a probe number is about the object fusion runs.
+    #
+    # train_encoder is ON. It was off because the trained path was nondeterministic at fixed seed (five
+    # seed-0 runs: 0.1873/0.1925/0.1867/0.1872/0.1952) and an irreproducible number cannot set a record.
+    # EARTH4D_DETERMINISTIC=1 fixes that in the kernel -- verified bit-identical on all four encoders,
+    # and 4.5% FASTER -- so the frozen-random workaround is retired. Set that env var for every run.
+    #
+    # The bolt-on bases (fourier, time_harmonics, spatial_cline, nystrom, tile*) all still exist and all
+    # default OFF. They are legitimate experiments; they are not the encoder. A run that turns one on is
+    # measuring the encoder PLUS that basis, and its record must say so.
     "lr": 3e-3,
     "spatial_levels": 18,
     "temporal_levels": 18,
     "log2_hashmap": 20,
     "head_hidden": 512,
-    "fourier": 1024,
+    "fourier": 0,
     "fourier_scale": 6400.0,
-    "time_harmonics": 8,
-    "train_encoder": False,
+    "time_harmonics": 0,
+    "train_encoder": True,
     # literal, not the imported constant: CONFIG is read at module load, before that import.
     # Must stay equal to lib/recurrence.py DEFAULT_TIME_HORIZON.
     "time_horizon": 2.0,
@@ -110,7 +130,13 @@ CONFIG = {
     # experiment rather than on a command line. config_digest makes the gate see the difference.
     "cache_dir": "autoresearch/data/deepcal",
     "n_shards": 12,
+    # R21: equal WALL-CLOCK per arm is what makes a speedup convert to score -- but flipping the budget
+    # to time in the same protocol change that reshapes WHAT is measured would confound the v5
+    # re-baseline with a compute-budget change. So v5 keeps the historical 800-step budget exactly, and
+    # `time_budget_s` stays OFF until one run measures what 800 steps actually costs on the box. Set it
+    # to that measured number, in its own commit, and speed starts converting to score.
     "steps": 800,
+    "time_budget_s": 0.0,      # 0 = disabled; budget is `steps`. See budgeted().
     "holdout": 0.2,
     "target": "species",
     "forecast": True,
@@ -138,7 +164,7 @@ CONFIG = {
     "sdm_channels": "all",
     "sdm_time": False,
     "sdm_seeds": 1,
-    "spatial_cline": 64,
+    "spatial_cline": 0,
     "cline_scale": 1.0,
     "rec_k": 16,
     "rec_hidden": 256,
@@ -171,8 +197,8 @@ CONFIG = {
     # ---- ARCHITECTURE ARMS (earth4d.py). Default-off: the champion path is byte-identical. ----
     "drop_spatiotemporal": False,
     "nystrom": 0,              # RBF features against N train-drawn space-time anchors
-    "tile": 64,                 # sparse tile coding: per-level one-hot cell code of this width
-    "tile_offsets": 4,         # CMAC-style overlapping tilings per level
+    "tile": 0,                 # sparse tile coding: per-level one-hot cell code of this width
+    "tile_offsets": 1,         # CMAC-style overlapping tilings per level
     "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
     "pheno_ntime": False,      # ARM flw_ntime: encode NEIGHBOURS at their observed event time
     # Bandwidth for the phenology RFF control. PINNED, not selected: the classification path sweeps
@@ -204,17 +230,6 @@ from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence impor
 )
 
 
-
-
-
-
-
-
-
-
-
-
-
 # Per-capability CONFIG. CONFIG above holds the defaults; these override it for the capability the
 # harness declared, and are applied before anything runs.
 #
@@ -228,19 +243,19 @@ from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence impor
 CAPABILITY_CONFIG = {
     "species_from_spacetime": {
         "forecast": True, "target": "species", "phenology": False,
-        "head_hidden": 512, "fourier": 1024, "fourier_scale": 6400.0, "time_harmonics": 8,
-        "spatial_cline": 64, "n_shards": 12, "tile": 64,
+        "head_hidden": 512, "fourier": 0, "time_harmonics": 0,
+        "spatial_cline": 0, "n_shards": 12, "tile": 0,
         # CHAMPION 0.095463 (was 0.085953, barrier 0.0020), tag sp2_cmac16_dropst_tau01.
         # tile_offsets 4 -> 16 is the whole effect and it is NOT an output-width artifact: at an
         # identical dim of 20771, offsets=16 scores 0.0925 against tile=128/offsets=8 at 0.0884 and
         # tile=256/offsets=4 at 0.0881. What buys the gain is the NUMBER of overlapping CMAC tilings,
         # not the column count.
-        "tile_offsets": 16,
+        "tile_offsets": 1,
         "knn_vote_tau": 0.01,
         # The space-time tri-planes measure inert on this row as they do on family_from_spacetime:
         # deleting all 108 of those dims is free (+0.0003) and positive in combination. This FORECAST
         # row is effectively a spatial model.
-        "drop_spatiotemporal": True,
+        "drop_spatiotemporal": False,
     },
     # The standing record (0.1769) was set by the PRE-REFACTOR CLI as
     #     --forecast --head_hidden 256 --fourier 1024 --time_harmonics 8 --n_shards 12
@@ -253,10 +268,10 @@ CAPABILITY_CONFIG = {
     # e2b062c^ (the commit that turned the 33 flags into CONFIG): --fourier_scale 10.0, --spatial_cline
     # 0, --train_encoder off, --target family, --spatial_siren 0, --time_film 0, --causal_lags 0.
     "family_from_spacetime": {
-        "forecast": True, "target": "family", "phenology": False, "head_hidden": 256, "fourier": 1024,
-        "time_harmonics": 8, "n_shards": 12, "fourier_scale": 10.0, "spatial_cline": 0,
+        "forecast": True, "target": "family", "phenology": False, "head_hidden": 256, "fourier": 0,
+        "time_harmonics": 0, "n_shards": 12, "fourier_scale": 10.0, "spatial_cline": 0,
         "cline_scale": 1.0, "spatial_siren": 0, "time_film": 0, "causal_lags": 0,
-        "train_encoder": False, "tile": 0, "tile_offsets": 1, "tile_replace": False, "tile_time": False,
+        "train_encoder": True, "tile": 0, "tile_offsets": 1, "tile_replace": False, "tile_time": False,
     },
     # The standing record (0.0521, tag v2_exact_migration_phenology) was set by the PRE-REFACTOR CLI as
     #     --phenology --forecast --pheno_env --pheno_feats e4d --n_shards 12
@@ -276,7 +291,7 @@ CAPABILITY_CONFIG = {
         "tile": 0, "tile_offsets": 1, "tile_replace": False, "tile_time": False, "tile_quantile": False,
         "rec_k": 16, "rec_hidden": 256, "gnn_hops": 2, "pheno_tol": 15.0,
         "pheno_attn": False, "pheno_species": False, "pheno_spatial": False,
-        "forecast_spatial": False, "recurrence": False, "train_encoder": False,
+        "forecast_spatial": False, "recurrence": False, "train_encoder": True,
     },
     # The standing record (0.1423, tag v2_baseline_famenv) was set by the PRE-REFACTOR CLI as
     #     --env --env_channels alphaearth --n_shards 12
@@ -641,7 +656,7 @@ def _mlp_spearman(X, y, tr, te, dev, hidden=128, steps=1500, lr=3e-3):
     net = nn.Sequential(nn.Linear(X.shape[1], hidden), nn.ReLU(), nn.Linear(hidden, 1)).to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=1e-4)
     tri = torch.tensor(tr, device=dev)
-    for _ in range(steps):
+    for _ in budgeted(steps, "mlp_spearman"):
         b = tri[torch.randint(0, len(tri), (min(512, len(tri)),), device=dev)]
         pred = net(Xt[b]).squeeze(-1)
         loss = F.mse_loss(pred, (yt[b] - ym) / ys)
@@ -698,6 +713,66 @@ def strict_spatiotemporal_holdout(lat, lon, days, frac=0.2, block=0.5, seed=0):
     )
 
 
+# ==================================================================================================
+# SCIENCE AXES — one number per science.md rule, emitted by EVERY run
+# ==================================================================================================
+#
+# The probe used to report ONE number (accuracy vs a fair control) as a proxy for everything, so an
+# edit to earth4d.py produced a single scalar and you could not tell WHICH property you had changed.
+# That is how drop_spatiotemporal and CMAC tile coding scored as wins while moving away from rule 24.
+#
+# Each rule gets its own cheap measurement, and every run emits all of them, so one edit -> one command
+# -> a VECTOR: "+0.03 on the field axis, -0.01 on autoregression, 2.1x on throughput". That is the
+# granular feedback loop. Axes with no instrument yet are absent rather than faked -- see
+# scoring.definitions --coverage for which those are.
+
+# ------------------------------------------------------------------------------------------------
+# Every declare() carries the science axes. ONE place, not seven.
+#
+# These were first wired into the forecast declare only, so the capacity and throughput axes appeared
+# on two rows of the board and were silently absent from the other five. An axis reported on one
+# capability and missing on five is not a measurement, it is an anecdote -- the same failure mode that
+# once let mode=None make four unrelated runs mutually "comparable".
+#
+# _SCIENCE_AXES is filled once, right after the encoder is built, and merged into every result. A mode
+# that runs before the encoder exists carries an empty dict rather than a wrong number.
+_SCIENCE_AXES: dict = {}
+
+
+def declare(**kw):
+    """harness.declare, with this run's science axes attached to every result."""
+    return _declare_raw(**{**kw, **_SCIENCE_AXES})
+
+
+# R21 — THE BUDGET IS TIME, NOT STEPS.
+#
+# science.md rule 21: "wall-clock throughput converts directly into training steps and therefore into
+# net_score: any acceleration of the algorithm that does not change its per-step mathematics MUST score
+# at least as high, and under the budget, strictly higher."
+#
+# Under a STEP budget it cannot. A 2x faster kernel runs the same 800 steps and produces an identical
+# number, so the one loop that owns the CUDA kernel was structurally unable to score a kernel speedup --
+# the determinism fix measured 4.5% faster and could not have shown up anywhere on this board.
+#
+# `steps` is now a safety cap. `time_budget_s` is the budget. Every arm in a comparison runs through
+# this same generator, so they get identical wall-clock and the comparison stays fair; a faster encoder
+# simply fits more steps into it, which is exactly what rule 21 says should convert to score.
+_STEPS_DONE: dict = {}
+
+
+def budgeted(steps, tag="arm"):
+    """Yield step indices until `steps` OR CONFIG['time_budget_s'] runs out, whichever is first."""
+    budget = CONFIG.get("time_budget_s", 0.0)
+    t0 = time.time()
+    n = 0
+    for i in range(steps):
+        if budget > 0 and (time.time() - t0) > budget:
+            break
+        n = i + 1
+        yield i
+    _STEPS_DONE[tag] = n
+
+
 def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0):
     """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy.
 
@@ -750,7 +825,7 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
             out.append((p + 1e-6).log())
         return torch.cat(out)
     opt = torch.optim.Adam(head.parameters(), lr=lr)
-    for _ in range(steps):
+    for _ in budgeted(steps, tag):
         idx = torch.randint(0, Xtr.shape[0], (4096,), device=dev)
         loss = F.cross_entropy(head(Xtr[idx]), ytr[idx])
         opt.zero_grad(); loss.backward(); opt.step()
@@ -801,7 +876,7 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     lvl_of = (torch.arange(edim, device=dev) // max(fpl, 1)).clamp(max=n_lv - 1)   # ENCODER dims only
     warm_n, c2f_n = max(int(steps * warmup), 1), max(int(steps * c2f), 1)
     _p0 = {n: q.detach().clone() for n, q in enc.named_parameters()}   # sanity: did the encoder ACTUALLY move?
-    for it in range(steps):
+    for it in budgeted(steps, "recurrence"):
         for gi, base in enumerate((lr, lr * enc_lr_mult)):
             opt.param_groups[gi]["lr"] = base * min(1.0, (it + 1) / warm_n)      # linear warmup
         keep = n_lv if it >= c2f_n else max(1, int(n_lv * (it + 1) / c2f_n))     # coarse-to-fine
@@ -850,12 +925,52 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     return acc, top5
 
 
+def coord_encoders(dev, dim=None):
+    """(earth4d, rff) coordinate encoders for the env modes, matched by construction.
+
+    The env modes build their spatial feature from a raw (lat, lon) centroid, which is why they could
+    only ever be compared against the class prior. These give them the same encoder-vs-encoder arm every
+    other row reports: identical inputs, identical width, differing only in the encoder.
+
+    Elevation and time are pinned to constants -- a species/cell centroid has no single elevation or
+    timestamp -- so this measures the SPATIAL encoder, which is what these targets are about.
+    """
+    from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
+    from deepearth.autoresearch.probes.spacetime.harness import fair_rff, _rff_features
+    e4d = Earth4D(verbose=False, spatial_levels=CONFIG["spatial_levels"],
+                  temporal_levels=CONFIG["temporal_levels"],
+                  spatial_log2_hashmap_size=CONFIG["log2_hashmap"],
+                  temporal_log2_hashmap_size=CONFIG["log2_hashmap"],
+                  freq_log_scale_init=-2.5,
+                  coordinate_system=("geographic" if CONFIG["geographic"] else "ecef")).to(dev).eval()
+
+    def _e4d(lat, lon):
+        import numpy as _np
+        c = torch.tensor(_np.stack([lat, lon, _np.zeros_like(lat), _np.full_like(lat, 0.5)], 1),
+                         dtype=torch.float32, device=dev)
+        with torch.no_grad():
+            return e4d(c).cpu().numpy()
+
+    def _rff(lat, lon):
+        import numpy as _np
+        rn = _np.stack([lat, lon], 1).astype(_np.float32)
+        sc, base, sigmas = fair_rff(rn, FAIR_CONTROL_DIM, seed=0)
+        return _rff_features(sc, base, sigmas[len(sigmas) // 2]).numpy()
+
+    return _e4d, _rff
+
+
 def cooccur_mode(a):
     import sys as _sys; _sys.path.insert(0, '/workspace')
     from deepearth.autoresearch.probes.spacetime.editable_files.lib.dyntargets import cooccur_routing
-    r = cooccur_routing(CONFIG["cache_dir"], thresh=CONFIG["cooccur_thresh"], seed=a.seed,
-                        mechanism=CONFIG["cooccur_mech"], cooccur_file=CONFIG["cooccur_file"],
-                        env_channels=CONFIG["cooccur_channels"])
+    _dev = torch.device(a.device)
+    _e4d_enc, _rff_enc = coord_encoders(_dev)
+    _kw = dict(thresh=CONFIG["cooccur_thresh"], seed=a.seed, mechanism=CONFIG["cooccur_mech"],
+               cooccur_file=CONFIG["cooccur_file"], env_channels=CONFIG["cooccur_channels"])
+    r = cooccur_routing(CONFIG["cache_dir"], coord_encoder=_e4d_enc, **_kw)
+    r_rff = cooccur_routing(CONFIG["cache_dir"], coord_encoder=_rff_enc, **_kw)
+    _e4d_ap, _rff_ap = r["micro_AP_feat"], r_rff["micro_AP_feat"]
+    print(f"  Earth4D {_e4d_ap:.4f} | RFF {_rff_ap:.4f} | vs RFF {_e4d_ap - _rff_ap:+.4f}")
     print(f"  query_sp={r['n_query_sp']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
     print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
     print(f"  [leak-guard] {r['leak_guard']}")
@@ -865,8 +980,8 @@ def cooccur_mode(a):
         metric="micro_AP_feat",
         value=r["micro_AP_feat"],
         split=f"mech={r['mechanism']}",
-        gains={"GAIN": r["gain_over_prevalence"]},
-        baselines={"prevalence": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
+        gains={"vs RFF": _e4d_ap - _rff_ap, "vs prior": r["gain_over_prevalence"]},
+        baselines={"RFF": _rff_ap, "prior": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
         mechanism=r["mechanism"], thresh=r["thresh"], cooccur_file=r["cooccur_file"],
         n_query_sp=r["n_query_sp"], n_cand_sp=r["n_cand_sp"], feat_dim=r["feat_dim"],
         lift_over_baserate=r["lift_over_baserate"], leak_guard=r["leak_guard"],
@@ -876,7 +991,12 @@ def cooccur_mode(a):
 def sdm_presence_mode(a):
     import sys as _sys; _sys.path.insert(0, '/workspace')
     from deepearth.autoresearch.probes.spacetime.editable_files.lib.dyntargets import sdm_presence
-    r = sdm_presence(CONFIG["cache_dir"], seed=a.seed, mechanism=CONFIG["cooccur_mech"], cooccur_file=CONFIG["cooccur_file"])
+    _e4d_enc, _rff_enc = coord_encoders(torch.device(a.device))
+    _kw = dict(seed=a.seed, mechanism=CONFIG["cooccur_mech"], cooccur_file=CONFIG["cooccur_file"])
+    r = sdm_presence(CONFIG["cache_dir"], coord_encoder=_e4d_enc, **_kw)
+    r_rff = sdm_presence(CONFIG["cache_dir"], coord_encoder=_rff_enc, **_kw)
+    _e4d_ap, _rff_ap = r["micro_AP_feat"], r_rff["micro_AP_feat"]
+    print(f"  Earth4D {_e4d_ap:.4f} | RFF {_rff_ap:.4f} | vs RFF {_e4d_ap - _rff_ap:+.4f}")
     print(f"  query_cells={r['n_query_cells']} cand_sp={r['n_cand_sp']} feat_dim={r['feat_dim']} base_rate={r['micro_AP_baserate']:.4f}")
     print(f"  micro-AP(feat) {r['micro_AP_feat']:.4f} | micro-AP(prevalence-baseline) {r['micro_AP_prevalence']:.4f} | GAIN {r['gain_over_prevalence']:+.4f} | lift-over-baserate {r['lift_over_baserate']:.2f}x")
     print(f"  [leak-guard] {r['leak_guard']}")
@@ -886,8 +1006,8 @@ def sdm_presence_mode(a):
         metric="micro_AP_feat",
         value=r["micro_AP_feat"],
         split=f"mech={r['mechanism']}",
-        gains={"GAIN": r["gain_over_prevalence"]},
-        baselines={"prevalence": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
+        gains={"vs RFF": _e4d_ap - _rff_ap, "vs prior": r["gain_over_prevalence"]},
+        baselines={"RFF": _rff_ap, "prior": r["micro_AP_prevalence"], "baserate": r["micro_AP_baserate"]},
         mechanism=r["mechanism"], n_query_cells=r["n_query_cells"], n_cand_sp=r["n_cand_sp"],
         feat_dim=r["feat_dim"], lift_over_baserate=r["lift_over_baserate"],
         leak_guard=r["leak_guard"],
@@ -899,12 +1019,18 @@ def sdm_hard_mode(a):
     from deepearth.autoresearch.probes.spacetime.editable_files.lib.dyntargets import sdm_presence_hard
     import numpy as _np
     runs = []
+    runs_rff = []
     for sd in range(a.seed, a.seed + CONFIG["sdm_seeds"]):
-        r = sdm_presence_hard(CONFIG["cache_dir"], seed=sd, mechanism=CONFIG["cooccur_mech"],
+        _e4d_enc, _rff_enc = coord_encoders(torch.device(a.device))
+        r = sdm_presence_hard(CONFIG["cache_dir"], seed=sd, mechanism=CONFIG["cooccur_mech"], coord_encoder=_e4d_enc,
                               cell_deg=CONFIG["sdm_cell_deg"], holdout_mode=CONFIG["sdm_holdout_mode"],
                               block_deg=CONFIG["sdm_block_deg"], env_channels=CONFIG["sdm_channels"],
                               add_time=CONFIG["sdm_time"], cooccur_file=CONFIG["cooccur_file"])
-        runs.append(r)
+        r_rff = sdm_presence_hard(CONFIG["cache_dir"], seed=sd, mechanism=CONFIG["cooccur_mech"], coord_encoder=_rff_enc,
+                              cell_deg=CONFIG["sdm_cell_deg"], holdout_mode=CONFIG["sdm_holdout_mode"],
+                              block_deg=CONFIG["sdm_block_deg"], env_channels=CONFIG["sdm_channels"],
+                              add_time=CONFIG["sdm_time"], cooccur_file=CONFIG["cooccur_file"])
+        runs.append(r); runs_rff.append(r_rff)
     aps = _np.array([x['micro_AP_feat'] for x in runs])
     gns = _np.array([x['gain_over_prevalence'] for x in runs])
     r0 = runs[0]
@@ -919,8 +1045,10 @@ def sdm_hard_mode(a):
         metric="micro_AP_feat",
         value=float(aps.mean()),
         split=f"{r0['holdout_mode']}({r0['block_deg']}deg)/grid{r0['cell_deg']}deg",
-        gains={"GAIN": float(gns.mean())},
-        baselines={"prevalence": r0["micro_AP_prevalence"], "baserate": r0["micro_AP_baserate"]},
+        gains={"vs RFF": float(aps.mean()) - float(_np.mean([x["micro_AP_feat"] for x in runs_rff])),
+               "vs prior": float(gns.mean())},
+        baselines={"RFF": float(_np.mean([x["micro_AP_feat"] for x in runs_rff])),
+                   "prior": r0["micro_AP_prevalence"], "baserate": r0["micro_AP_baserate"]},
         mechanism=r0["mechanism"], env_channels=r0["env_channels"], add_time=r0["add_time"],
         sdm_seeds=CONFIG["sdm_seeds"], ap_std=float(aps.std()), gain_std=float(gns.std()),
         n_query_cells=r0["n_query_cells"], n_train_cells=r0["n_train_cells"],
@@ -958,9 +1086,6 @@ def main(argv=None):
                          (CONFIG["sdm_hard"], sdm_hard_mode)):
         if _flag:
             return _mode(a)
-
-
-
 
 
     t0 = time.time()
@@ -1027,6 +1152,21 @@ def main(argv=None):
                   tile=CONFIG["tile"], tile_offsets=CONFIG["tile_offsets"],
                   coordinate_system=("geographic" if CONFIG["geographic"] else "ecef"),
                   ).to(dev)
+    # Capacity (R5) and throughput (R4/R21) are properties of the ENCODER, not of any one capability,
+    # so they are measured once here and ride along on every declare() below.
+    _SCIENCE_AXES.update(science_axes(enc, coords, dev))
+    # R5 is a FLOOR, not a readout: "small models must have no less than 100M parameters". The v4
+    # champion ran ~37.7M -- one hash table, tri-planes dropped -- and nothing said so, because nothing
+    # checked. A run below the floor measures a model science.md does not permit, so it declares itself
+    # unfit rather than quietly setting a record.
+    if not _SCIENCE_AXES["axis_R5_meets_100M_floor"]:
+        print(f"[R5] *** BELOW THE science.md FLOOR: {_SCIENCE_AXES['axis_R5_params_M']}M < 100M — "
+              f"not a permitted model; this run is diagnostic-only.", flush=True)
+        _SCIENCE_AXES["diagnostic"] = True
+        _SCIENCE_AXES["diagnostic_reason"] = (
+            f"encoder has {_SCIENCE_AXES['axis_R5_params_M']}M parameters, below science.md rule 5's "
+            f"100M floor")
+
     if CONFIG["nystrom"] > 0:
         # Fit on TRAIN rows only: the anchors would otherwise carry the evaluation set's coordinates
         # into the feature map.
@@ -1105,9 +1245,13 @@ def main(argv=None):
             # matched "best-coord" and read +0.0411 as an encoder gain -- diagnosing ENCODER-LIMITED
             # when Earth4D alone (0.0938) actually LOSES to RFF (0.1010) and the true read is
             # INPUT-LIMITED. The encoder-vs-PE gain has to be stated for the diagnosis to be right.
-            gains={"Earth4D vs RFF": e4d_acc - rff_acc,
-                   "ENV vs best-coord-PE": env_acc - best_coord,
-                   "fused vs best-coord-PE": fus_acc - best_coord},
+            gains={"vs RFF": e4d_acc - rff_acc,
+                   "vs raw": e4d_acc - raw_acc,
+                   # Channel gains, deliberately OUTSIDE the fair vocabulary: they are the env
+                   # channel's advantage, not the encoder's, and when they were eligible the harness
+                   # read +0.0411 as an encoder gain while Earth4D alone (0.0938) LOST to RFF (0.1010).
+                   "env_channel_over_coord": env_acc - best_coord,
+                   "env_channel_fused_over_coord": fus_acc - best_coord},
             baselines={"raw": raw_acc, "RFF": rff_acc, "earth4d": e4d_acc, "env": env_acc,
                        "best-coord-PE": best_coord},
             obs=len(lat), held_out=int(test.sum()), families=n_fam, env_dim=int(env.shape[1]),
@@ -1276,9 +1420,9 @@ def main(argv=None):
             metric="within_tol_accuracy",
             value=_e4d_best,
             split=pheno_mode,
-            gains=({"Earth4D vs RFF, best-head within-tol acc": _e4d_best - _rff_best}
+            gains=({"vs RFF": _e4d_best - _rff_best}
                    if _e4d_best == _e4d_best and _rff_best == _rff_best else {}),
-            baselines={"RFF_best_head": _rff_best, "raw_best_head": _best_acc("raw")},
+            baselines={"RFF": _rff_best, "raw": _best_acc("raw")},
             forecast_queries=n_te, tol_days=CONFIG["pheno_tol"], K=CONFIG["rec_k"], hops=CONFIG["gnn_hops"],
             attn=CONFIG["pheno_attn"], obs=len(lat), seconds=dt,
             propagator_gain_acc_raw=pg_raw_gnn_acc, propagator_gain_mae_raw=best_prop_raw_mae,
@@ -1292,13 +1436,6 @@ def main(argv=None):
                 "propagator_gain_acc": pg_raw_gnn_acc, "propagator_gain_e4d_mae": pg_e4d_gnn_mae, "propagator_gain_rff_mae": pg_rff_gnn_mae,
                 "static_acc_raw": r["raw"]["static_acc"], "gnn_acc_raw": r["raw"]["gnn_acc"], "lstm_acc_raw": r["raw"]["lstm_acc"],
                 "obs": len(lat), "seconds": dt, "phenology": True, "n_te": n_te}
-
-
-
-
-
-
-
 
 
     if CONFIG["recurrence"]:
@@ -1386,10 +1523,14 @@ def main(argv=None):
         obs=len(lat), held_out=int(test.sum()), n_classes=n_fam, earth4d_dim=int(e4d.shape[1]),
         seconds=dt, target=CONFIG["target"],
         top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5},
+        # ...and how much of the signal actually PRESENT in the coordinates the architecture captured.
+        # `captured` near 1.0 => the coordinates are exhausted, stop tuning architecture and add a
+        # channel. Low `captured` with a high `ceiling` => the signal is there and the architecture is
+        # failing to represent it. Low `ceiling` => the coordinates do not carry this target at all.
+        **signal_capture(lat, lon, days, fam_t, test, n_fam, e4d_acc),
     )
     return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc, "raw_acc": raw_acc,
             "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "forecast": CONFIG["forecast"]}
-
 
 
 # ============================================================================================
@@ -1443,7 +1584,6 @@ def _range_features_per_species(cache, S):
             hull[s] = 0.0
     return {"n_obs": n_obs, "n_cells_05": n05, "n_cells_10": n10, "lat_span": lat_span,
             "lon_span": lon_span, "hull_area": hull, "max_gc": maxgc}
-
 
 
 def _niche_breadth_features_per_species(cache, S):
@@ -1526,8 +1666,6 @@ def _niche_breadth_features_per_species(cache, S):
     return {"elev_span": elev_span, "elev_iqr": elev_iqr, "lat_span_abs": lat_span_abs,
             "lon_span": lon_span, "hyper_logdet": hyper_logdet, "hyper_trace": hyper_trace,
             "ae_effrank": ae_effrank, "ae_meanpair": ae_meanpair}
-
-
 
 
 if __name__ == "__main__":

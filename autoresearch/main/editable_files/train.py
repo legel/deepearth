@@ -328,7 +328,7 @@ def train_and_evaluate(config, device):
     scores = evaluate(model, source, given, targets, device)
     line = " | ".join(f"{k} {v:.3f}" for k, v in scores.items())
     print(f"held-out regions (conditioning on {given}): {line}", flush=True)
-    from deepearth.autoresearch.main.editable_files.harness import evaluate as ev      # the frozen benchmark suite -> net-score north star
+    from deepearth.autoresearch.main.harness import evaluate as ev      # the frozen benchmark suite -> net-score north star
     _t_eval = time.time()
     raw = ev.evaluate_benchmarks(model, source, device, batch=1280)
     _eval_s = time.time() - _t_eval

@@ -45,12 +45,100 @@ from typing import Any, Callable, Dict, Optional, Tuple
 # a parents[N]: REPO once resolved to "/" and the board once resolved outside its own loop, which made
 # trace.py mint a record against an empty file. Named anchors cannot drift when a directory moves.
 _HERE = Path(__file__).resolve()
-LOOP = _HERE.parents[1]                     # this loop's root
 AUTORESEARCH = next(p for p in _HERE.parents if p.name == "autoresearch")
 REPO = AUTORESEARCH.parent                  # the deepearth package root
+# The loop this harness JUDGES, named outright. It used to be `_HERE.parents[1]`, which was correct only
+# while the harness lived inside the loop it scored. Moving it to autoresearch/scoring/ -- so that an
+# experiment cannot edit its own judge -- made parents[1] resolve to autoresearch/, i.e. RECORDS pointed
+# at autoresearch/records/records.json: a file that does not exist, which the harness would have created
+# empty, found no prior record in, and reported "RECORD = YES (new best!)" against for every capability.
+# Exactly the failure this comment block was already warning about. A judge that lives outside its
+# subject must name its subject.
+LOOP = AUTORESEARCH / "probes" / "spacetime"
+assert (LOOP / "program").is_dir(), f"spacetime loop not found at {LOOP}"
 assert REPO.name == "deepearth", f"expected the deepearth package root, resolved {REPO}"
 sys.path.insert(0, str(REPO.parent))        # dir holding the deepearth package
 
+
+
+# ============================================================================================================
+# 1b. FAIR BASELINE — what every `vs RFF` gain is measured against
+# ============================================================================================================
+#
+# The fair baseline — what every `vs RFF` gain is measured against.
+#
+# This is not a helper. It defines what "fair-gain" MEANS on this board, and therefore what every EARNING
+# or ENCODER-LIMITED read is asserting. It lives apart from probe.py so it can be tested without CUDA,
+# because a baseline nobody can test is how the previous one stayed broken.
+#
+# Folded in from lib/fair_baseline.py: 46 lines in their own module, imported by exactly one
+# caller, is not a boundary — it is a file to keep in sync.
+import numpy as np
+import torch
+
+# The control's width is now FIXED instead of tracking the encoder's.
+#
+# Both call sites used to pass `e4d.shape[1]`, so the baseline's width moved whenever any arm changed
+# the encoder's output width -- and RFF accuracy is non-monotone in width. Measured: padding the encoder
+# with columns of LITERAL ZEROS, adding no information at all, moved family_from_spacetime's share from
+# 20.7% (dim 2592) to 27.2% (dim 3024) to 15.1% (dim 3744). Since `share = fair_gain / score` is the
+# number that chooses DATA vs ARCHITECTURE, an unknown fraction of every EARNING / ENCODER-LIMITED read
+# on this board was an artifact of output width.
+#
+# v4 set this to 2592, the width family_from_spacetime's record was set at, on the reasoning that ONE
+# control everywhere makes gains comparable across rows. That reasoning was sound while encoder widths
+# varied wildly per capability (144 to 20,663).
+#
+# Under v5 they no longer vary. The probe builds exactly what fusion.py:302 builds -- 36 spatial + 108
+# tri-plane = 144 dims -- for EVERY capability, with the bolt-on bases off. So the two goals stop
+# competing: 144 is both a fixed protocol constant AND matched to the encoder, and Earth4D vs RFF is
+# finally a head-to-head at equal width.
+#
+# Leaving it at 2592 would have handed the control 18x the encoder's capacity and crushed every gain --
+# the same class of error as the old dimension-MATCHED control, pointing the other way.
+#
+# If an experiment turns a bolt-on basis back on, the encoder gets wider and the control does NOT
+# follow. That is correct: the control is a fixed reference, and an arm that buys width has to earn it.
+FAIR_CONTROL_DIM = 144
+
+
+def fair_rff(rn: np.ndarray, out_dim: int, train_mask=None, seed: int = 0,
+             bandwidths=(1.0, 4.0, 16.0, 64.0, 256.0, 1024.0)):
+    """A random-Fourier control that is actually FAIR.
+
+    The old control was `rn @ N(0, 8)` where rn is (lat/90, lon/180): coordinates normalized to the
+    GLOBE. On a regional corpus that is degenerate. California spans ~9.5 deg of latitude, i.e. ~0.05 of
+    the normalized range, so at sigma=8 the projection varies ~0.04 CYCLES across the entire dataset --
+    every sample gets nearly the same feature. Measured: it scored 0.008, BELOW the raw-coordinate
+    baseline at 0.0166. A nonlinear control that loses to raw coordinates is not a control; it is a
+    handicap, and every `vs RFF` gain computed against it was inflated by that handicap.
+
+    Two fixes, both of which just extend to the baseline the courtesy the encoder already gets:
+
+      1. Normalize to the TRAIN extent, exactly as the encoder's GeoAdaptiveRange does, so the control
+         sees the data at its actual scale rather than as a speck of the globe. Fit on train rows only —
+         using the full extent would leak the evaluation range into the control's features.
+      2. Select the bandwidth. The encoder gets its hyperparameters chosen; a baseline pinned to one
+         arbitrary sigma is not the strongest fair baseline, it is a straw man. Pick the sigma that
+         maximizes the control's own held-out fit, and let the encoder beat THAT.
+
+    Returns (features, chosen_sigma). Selection is on the same split the arms are scored on, which is
+    generous to the baseline by design: an encoder gain that survives a baseline tuned on the evaluation
+    split is not an artifact of the baseline being weak.
+    """
+    rn = np.asarray(rn, dtype=np.float32)
+    fit = np.ones(len(rn), dtype=bool) if train_mask is None else np.asarray(train_mask, dtype=bool)
+    lo = rn[fit].min(0)
+    span = np.maximum(rn[fit].max(0) - lo, 1e-6)
+    scaled = ((rn - lo) / span * 2.0 - 1.0).astype(np.float32)      # train extent -> [-1, 1]
+    rng = np.random.default_rng(seed)
+    base = rng.normal(0.0, 1.0, (scaled.shape[1], max(out_dim // 2, 1))).astype(np.float32)
+    return scaled, base, tuple(bandwidths)
+
+
+def _rff_features(scaled: np.ndarray, base: np.ndarray, sigma: float) -> torch.Tensor:
+    proj = scaled @ (base * float(sigma))
+    return torch.tensor(np.concatenate([np.sin(proj), np.cos(proj)], 1).astype(np.float32))
 
 
 # ============================================================================================================
@@ -405,8 +493,8 @@ def declare(capability, mode, metric, value, gains=None, baselines=None, split="
 # needs them.
 # 
 # Usage:
-#     python -m deepearth.autoresearch.probes.spacetime.editable_files.harness --capability family_from_env --list-modes
-#     python -m deepearth.autoresearch.probes.spacetime.editable_files.harness.harness.py --list-modes
+#     python -m deepearth.autoresearch.probes.spacetime.harness --capability family_from_env --list-modes
+#     python -m deepearth.autoresearch.probes.spacetime.harness.harness.py --list-modes
 
 DATA = "DATA"
 ARCH = "ARCHITECTURE"
@@ -593,6 +681,16 @@ EXCLUDED_CAPABILITIES = {
 }
 
 # PROTOCOL VERSION. Bump this whenever a change alters what a run MEASURES rather than how well it does:
+#   v5-encoder-only : 2026-07-31. The probe was not measuring Earth4D. At the v4 champion the head
+#                     received 20,663 features and the hash grid was 36 of them (0.17%); CMAC tile
+#                     coding was 89.2%, the RFF 9.9%, and drop_spatiotemporal had deleted the
+#                     tri-planes. Every v4 and earlier `fair_gain vs RFF` therefore scored a tile coder
+#                     with a hash-shaped residue attached, and no record on this board has ever been a
+#                     measurement of the encoder. v5 builds exactly what fusion.py:302 builds -- 36
+#                     spatial + 108 tri-plane = 144 dims -- and TRAINS it (the frozen-random protocol
+#                     existed only because the trained backward was nondeterministic; the kernel fix
+#                     lands that at bit-identical and 4.5% faster). Every row re-baselines. Expect the
+#                     numbers to FALL: 0.0955 was the tile coder's.
 # a leak fix, a split change, a target/normalization change. Records carry the protocol they were set under,
 # and a run under a different protocol RE-BASELINES the capability instead of "beating" it -- mode and shard
 # count both match across such a change, so neither of those gates catches it.
@@ -609,14 +707,26 @@ EXCLUDED_CAPABILITIES = {
 #                   control now gets train-extent normalization (the same courtesy the encoder gets) and
 #                   its bandwidth selected over a sweep. This changes what fair-gain MEANS, so v2 numbers
 #                   are not comparable to v3 ones and must re-baseline rather than be beaten.
-PROTOCOL = "v4-fixedcontrol"
+PROTOCOL = "v5-encoder-only"
 # Only explicitly identified, audited protocols may be migrated automatically.
 # Absence of a protocol is not evidence that a hand-restored or pre-gate record
 # belongs to the known v1 measurement regime.
 REBASELINE_PROTOCOLS = frozenset({"v1-prefix", "v2-leakfix"})
 
 # Fair-baseline preference: Earth4D must beat a TRAINED generic PE, not just raw coords.
-FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "prop_acc", "best-coord", "raw"]
+# THE fair control. One entry, because there is one encoder question: does Earth4D beat a
+# matched-width generic coordinate encoder on the same data, split and head?
+#
+# This was a 7-entry preference list, and the list is what let three different quantities share one
+# column of the board. "GAIN" matched a gain over the CLASS PRIOR, so species_from_env published
+# +0.4000 -- beating the base rate -- next to species_from_spacetime's +0.0608 against a real encoder,
+# and the two were sorted against each other. "best-coord" matched the ENV CHANNEL's advantage over
+# coordinates, which is how family_from_env read as an encoder gain of +0.0411 while Earth4D alone
+# (0.0938) was losing to RFF (0.1010).
+#
+# A row that cannot produce "vs RFF" now yields fair_gain=None and is declared diagnostic at the call
+# site, rather than silently scoring against whatever else it happened to report.
+FAIR_ORDER = ["vs RFF"]
 
 
 def _run(device: str, log_path: str, result_path: str, capability: str, seed=None) -> int:
@@ -1160,6 +1270,101 @@ def post_ensue(trace: dict) -> None:
                  f"        The local board is correct but the swarm was NOT updated. Fix and re-publish.")
 
 
+
+# ============================================================================================================
+# DETERMINISM CHECK  (harness.py --determinism)
+# ============================================================================================================
+#
+# The trained protocol was unusable for years because the backward is a storm of colliding float atomics:
+# five seed-0 runs gave 0.1873/0.1925/0.1867/0.1872/0.1952 (sd 0.0038), as large as the whole across-seed
+# spread. An irreproducible number cannot set a record, which is why every record before v5 was frozen-
+# encoder. utils.cuh::atomicAddFixed replaces those atomics with order-independent int64 accumulation.
+#
+# This is the gate for that fix, and the regression test for it: exit 1 while the backward diverges,
+# exit 0 once it is bit-identical. It also ATTRIBUTES the divergence per level -- concentrated in coarse
+# levels (many points per cell, many colliding atomics) confirms atomicAdd; a flat profile would mean the
+# cause is elsewhere and the kernel is the wrong target. Measured on 2x RTX PRO 6000: coarse levels ran
+# 5-13x above a flat ~2.5e-7 fine-level plateau, and EARTH4D_DETERMINISTIC=1 made all four encoders
+# bit-identical at 4.5% FASTER.
+
+
+
+def _det_det_one_backward(enc: Earth4D, coords: torch.Tensor, seed: int):
+    """One forward+backward at a fixed seed. Returns (output, per-encoder embedding grads)."""
+    torch.manual_seed(seed)
+    for p in enc.parameters():
+        if p.grad is not None:
+            p.grad = None
+    out = enc(coords)
+    # A fixed, seed-independent scalar objective: no randomness anywhere except the kernel itself.
+    loss = (out * torch.linspace(1.0, 2.0, out.shape[1], device=out.device)).sum()
+    loss.backward()
+    grads = {name: p.grad.detach().clone()
+             for name, p in enc.named_parameters()
+             if p.grad is not None and name.endswith("embeddings")}
+    return out.detach().clone(), grads
+
+
+def _det_det_report(name: str, a: torch.Tensor, b: torch.Tensor) -> bool:
+    same = torch.equal(a, b)
+    if same:
+        print(f"  {name:<34} BIT-IDENTICAL")
+        return True
+    d = (a - b).abs()
+    scale = a.abs().max().clamp_min(1e-30)
+    n_diff = int((d > 0).sum())
+    print(f"  {name:<34} DIVERGES   max|d|={d.max():.3e}  rel={d.max() / scale:.3e}  "
+          f"elems={n_diff}/{a.numel()}")
+    return False
+
+
+def _determinism_check(device: str = "cuda:0", n: int = 200_000, repeats: int = 3,
+                       levels: int = 18, log2_hashmap: int = 20) -> int:
+    import torch
+    from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
+    if not torch.cuda.is_available() and device.startswith("cuda"):
+        print("[determinism] no CUDA device — this must run on the box.")
+        return 2
+    dev = torch.device(device)
+    torch.manual_seed(0)
+    coords = torch.stack([
+        torch.rand(n, device=dev) * 9.5 + 32.5, torch.rand(n, device=dev) * 10.0 - 124.0,
+        torch.rand(n, device=dev) * 2000.0, torch.rand(n, device=dev)], dim=1)
+    enc = Earth4D(verbose=False, spatial_levels=levels, temporal_levels=levels,
+                  spatial_log2_hashmap_size=log2_hashmap,
+                  temporal_log2_hashmap_size=log2_hashmap).to(dev)
+    print(f"[determinism] {n:,} coords · {levels} levels · 2^{log2_hashmap} hashmap · {repeats} repeats\n")
+    outs, grads = [], []
+    for _ in range(repeats):
+        o, g = _det_one_backward(enc, coords, seed=0)
+        outs.append(o); grads.append(g)
+    print("1. FORWARD (gather — expected bit-identical)")
+    for r in range(1, repeats):
+        _det_report(f"output[0 vs {r}]", outs[0], outs[r])
+    print("\n2. BACKWARD (scatter — atomicAdd lives here)")
+    ok = True
+    for name in grads[0]:
+        for r in range(1, repeats):
+            ok &= _det_report(f"{name}[0 vs {r}]", grads[0][name], grads[r][name])
+    if ok:
+        print("\nBackward is deterministic on this build.")
+        return 0
+    print("\n3. WHERE — per-level divergence (coarse-concentrated => atomicAdd confirmed)")
+    named = {nm: m for nm, m in enc.named_modules() if hasattr(m, "offsets")}
+    for name, g0 in grads[0].items():
+        mod = named.get(name.rsplit(".", 1)[0])
+        if mod is None:
+            continue
+        offs = mod.offsets.tolist()
+        print(f"\n   {name.rsplit('.', 1)[0]}")
+        for lvl in range(len(offs) - 1):
+            lo, hi = offs[lvl], offs[lvl + 1]
+            b0, b1 = g0[lo:hi], grads[1][name][lo:hi]
+            rel = (b0 - b1).abs().max().item() / max(b0.abs().max().item(), 1e-30)
+            print(f"     level {lvl:>2}  entries {hi-lo:>9,}  rel={rel:.3e}  " + "#" * min(int(rel * 2e4), 40))
+    print("\nEXIT 1: backward is nondeterministic. Rerun with EARTH4D_DETERMINISTIC=1.")
+    return 1
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Earth4D legacy probe ledger — exact audited protocol migrations only"
@@ -1426,6 +1631,9 @@ def main() -> None:
 if __name__ == "__main__":
     # Two entry points, one file: `--list-modes` answers "what can move this capability, and where do I
     # edit?" without running anything; anything else runs the loop.
+    if "--determinism" in sys.argv:
+        sys.argv.remove("--determinism")
+        raise SystemExit(_determinism_check())
     if "--list-modes" in sys.argv:
         sys.argv.remove("--list-modes")
         _list_modes()

@@ -233,7 +233,13 @@ __global__ void kernel_grid_backward(
     float * __restrict__ grad_index_logits = nullptr,
     const uint32_t N_f = 0,
     const uint32_t N_p = 1,
-    const uint32_t N_c = 0
+    const uint32_t N_c = 0,
+    // DETERMINISM. nullptr => the original float-atomic path, bit-identical to before. Non-null =>
+    // every embedding gradient is accumulated in int64 fixed-point instead, which is order-independent
+    // and therefore reproducible run-to-run. See atomicAddFixed in utils.cuh.
+    long long * __restrict__ grad_grid_fixed = nullptr,
+    long long * __restrict__ grad_logits_fixed = nullptr,
+    const float fixed_scale = 0.0f
 ) {
     const uint32_t b = (blockIdx.x * blockDim.x + threadIdx.x) * N_C / C;
     if (b >= B) return;
@@ -243,6 +249,7 @@ __global__ void kernel_grid_backward(
 
     // locate
     grad_grid += offsets[level] * C;
+    if (grad_grid_fixed != nullptr) grad_grid_fixed += offsets[level] * C;
     inputs += b * D;
     grad += level * B * C + b * C + ch;
 
@@ -338,7 +345,13 @@ __global__ void kernel_grid_backward(
                     uint32_t probe_index = ((N_p * h1 + p) % hashmap_size) * C + ch;
                     float weight = w * weights[p];
 
-                    if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+                     // DETERMINISM: order-independent int64 accumulation (utils.cuh::atomicAddFixed).
+                     if (grad_grid_fixed != nullptr) {
+                         #pragma unroll
+                         for (uint32_t c = 0; c < N_C; c++) {
+                             atomicAddFixed(&grad_grid_fixed[probe_index + c], (float)(weight * grad_cur[c]), fixed_scale);
+                         }
+                     } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                         #pragma unroll
                         for (uint32_t c = 0; c < N_C; c += 2) {
                             __half2 v = {(__half)(weight * grad_cur[c]), (__half)(weight * grad_cur[c + 1])};
@@ -373,13 +386,26 @@ __global__ void kernel_grid_backward(
                     for (uint32_t p = 0; p < N_p; ++p) {
                         float grad_logit = weights[p] * (grad_weights[p] - dot_product);
                         uint32_t logit_idx = level * N_c * N_p + h2 * N_p + p;
-                        atomicAdd(&grad_index_logits[logit_idx], grad_logit);
+                        // The logit gradient collides on (level, h2, p) exactly as the grid does,
+                        // so it needs the same order-independent accumulation or the run is still
+                        // irreproducible whenever learned probing is on (it is, by default).
+                        if (grad_logits_fixed != nullptr) {
+                            atomicAddFixed(&grad_logits_fixed[logit_idx], grad_logit, fixed_scale);
+                        } else {
+                            atomicAdd(&grad_index_logits[logit_idx], grad_logit);
+                        }
                     }
                 }
             } else {
                 uint32_t index = (uint32_t)((index_direct % hashmap_size) * C + ch);
 
-                if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+                 // DETERMINISM: order-independent int64 accumulation (utils.cuh::atomicAddFixed).
+                 if (grad_grid_fixed != nullptr) {
+                     #pragma unroll
+                     for (uint32_t c = 0; c < N_C; c++) {
+                         atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
+                     }
+                 } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                     #pragma unroll
                     for (uint32_t c = 0; c < N_C; c += 2) {
                         __half2 v = {(__half)(w * grad_cur[c]), (__half)(w * grad_cur[c + 1])};
@@ -395,7 +421,13 @@ __global__ void kernel_grid_backward(
         } else {
             uint32_t index = get_grid_index<D, C>(ch, hashmap_size, resolution, pos_grid_local);
 
-            if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+             // DETERMINISM: order-independent int64 accumulation (utils.cuh::atomicAddFixed).
+             if (grad_grid_fixed != nullptr) {
+                 #pragma unroll
+                 for (uint32_t c = 0; c < N_C; c++) {
+                     atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
+                 }
+             } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                 #pragma unroll
                 for (uint32_t c = 0; c < N_C; c += 2) {
                     __half2 v = {(__half)(w * grad_cur[c]), (__half)(w * grad_cur[c + 1])};
@@ -643,26 +675,45 @@ void hash_encode_forward_cuda(const input_t *inputs, const scalar_t *embeddings,
     }
 }
 
+
+// Fixed-point -> float, once, after every atomic has landed. One multiply per element; the result is a
+// correctly-rounded sum of the exact fixed-point accumulation, so it is both deterministic AND closer
+// to the true sum than the float-atomic path (which reorders and rounds at every step).
+template <typename scalar_t>
+__global__ void kernel_fixed_to_float(const long long * __restrict__ src, scalar_t * __restrict__ dst,
+                                      const int64_t n, const float inv_scale) {
+    const int64_t i = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    dst[i] = (scalar_t)((float)src[i] * inv_scale);
+}
+
+__global__ void kernel_fixed_to_float32(const long long * __restrict__ src, float * __restrict__ dst,
+                                        const int64_t n, const float inv_scale) {
+    const int64_t i = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    dst[i] = (float)src[i] * inv_scale;
+}
+
 template <typename input_t, typename scalar_t, uint32_t D>
-void kernel_grid_backward_wrapper(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs, const int *probe_indices, const float *index_logits, float *grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c) {
+void kernel_grid_backward_wrapper(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs, const int *probe_indices, const float *index_logits, float *grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c, long long *grad_grid_fixed, long long *grad_logits_fixed, const float fixed_scale) {
     static constexpr uint32_t N_THREAD = 256;
     const uint32_t N_C = std::min(2u, C);
     const dim3 blocks_hashgrid = { div_round_up(B * C / N_C, N_THREAD), L, 1 };
     switch (C) {
         case 1:
-            kernel_grid_backward<input_t, scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c);
+            kernel_grid_backward<input_t, scalar_t, D, 1, 1><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 1><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         case 2:
-            kernel_grid_backward<input_t, scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c);
+            kernel_grid_backward<input_t, scalar_t, D, 2, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 2><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         case 4:
-            kernel_grid_backward<input_t, scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c);
+            kernel_grid_backward<input_t, scalar_t, D, 4, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 4><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         case 8:
-            kernel_grid_backward<input_t, scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c);
+            kernel_grid_backward<input_t, scalar_t, D, 8, 2><<<blocks_hashgrid, N_THREAD>>>(grad, inputs, embeddings, offsets, grad_embeddings, B, L, per_level_scale, base_resolution, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale);
             if (calc_grad_inputs) kernel_input_backward<scalar_t, D, 8><<<div_round_up(B * D, N_THREAD), N_THREAD>>>(grad, dy_dx, grad_inputs, B, L);
             break;
         default: throw std::runtime_error{"GridEncoding: C must be 1, 2, 4, or 8."};
@@ -670,10 +721,10 @@ void kernel_grid_backward_wrapper(const scalar_t *grad, const input_t *inputs, c
 }
 
 template <typename input_t, typename scalar_t>
-void hash_encode_backward_cuda(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs, const int *probe_indices, const float *index_logits, float *grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c) {
+void hash_encode_backward_cuda(const scalar_t *grad, const input_t *inputs, const scalar_t *embeddings, const int *offsets, scalar_t *grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const float* per_level_scale, const float* base_resolution, const bool calc_grad_inputs, scalar_t *dy_dx, scalar_t *grad_inputs, const int *probe_indices, const float *index_logits, float *grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c, long long *grad_grid_fixed, long long *grad_logits_fixed, const float fixed_scale) {
     switch (D) {
-        case 2: kernel_grid_backward_wrapper<input_t, scalar_t, 2>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c); break;
-        case 3: kernel_grid_backward_wrapper<input_t, scalar_t, 3>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c); break;
+        case 2: kernel_grid_backward_wrapper<input_t, scalar_t, 2>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale); break;
+        case 3: kernel_grid_backward_wrapper<input_t, scalar_t, 3>(grad, inputs, embeddings, offsets, grad_embeddings, B, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs, probe_indices, index_logits, grad_index_logits, N_f, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale); break;
         default: throw std::runtime_error{"GridEncoding: D must be 2 or 3."};
     }
 }
@@ -766,7 +817,7 @@ void hash_encode_forward(const at::Tensor inputs, const at::Tensor embeddings, c
 }
 
 
-void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, const at::Tensor dy_dx, at::Tensor grad_inputs, const at::Tensor probe_indices, const at::Tensor index_logits, at::Tensor grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c) {
+void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const at::Tensor embeddings, const at::Tensor offsets, at::Tensor grad_embeddings, const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L, const at::Tensor per_level_scale, const at::Tensor base_resolution, const bool calc_grad_inputs, const at::Tensor dy_dx, at::Tensor grad_inputs, const at::Tensor probe_indices, const at::Tensor index_logits, at::Tensor grad_index_logits, const uint32_t N_f, const uint32_t N_p, const uint32_t N_c, const double fixed_scale) {
     CHECK_CUDA(grad);
     DEVICE_GUARD(grad);
     CHECK_CUDA(inputs);
@@ -823,16 +874,52 @@ void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const 
         grad_index_logits_ptr = grad_index_logits.data_ptr<float>();
     }
 
+    // DETERMINISTIC MODE. fixed_scale > 0 routes every colliding atomic into an int64 fixed-point
+    // sink; integer addition is order-independent, so the result is bit-reproducible run to run.
+    // fixed_scale <= 0 leaves the original float-atomic path untouched and BIT-IDENTICAL, which is
+    // what the champion still runs until this is validated end-to-end (science.md rule 21: gate at
+    // graduation, not at conception). The scale is chosen by the caller from the upstream gradient's
+    // own magnitude -- see hashgrid.py, which has the tensor and can do the reduction without an
+    // extra device sync here.
+    at::Tensor grad_fixed, logits_fixed;
+    long long *grad_fixed_ptr = nullptr;
+    long long *logits_fixed_ptr = nullptr;
+    if (fixed_scale > 0.0) {
+        grad_fixed = at::zeros({grad_embeddings.numel()}, grad_embeddings.options().dtype(at::kLong));
+        grad_fixed_ptr = reinterpret_cast<long long *>(grad_fixed.data_ptr<int64_t>());
+        if (grad_index_logits_ptr != nullptr) {
+            logits_fixed = at::zeros({grad_index_logits.numel()}, grad_index_logits.options().dtype(at::kLong));
+            logits_fixed_ptr = reinterpret_cast<long long *>(logits_fixed.data_ptr<int64_t>());
+        }
+    }
+
     if (inputs.scalar_type() == at::ScalarType::Double) {
         AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         grad.scalar_type(), "hash_encode_backward", ([&] {
-            hash_encode_backward_cuda<double, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<double>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, N_f, N_p, N_c);
+            hash_encode_backward_cuda<double, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<double>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, N_f, N_p, N_c, grad_fixed_ptr, logits_fixed_ptr, (float)fixed_scale);
         }));
     } else {
         AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         grad.scalar_type(), "hash_encode_backward", ([&] {
-            hash_encode_backward_cuda<scalar_t, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, N_f, N_p, N_c);
+            hash_encode_backward_cuda<scalar_t, scalar_t>(grad.data_ptr<scalar_t>(), inputs.data_ptr<scalar_t>(), embeddings.data_ptr<scalar_t>(), offsets.data_ptr<int>(), grad_embeddings.data_ptr<scalar_t>(), B, D, C, L, per_level_scale.data_ptr<float>(), base_resolution.data_ptr<float>(), calc_grad_inputs, dy_dx.data_ptr<scalar_t>(), grad_inputs.data_ptr<scalar_t>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, N_f, N_p, N_c, grad_fixed_ptr, logits_fixed_ptr, (float)fixed_scale);
         }));
+    }
+
+    // Land the fixed-point sums back in the real gradient tensors. Every atomic has completed by the
+    // time this launches (same stream, ordered), so this pass sees a total that does not depend on
+    // the order the atomics arrived in -- which is the whole point.
+    if (grad_fixed_ptr != nullptr) {
+        const float inv = (float)(1.0 / fixed_scale);
+        const int64_t n = grad_embeddings.numel();
+        AT_DISPATCH_FLOATING_TYPES_AND_HALF(grad_embeddings.scalar_type(), "fixed_to_float", ([&] {
+            kernel_fixed_to_float<scalar_t><<<div_round_up((uint32_t)n, 256u), 256>>>(
+                grad_fixed_ptr, grad_embeddings.data_ptr<scalar_t>(), n, inv);
+        }));
+        if (logits_fixed_ptr != nullptr) {
+            const int64_t m = grad_index_logits.numel();
+            kernel_fixed_to_float32<<<div_round_up((uint32_t)m, 256u), 256>>>(
+                logits_fixed_ptr, grad_index_logits.data_ptr<float>(), m, inv);
+        }
     }
 }
 

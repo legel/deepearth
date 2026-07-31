@@ -9,26 +9,12 @@ recovered signals get plugged into the fusion layer — the full model comes las
    APEX                   │  autoresearch/main/       FUSION         │  runs LAST
    consumes probe results │  integrates finished encoders            │
                           └───────────────▲──────────────────────────┘
-                                          │ depends on (later, once the science is in)
+                                          │ graduation.py — a tested prediction, not a copied score
             ┌─────────────────────────────┴─────────────────────────────┐
    PROBE    │ autoresearch/probes/spacetime/   autoresearch/probes/biological/ │
    LOOPS    │ one probe · own data · own metric · own evals · independent code │
-            └─────────────────────────────▲─────────────────────────────┘
-                                          │ develops
-                          ┌───────────────┴──────────────────────────┐
-   LEAVES                 │  autoresearch/probes/spacetime/editable_files/   autoresearch/probes/biological/editable_files/ │
-   the artifacts          │  the thing each probe loop is researching   │
-                          └──────────────────────────────────────────┘
+            └───────────────────────────────────────────────────────────┘
 ```
-
-Read it bottom-up: an **encoder is a leaf** — the artifact under development. A **probe loop** sits above
-its encoder and is the only thing that changes it. **`main` is the apex**: it will consume each probe's
-finished encoder, and it runs last. Dependencies point *upward only*. A probe importing a sibling probe,
-or a probe importing `main`, is a cycle or a hidden coupling, and
-
-each probe loop's `editable_files/` is still top-level rather than inside its probe loop. That consolidation waits until the
-scientific performance is filled out — moving a CUDA build and its ABI-specific `.so` mid-campaign buys
-nothing. The dependency direction is already correct; only the file location is provisional.
 
 Why this way round: a fusion model trained before its constituent signals are established cannot tell
 you which part works. It is confounded and slow, and every result it produces is a joint claim about
@@ -36,109 +22,125 @@ everything at once. A probe loop makes one narrow claim, in minutes, against fai
 that survives its own validation is what earns a place in the fusion layer.
 
 So a probe loop's job is not "raise the aggregate". It is: **recover a real signal on one capability,
-with its own evals, and prove it is the encoder's and not borrowed.** `main/` is the destination, not a
-peer competing for the same score.
+with its own evals, and prove it is the encoder's and not borrowed.**
 
-Each loop is a directory, owns its program, and has **the same three subdirectories with the same
-meaning**, so an agent never has to guess what it may touch.
+## The one rule the layout enforces: the judge is not editable
+
+```
+   harness/            THE JUDGE      measurement, scoring, gating, recording   never edited to win a run
+   editable_files/     THE SCIENCE    model, objective, data, config            the ONLY surface
+```
+
+Nothing in `editable_files/` should be something you must read to understand *how you are scored* — only
+things you change *in order to score better*. Every scorer used to live inside a directory named for the
+fact that agents edit it, and `score.py` kept a hand-copy of `is_diagnostic`/`_net_value` under a comment
+reading "keep byte-identical". One definition now, and it is out of reach.
 
 ```
 autoresearch/
-  .env                credentials (gitignored) — ENSUE_API_TOKEN; template in .env.example
+  science.md          binding research rules — all loops obey them
   scorecard.md        INDEX of every loop's scorecard — start here to read progress
-  science.md          binding research rules — all three loops obey them
   bibliography.md     references
-  probes/             the leaves' loops — independent, siblings, one probe each
+  .env                credentials (gitignored) — ENSUE_API_TOKEN; template in .env.example
+
+  harness/            SHARED JUDGE — only what is genuinely cross-loop
+    definitions.py          what every number MEANS + the METRIC REGISTRY + routing
+    graduation.py         probe record -> champion crossing ledger
+
+  probes/             the probe loops — independent siblings, one probe each
     spacetime/          Earth4D space-time encoder
-    biological/         biological encoder
+      harness.py          this probe's own judge: contract, registry, gate, ledger, publish
+      determinism.py      attributes the trained path's nondeterminism
+      editable_files/     SCIENCE: earth4d.py, hashencoder/, probe.py, lib/
+      program/  records/
+    biological/         biological encoder — same shape
+
   main/               the apex — fusion over the whole B1..B60 suite, runs last
-        │
-        ├── program/           the contract. Read first; change only when doctrine changes.
-        ├── editable_files/    ← THE ONLY CODE AN EXPERIMENT MAY EDIT
-        │     ├── harness/       the loop itself
-        │     └── lib/           auxiliary code the loop calls
-        │     └── data/          the DATA lever: sources added, moved and removed by the signal
-        │                        they provide. One source per directory.
-        └── records/           harness-written: board, traces, ledgers. Never hand-edited.
+    harness/            evaluate.py, champion_report.py, hooks.py, score.py, run_experiment.py
+    editable_files/     SCIENCE: fusion/fusion.py, train.py, *.yaml, lib/{data,prepare,recipes}
+    program/  records/
+
+  data/               the shared corpus. All loops read it, so it belongs to no single loop.
 ```
 
-The shared dataset lives at the repo root `autoresearch/data/deepcal`: all three loops read it, so it belongs to no
-single loop. Loop-specific data lives with its loop (`spacetime/data/lfmc/`).
+## Routing: pick a metric, get the file
 
-## The three roles
+The mapping from *what you want to improve* to *what you edit* is one table — `scoring.METRICS` — and it
+lives in the harness so an experiment cannot widen its own scope. It used to live in four places that
+disagreed (`scorecard.md` prose, `program.md`'s LEVER_SITES, `score.py`'s partitions, `graduation.py`'s own
+dict), and LEVER_SITES was still pointing at a `lib/gnn.py` that had been deleted weeks earlier.
 
-| directory | what it is | policy |
-|---|---|---|
-| `program/` | objective, how to pick a target, what counts as evidence, ops notes | Read before every cycle. Change when the *doctrine* changes — never to accommodate a result. |
-| `editable_files/harness/` | the loop: the driver, the modes, the scoring and recording path | Editable. But a change to what a number *means* — recording, comparability, gates — goes in its own commit with a test that fails before and passes after. Never inside an experiment. |
-| `editable_files/lib/` | auxiliary code the loop calls: mechanisms, target builders, data loaders | Editable. This is where most experiments live. |
-| `data/` | the channels and observations that feed the model | **Editable — this is the DATA lever.** When the diagnosis reads INPUT-LIMITED, changing what feeds the encoder is the correct move. Rebuild the prepared cache after any change; attribute borrowed signal honestly. |
-| `data/` | the board, traces, ledgers — everything the harness writes | Never hand-edit; that forges a result. Corrections go through the ledger, with a reason. Each loop's records are disentangled from every other loop's. |
+```bash
+python -m deepearth.autoresearch.scoring.definitions --capability species_from_spacetime
+python -m deepearth.autoresearch.scoring.definitions --metric B8_family_from_spacetime
+python -m deepearth.autoresearch.scoring.definitions --file earth4d.py
+python -m deepearth.autoresearch.scoring.definitions --audit      # orphan metrics, orphan files, leaks
+python -m deepearth.autoresearch.scoring.definitions --coverage   # which science.md rules have an instrument
+```
+
+Every metric row names: what it measures · the science.md rule that demands it · the editable file(s)
+that move it · the probe capability that estimates it cheaply.
 
 ## Scope — what an experiment may edit
 
 ```
-   IN SCOPE      <loop>/editable_files/**         the loop and its libraries
-                 <loop>/data/**            the DATA lever — a first-class experiment
-                 encoders/**                      when the experiment IS an encoder change
-   OUT OF SCOPE  <loop>/data/**           the board and its ledgers
-                 <loop>/program/**                the contract
-                 any OTHER loop's directory       not your surface
-                 core/**, autoresearch/science.md unless that is the declared experiment
+   IN SCOPE      <loop>/editable_files/**    the model, the objective, the data, the config
+   OUT OF SCOPE  harness/**                  the shared judge
+                 <loop>/harness*             the loop's own judge
+                 <loop>/records/**           the board and its ledgers
+                 <loop>/program/**           the contract
+                 any OTHER loop's directory  not your surface
+                 science.md                  unless that is the declared experiment
 ```
 
-Anything outside `editable_files/` and `data/` is not an experiment — it is infrastructure work, and it goes in its
-own commit with its own tests, separate from any result.
+Anything outside `editable_files/` is not an experiment — it is infrastructure, and it goes in its own
+commit with its own tests, separate from any result. A change to what a number *means* re-baselines every
+board that number appears on: bump the protocol, and say so.
 
 ## Per-loop contents
 
-| loop | program/ | editable_files/harness/ | editable_files/lib/ | records/ |
+| loop | program/ | harness (the judge) | editable_files/ (the science) | records/ |
 |---|---|---|---|---|
-| `main/` | `autoresearch.md`, `BENCHMARKS.md`, `CHAMPION_REPORT.md`, `audit.md`, `GRADUATION_BLUEPRINT.md` | `train.py`, `run_experiment.py`, `evaluate.py`, `score.py`, `score_encoders.py`, `champion_report.py`, `hooks.py`, `perception_diag.py`, `deepcal.yaml`, `champion.yaml` | `data.py`, `prepare.py`, `recipes/` | `champion_scores.json` |
-| `probes/biological/` | `program.md` | `probe.py`, `stage1…stage4`, `ensue_log.py` | `traitprobe.py` | — |
-| `probes/spacetime/` | `program.md`, `scorecard.md`, `box-operations.md` | `probe.py`, `harness.py` | `recurrence.py`, `phenology.py`, `dyntargets.py`, `fair_baseline.py` | `records.json`, `traces/` |
+| `main/` | `autoresearch.md`, `BENCHMARKS.md`, `CHAMPION_REPORT.md`, `audit.md`, `GRADUATION_BLUEPRINT.md` | `evaluate.py`, `champion_report.py`, `hooks.py`, `score.py`, `run_experiment.py` | `fusion/fusion.py`, `train.py`, `deepcal.yaml`, `champion.yaml`, `lib/{data,prepare,recipes}` | `champion_scores.json`, `graduation.jsonl` |
+| `probes/spacetime/` | `program.md`, `scorecard.md`, `scorecard.txt`, `box-operations.md` | `harness.py`, `determinism.py` | `earth4d.py`, `hashencoder/`, `probe.py`, `lib/{recurrence,phenology,dyntargets}.py` | `records.json`, `traces/` |
+| `probes/biological/` | `program.md` | *(still inside `editable_files/harness/` — not yet split)* | `phylogenomic.py`, `lib/traitprobe.py` | — |
 
 ## Boundaries between the loops
 
-| loop | objective | instrument | state it owns |
-|---|---|---|---|
-| `main/` | integrate established signals; B1..B60 means, no metric regressing | full 799M fusion model | `main/records/champion_scores.json`, `champion.yaml` |
-| `probes/biological/` | recover signal on the biological capabilities | biological probe pipeline | its own logs |
-| `probes/spacetime/` | recover signal on one capability at a time (`spacetime/program/scorecard.md`) | Earth4D + light head, minutes per run | `spacetime/records/records.json`, Ensue `LOOP-earth4d-<capability>` |
-
-- **Only `main/` trains the full fusion model, and it runs LAST.** A probe loop trains a light head on
-  encoder features in minutes. A probe record is not a champion result; it is a candidate signal that
-  has to clear its own loop's validation before fusion is the right place for it.
-- **One probe per loop.** If a loop grows a second probe with its own targets and its own scoring, it is
-  two loops wearing one directory — split it. That accretion is what produced 113 flags and 19 modes in
-  a single file here.
-- **Each loop is independent CODE.** No loop imports another loop. If two loops need the same loader,
-  each keeps its own copy — a cross-loop import means a change in one loop silently moves another loop's
-  numbers with no record saying so. Sharing is allowed only *downward*, into code no loop owns
-  (each probe loop's `editable_files/`, and `autoresearch/main/editable_files/fusion/` for the fusion loop alone).
-  plus the identical four directories and the presence of each loop's program.
-- **Each loop optimizes its own metric under its own evals.** A loop's program declares what it is
-  raising and what would falsify it. No loop is scored on another's number, and no loop's result is
-  promoted by another loop's evidence.
+- **Only `main/` trains the full fusion model, and it runs LAST.** A probe trains a light head on encoder
+  features in minutes. A probe record is not a champion result; it is a candidate signal.
+- **Probe results reach `main` through `graduation.py`, never by copying a score.** A probe score and a
+  benchmark score are different instruments on different models — neither bounds the other. What crosses
+  is a prediction that gets tested: *probe says capability X improved → champion re-measures B(X) → did it
+  move?* Each crossing appends a row to `main/records/graduation.jsonl`, and that ledger is the only thing
+  that will ever tell you whether a probe gain transfers.
+- **Each loop is independent CODE.** No loop imports a sibling. Sharing is allowed only *downward*, into
+  `harness/` — code no loop owns.
+- **Each loop optimizes its own metric under its own evals.** No loop is scored on another's number.
 - **No loop writes another loop's `records/`.**
 - **One program per surface.** Two definitions of the same surface means one is stale — reconcile before
+  running anything.
 
 ## Setup
 
 1. Clone `github.com/legel/deepearth` (branch `deepcal`).
-2. `pip install -r requirements.txt`, then build the Earth4D CUDA hash encoder against your torch:
-   `pip install ninja` — the kernel JIT-compiles itself on first import and caches under `hashencoder/build/`.
+2. `pip install -r requirements.txt` and `pip install ninja` — the Earth4D CUDA kernel JIT-compiles on
+   first import and caches under `hashencoder/build/`.
 3. Read `science.md` (binding), then the `program/` of the loop you are running.
 4. `python -m deepearth.autoresearch.main.editable_files.lib.prepare` — downloads and extracts the audited
    dataset (deepcal_data.zip) from NERSC into `autoresearch/data/deepcal/`.
-5. `python -m deepearth.autoresearch.main.editable_files.harness.train autoresearch/main/editable_files/harness/deepcal.yaml --steps 8000 --device cuda:0`
+5. `python -m deepearth.autoresearch.main.editable_files.train autoresearch/main/editable_files/deepcal.yaml --steps 8000 --device cuda:0`
    (batch 512 needs ~27GB; on a 24GB card set `batch: 256` + `pollinator_top_k: 32`). Score against
    `main/program/BENCHMARKS.md`, edit, repeat.
 
 ## Experiment budget: 10 minutes (hard cap)
 
 Every full-model run trains for at most **10 minutes** of wall-clock (`time_budget_s: 600`, measured from
-step 10 so startup and compilation are excluded), then is scored by `main/editable_files/harness/evaluate.py`
-(science.md rule 20). A hard cap, not a target: never raise it, never report benchmarks from a longer
-run. Comparing experiments only at the equal budget is what makes a gain reflect real efficiency rather
-than more steps. Kill any run that exceeds it and rerun at 600s.
+step 10 so startup and compilation are excluded), then is scored by `main/harness/evaluate.py`
+(science.md rule 20). A hard cap, not a target: never raise it, never report benchmarks from a longer run.
+Comparing experiments only at equal budget is what makes a gain reflect real efficiency rather than more
+steps. Kill any run that exceeds it and rerun at 600s.
+
+**The probe loops use a different currency** — `CONFIG["steps"]`, not wall-clock. That is a known gap:
+science.md rule 21 makes throughput a first-class score lever, and under a step budget a kernel speedup
+cannot move any probe number. `scoring --coverage` lists it alongside the other unmeasured axes.

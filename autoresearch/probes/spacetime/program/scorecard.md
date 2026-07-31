@@ -6,10 +6,19 @@
 > none. This file explains what each row means, how a record is earned, and what is excluded and why.
 > The index of all loops' scorecards is [`../../../scorecard.md`](../../../scorecard.md).
 >
-> **Every record on this board predates the noise barrier and should be treated as the maximum of its
-> reruns.** Measured directly: `family_from_env` at 3 matched seeds is 0.142318 / 0.122941 / 0.139142,
-> mean 0.1348, sd 0.0085 — and the stored record, 0.1423, is exactly seed 0. Re-measure at ≥5 seeds
-> before treating any of these as a baseline to beat.
+> **Every record predates `v5-encoder-only` and is not comparable to anything measured now.** A record
+> is bound to the protocol it was set under; a protocol change re-baselines the board.
+
+## What `v5-encoder-only` measures
+
+The probe measures **the encoder `fusion.py` instantiates**, and nothing else. Three rules define a
+score:
+
+| rule | why it exists |
+|---|---|
+| the encoder is what fusion builds — no bolt-on bases | a probe number must be about the object we ship |
+| the fair control is a FIXED width | a control that tracks the encoder makes `share` an artifact of output width |
+| a bolt-on may be switched on, but the record must declare it | otherwise the board reports the basis as the encoder |
 
 
 The agent picks **one capability from Layer 1, with intention**, declares it as `--metric`, and is then
@@ -33,7 +42,7 @@ A different mode or shard count is a different target, not a better score.
 **Base:** champion `arithmetic 0.6153` · `harmonic 0.348744` · label `latent_diffusion:true`.
 **Never compare Layer 1 to Layer 2.** They are different instruments on different metrics: B20
 `community_from_env` is recall@10 from the full 799M fusion model; the probe's `community_from_env`
-0.8845 is micro-AP from a light head on frozen encoder features. Neither bounds the other.
+0.8845 is micro-AP from a light head on encoder features. Neither bounds the other.
 
 ---
 
@@ -87,38 +96,32 @@ B1 0.323 · B5 0.399 · B16 0.426 · B34 0.433 · B28 0.451
 
 ## Layer 2 — encoder-probe records (exploratory)
 
-Fast frozen-encoder probes. `fair_gain` = Earth4D − the strongest fair baseline on the same probe.
+> **Every record on this board predates protocol v5 and measures something else.** Until v5 the head
+> received 20,663 features of which the hash grid was 36 — 0.17% — with tile coding at 89.2%; the
+> encoder was frozen at random init; and `fair_gain` could resolve to a gain over the class prior or
+> over the env channel depending on the row. v5 runs Earth4D at 144 dims, trained, against a 144-dim
+> control, with one gain vocabulary. Every row re-baselines on its next run. Expect the numbers to fall.
+
+Fast **trained**-encoder probes (protocol v5-encoder-only). `fair_gain` = Earth4D − a matched-width
+RFF on the same data, split and head — the same quantity on every capability.
 **Discovery instruments: a probe record is never science** — it must clear the evidence standard in
 `program.md` first. Records below are the live board; a record may only be beaten like-for-like.
 
-THE NUMBERS LIVE IN scorecard.txt, WHICH IS GENERATED. This table was hand-maintained and drifted
-(it read 0.1769 / 0.0521 / 0.0512 against a live board of 0.1968 / 0.1983 / 0.0955). Two sources for one
-board is how it drifted; there is now one.
+The numbers live in `scorecard.txt`, which is generated. This file carries no scores: two sources for
+one board is how it drifted.
 
-| capability | record | metric | fair_gain | vs baseline | mode | shards | protocol |
-|---|---|---|---|---|---|---|---|
+**Per-record findings belong in the ledger, not here.** A defect in a specific record is recorded as a
+dead-end in `records.json` with its reason and published to Ensue, where the swarm reads it before
+picking. This file describes the scoring, not the history of individual runs.
 
-Reads:
-- **calibration** reports no fair baseline, so its bottleneck is undiagnosable and 0.5910 is barely
-  above the 0.5 useless floor. Its stored probe uses `--feature/--ensemble`, which belong to
-  `calib_probe.py`, not `probe.py` — the record cannot currently be reproduced through the harness.
-- **family_from_spacetime** was **invalidated on 2026-07-30** and restored to 0.1769. A second agent tree
-  on the box (`/workspace/codex-earth4d-native-fb35a7f`, its own harness and `--causal_clock_*` flags)
-  walked the record 0.1769 → 0.19143524765968323 in seven accepted single-seed steps
-  (+0.0007 / +0.0008 / +0.0112 / +0.0005 / +0.0002 / +0.0006 / +0.0006), each stacking another
-  `--causal_*` flag on the same held-out split. Every delta is inside single-seed noise and the walk is a
-  maximum selected over repeated runs. It is also unreproducible here: nothing in this tree emits its
-  claimed `trained_rff` baseline, and replaying the stored command gives `st_gain(vs RFF) +0.0481`.
-  **The board is shared and singular.**
-- **flowering_peak_month**'s stored probe passes `--pheno_env`, which is **silently ignored**: in
-  `probe.py` the `if a.phenology:` block returns before the `--pheno_env/--pheno_disttarget/
-  --pheno_taxon` and `--pheno_densefield` blocks can run. Verified — `--phenology --forecast` with
-  `--pheno_env`, with `--pheno_taxon family`, and with `--pheno_densefield` all produce a byte-identical
-  `PHENOLOGY-FUTURE` header, the same 98,304 obs / 19,662 queries, and the same +0.0087. So this record
-  measures the plain temporal path, not an env-channel phenology probe, and ~120 lines of pheno modes
-  are unreachable whenever `--phenology` is set.
-- **community_from_env / species_from_env** carry large fair-gains on *fused env channels*, not on the
-  coordinate encoder alone. Label them as such.
+How a record is earned:
+
+| | |
+|---|---|
+| beats the standing record by more than the noise barrier | 2% of the record, floor 0.002, and 2σ once ≥3 seeds |
+| like-for-like | same capability, mode, split, shard count and protocol |
+| from a clean tree | the CONFIG/`earth4d.py` diff IS the experiment; a dirty tree makes it unrecoverable |
+| published | `--ensue` on every run, win or dead-end |
 
 ## Layer 3 — excluded, with reason
 
@@ -132,12 +135,12 @@ Reads:
 These 9 are **not** legal `--metric` values. They remain on Layer 1 because the full model is still
 scored on them; they are simply not reachable by the encoder probe.
 
-## Architectural note — a probe-win that must NOT graduate
+## A probe-win is not automatically a champion-win
 
-A gated **spatial-only random-Fourier-features branch** (default off) fixes the bare probe's weakness:
-a raw Earth4D hash grid loses to a generic RFF PE on smooth/static tasks (0.069→~0.08–0.10 static;
-forecast 0.153→0.165, +0.096 vs RFF). **But the champion already carries this exact prior** —
-`autoresearch/main/editable_files/fusion/fusion.py:311` wires `SmoothGeoField` (an RFF geo prior added to the hash position;
-`champion.yaml smooth_geo: true`). The probe-win is the probe catching up to the champion, not a new
-lever. **Do not graduate** (Ensue `earth4d_FOURIER_redundant_with_smooth_geo_NO_graduation_2026_07_28`).
-Keep the branch default-off for probe fairness only. Single-seed, noisy.
+A gain the champion **already carries** is the probe catching up, not a lever to graduate. The bolt-on
+bases are the standing example: fusion already wires an RFF geo prior, so switching one on in the probe
+can raise a probe number while adding nothing to the model.
+
+Before proposing a graduation, check the champion for the mechanism first. `scoring/graduation.py`
+enforces the rest: a probe record crosses only as a **prediction that gets tested** — the champion
+re-measures the benchmark and the result is recorded either way.

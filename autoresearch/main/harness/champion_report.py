@@ -10,7 +10,7 @@ This makes every champion commit read consistently (see science.md rule 30). Exa
 
 Usage:
     # after a benchmark run whose stdout/eval was captured to run.log:
-    python -m deepearth.autoresearch.main.editable_files.harness.champion_report --log run.log --desc "widen d_model 256->384" --save
+    python -m deepearth.autoresearch.main.harness.champion_report --log run.log --desc "widen d_model 256->384" --save
     # prints the commit message and promotes run.log's scores to the champion record.
     # omit --save to preview the report without changing the record (e.g. a candidate that did not win).
 """
@@ -19,10 +19,16 @@ import json
 import argparse
 from pathlib import Path
 
-RECORD = Path(__file__).with_name("champion_scores.json")   # the current champion (before for the next run)
+# The champion record lives in main/records/, NOT beside this file. `Path(__file__).with_name(...)`
+# resolved to harness/champion_scores.json — a path that has never existed — so
+# `old` was always None, every report printed "BASELINE" instead of BEFORE -> AFTER, and --save wrote a
+# second record the loop then ignored. That is rule 30's entire mechanism, silently off.
+# Anchored by NAME so a directory move cannot re-break it.
+RECORD = next(p for p in Path(__file__).resolve().parents
+              if p.name == "autoresearch") / "main" / "records" / "champion_scores.json"
 
 try:                                                        # canonical order so EVERY benchmark is listed (inactive ones marked, never silently missing)
-    from deepearth.autoresearch.main.editable_files.harness.evaluate import BENCHMARKS as _CANON
+    from deepearth.autoresearch.main.harness.evaluate import BENCHMARKS as _CANON
 except Exception:
     _CANON = []
 
@@ -104,7 +110,7 @@ def parse_run(log_path: str) -> dict:
     for m in re.finditer(r"^\s*(B\d+_\w+)\s+(-?[0-9.]+)(?:\s|$)", txt, re.M):
         scores[m.group(1)] = float(m.group(2))                 # last occurrence wins (final eval)
     try:                                                       # RECOMPUTE the net from scores with the live logic, so
-        from deepearth.autoresearch.main.editable_files.harness.evaluate import net_score, arithmetic_net   # every champion record is comparable
+        from deepearth.autoresearch.main.harness.evaluate import net_score, arithmetic_net   # every champion record is comparable
         return {"scores": scores, "harmonic": float(net_score(scores)), "arithmetic": float(arithmetic_net(scores))}
     except Exception:                                          # fallback: parse whatever the log printed
         h = re.search(r"net_score:\s+([0-9.]+)", txt)

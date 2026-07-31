@@ -1,7 +1,7 @@
 """One-time setup for DeepCal autoresearch. Idempotent: safe to run repeatedly.
 
-    python -m deepearth.autoresearch.main.editable_files.lib.prepare                              # uses autoresearch/main/editable_files/harness/deepcal.yaml
-    python -m deepearth.autoresearch.main.editable_files.lib.prepare --config autoresearch/main/editable_files/harness/deepcal.yaml
+    python -m deepearth.autoresearch.main.editable_files.lib.prepare                              # uses autoresearch/main/editable_files/deepcal.yaml
+    python -m deepearth.autoresearch.main.editable_files.lib.prepare --config autoresearch/main/editable_files/deepcal.yaml
 
 Run from the repo's PARENT directory (the one containing ``deepearth/``) so the ``deepearth`` package imports.
 
@@ -191,7 +191,7 @@ def main():
     data_dir = resolve_data_dir(cache_dir_cfg)
     prepared = ensure_prepared(config, data_dir, a.device)
     ensure_test_io(prepared, a.device)
-    print("=== prepare complete: ready for `python -m deepearth.autoresearch.main.editable_files.harness.train` and the autoresearch loop ===")
+    print("=== prepare complete: ready for `python -m deepearth.autoresearch.main.editable_files.train` and the autoresearch loop ===")
 
 
 if __name__ == "__main__":

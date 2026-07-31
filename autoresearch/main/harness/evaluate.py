@@ -468,48 +468,22 @@ def observed_any(observed: Dict[str, torch.Tensor], name: str) -> bool:
     return name in observed and bool(observed[name].any())
 
 
-_SCORE_FLOOR = 1e-3   # keeps the harmonic mean finite/comparable if a benchmark reads ~0 (a zero would otherwise nuke it to 0)
-
-
-def normalized(raw: Dict[str, float]) -> Dict[str, float]:
-    """Each benchmark's score in [0,1]. EVERY benchmark here is defined on a metric that is ALREADY naturally in
-    [0,1] -- top-k accuracy, family accuracy, macro-F1, cosine similarity of unit embeddings, recall@k, calibration
-    MRR -- so the score IS the raw value (clipped for safety). No baseline/target remap: a hand-set target below the
-    attainable maximum is an ARTIFICIAL ceiling that saturates a still-improving metric at 1.0, which we reject."""
-    return {k: float(np.clip(v, 0.0, 1.0)) for k, v in raw.items()
-            if not (isinstance(v, float) and np.isnan(v))}
-
-
-def is_diagnostic(k: str) -> bool:
-    """A DERIVED difference benchmark (ablation-delta / information-gain): B24_geo_information_gain = B2-B1,
-    B56-B60_*_phylo_graph_gain = capability WITH minus WITHOUT the species graph. These isolate a MECHANISM's
-    contribution and live on a compressed 0-0.3 scale. They ARE included in the net (rule 32: score 100% of the suite), renormalized by _net_value.
-    This docstring used to say EXCLUDED, which the code has not done for some time. The old reasoning was:
-    folding a difference into the harmonic mean double-counts its own constituents and, being small (a good phylo
-    gain is ~0.05, an untrained one is 0.0), it dominates/nukes the harmonic mean -> the north star would be pinned
-    near 0 regardless of the model's actual capabilities."""
-    return k.endswith("_gain")
-
+# WHAT A NUMBER MEANS IS NOT DEFINED HERE. `normalized`, `is_diagnostic`, `_net_value` and the score
+# floor moved to `autoresearch/scoring.py`, which sits OUTSIDE every loop's `editable_files/` because
+# scoring must not be editable by the experiments it judges. science.md rule 19 already calls this file
+# "the immutable ground truth"; it was stored in the editable tree anyway, and `score.py` kept a
+# hand-copy of two of them under a comment reading "keep byte-identical". One definition now, imported
+# by all three loops. Bodies moved verbatim -- net_score on the champion record is unchanged to full
+# float precision (0.32413703851749265).
+from deepearth.autoresearch.scoring.definitions import (        # noqa: E402  (must follow BENCHMARKS)
+    SCORE_FLOOR as _SCORE_FLOOR,                    # noqa: F401  (re-exported for existing callers)
+    is_diagnostic,
+    net_value as _net_value,
+    normalized,
+    suite_mismatch,                                 # noqa: F401  (re-exported: before/after guard)
+)
 
 _BENCHMARK_SET = frozenset(BENCHMARKS)   # the net averages over THIS, never over the caller's dict
-
-_GAIN_SCALE = 0.1   # logistic scale for ablation-delta ("_gain") benchmarks in the net (see _net_value)
-
-
-def _net_value(k: str, v: float) -> float:
-    """The safe [0,1) contribution of benchmark ``k`` (normalized score ``v``) to the harmonic net. 100% of the
-    benchmarks are included -- NOTHING is excluded (rule: every benchmark exists to be measured AND optimized). A
-    plain capability metric is already in [0,1] (floored at _SCORE_FLOOR so a genuine ~0 does not nuke the mean). An
-    ablation-delta ("_gain", e.g. B56 family-graph-gain, B24 geo-information-gain) is unbounded/ can sit near 0, so a
-    logistic squash maps it to (0,1): it NEVER exceeds 1.0, NEVER forms a below-0 well, and is MONOTONICALLY beneficial
-    to drive up -- optimizing the net therefore optimizes every benchmark, deltas included, even where signal repeats."""
-    if is_diagnostic(k):
-        # Affine map of the signed delta d in [-1,1] -> [0,1]: 0.5 = neutral (no gain / not computed), 1.0 only at a
-        # full +1 gain, 0.0 at a full -1 (graph hurts). Linear so it NEVER exceeds 1, NEVER forms a sub-0 well, is
-        # monotonically beneficial to raise, and — unlike a logistic — leaves FULL headroom (a 0.5 gain sits at 0.75,
-        # not 0.99, so there is real room to improve).
-        return 0.5 + 0.5 * float(np.clip(v, -1.0, 1.0))
-    return max(v, _SCORE_FLOOR)
 
 
 def net_score(raw: Dict[str, float]) -> float:

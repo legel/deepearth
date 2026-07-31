@@ -14,7 +14,7 @@ restricts it to the encoder's benchmark subset, and reports:
 The full-suite net_score is untouched -- this is an added lens, not a replacement (science.md rule 32).
 
 Usage:
-  python -m deepearth.autoresearch.main.editable_files.harness.score --log run.log [--encoder biological|spacetime|both]
+  python -m deepearth.autoresearch.main.harness.score --log run.log [--encoder biological|spacetime|both]
          [--champion autoresearch/main/records/champion_scores.json] [--json out.json] [--ensue-tag biological]
 """
 from __future__ import annotations
@@ -25,18 +25,16 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# --- reuse evaluate's OWN scoring maps so the encoder lens never redefines scoring (autoresearch.md rule) ---
-try:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # <parent-of-deepearth> on path
-    from deepearth.autoresearch.main.editable_files.harness.evaluate import _net_value, is_diagnostic  # type: ignore
-except Exception:  # pragma: no cover - standalone log scoring without the heavy (torch) import
-    _SCORE_FLOOR = 1e-3
-    def is_diagnostic(k: str) -> bool:            # MIRROR of evaluate.is_diagnostic -- keep byte-identical
-        return k.endswith("_gain")
-    def _net_value(k: str, v: float) -> float:    # MIRROR of evaluate._net_value -- keep byte-identical
-        if is_diagnostic(k):
-            return 0.5 + 0.5 * float(max(-1.0, min(1.0, v)))
-        return max(v, _SCORE_FLOOR)
+# Scoring is defined ONCE, in autoresearch/scoring.py, outside every loop's editable_files/. This file
+# used to import from evaluate.py and, when that import failed (it pulls in torch), fall back to a
+# HAND-COPY of is_diagnostic and _net_value annotated "keep byte-identical" -- a second definition of
+# the north star, maintained by a comment. scoring.py has no heavy dependencies, so there is nothing to
+# fall back FROM and no copy to keep in sync.
+# Named anchor, not parents[N] -- the count was already wrong before this file moved, and a wrong one
+# fails as a silent ImportError that used to be caught and papered over by a hand-copied fallback.
+sys.path.insert(0, str(next(p for p in Path(__file__).resolve().parents
+                            if p.name == "deepearth").parent))
+from deepearth.autoresearch.scoring.definitions import is_diagnostic, net_value as _net_value  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------------------
 # Benchmark -> encoder partition (see autoresearch/main/README.md). Each program scores ONLY its set.

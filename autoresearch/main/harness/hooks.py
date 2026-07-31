@@ -86,7 +86,7 @@ def instrument(spacetime_gain: bool = False) -> None:
       - if spacetime_gain: a SECOND eval under ``ablate_spacetime`` and the ``*_spacetime_gain`` deltas
         (this is the S0 instrument -- it *creates* st_gain). Doubles eval time only when requested.
     Launch experiments through ``programs/run_experiment.py`` so this is installed before training."""
-    from deepearth.autoresearch.main.editable_files.harness import evaluate as ev
+    from deepearth.autoresearch.main.harness import evaluate as ev
     if getattr(ev, "_programs_instrumented", False):
         return
     orig = ev.evaluate_benchmarks
