@@ -26,8 +26,7 @@ picking one side's scores, which would silently delete the other's dead-ends.
 no `.py` file in this repository and never did anything. Two mechanisms are real:
 
 - **The dirty-tree gate** (`harness.py`): a run from a tree with uncommitted changes still publishes its
-  dead-end and still posts to Ensue, but cannot take the record. The experiment IS the CONFIG/earth4d.py
-  diff, so a record nobody can reconstruct is not a record.
+  dead-end and still posts to Ensue, but cannot take the record. The experiment IS the diff of the CONFIG block and the encoder, so a record nobody can reconstruct is not a record.
 - **One worktree at a time.** `records.json` is git-tracked, so every worktree carries its own physical
   copy — two trees do not contend for a lock, they diverge silently. Merge boards back by UNION of
   `ledger.deadends` keyed by tag; picking one side deletes the other's dead-ends, which is how 74 were
