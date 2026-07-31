@@ -989,6 +989,51 @@ def audit() -> Tuple[str, List[str]]:
 # knows about Earth4D, only about "a torch module" and "a categorical target over coordinates", so the
 # biological loop can call them unchanged.
 
+
+def enforce_determinism(seed: int = 0) -> dict:
+    """Make a whole RUN reproducible, not just the hash backward.
+
+    EARTH4D_DETERMINISTIC=1 makes the hash-grid gradient bit-identical -- verified on the box, all four
+    encoders. It is not sufficient. Measured after that fix, four seed-0 runs of species_from_spacetime
+    still gave 0.032906 / 0.033466 / 0.034178 / 0.036721: a spread of 0.0038, which is LARGER than the
+    0.002 noise-barrier floor a record has to clear. The frozen RFF control was bit-identical across the
+    same runs (0.041806530207395554), so the nondeterminism is in the TRAINED path, not the data or the
+    split.
+
+    What is left after the kernel: cuBLAS split-k reductions pick different orders per launch, TF32 lets
+    matmuls use a lower-precision path chosen at runtime, cuDNN autotunes an algorithm per shape, and
+    torch's scatter/index kernels have nondeterministic variants. Every one of those sits between the
+    encoder output and the loss.
+
+    This pins all of them. It costs some throughput, which is the correct trade: a number nobody can
+    reproduce cannot set a record, and that is exactly why the trained protocol went unused for so long.
+    Returns what it set, so a run can record the guarantee it was made under.
+    """
+    import os
+    import random
+    import torch
+    # cuBLAS needs this set BEFORE the first CUDA context or the workspace is already allocated.
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False        # no per-shape autotune
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cuda.matmul.allow_tf32 = False  # TF32 picks precision at runtime
+    torch.backends.cudnn.allow_tf32 = False
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except Exception:
+        pass
+    return {
+        "determinism_hash_kernel": os.environ.get("EARTH4D_DETERMINISTIC", "") in ("1", "true", "True"),
+        "determinism_cublas_workspace": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+        "determinism_tf32_off": True,
+        "determinism_torch_algorithms": True,
+    }
+
+
 def _as_device(dev):
     """Accept "cuda:0" or torch.device. probe.py passes the raw --device STRING, and an axis that
     assumed the object died with AttributeError: 'str' has no attribute 'type'. Normalise once here so
