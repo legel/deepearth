@@ -70,7 +70,8 @@ from deepearth.autoresearch.probes.spacetime.harness import (
 )
 # Measurement definitions live in the non-editable scoring module, not here.
 from deepearth.autoresearch.scoring.definitions import (
-    field_interpolation, relative_transfer, science_axes, signal_capture)
+    autoregressive_rollout, field_interpolation, relative_transfer, science_axes,
+    signal_capture)
 
 # ===================================================================================================
 # CONFIG — THE EXPERIMENT. Edit this, on a branch. There is no command-line flag for any of it.
@@ -1167,6 +1168,13 @@ def main(argv=None):
     except Exception as _exc:
         _SCIENCE_AXES["axis_R2b_measurable"] = False
         _SCIENCE_AXES["axis_R2b_reason"] = f"{type(_exc).__name__}: {_exc}"[:120]
+    # R1 — does consuming observed past state help, and does it SURVIVE being fed the model's own
+    # output? A delayed positional basis collapses to the control once its input is synthetic.
+    try:
+        _SCIENCE_AXES.update(autoregressive_rollout(enc, coords, fam_t, days, test, dev))
+    except Exception as _exc:
+        _SCIENCE_AXES["axis_R1_measurable"] = False
+        _SCIENCE_AXES["axis_R1_reason"] = f"{type(_exc).__name__}: {_exc}"[:120]
     # R5 is a FLOOR, not a readout: "small models must have no less than 100M parameters". The v4
     # champion ran ~37.7M -- one hash table, tri-planes dropped -- and nothing said so, because nothing
     # checked. A run below the floor measures a model science.md does not permit, so it declares itself

@@ -29,9 +29,12 @@ RECORD = next(p for p in Path(__file__).resolve().parents
               if p.name == "autoresearch") / "main" / "records" / "champion_scores.json"
 
 try:                                                        # canonical order so EVERY benchmark is listed (inactive ones marked, never silently missing)
-    from deepearth.autoresearch.main.harness.evaluate import BENCHMARKS as _CANON
+    from deepearth.autoresearch.main.harness.evaluate import BENCHMARKS as _CANON, suite_mismatch
 except Exception:
     _CANON = []
+
+    def suite_mismatch(before, after):
+        return sorted(set(after) - set(before)), sorted(set(before) - set(after))
 
 # One-line description per benchmark (given-set -> target, metric), so a reader grasps whole-system performance at a
 # glance. "env" = the location's full environment vector U; "phylo graph gain" = ablation delta from species-graph refinement.
@@ -156,6 +159,19 @@ def format_commit(new: dict, old: Optional[dict], desc: str, config: str = "") -
             flag = "" if before is None else ("  ^" if after > before + 1e-9 else ("  v" if after < before - 1e-9 else "  ="))
             row = f"{name}: {_f(before)} -> {_f(after)} ({d}){flag}"
         lines.append(f"{i:>2}. {row}" + (f"  -- {desc}" if desc else ""))
+    if old is not None:
+        # THE SUITE MUST BE THE SAME SUITE. net_score averages over the declared benchmarks that are
+        # PRESENT, and hooks.instrument(spacetime_gain=True) only produces the six *_spacetime_gain
+        # keys when --st-gain is passed. Each lands near 0.5 through net_value and the harmonic mean is
+        # dominated by its near-zero terms, so merely passing the flag RAISES the net. A before/after
+        # that straddles that boundary records a CLI flag as a result, which is precisely what rule 30
+        # exists to prevent.
+        added, missing = suite_mismatch(os_, ns)
+        if added or missing:
+            lines += ["", "*** SUITE CHANGED — these two runs did not score the same benchmarks, so the",
+                      "    net comparison above is NOT valid. Re-run both sides the same way.",
+                      f"    added:   {', '.join(added) or '(none)'}",
+                      f"    missing: {', '.join(missing) or '(none)'}"]
     if old is not None:                                        # regression guard summary (science.md: NO metric regressing)
         reg = [f"{n} ({os_[n]:.3f}->{ns[n]:.3f})" for n in sorted(ns, key=_n)
                if n in os_ and ns[n] < os_[n] - 0.005]

@@ -243,6 +243,25 @@ METRICS: Tuple[Metric, ...] = (
            "a plant's pollinators from its relatives' pollinators, recall@10",
            rule="R27 interactions across two trees",
            surface=(_PHYLO, _FUSION), question="Does interaction signal travel along phylogeny?"),
+    # ---- the probe->fusion bridge: the SAME quantity the probe reports, on the 799M model ----------
+    # hooks.ablate_spacetime computes capability WITH Earth4D minus WITHOUT. That is `vs RFF` at
+    # full-model scale. Declaring these is what lets a spacetime probe finding reach a champion score
+    # at all; until now they were computed by --st-gain and dropped.
+    Metric("B1_species_spacetime_gain", "species-from-env accuracy gained FROM Earth4D",
+           rule="R18 all data must lift induction", surface=(_E4D, _FUSION),
+           capability="species_from_env",
+           question="Does the coordinate encoder add anything the env channel does not already carry?"),
+    Metric("B6_family_spacetime_gain", "family-from-env accuracy gained FROM Earth4D",
+           rule="R18 all data must lift induction", surface=(_E4D, _FUSION),
+           capability="family_from_env"),
+    Metric("B34_lfmc_spacetime_gain", "LFMC correlation gained FROM Earth4D",
+           rule="R18 all data must lift induction", surface=(_E4D, _FUSION)),
+    Metric("B42_mycorrhiza_spacetime_gain", "mycorrhiza macro-F1 gained FROM Earth4D",
+           rule="R18 all data must lift induction", surface=(_E4D, _FUSION)),
+    Metric("B51_pollinator_spacetime_gain", "pollinator recall gained FROM Earth4D",
+           rule="R18 all data must lift induction", surface=(_E4D, _FUSION)),
+    Metric("B23_calibration_spacetime_gain", "species-posterior calibration gained FROM Earth4D",
+           rule="R18 all data must lift induction", surface=(_E4D, _FUSION)),
 )
 
 _BY_NAME = {m.name: m for m in METRICS}
@@ -296,8 +315,12 @@ class Axis:
 SCIENCE_AXES: Tuple[Axis, ...] = (
     Axis("R1", "learn spatio-temporal distributions via a CAUSAL AUTOREGRESSIVE forecaster that "
                "consumes observed past state and rolls its own predictions forward",
-         instrument=None, status="unmeasured",
-         note="The probe's FORECAST mode is a SPLIT (train t<0.5, test t>0.5), not autoregression. "
+         instrument="autoregressive_rollout", status="measured",
+         note="Three arms: positional-only (control), + observed strictly-past neighbour state, and "
+              "ROLLED where that state is the model's own prediction fed back `horizon` times. A "
+              "delayed basis collapses to the control once its input is synthetic; memory does not. "
+              "Previously: the probe's FORECAST mode is a SPLIT (train t<0.5, test t>0.5), not "
+              "autoregression. "
               "earth4d.py's own _causal_state docstring: 'does not consume observed history and "
               "therefore is not state memory or an autoregressive mechanism.' program.md's evidence "
               "standard #3 already defines the correct test; no mode implements it."),
@@ -348,7 +371,7 @@ SCIENCE_AXES: Tuple[Axis, ...] = (
     # The axis this whole three-loop design exists for, and the one with no instrument.
     Axis("probe->fusion", "a probe measures what an encoder CONTRIBUTES, so that measurement must be "
                           "the same quantity fusion scores -- only cheaper",
-         instrument=None, status="unmeasured",
+         instrument="hooks.ablate_spacetime + B*_spacetime_gain", status="measured",
          note="The probe scores fair_gain = Earth4D minus the strongest fair baseline (a MARGINAL). "
               "The champion scores B5/B8 = absolute accuracy of the full model, with no encoder "
               "ablation in the declared suite. Those are different quantities, so a probe gain has no "
@@ -763,6 +786,98 @@ def relative_transfer(enc, coords, fam, dev, steps: int = 400, lr: float = 3e-3,
         "axis_R2b_relative_transfer": round(rel, 4),
         "axis_R2b_absolute_transfer": round(absol, 4),
         "axis_R2b_gain": round(rel - absol, 4),
+    }
+
+
+
+def autoregressive_rollout(enc, coords, fam, days, test, dev, K: int = 16, horizon: int = 2,
+                           steps: int = 400, lr: float = 3e-3, seed: int = 0) -> dict:
+    """R1 — does the model CONSUME observed past state and roll its own predictions forward?
+
+    science.md rule 1: "a causal auto-regressive model trained to forecast future states from past
+    states". program.md's evidence standard #3 sharpens it: "Consume observed past state; roll your own
+    predictions forward. A positional lookup at t-lag is a delayed basis, not memory."
+
+    Every capability on this board is a past->future SPLIT, which is not the same thing. A split asks
+    "does a coordinate in the future decode?"; autoregression asks "does knowing what happened nearby
+    BEFORE help, and does that survive being fed the model's own output?" Nothing has ever asked the
+    second question, so rule 1 has been unmeasured while the loop reported a forecast metric.
+
+    Three arms, identical head capacity and budget:
+
+      POSITIONAL  encoder(query coordinate) alone.               the control -- no state consumed
+      OBSERVED    + aggregated state of the K nearest STRICTLY-PAST train neighbours
+      ROLLED      same, but the state is the model's OWN prediction from the previous step,
+                  applied `horizon` times. This is the part that separates memory from a delayed basis:
+                  a delayed basis degrades to the control as soon as its input is synthetic.
+
+    axis_R1_gain_observed  = OBSERVED - POSITIONAL   (does history help at all?)
+    axis_R1_gain_rolled    = ROLLED   - POSITIONAL   (does it survive self-feeding?)
+
+    Neighbours are drawn from TRAIN rows only and are strictly earlier in time, so no test label and no
+    future information can enter the state.
+    """
+    import torch
+    torch.manual_seed(seed)
+    lat = np.asarray(coords[:, 0].cpu()); lon = np.asarray(coords[:, 1].cpu())
+    dy = np.asarray(days); te = np.asarray(test); tr = ~te
+    y = torch.as_tensor(np.asarray(fam), dtype=torch.long, device=dev)
+    n_cls = int(y.max()) + 1
+    if tr.sum() < 64 or te.sum() < 64:
+        return {"axis_R1_measurable": False, "axis_R1_reason": "split too small"}
+
+    with torch.no_grad():
+        P = enc(coords.to(dev)).float()
+
+    tr_idx = np.flatnonzero(tr)
+    ll_tr = torch.as_tensor(np.stack([lat[tr_idx], lon[tr_idx]], 1), dtype=torch.float32, device=dev)
+    d_tr = torch.as_tensor(dy[tr_idx], dtype=torch.float32, device=dev)
+
+    def _past_state(idx, state_src):
+        """Mean one-hot state of the K nearest TRAIN neighbours strictly earlier in time."""
+        ll = torch.as_tensor(np.stack([lat[idx], lon[idx]], 1), dtype=torch.float32, device=dev)
+        dq = torch.as_tensor(dy[idx], dtype=torch.float32, device=dev)
+        dist = torch.cdist(ll, ll_tr)
+        dist = dist.masked_fill(d_tr.unsqueeze(0) >= dq.unsqueeze(1), float("inf"))  # strictly past
+        k = min(K, ll_tr.shape[0])
+        nn = dist.topk(k, largest=False).indices
+        valid = torch.isfinite(dist.gather(1, nn)).float().unsqueeze(-1)
+        return (state_src[nn] * valid).sum(1) / valid.sum(1).clamp_min(1.0)
+
+    onehot_tr = torch.nn.functional.one_hot(y[torch.as_tensor(tr_idx, device=dev)], n_cls).float()
+    tr_state, te_state = _past_state(tr_idx, onehot_tr), _past_state(np.flatnonzero(te), onehot_tr)
+    Ptr, Pte = P[torch.as_tensor(tr)], P[torch.as_tensor(te)]
+    ytr, yte = y[torch.as_tensor(tr)], y[torch.as_tensor(te)]
+
+    def _fit(Xtr, Xte):
+        head = torch.nn.Linear(Xtr.shape[1], n_cls).to(dev)
+        opt = torch.optim.Adam(head.parameters(), lr=lr)
+        for _ in range(steps):
+            opt.zero_grad()
+            torch.nn.functional.cross_entropy(head(Xtr), ytr).backward()
+            opt.step()
+        with torch.no_grad():
+            return head, float((head(Xte).argmax(1) == yte).float().mean())
+
+    _, positional = _fit(Ptr, Pte)
+    head, observed = _fit(torch.cat([Ptr, tr_state], 1), torch.cat([Pte, te_state], 1))
+
+    # ROLLED: replace the observed state with the model's own output, `horizon` times.
+    rolled_state = te_state
+    with torch.no_grad():
+        for _ in range(horizon):
+            pred = torch.softmax(head(torch.cat([Pte, rolled_state], 1)), dim=1)
+            rolled_state = pred
+        rolled = float((head(torch.cat([Pte, rolled_state], 1)).argmax(1) == yte).float().mean())
+
+    return {
+        "axis_R1_measurable": True,
+        "axis_R1_positional": round(positional, 4),
+        "axis_R1_observed": round(observed, 4),
+        "axis_R1_rolled": round(rolled, 4),
+        "axis_R1_gain_observed": round(observed - positional, 4),
+        "axis_R1_gain_rolled": round(rolled - positional, 4),
+        "axis_R1_horizon": horizon,
     }
 
 

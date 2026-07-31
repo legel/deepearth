@@ -97,6 +97,16 @@ BENCHMARKS: List[str] = [
     "B53_pollinator_calibration_mrr",   # pollinator posterior calibration, mean reciprocal rank
     "B54_pollinator_dist_kl",           # predicted vs true pollinator frequency distribution, exp(-KL)
     "B55_pollinator_phylo_transfer_recall",  # rule 27: predict a plant's pollinators from its relatives' pollinators (cross-tree induction)
+    # SPACETIME ablation-deltas: capability WITH Earth4D minus WITHOUT (hooks.ablate_spacetime).
+    # These are the fusion-side counterpart of the probe's `vs RFF` -- the SAME quantity, measured on
+    # the 799M model instead of a light head. Undeclared, they were computed by --st-gain and then
+    # silently dropped from the net, so nothing the spacetime probe found could ever reach a score.
+    "B1_species_spacetime_gain",
+    "B6_family_spacetime_gain",
+    "B34_lfmc_spacetime_gain",
+    "B42_mycorrhiza_spacetime_gain",
+    "B51_pollinator_spacetime_gain",
+    "B23_calibration_spacetime_gain",
     "B56_family_phylo_graph_gain",      # ablation-delta: family-from-phylo accuracy gained from the species-graph refinement
     "B57_flowering_phylo_graph_gain",   # ablation-delta (phenology family): flowering-AUC gained from the species-graph refinement
     "B58_lfmc_phylo_graph_gain",        # ablation-delta (ecophysiology family): LFMC-correlation gained from the species-graph refinement
@@ -430,13 +440,13 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     if flower_fid:                                                          # B27: 1 - mean|imagined-vision flowering - real-vision flowering|
         out["B27_flowering_fidelity"] = float(1.0 - torch.cat(flower_fid).mean())
     if "B7_family_from_phylo" in out and "_B7_ablated" in out:              # B56: phylogenomic-graph contribution (rule 27 ablation)
-        out["B56_family_phylo_graph_gain"] = max(0.0, out["B7_family_from_phylo"] - out["_B7_ablated"])
+        out["B56_family_phylo_graph_gain"] = out["B7_family_from_phylo"] - out["_B7_ablated"]
     out.pop("_B7_ablated", None)
     if "B51_pollinator_from_env_recall" in out and "_B51_ablated" in out:   # B59: species-graph contribution to interaction prediction
-        out["B59_pollinator_phylo_graph_gain"] = max(0.0, out["B51_pollinator_from_env_recall"] - out["_B51_ablated"])
+        out["B59_pollinator_phylo_graph_gain"] = out["B51_pollinator_from_env_recall"] - out["_B51_ablated"]
     out.pop("_B51_ablated", None)
     if "B20_community_from_env_recall" in out and "_B20_ablated" in out:     # B60: species-graph contribution to community/niche prediction
-        out["B60_community_phylo_graph_gain"] = max(0.0, out["B20_community_from_env_recall"] - out["_B20_ablated"])
+        out["B60_community_phylo_graph_gain"] = out["B20_community_from_env_recall"] - out["_B20_ablated"]
     out.pop("_B20_ablated", None)
     if traits:
         for lab, key in (("photo_env", "B10_traits_from_photo_env_f1"),
@@ -457,9 +467,9 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             if tname in traits: out[key] = _tf1(tname)
         if "B10_traits_from_photo_env_f1" in out and all(trc_abl[t][0] for t in traits):   # B61: species-graph contribution to trait prediction (traits are phylo-conserved)
             f1a = float(np.nanmean([_macro_f1(torch.cat(trc_abl[t][0]), torch.cat(trc_abl[t][1]), torch.cat(trc_abl[t][2]), trait_nc[t]) for t in traits]))
-            if not np.isnan(f1a): out["B61_trait_phylo_graph_gain"] = max(0.0, out["B10_traits_from_photo_env_f1"] - f1a)
+            if not np.isnan(f1a): out["B61_trait_phylo_graph_gain"] = out["B10_traits_from_photo_env_f1"] - f1a
     if "B2_species_from_photo_top1" in out and "B1_species_from_env_top10" in out:
-        out["B24_geo_information_gain"] = max(0.0, out["B2_species_from_photo_top1"] - out["B1_species_from_env_top10"])
+        out["B24_geo_information_gain"] = out["B2_species_from_photo_top1"] - out["B1_species_from_env_top10"]
     return out
 
 
