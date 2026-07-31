@@ -1001,6 +1001,11 @@ def main(argv=None):
         # best coordinate-PE control -> if env >> best coord-PE, the encoder's job is to REPRESENT environment.
         with torch.no_grad():
             e4d = enc(coords.to(dev)).cpu()
+        # The Earth4D arm trains `enc` IN PLACE under train_encoder, so a fused arm that reused it would
+        # inherit an already-trained table -- twice the encoder budget of the arm it is compared against.
+        # The fused arm gets its own freshly-initialized copy.
+        import copy as _copy
+        enc_fused = _copy.deepcopy(enc)
         env_t = torch.tensor(env)
         raw = torch.tensor(rn)
         rff_rng = np.random.default_rng(0)
@@ -1014,7 +1019,7 @@ def main(argv=None):
                            if CONFIG["train_encoder"] else
                            evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d", CONFIG["head_hidden"], a.seed))
         env_acc, env_t5 = evaluate(env_t, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "env", CONFIG["head_hidden"], a.seed)
-        fus_acc, fus_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "fused",
+        fus_acc, fus_t5 = (evaluate_trainable(enc_fused, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "fused",
                                               CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'],
                                               seed=a.seed, side=env_t)
                            if CONFIG["train_encoder"] else
@@ -1032,6 +1037,9 @@ def main(argv=None):
             metric="family_top1_accuracy",
             value=fus_acc,
             split=mode,
+            # The fused primary is only frozen-random when train_encoder is off. Declaring it honestly is
+            # what stops a trained-encoder number from being compared like-for-like with a frozen record.
+            trained_encoder=CONFIG["train_encoder"],
             # "ENV vs best-coord-PE" is the CHANNEL's advantage over coordinates, not the encoder's.
             # Without an explicit Earth4D-vs-generic-PE entry the harness's fair-baseline preference
             # matched "best-coord" and read +0.0411 as an encoder gain -- diagnosing ENCODER-LIMITED
