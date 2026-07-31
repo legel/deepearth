@@ -282,13 +282,10 @@ CAPABILITY_CONFIG = {
     # (the commit that turned the 33 flags into CONFIG): --target family, --head_hidden 0 (LINEAR
     # head), --fourier 0, --time_harmonics 0, --fourier_scale 10.0, --spatial_cline 0, --tile 0.
     "family_from_env": {
-        "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
+        "env": True, "env_channels": "alphaearth+terrain", "forecast": False, "phenology": False,
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
-        "head_hidden": 256,          # ARM famenv_head256: was 0 (LINEAR). A softmax over standardized env
-                                     # cannot carve a NICHE (a region of env space); every channel swap
-                                     # being flat may be the READOUT, not the channel. Fair: every arm
-                                     # (raw/RFF/Earth4D/env/fused) gets the identical head.
+        "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
         "fourier": 0, "time_harmonics": 0,
     },
     "species_from_env": {
@@ -371,8 +368,20 @@ def load_env(cache: str, gid, channels: str = "wcsoil", fit_mask=None):
       all+modis                   = wcsoil ++ alphaearth ++ modis   = 105
     MODIS is a genuinely different modality from AlphaEarth: a within-year greenness TRAJECTORY (vegetation
     seasonality at the observation) rather than a static annual scene embedding. It has only ever fed the
-    phenology probe, never the env->biology path."""
+    phenology probe, never the env->biology path.
+
+    A `+terrain` suffix on any of the above appends the PHYSICAL-STRUCTURE stack, which has never fed the
+    env->biology path at all (it exists in the corpus and only the infer_* decoders ever read it):
+      topo  (12, gbif_topo_tokens)   elevation/slope/aspect/roughness terrain descriptors
+      hydro ( 6, gbif_hydro_tokens)  surface-water / flow-accumulation context
+      chm   (11, gbif_chm_tokens)    canopy-height structure
+    e.g. alphaearth+terrain = 64 + 29 = 93, terrain = 29 alone. The claim being tested is that landform and
+    vegetation STRUCTURE carry niche information that neither a spectral scene embedding nor gridded climate
+    resolves -- a different physical modality, not more columns of the same one."""
     cachep = Path(cache)
+    terrain = channels.endswith("+terrain")
+    if terrain:
+        channels = channels[: -len("+terrain")] or "none"
     wc = np.load(cachep / "gbif_worldclim_tokens.npz")
     so = np.load(cachep / "gbif_soil_tokens.npz")
     el = np.load(cachep / "gbif_elev.npz")
@@ -389,13 +398,13 @@ def load_env(cache: str, gid, channels: str = "wcsoil", fit_mask=None):
         phmap = {int(g): i for i, g in enumerate(_ph["gbifID"])}; PH = _ph["phenology"]
     n_ae = 0 if AE is None else AE.shape[1]
     n_ph = 0 if PH is None else PH.shape[1]
-    _base = 0 if channels in ("alphaearth", "modis") else (19 if channels == "worldclim" else 29)
+    _base = 0 if channels in ("alphaearth", "modis", "none") else (19 if channels == "worldclim" else 29)
     D = _base + n_ae + n_ph
     env = np.full((len(gid), D), np.nan, np.float32)
     for i, g in enumerate(gid):
         g = int(g)
         o = 0
-        if channels not in ("alphaearth", "modis"):
+        if channels not in ("alphaearth", "modis", "none"):
             if g in wcmap: env[i, :19] = wcmap[g]
             o = 19
             if channels != "worldclim":
@@ -409,6 +418,19 @@ def load_env(cache: str, gid, channels: str = "wcsoil", fit_mask=None):
         if phmap is not None:
             j = phmap.get(g)
             if j is not None: env[i, o:o + n_ph] = PH[j]
+    if terrain:
+        cols = []
+        for fn, key in (("gbif_topo_tokens", "topo"), ("gbif_hydro_tokens", "hydro"),
+                        ("gbif_chm_tokens", "chm")):
+            z = np.load(cachep / f"{fn}.npz", allow_pickle=True)
+            idx = {int(g): i for i, g in enumerate(z["gbifID"])}
+            M = z[key]
+            X = np.full((len(gid), M.shape[1]), np.nan, np.float32)
+            for i, g in enumerate(gid):
+                j = idx.get(int(g))
+                if j is not None: X[i] = M[j]
+            cols.append(X)
+        env = np.concatenate([env] + cols, 1) if env.shape[1] else np.concatenate(cols, 1)
     # Fit transforms on train only when a split mask is supplied.
     fit = env if fit_mask is None else env[np.asarray(fit_mask, dtype=bool)]
     mu = np.nanmean(fit, 0); sd = np.nanstd(fit, 0); sd[sd < 1e-6] = 1.0
