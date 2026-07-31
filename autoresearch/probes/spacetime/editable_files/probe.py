@@ -296,7 +296,7 @@ CAPABILITY_CONFIG = {
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
         "fourier": 0, "time_harmonics": 0,
-        "train_encoder": True,   # ARM fused_trained
+        "env_channels": "ae_wb",   # ARM aewb
     },
     "species_from_env": {
         "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
@@ -402,19 +402,25 @@ def load_env(cache: str, gid, channels: str = "wcsoil", fit_mask=None):
     if channels in ("alphaearth", "all", "all+modis"):
         _ae = np.load(cachep / "gbif_alphaearth_tokens.npz")
         aemap = {int(g): i for i, g in enumerate(_ae["gbifID"])}; AE = _ae["ae"]
+    elif channels in ("ae_wb", "ae_wb_ph"):
+        # Prepared channel fusions that already exist in the corpus and have NEVER fed this path:
+        #   ae_wb    = AlphaEarth ++ water-balance bands (78)
+        #   ae_wb_ph = AlphaEarth ++ water balance ++ phenology (larger)
+        _ae = np.load(cachep / ("gbif_ae_wb.npz" if channels == "ae_wb" else "gbif_ae_wb_ph.npz"))
+        aemap = {int(g): i for i, g in enumerate(_ae["gbifID"])}; AE = _ae["ae"]
     phmap = PH = None
     if channels in ("modis", "all+modis"):
         _ph = np.load(cachep / "gbif_phenology_tokens.npz")
         phmap = {int(g): i for i, g in enumerate(_ph["gbifID"])}; PH = _ph["phenology"]
     n_ae = 0 if AE is None else AE.shape[1]
     n_ph = 0 if PH is None else PH.shape[1]
-    _base = 0 if channels in ("alphaearth", "modis", "none") else (19 if channels == "worldclim" else 29)
+    _base = 0 if channels in ("alphaearth", "modis", "none", "ae_wb", "ae_wb_ph") else (19 if channels == "worldclim" else 29)
     D = _base + n_ae + n_ph
     env = np.full((len(gid), D), np.nan, np.float32)
     for i, g in enumerate(gid):
         g = int(g)
         o = 0
-        if channels not in ("alphaearth", "modis", "none"):
+        if channels not in ("alphaearth", "modis", "none", "ae_wb", "ae_wb_ph"):
             if g in wcmap: env[i, :19] = wcmap[g]
             o = 19
             if channels != "worldclim":
