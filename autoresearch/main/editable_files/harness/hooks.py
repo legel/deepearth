@@ -100,7 +100,12 @@ def instrument(spacetime_gain: bool = False) -> None:
                 abl = orig(model, source, device, *a, **k)
             for cap, gain in ST_GAIN_MAP.items():
                 if cap in raw and cap in abl:
-                    raw[gain] = max(0.0, float(raw[cap]) - float(abl[cap]))
+                    # SIGNED, not clamped. This used to be max(0.0, ...), so a mechanism that HURT a
+                    # capability recorded 0.000 -- indistinguishable from one that did nothing. science.md
+                    # rule 18 says a modality that measurably hurts is a bug to be found and fixed, and
+                    # this is the instrument that would find it. The biological gains (B56-B62) were never
+                    # clamped; this was an asymmetry between the two sibling loops, not a decision.
+                    raw[gain] = float(raw[cap]) - float(abl[cap])
                     print(f"  {gain:<34} {raw[gain]:.3f}  (spacetime-gain: WITH {raw[cap]:.3f} - WITHOUT {abl[cap]:.3f})", flush=True)
         return raw
 

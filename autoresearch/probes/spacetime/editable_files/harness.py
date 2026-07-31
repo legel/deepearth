@@ -345,7 +345,7 @@ def declare(capability, mode, metric, value, gains=None, baselines=None, split="
     `--capability` from the harness wins over the mode's natural default when both are present: the
     harness declared the objective, and any mismatch is the harness's to detect.
 
-    `trained_encoder` defaults to the --train_encoder FLAG, but some modes (FIELD-DECODE, ENV-DECODE)
+    `trained_encoder` defaults to the --train_encoder FLAG, but some modes
     train the encoder end-to-end unconditionally, so they pass it explicitly. Only the trained protocol
     can support a claim about learned hash state, so this field must describe what actually happened
     rather than what was requested.
@@ -437,22 +437,11 @@ MODES: Tuple[Mode, ...] = (
          capability="family_from_env", lever=BOTH,
          notes="Primary is the FUSED Earth4D+ENV accuracy. Earth4D alone currently LOSES to RFF "
                "(0.0938 vs 0.1010), so the record is carried by the env channel -- label it."),
-    Mode("ENV-DECODE(<split>)", "--env_decode [--env_aux_weight W]",
-         capability="family_from_env", lever=ARCH,
-         notes="Trains the encoder end-to-end against an auxiliary env field. NOT reproducible "
-               "run-to-run (gains move ~0.005), so a single-seed record here means nothing."),
 
     # ---- family_from_spacetime -------------------------------------------------------------------
     Mode("FORECAST(past->future)", "--forecast [--target family]",
          capability="family_from_spacetime", lever=ARCH,
          notes="The default coordinate path. --forecast_spatial switches to future+newplace."),
-    Mode("FIELD-DECODE(<split>)", "--field_decode",
-         capability="family_from_spacetime", lever=ARCH,
-         notes="Trains the encoder end-to-end (rule 24). Also not reproducible run-to-run."),
-    Mode("GNN(message-passing propagator)", "--gnn [--gnn_hops H] [--rec_k K]",
-         capability="family_from_spacetime", requires=("--forecast",), lever=ARCH,
-         notes="Declares the ENCODER gain (Earth4D GNN vs generic-PE GNN). propagator_gain, in "
-               "extras, is propagation-vs-static on RAW features and gates nothing about Earth4D."),
     Mode("RECURRENCE(4D-LSTM rollout past->future)", "--recurrence [--rec_k K] [--rec_hidden H]",
          capability="family_from_spacetime", requires=("--forecast",), lever=ARCH,
          notes="science.md rule 2b. Currently negative vs RFF."),
@@ -493,8 +482,8 @@ LEVER_SITES = {
     ],
     ARCH: [
         "autoresearch/probes/spacetime/editable_files/earth4d.py: __init__, forward, training objective (the encoder itself)",
-        "autoresearch/probes/spacetime/editable_files/lib/recurrence.py: run_recurrence, run_field_decode, propagators",
-        "flags: --recurrence, --gnn, --forecast, --env_decode, --field_decode, --fourier, "
+        "autoresearch/probes/spacetime/editable_files/lib/recurrence.py: run_recurrence, propagators",
+        "CONFIG levers: recurrence, forecast, fourier, "
         "--spatial_siren, --time_harmonics",
     ],
 }
@@ -730,10 +719,6 @@ def _evict_oldest_deadends(ledger, cap=DEADEND_CAP):
 #   * a second agent walked family_from_spacetime 0.1769 -> 0.19143 in seven accepted single-seed steps
 #     of +0.0007 / +0.0008 / +0.0112 / +0.0005 / +0.0002 / +0.0006 / +0.0006;
 #   * a verification run here took flowering_peak_month 0.0521 -> 0.052131, a delta of +0.000031;
-#   * ENV-DECODE and FIELD-DECODE train the encoder end-to-end and move ~0.005 between identical
-#     invocations at the same seed.
-#
-# So: a delta below a few tenths of a percent is indistinguishable from re-running the same command.
 MIN_REL_IMPROVEMENT = 0.02      # 2% of the standing record
 MIN_ABS_IMPROVEMENT = 0.002     # ...and never less than this in absolute terms
 SEED_SIGMA_MULTIPLE = 2.0       # with >=3 seeds, must also clear 2 sigma of the seed spread

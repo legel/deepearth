@@ -483,12 +483,15 @@ def normalized(raw: Dict[str, float]) -> Dict[str, float]:
 def is_diagnostic(k: str) -> bool:
     """A DERIVED difference benchmark (ablation-delta / information-gain): B24_geo_information_gain = B2-B1,
     B56-B60_*_phylo_graph_gain = capability WITH minus WITHOUT the species graph. These isolate a MECHANISM's
-    contribution and live on a compressed 0-0.3 scale. They are reported as diagnostics but EXCLUDED from the net:
+    contribution and live on a compressed 0-0.3 scale. They ARE included in the net (rule 32: score 100% of the suite), renormalized by _net_value.
+    This docstring used to say EXCLUDED, which the code has not done for some time. The old reasoning was:
     folding a difference into the harmonic mean double-counts its own constituents and, being small (a good phylo
     gain is ~0.05, an untrained one is 0.0), it dominates/nukes the harmonic mean -> the north star would be pinned
     near 0 regardless of the model's actual capabilities."""
     return k.endswith("_gain")
 
+
+_BENCHMARK_SET = frozenset(BENCHMARKS)   # the net averages over THIS, never over the caller's dict
 
 _GAIN_SCALE = 0.1   # logistic scale for ablation-delta ("_gain") benchmarks in the net (see _net_value)
 
@@ -513,8 +516,19 @@ def net_score(raw: Dict[str, float]) -> float:
     """North star = HARMONIC mean (power mean p=-1) of ALL active benchmarks -- capabilities AND ablation-deltas
     (deltas safely renormalized by _net_value so their inclusion can only help, never nuke). Harmonic so lifting the
     WEAKEST benchmark helps most and none can be sacrificed for another; 100% inclusion so a champion must carry the
-    entire suite, not a favoured subset."""
-    vals = [_net_value(k, v) for k, v in normalized(raw).items()]
+    entire suite, not a favoured subset.
+
+    THE NET AVERAGES OVER THE DECLARED SUITE, NOT OVER WHATEVER THE CALLER PUT IN `raw`.
+
+    It used to iterate every key present, which let a CLI flag change the denominator: hooks.instrument
+    (--st-gain) writes six *_spacetime_gain keys into this same dict, none of them in BENCHMARKS. Each
+    maps through _net_value to ~0.5, and the harmonic mean is currently dominated by near-zero
+    benchmarks (harmonic 0.3487 vs arithmetic 0.6153), so adding six 0.5s RAISES the net by
+    construction. A --st-gain run and a plain run were not comparable, and a champion ledger could
+    straddle both with nothing flagging it -- which defeats the whole point of a before/after report.
+    Undeclared keys are still reported; they just cannot move the north star.
+    """
+    vals = [_net_value(k, v) for k, v in normalized(raw).items() if k in _BENCHMARK_SET]
     if not vals:
         return 0.0
     return float(len(vals) / sum(1.0 / v for v in vals))
@@ -545,8 +559,8 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
         for b in inactive:
             why = "needs holdout: temporal (strictly-future forecast split)" if "forecast" in b else "required inputs/labels absent for this run"
             lines.append(f"  {b:<34} {why}")
-    if diags:                                                  # ablation-delta / information-gain: raw here, logistic-renormalized INTO the net (_net_value)
-        lines.append("ablation-delta / information-gain benchmarks (raw; logistic-renormalized into the net, never excluded):")
+    if diags:                                                  # ablation-delta / information-gain: raw here, affine-renormalized INTO the net (_net_value)
+        lines.append("ablation-delta / information-gain benchmarks (raw; affine-renormalized into the net, never excluded):")
         for k in sorted(diags, key=lambda k: -diags[k]):
-            lines.append(f"  {k:<34} {diags[k]:6.3f}  (net contrib {1.0 / (1.0 + math.exp(-diags[k] / _GAIN_SCALE)):.3f})")
+            lines.append(f"  {k:<34} {diags[k]:6.3f}  (net contrib {_net_value(k, diags[k]):.3f})")
     return "\n".join(lines)
