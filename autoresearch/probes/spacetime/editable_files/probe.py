@@ -297,7 +297,7 @@ CAPABILITY_CONFIG = {
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
         "fourier": 0, "time_harmonics": 0,
-        "knn_readout": 200, "env_channels": "+terrain",   # ARM knn200_terrain_only
+        "knn_readout": 200, "env_channels": "alphaearth+terrain",   # ARM knn200_terrain (BEST: 0.1489)
     },
     "species_from_env": {
         "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
