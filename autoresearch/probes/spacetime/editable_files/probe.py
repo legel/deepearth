@@ -718,13 +718,26 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
                              nn.Linear(head_hidden, n_fam)).to(dev)
     else:
         head = nn.Linear(feats.shape[1], n_fam).to(dev)
+
+    def _knn_logp(Q, K=256, tau=0.02, chunk=2048):
+        """Soft k-NN class log-posterior of Q against the TRAIN rows, cosine similarity."""
+        Xn = F.normalize(Xtr, dim=-1)
+        out = []
+        for i in range(0, Q.shape[0], chunk):
+            sim = F.normalize(Q[i:i + chunk], dim=-1) @ Xn.t()
+            v, j = sim.topk(min(K, sim.shape[1]), dim=-1)
+            w = torch.softmax(v / tau, dim=-1)
+            p = torch.zeros(j.shape[0], n_fam, device=dev)
+            p.scatter_add_(1, ytr[j], w)
+            out.append((p + 1e-6).log())
+        return torch.cat(out)
     opt = torch.optim.Adam(head.parameters(), lr=lr)
     for _ in range(steps):
         idx = torch.randint(0, Xtr.shape[0], (4096,), device=dev)
         loss = F.cross_entropy(head(Xtr[idx]), ytr[idx])
         opt.zero_grad(); loss.backward(); opt.step()
     with torch.no_grad():
-        logits = head(Xte)
+        logits = head(Xte) + 1 * _knn_logp(Xte)
         acc = (logits.argmax(-1) == yte).float().mean().item()
         top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
     return acc, top5
