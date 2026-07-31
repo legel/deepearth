@@ -7,6 +7,23 @@ because a baseline nobody can test is how the previous one stayed broken.
 import numpy as np
 import torch
 
+# The control's width is now FIXED instead of tracking the encoder's.
+#
+# Both call sites used to pass `e4d.shape[1]`, so the baseline's width moved whenever any arm changed
+# the encoder's output width -- and RFF accuracy is non-monotone in width. Measured: padding the encoder
+# with columns of LITERAL ZEROS, adding no information at all, moved family_from_spacetime's share from
+# 20.7% (dim 2592) to 27.2% (dim 3024) to 15.1% (dim 3744). Since `share = fair_gain / score` is the
+# number that chooses DATA vs ARCHITECTURE, an unknown fraction of every EARNING / ENCODER-LIMITED read
+# on this board was an artifact of output width.
+#
+# 2592 is the width family_from_spacetime's record was set at. It is a PROTOCOL CONSTANT, not a
+# per-capability fit: rows whose encoder is narrower (flowering_peak_month is 144) now face a control
+# far wider than themselves. That is deliberate -- the control is the same everywhere, so gains are
+# comparable ACROSS rows for the first time -- but it means every stored gain is non-comparable and the
+# whole board re-baselines under v4.
+FAIR_CONTROL_DIM = 2592
+
+
 def fair_rff(rn: np.ndarray, out_dim: int, train_mask=None, seed: int = 0,
              bandwidths=(1.0, 4.0, 16.0, 64.0, 256.0, 1024.0)):
     """A random-Fourier control that is actually FAIR.

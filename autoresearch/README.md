@@ -96,7 +96,7 @@ own commit with its own tests, separate from any result.
 |---|---|---|---|---|
 | `main/` | `autoresearch.md`, `BENCHMARKS.md`, `CHAMPION_REPORT.md`, `audit.md`, `GRADUATION_BLUEPRINT.md` | `train.py`, `run_experiment.py`, `evaluate.py`, `score.py`, `score_encoders.py`, `champion_report.py`, `hooks.py`, `perception_diag.py`, `deepcal.yaml`, `champion.yaml` | `data.py`, `prepare.py`, `recipes/` | `champion_scores.json` |
 | `probes/biological/` | `program.md` | `probe.py`, `stage1…stage4`, `ensue_log.py` | `traitprobe.py` | — |
-| `probes/spacetime/` | `program.md`, `scorecard.md`, `box-operations.md` | `probe.py`, `probe_modes_tables.py`, `trace.py`, `probe_contract.py`, `probe_emit.py`, `probe_registry.py` | `recurrence.py`, `gnn.py`, `phenology.py`, `dyntargets.py`, `env_field.py`, `calib_probe.py` | `records.json`, `traces/` |
+| `probes/spacetime/` | `program.md`, `scorecard.md`, `box-operations.md` | `probe.py`, `harness.py` | `recurrence.py`, `phenology.py`, `dyntargets.py`, `fair_baseline.py` | `records.json`, `traces/` |
 
 ## Boundaries between the loops
 

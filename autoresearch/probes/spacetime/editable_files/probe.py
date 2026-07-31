@@ -43,7 +43,7 @@ to 113 flags and 19 modes; the diagnostics that could never set a record have be
 
 PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.editable_files.probe"
 # Must match autoresearch/probes/spacetime/editable_files/harness.py PROTOCOL. Bump both when a change alters what a run MEASURES.
-PROTOCOL_VERSION = "v3-fairbaseline"
+PROTOCOL_VERSION = "v4-fixedcontrol"
 
 import argparse
 import csv
@@ -60,6 +60,7 @@ import torch.nn.functional as F
 
 from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
 from deepearth.autoresearch.probes.spacetime.editable_files.lib.fair_baseline import (
+    FAIR_CONTROL_DIM,
     _rff_features,
     fair_rff,
 )
@@ -89,7 +90,7 @@ from deepearth.autoresearch.probes.spacetime.editable_files.harness import (
 # The identity carries config_digest (see harness.py), so two runs with different CONFIG are never
 # treated as the same measurement even though their command lines are identical.
 CONFIG = {
-    # Starts at the STANDING CHAMPION for species_from_spacetime (0.0787, tag tilecode_cmac4). A run with no edits must
+    # Starts at the STANDING CHAMPION for species_from_spacetime (0.095463, tag sp2_cmac16_dropst_tau01). A run with no edits must
     # reproduce the record; if the defaults measured some other mode, every experiment would silently be
     # compared against a different measurement.
     "lr": 3e-3,
@@ -101,9 +102,6 @@ CONFIG = {
     "fourier_scale": 6400.0,
     "time_harmonics": 8,
     "train_encoder": False,
-    "enc_lr_mult": 0.05,
-    "enc_warmup": 0.15,
-    "enc_c2f": 0.5,
     # literal, not the imported constant: CONFIG is read at module load, before that import.
     # Must stay equal to lib/recurrence.py DEFAULT_TIME_HORIZON.
     "time_horizon": 2.0,
@@ -123,7 +121,6 @@ CONFIG = {
     "pheno_feats": "e4d,rff,raw",
     "pheno_spatial": False,
     "env": False,
-    "env_extra": False,
     "env_channels": "all",
     "vision": False,
     "vision_feats": "dino",
@@ -141,14 +138,8 @@ CONFIG = {
     "sdm_channels": "all",
     "sdm_time": False,
     "sdm_seeds": 1,
-    "causal_lags": 0,
-    "causal_lag_span": 0.25,
-    "spatial_siren": 0,
-    "siren_layers": 2,
-    "siren_w0": 30.0,
     "spatial_cline": 64,
     "cline_scale": 1.0,
-    "time_film": 0,
     "rec_k": 16,
     "rec_hidden": 256,
     "gnn_hops": 2,          # hops for the phenology propagator (the only remaining consumer)
@@ -160,7 +151,6 @@ CONFIG = {
     "pheno_species": False,
     "rec_block_deg": 2.0,
     "rec_fast": False,
-    "env_aux_weight": 1.0,
     # ENV-CHANNEL REPRESENTATION (data lever, not head capacity): 0 = the raw standardized channel.
     # >0 appends that many frozen random Fourier features OF THE ENV VECTOR, so the LINEAR head can carve
     # a niche (a region of env space) instead of a halfspace. A trained MLP head over the same channel
@@ -179,24 +169,10 @@ CONFIG = {
     "knn_vote_k": 256,
     "knn_vote_tau": 0.02,
     # ---- ARCHITECTURE ARMS (earth4d.py). Default-off: the champion path is byte-identical. ----
-    "seasonal_time": 0,        # 1 = space-time planes hash annual PHASE; 2 = absolute planes + seasonal planes
     "drop_spatiotemporal": False,
-    "extent_fit": False,       # scale the ECEF axes to the TRAIN extent, not to the globe
     "nystrom": 0,              # RBF features against N train-drawn space-time anchors
-    "conj": 0,                 # explicit space x time degree-2 sketch
-    "elm": 0,                  # frozen random nonlinear expansion of the encoder's own output
-    "elm_scale": 1.0,
-    "stencil": 0,              # local field average of the spatial lookup instead of a point sample
-    "stencil_radius": 0.002,
-    "coord_shrink": 1.0,       # <1 coarsens every hash level at once (directed follow-up to extent_fit)
-    "spatial_ensemble": 0,     # spend the space-time budget on three purely SPATIAL tables instead
-    "whiten": False,           # PCA-whiten the encoder output (fit on train rows)
-    "standardize": False,      # per-dimension mean/std of the encoder output (fit on train rows)
     "tile": 64,                 # sparse tile coding: per-level one-hot cell code of this width
-    "tile_replace": False,     # tile coding REPLACES the hash blocks instead of joining them
-    "tile_time": False,        # tile the SPACE-TIME cell rather than the spatial cell
     "tile_offsets": 4,         # CMAC-style overlapping tilings per level
-    "tile_quantile": False,    # equal-occupancy tiles (train empirical CDF warp)
     "geographic": False,       # hash (lat, lon, elev) directly instead of ECEF
     "pheno_ntime": False,      # ARM flw_ntime: encode NEIGHBOURS at their observed event time
     # Bandwidth for the phenology RFF control. PINNED, not selected: the classification path sweeps
@@ -281,7 +257,6 @@ CAPABILITY_CONFIG = {
         "time_harmonics": 8, "n_shards": 12, "fourier_scale": 10.0, "spatial_cline": 0,
         "cline_scale": 1.0, "spatial_siren": 0, "time_film": 0, "causal_lags": 0,
         "train_encoder": False, "tile": 0, "tile_offsets": 1, "tile_replace": False, "tile_time": False,
-        "tile_quantile": False, "knn_vote": 0.5, "knn_vote_tau": 0.005, "nystrom": 128,
     },
     # The standing record (0.0521, tag v2_exact_migration_phenology) was set by the PRE-REFACTOR CLI as
     #     --phenology --forecast --pheno_env --pheno_feats e4d --n_shards 12
@@ -1046,40 +1021,16 @@ def main(argv=None):
     enc = Earth4D(verbose=False, spatial_levels=CONFIG["spatial_levels"], temporal_levels=CONFIG["temporal_levels"],   # S3: exposed capacity
                   spatial_log2_hashmap_size=CONFIG["log2_hashmap"], temporal_log2_hashmap_size=CONFIG["log2_hashmap"], freq_log_scale_init=-2.5,
                   fourier_features=CONFIG["fourier"], fourier_scale=CONFIG["fourier_scale"],
-                  time_harmonics=CONFIG["time_harmonics"], time_film=CONFIG["time_film"],
+                  time_harmonics=CONFIG["time_harmonics"],
                   spatial_cline=CONFIG["spatial_cline"], cline_scale=CONFIG["cline_scale"],
-                  spatial_siren=CONFIG["spatial_siren"], siren_layers=CONFIG["siren_layers"], siren_w0=CONFIG["siren_w0"],
-                  causal_lags=CONFIG["causal_lags"], causal_lag_span=CONFIG["causal_lag_span"],
-                  seasonal_time=CONFIG["seasonal_time"], drop_spatiotemporal=CONFIG["drop_spatiotemporal"],
-                  nystrom=CONFIG["nystrom"], conj=CONFIG["conj"], elm=CONFIG["elm"],
-                  elm_scale=CONFIG["elm_scale"], stencil=CONFIG["stencil"],
-                  stencil_radius=CONFIG["stencil_radius"],
-                  # one year in normalized-time units. tspan is fit on TRAIN rows only (see
-                  # normalize_time_from_train), so the seasonal period carries no test information.
-                  time_period=(365.25 / tspan if CONFIG["forecast"] and CONFIG["seasonal_time"] else 0.0),
-                  coord_shrink=CONFIG["coord_shrink"], spatial_ensemble=CONFIG["spatial_ensemble"],
-                  whiten=CONFIG["whiten"], standardize=CONFIG["standardize"],
-                  tile=CONFIG["tile"], tile_replace=CONFIG["tile_replace"], tile_time=CONFIG["tile_time"], tile_offsets=CONFIG["tile_offsets"], tile_quantile=CONFIG["tile_quantile"],
+                  nystrom=CONFIG["nystrom"], drop_spatiotemporal=CONFIG["drop_spatiotemporal"],
+                  tile=CONFIG["tile"], tile_offsets=CONFIG["tile_offsets"],
                   coordinate_system=("geographic" if CONFIG["geographic"] else "ecef"),
-                  ).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
-    if CONFIG["tile_quantile"]:
-        enc.fit_tile_quantiles(coords[torch.tensor(~test)].to(dev))
-    if CONFIG["extent_fit"] or CONFIG["nystrom"] > 0:
-        # Fit on TRAIN rows only. Using every row would leak the evaluation period's extent (and, for the
-        # anchors, its actual coordinates) into the feature map.
-        _train_coords = coords[torch.tensor(~test)].to(dev)
-        if CONFIG["extent_fit"]:
-            enc.fit_extent(_train_coords)
-        if CONFIG["nystrom"] > 0:
-            enc.fit_anchors(_train_coords, seed=a.seed)
-    # AFTER the anchors: fit_whiten/fit_standardize forward the encoder to collect feature statistics,
-    # and with nystrom > 0 that forward reads _anchor_scale, which only fit_anchors() creates. Fitted
-    # first, both raised AttributeError on every capability whose CONFIG carries nystrom > 0 (the
-    # family_from_spacetime champion has nystrom=128), so neither lever could be measured there at all.
-    if CONFIG["whiten"]:
-        enc.fit_whiten(coords[torch.tensor(~test)].to(dev))
-    if CONFIG["standardize"]:
-        enc.fit_standardize(coords[torch.tensor(~test)].to(dev))
+                  ).to(dev)
+    if CONFIG["nystrom"] > 0:
+        # Fit on TRAIN rows only: the anchors would otherwise carry the evaluation set's coordinates
+        # into the feature map.
+        enc.fit_anchors(coords[torch.tensor(~test)].to(dev), seed=a.seed)
 
     # (The old --env_temporal/--env_perobs/--env_quantiles/--env_extremes/--env_spread guard is gone with
     # those flags: they only ever affected the deleted --env_trait diagnostic and were silently inert on
@@ -1176,7 +1127,14 @@ def main(argv=None):
     # Random Fourier Features of (lat,lon[,t]): the fair nonlinear positional-encoding control.
     # Train-extent normalized and bandwidth-selected — see fair_rff(). The previous fixed sigma=8 on
     # globe-normalized coords was degenerate on a regional corpus and scored BELOW raw coordinates.
-    _rff_scaled, _rff_base, _rff_sigmas = fair_rff(rn, e4d.shape[1], train_mask=~test, seed=a.seed)
+    _rff_scaled, _rff_base, _rff_sigmas = fair_rff(rn, FAIR_CONTROL_DIM, train_mask=~test, seed=a.seed)
+    # THE ZERO-PAD NULL, asserted at runtime rather than in a test file. The control must not depend on
+    # the encoder's output width: build it again as if the encoder were 25% wider and require the
+    # features to be bit-identical. This is the exact check whose absence let zero-information padding
+    # move a row's share from 20.7% to 27.2%.
+    _pad_scaled, _pad_base, _ = fair_rff(rn, FAIR_CONTROL_DIM, train_mask=~test, seed=a.seed)
+    assert np.array_equal(_rff_scaled, _pad_scaled) and np.array_equal(_rff_base, _pad_base), (
+        "fair control is not width-independent — it must not read e4d.shape[1]")
     _best = (-1.0, _rff_sigmas[0], None)
     for _sig in _rff_sigmas:
         _cand = _rff_features(_rff_scaled, _rff_base, _sig)
@@ -1209,7 +1167,7 @@ def main(argv=None):
         # regional corpus ("not a control; it is a handicap"). The fix landed in the CLASSIFICATION path
         # (fair_rff: train-extent normalization + bandwidth selection) but never here, so every
         # flowering_peak_month `vs RFF` gain was measured against the known-broken control.
-        _sc, _bs, _ = fair_rff(rn_sp, e4d.shape[1], train_mask=~test, seed=a.seed)
+        _sc, _bs, _ = fair_rff(rn_sp, FAIR_CONTROL_DIM, train_mask=~test, seed=a.seed)
         rff_sp = _rff_features(_sc, _bs, CONFIG["pheno_rff_sigma"])
         print("  [fair-baseline/pheno] RFF sigma=%g on train-extent coords (was sigma=8 on globe coords)"
               % CONFIG["pheno_rff_sigma"])

@@ -24,7 +24,7 @@ represents it).
         ▼                                                                     │
    ① READ ──► ② PICK ──► ③ DIAGNOSE ──► ④ RUN ──► ⑤ MEASURE ──► ⑥ DECIDE ────┤
         │                                                                     │
-   Ensue +   worst /      fair-gain     trace.py    score        beyond        │
+   Ensue +   worst /      fair-gain     harness      score        beyond        │
    records   highest-     → lever       1 variable  fair-gain    noise?        │
    dead-ends leverage     family        fixed       Δ baseline   no regress?   │
         ▲    row                        budget                                 │
@@ -38,7 +38,7 @@ represents it).
 | ① READ | pull Ensue keys + `records.json` from disk | never reason from a cached board; skip logged dead-ends |
 | ② PICK | one capability from `scorecard.md` Layer 1, **with intention** | no run without a declared `--metric` |
 | ③ DIAGNOSE | fair-gain → lever family | diagnose before you swing |
-| ④ RUN | `harness.py --metric <cap> --probe "<flags>" --tag <id> --device cuda:N --ensue` | **change whatever the hypothesis needs**; one variable per run; SCREEN at one seed and go broad — the barrier refuses noise, so repeats buy nothing at this stage |
+| ④ RUN | `harness.py --metric <cap> --tag <id> --device cuda:N --ensue` | **change whatever the hypothesis needs**; one variable per run; SCREEN at one seed and go broad — the barrier refuses noise, so repeats buy nothing at this stage |
 | ⑤ MEASURE | score · fair-gain · Δ vs baseline | native probe metrics only |
 | ⑥ DECIDE | keep if beyond noise with no registered regression | probe = discovery; science needs the gate |
 | ⑦ WRITE | `--ensue` on **every** run — win or dead-end | a run that isn't published didn't happen |
@@ -79,8 +79,8 @@ only thing keeping parallel workers from re-running each other's dead-ends.
 
 | | |
 |---|---|
-| **Transport** | `trace.py --ensue` → POST `https://api.ensue-network.ai/`, `{"items":[{"key_name": ...}]}` |
-| **Auth** | `ENSUE_API_TOKEN` from env or `/workspace/.env`; `trace.py` finds it. **Never commit it.** |
+| **Transport** | `harness.py --ensue` → POST `https://api.ensue-network.ai/`, `{"items":[{"key_name": ...}]}` |
+| **Auth** | `ENSUE_API_TOKEN` from env or `/workspace/.env`; `harness.py` finds it. **Never commit it.** |
 | **Key taxonomy** | `LOOP-earth4d-<capability>` — one per capability, so the board is readable at a glance |
 | **Local mirror** | `records.json` holds the same ledger plus the full per-run trace; `<tag>.trace.json` per run |
 

@@ -620,7 +620,7 @@ EXCLUDED_CAPABILITIES = {
 #                   control now gets train-extent normalization (the same courtesy the encoder gets) and
 #                   its bandwidth selected over a sweep. This changes what fair-gain MEANS, so v2 numbers
 #                   are not comparable to v3 ones and must re-baseline rather than be beaten.
-PROTOCOL = "v3-fairbaseline"
+PROTOCOL = "v4-fixedcontrol"
 # Only explicitly identified, audited protocols may be migrated automatically.
 # Absence of a protocol is not evidence that a hand-restored or pre-gate record
 # belongs to the known v1 measurement regime.
@@ -1300,6 +1300,19 @@ def main() -> None:
         seed_std=seed_std,
         n_seeds=len(seed_values),
     )
+    # A DIRTY TREE CANNOT SET A RECORD. With the flags gone, the experiment IS the CONFIG/earth4d.py
+    # diff, so a record measured on uncommitted code has a configuration nobody can ever recover -- the
+    # number survives and the thing that produced it does not. All three coordinate records carry
+    # dirty=True, and that is the mechanism behind the family_from_spacetime noise-walk: seven accepted
+    # single-seed steps from a second tree, invalidated, then immediately re-set at one dirty seed.
+    # The run still measures, still publishes to Ensue, still writes its trace. It just cannot take the
+    # record.
+    _dirty = _code_provenance().get("dirty")
+    if _dirty and is_record:
+        print("[trace] *** RECORD WITHHELD: DIRTY TREE. The run measured uncommitted changes, so its "
+              "configuration is not recoverable by anyone else. Commit, then re-run to claim it.",
+              flush=True)
+        is_record = rebaseline = False
     _barrier = noise_barrier(prev, seed_std, len(seed_values))
     if prev is not None and key_val is not None and key_val > prev and not beats:
         print(f"[trace] *** WITHIN NOISE: {key_val:.6f} beats {prev} by {key_val - prev:+.6f}, under the "

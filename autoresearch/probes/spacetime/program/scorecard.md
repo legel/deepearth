@@ -91,15 +91,12 @@ Fast frozen-encoder probes. `fair_gain` = Earth4D − the strongest fair baselin
 **Discovery instruments: a probe record is never science** — it must clear the evidence standard in
 `program.md` first. Records below are the live board; a record may only be beaten like-for-like.
 
+THE NUMBERS LIVE IN scorecard.txt, WHICH IS GENERATED. This table was hand-maintained and drifted
+(it read 0.1769 / 0.0521 / 0.0512 against a live board of 0.1968 / 0.1983 / 0.0955). Two sources for one
+board is how it drifted; there is now one.
+
 | capability | record | metric | fair_gain | vs baseline | mode | shards | protocol |
 |---|---|---|---|---|---|---|---|
-| community_from_env | **0.8845** | micro-AP | **+0.4570** | GAIN | COOCCUR-ROUTING | 12 | v2-leakfix |
-| species_from_env | **0.6275** | micro-AP | **+0.4000** | GAIN | SDM-PRESENCE | 16 | v2-leakfix |
-| calibration | **0.5910** | AUROC conf→correct | — | *none reported* | *none* | 8 | v2-leakfix |
-| family_from_spacetime | **0.1769** | acc | **+0.0772** | RFF | FORECAST(past→future) | 12 | v2-leakfix |
-| family_from_env | **0.1423** | acc | **+0.0411** | best-coord-PE | ENV | 12 | v2-leakfix |
-| flowering_peak_month | **0.0521** | within-tol acc | **+0.0087** | RFF | PHENOLOGY-FUTURE | 12 | v2-leakfix |
-| species_from_spacetime | **0.0512** | acc | **+0.0432** | RFF | FORECAST | 12 | v2-leakfix |
 
 Reads:
 - **calibration** reports no fair baseline, so its bottleneck is undiagnosable and 0.5910 is barely
@@ -112,8 +109,7 @@ Reads:
   `--causal_*` flag on the same held-out split. Every delta is inside single-seed noise and the walk is a
   maximum selected over repeated runs. It is also unreproducible here: nothing in this tree emits its
   claimed `trained_rff` baseline, and replaying the stored command gives `st_gain(vs RFF) +0.0481`.
-  Prior state kept at `records.pre-invalidation-20260730.json`; the reason is in the ledger dead-ends.
-  **The board is shared and singular** — see `BOARD_FROZEN.md`.
+  **The board is shared and singular.**
 - **flowering_peak_month**'s stored probe passes `--pheno_env`, which is **silently ignored**: in
   `probe.py` the `if a.phenology:` block returns before the `--pheno_env/--pheno_disttarget/
   --pheno_taxon` and `--pheno_densefield` blocks can run. Verified — `--phenology --forecast` with
