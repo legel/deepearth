@@ -355,7 +355,7 @@ class _hash_encode_precomputed(Function):
             h1_used, h2_used, weights,
             probe_indices, index_logits, grad_index_logits, grad_embeddings,
             B, D, C, L, N_p, N_c
-        )
+        , _fixed_scale(grad))
 
         # per_level_scale gradient: same formula as the standard backward, from the freshly recomputed dy_dx.
         # scale_l[d] = exp2(pls[l,d])*base[d]-1 ; d(out)/d(pls) = ln2*(scale+1)/scale * (dy_dx contracted with grad) * input
@@ -740,7 +740,7 @@ class HashEncoder(nn.Module):
             B, self.input_dim, self.level_dim, self.num_levels,
             self.N_p if self.enable_learned_probing else 1,
             self.N_c if self.enable_learned_probing else 0
-        )
+        , _fixed_scale(grad))
 
     def adam_step(self, batch_indices):
         """

@@ -304,27 +304,35 @@ SCIENCE_AXES: Tuple[Axis, ...] = (
 
     Axis("R2b", "a RELATIVE encoder over limited context windows going back in time "
                 "(translation-equivariant, physics-inspired 4D LSTM)",
-         instrument=None, status="unmeasured",
-         note="earth4d.py implements enable_relative / encode_relative / fit_relative_window. "
-              "probe.py never references any of them. The capability exists and is unscored."),
+         instrument="relative_transfer", status="measured",
+         note="Train on one spatial half, test on the other. An absolute encoding of a coordinate in "
+              "the held region was never seen; an encoding of the OFFSET between two nearby "
+              "observations is the same vector in both. axis_R2b_gain is the difference. Reports "
+              "measurable=False when the encoder is built with enable_relative=False."),
 
     Axis("R4, R21", "remain at least as fast as it is now; speed converts directly into score under a "
                     "fixed budget, so a non-compromising speedup MUST score strictly higher",
-         instrument=None, status="unmeasured",
-         note="The probe budget is CONFIG['steps']=800, not wall-clock, so throughput is invisible to "
+         instrument="science_axes", status="unmeasurable-here",
+         note="axis_R21_fwd_bwd_ms_per_1k_coords is measured and reported every run, so a speedup is "
+              "VISIBLE. It does not yet CONVERT to score, which is what rule 21 actually demands: the "
+              "budget is still CONFIG[steps]=800. budgeted() and CONFIG[time_budget_s] are wired and "
+              "switched OFF, waiting on one run to measure what 800 steps costs -- flipping the budget "
+              "in the same change that reshaped WHAT is measured would confound the v5 re-baseline."
               "every probe number. main uses time_budget_s=600. The one loop that owns the CUDA kernel "
               "is the one loop structurally unable to score a kernel speedup."),
 
     Axis("R5", "small models no less than 100M parameters",
-         instrument=None, status="unmeasured",
-         note="Nothing asserts a floor. Computed from hashgrid.py's allocation rule (learned probing "
+         instrument="science_axes", status="measured",
+         note="axis_R5_params_M is counted from the live module every run, and the floor BINDS: below "
+              "100M the run marks itself diagnostic and cannot set a record. The v4 champion ran "
+              "~37.7M -- one hash table, tri-planes dropped -- and nothing checked."
               "skips the min(max_params, prod(resolution)) cap): 18 levels x 2^20 x 2 = 37.7M per "
               "table. The species_from_spacetime champion sets drop_spatiotemporal=True, leaving ONE "
               "table: ~37.7M, below the rule-5 floor."),
 
     Axis("R24", "model the DENSE 4D field -- infer every variable at every space-time patch, "
                 "SAMPLING BETWEEN sparse observations",
-         instrument=None, status="unmeasured",
+         instrument="field_interpolation", status="measured",
          note="fair_gain is discriminative accuracy at held-out observation ROWS. The split does hold "
               "out places (strict_spatiotemporal_masks), but nothing ever queries a coordinate with no "
               "observation. run_field_decode exists in lib/recurrence.py and is orphaned -- no caller. "
@@ -626,6 +634,135 @@ def signal_capture(lat, lon, days, fam, test, n_fam, encoder_acc: float, cells=(
         "axis_signal_headroom": None if captured != captured else round(1.0 - captured, 4),
         # span <= 2*SE => floor and ceiling are the same number within noise; no fraction is reportable.
         "axis_signal_measurable": bool(measurable),
+    }
+
+
+
+def field_interpolation(enc, coords, env, dev, cell_deg: float = 0.25, steps: int = 400,
+                        lr: float = 3e-3, seed: int = 0) -> dict:
+    """R24 — does the encoder infer a variable at a coordinate where NOTHING was observed?
+
+    science.md rule 24: model the dense 4D field, "sampling between sparse observations in space and
+    time". Every other measurement on this board scores at held-out OBSERVATION points, so a code that
+    memorises observed positions perfectly and interpolates not at all scores identically to a genuine
+    field. That is exactly how CMAC tile coding -- a one-hot cell indicator that CANNOT interpolate by
+    construction -- came to hold the Earth4D record, and why deleting the space-time tri-planes read as
+    free.
+
+    Whole spatial CELLS are held out, so a test coordinate has no training observation anywhere near it
+    and the encoder must generalise across the gap rather than look the answer up. The target is a dense
+    env channel (always available at any coordinate, unlike species), reconstructed from encoder
+    features by a linear head fit on train cells only.
+
+    Control is NEAREST-NEIGHBOUR from the train cells: the interpolation any method gets for free. A
+    gain over it is evidence of a learned field; at or below it, the encoder is a lookup table.
+    """
+    import torch
+    torch.manual_seed(seed)
+    lat, lon = np.asarray(coords[:, 0].cpu()), np.asarray(coords[:, 1].cpu())
+    cell = (np.floor(lat / cell_deg).astype(np.int64) * 100003
+            + np.floor(lon / cell_deg).astype(np.int64))
+    uniq = np.unique(cell)
+    rng = np.random.default_rng(seed)
+    held = set(rng.choice(uniq, max(1, len(uniq) // 5), replace=False).tolist())
+    te = np.array([c in held for c in cell])
+    tr = ~te
+    if tr.sum() < 32 or te.sum() < 32:
+        return {"axis_R24_measurable": False}
+
+    Y = torch.as_tensor(np.asarray(env), dtype=torch.float32, device=dev)
+    m, sd = Y[torch.as_tensor(tr)].mean(0), Y[torch.as_tensor(tr)].std(0).clamp_min(1e-6)
+    Y = (Y - m) / sd
+
+    with torch.no_grad():
+        F = enc(coords.to(dev)).float()
+    Ftr, Fte = F[torch.as_tensor(tr)], F[torch.as_tensor(te)]
+    Ytr, Yte = Y[torch.as_tensor(tr)], Y[torch.as_tensor(te)]
+    head = torch.nn.Linear(F.shape[1], Y.shape[1]).to(dev)
+    opt = torch.optim.Adam(head.parameters(), lr=lr)
+    for _ in range(steps):
+        opt.zero_grad()
+        torch.nn.functional.mse_loss(head(Ftr), Ytr).backward()
+        opt.step()
+    with torch.no_grad():
+        enc_mse = float(torch.nn.functional.mse_loss(head(Fte), Yte))
+
+    # nearest train observation in raw space -- the free interpolation
+    ll_tr = torch.as_tensor(np.stack([lat[tr], lon[tr]], 1), dtype=torch.float32, device=dev)
+    ll_te = torch.as_tensor(np.stack([lat[te], lon[te]], 1), dtype=torch.float32, device=dev)
+    nn_idx = torch.cdist(ll_te, ll_tr).argmin(1)
+    with torch.no_grad():
+        nn_mse = float(torch.nn.functional.mse_loss(Ytr[nn_idx], Yte))
+    var = float(Yte.var())
+    return {
+        "axis_R24_measurable": True,
+        "axis_R24_encoder_r2": round(1.0 - enc_mse / max(var, 1e-9), 4),
+        "axis_R24_nearest_r2": round(1.0 - nn_mse / max(var, 1e-9), 4),
+        "axis_R24_vs_nearest": round((nn_mse - enc_mse) / max(var, 1e-9), 4),
+        "axis_R24_held_cells": len(held),
+    }
+
+
+def relative_transfer(enc, coords, fam, dev, steps: int = 400, lr: float = 3e-3, seed: int = 0) -> dict:
+    """R2b — does the relative encoder carry a pattern ACROSS absolute position?
+
+    science.md rule 2B: a relative encoder over "limited context windows, focused on a limited spatial
+    region, going back in time". `earth4d.py` implements it (`encode_relative`) and `fusion.py:54` calls
+    it; no probe mode ever has, so half of rule 2 has never been measured.
+
+    The test is transfer. Train on one spatial half, evaluate on the other. An ABSOLUTE encoding of a
+    coordinate in region B was never seen during training, so it should collapse. An encoding of the
+    OFFSET between two nearby observations is the same vector in both regions, so if the relative
+    channel works it should hold up. Returns the gap.
+
+    Requires enable_relative=True; without it the axis reports unmeasurable rather than a wrong number.
+    """
+    import torch
+    if not getattr(enc, "enable_relative", False):
+        return {"axis_R2b_measurable": False,
+                "axis_R2b_reason": "encoder built with enable_relative=False"}
+    torch.manual_seed(seed)
+    lat = np.asarray(coords[:, 0].cpu())
+    tr = lat < np.median(lat)
+    te = ~tr
+    y = torch.as_tensor(np.asarray(fam), dtype=torch.long, device=dev)
+    n_cls = int(y.max()) + 1
+
+    # pair each observation with its nearest neighbour INSIDE its own half, encode the offset
+    def _pairs(mask):
+        idx = np.flatnonzero(mask)
+        ll = torch.as_tensor(np.stack([lat[idx], np.asarray(coords[:, 1].cpu())[idx]], 1),
+                             dtype=torch.float32, device=dev)
+        dist = torch.cdist(ll, ll)
+        dist.fill_diagonal_(float("inf"))
+        j = dist.argmin(1)
+        a = coords.to(dev)[torch.as_tensor(idx, device=dev)]
+        b = a[j]
+        return a, b, y[torch.as_tensor(idx, device=dev)]
+
+    a_tr, b_tr, y_tr = _pairs(tr)
+    a_te, b_te, y_te = _pairs(te)
+    with torch.no_grad():
+        rel_tr = enc.encode_relative(a_tr - b_tr).float()
+        rel_te = enc.encode_relative(a_te - b_te).float()
+        abs_tr, abs_te = enc(a_tr).float(), enc(a_te).float()
+
+    def _fit(Xtr, Xte):
+        head = torch.nn.Linear(Xtr.shape[1], n_cls).to(dev)
+        opt = torch.optim.Adam(head.parameters(), lr=lr)
+        for _ in range(steps):
+            opt.zero_grad()
+            torch.nn.functional.cross_entropy(head(Xtr), y_tr).backward()
+            opt.step()
+        with torch.no_grad():
+            return float((head(Xte).argmax(1) == y_te).float().mean())
+
+    rel, absol = _fit(rel_tr, rel_te), _fit(abs_tr, abs_te)
+    return {
+        "axis_R2b_measurable": True,
+        "axis_R2b_relative_transfer": round(rel, 4),
+        "axis_R2b_absolute_transfer": round(absol, 4),
+        "axis_R2b_gain": round(rel - absol, 4),
     }
 
 

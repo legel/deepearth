@@ -69,7 +69,8 @@ from deepearth.autoresearch.probes.spacetime.harness import (
     declare as _declare_raw,
 )
 # Measurement definitions live in the non-editable scoring module, not here.
-from deepearth.autoresearch.scoring.definitions import science_axes, signal_capture
+from deepearth.autoresearch.scoring.definitions import (
+    field_interpolation, relative_transfer, science_axes, signal_capture)
 
 # ===================================================================================================
 # CONFIG — THE EXPERIMENT. Edit this, on a branch. There is no command-line flag for any of it.
@@ -270,9 +271,7 @@ CAPABILITY_CONFIG = {
     "family_from_spacetime": {
         "forecast": True, "target": "family", "phenology": False, "head_hidden": 256, "fourier": 0,
         "time_harmonics": 0, "n_shards": 12, "fourier_scale": 10.0, "spatial_cline": 0,
-        "cline_scale": 1.0, "spatial_siren": 0, "time_film": 0, "causal_lags": 0,
-        "train_encoder": True, "tile": 0, "tile_offsets": 1, "tile_replace": False, "tile_time": False,
-    },
+        "cline_scale": 1.0, "train_encoder": True, "tile": 0, "tile_offsets": 1, },
     # The standing record (0.0521, tag v2_exact_migration_phenology) was set by the PRE-REFACTOR CLI as
     #     --phenology --forecast --pheno_env --pheno_feats e4d --n_shards 12
     # and NOTHING else, so every other lever took that CLI's argparse DEFAULT -- not the values CONFIG
@@ -287,9 +286,7 @@ CAPABILITY_CONFIG = {
         "spatial_levels": 18, "temporal_levels": 18, "log2_hashmap": 20,
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
         "fourier": 0, "fourier_scale": 10.0, "time_harmonics": 0,
-        "spatial_cline": 0, "cline_scale": 1.0, "spatial_siren": 0, "time_film": 0, "causal_lags": 0,
-        "tile": 0, "tile_offsets": 1, "tile_replace": False, "tile_time": False, "tile_quantile": False,
-        "rec_k": 16, "rec_hidden": 256, "gnn_hops": 2, "pheno_tol": 15.0,
+        "spatial_cline": 0, "cline_scale": 1.0, "tile": 0, "tile_offsets": 1, "rec_k": 16, "rec_hidden": 256, "gnn_hops": 2, "pheno_tol": 15.0,
         "pheno_attn": False, "pheno_species": False, "pheno_spatial": False,
         "forecast_spatial": False, "recurrence": False, "train_encoder": True,
     },
@@ -1151,10 +1148,25 @@ def main(argv=None):
                   nystrom=CONFIG["nystrom"], drop_spatiotemporal=CONFIG["drop_spatiotemporal"],
                   tile=CONFIG["tile"], tile_offsets=CONFIG["tile_offsets"],
                   coordinate_system=("geographic" if CONFIG["geographic"] else "ecef"),
+                  # science.md rule 2 has TWO halves and the probe only ever built one. fusion.py:42
+                  # runs a relative-only Earth4D alongside the absolute one; without this the relative
+                  # channel exists, is used in production, and is measured nowhere. It adds its own
+                  # tables (so it moves the R5 parameter count) but leaves output_dim -- and therefore
+                  # every primary metric -- untouched, because encode_relative is a separate path.
+                  enable_relative=True,
                   ).to(dev)
     # Capacity (R5) and throughput (R4/R21) are properties of the ENCODER, not of any one capability,
     # so they are measured once here and ride along on every declare() below.
     _SCIENCE_AXES.update(science_axes(enc, coords, dev))
+    # R24 (does the encoder infer where nothing was observed?) and R2b (does the relative channel
+    # transfer across absolute position?). Both are properties of the ENCODER, so like capacity and
+    # throughput they are measured once here and ride on every declare() below. Each reports
+    # `measurable: False` rather than a wrong number when its precondition is absent.
+    try:
+        _SCIENCE_AXES.update(relative_transfer(enc, coords, fam_t, dev))
+    except Exception as _exc:
+        _SCIENCE_AXES["axis_R2b_measurable"] = False
+        _SCIENCE_AXES["axis_R2b_reason"] = f"{type(_exc).__name__}: {_exc}"[:120]
     # R5 is a FLOOR, not a readout: "small models must have no less than 100M parameters". The v4
     # champion ran ~37.7M -- one hash table, tri-planes dropped -- and nothing said so, because nothing
     # checked. A run below the floor measures a model science.md does not permit, so it declares itself
@@ -1181,6 +1193,14 @@ def main(argv=None):
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
         # follows. Real env covariates (worldclim+soil+elev) joined by gbifID -> the science-aligned question.
         env = load_env(CONFIG["cache_dir"], gid, channels=CONFIG["env_channels"], fit_mask=~test)  # train-fit transform
+        # R24 — the dense-field axis. Needs an always-available target at any coordinate, which is what
+        # an env channel is (species are sparse). Held-out CELLS, so a test point has no training
+        # observation nearby and the encoder has to generalise across the gap instead of looking it up.
+        try:
+            _SCIENCE_AXES.update(field_interpolation(enc, coords, env, dev))
+        except Exception as _exc:
+            _SCIENCE_AXES["axis_R24_measurable"] = False
+            _SCIENCE_AXES["axis_R24_reason"] = f"{type(_exc).__name__}: {_exc}"[:120]
         if CONFIG["env_rff"] > 0:
             _rng = np.random.default_rng(a.seed)
             _W = _rng.normal(0, CONFIG["env_rff_scale"], (env.shape[1], CONFIG["env_rff"])).astype(np.float32)

@@ -392,7 +392,11 @@ __global__ void kernel_grid_backward(
                         if (grad_logits_fixed != nullptr) {
                             atomicAddFixed(&grad_logits_fixed[logit_idx], grad_logit, fixed_scale);
                         } else {
-                            atomicAdd(&grad_index_logits[logit_idx], grad_logit);
+                            if (grad_logits_fixed != nullptr) {
+                        atomicAddFixed(&grad_logits_fixed[logit_idx], grad_logit, fixed_scale);
+                    } else {
+                        atomicAdd(&grad_index_logits[logit_idx], grad_logit);
+                    }
                         }
                     }
                 }
@@ -1280,7 +1284,13 @@ __global__ void kernel_grid_backward_precomputed(
     scalar_t * __restrict__ grad_grid,             // [total_embeddings, C]
     const uint32_t B, const uint32_t L,
     const uint32_t N_p,
-    const uint32_t N_c
+    const uint32_t N_c,
+    // DETERMINISM, same contract as the dense path: nullptr => the original float-atomic behaviour,
+    // bit-identical to before. fusion.py trains through THIS kernel, so leaving it out meant
+    // EARTH4D_DETERMINISTIC=1 silently did nothing for the champion.
+    long long * __restrict__ grad_grid_fixed = nullptr,
+    long long * __restrict__ grad_logits_fixed = nullptr,
+    const float fixed_scale = 0.0f
 ) {
     const uint32_t b = (blockIdx.x * blockDim.x + threadIdx.x) * N_C / C;
     if (b >= B) return;
@@ -1316,7 +1326,11 @@ __global__ void kernel_grid_backward_precomputed(
             uint32_t index = h1 * C + ch;
             #pragma unroll
             for (uint32_t c = 0; c < N_C; c++) {
+                if (grad_grid_fixed != nullptr) {
+                    atomicAddFixed(&grad_grid_fixed[level_grad_grid - grad_grid + index + c], (float)(w * grad_cur[c]), fixed_scale);
+                } else {
                 atomicAdd(&level_grad_grid[index + c], (scalar_t)(w * grad_cur[c]));
+                }
             }
         }
         // Learned probing with SOFT gradients (matches standard backward)
@@ -1354,7 +1368,11 @@ __global__ void kernel_grid_backward_precomputed(
 
                 #pragma unroll
                 for (uint32_t c = 0; c < N_C; c++) {
+                    if (grad_grid_fixed != nullptr) {
+                        atomicAddFixed(&grad_grid_fixed[level_grad_grid - grad_grid + probe_index + c], (float)(combined_weight * grad_cur[c]), fixed_scale);
+                    } else {
                     atomicAdd(&level_grad_grid[probe_index + c], (scalar_t)(combined_weight * grad_cur[c]));
+                    }
                 }
             }
 
@@ -1381,7 +1399,11 @@ __global__ void kernel_grid_backward_precomputed(
                 for (uint32_t p = 0; p < N_p; ++p) {
                     float grad_logit = weights[p] * (grad_weights[p] - dot_product);
                     uint32_t logit_idx = level * N_c * N_p + h2_mod * N_p + p;
-                    atomicAdd(&grad_index_logits[logit_idx], grad_logit);
+                    if (grad_logits_fixed != nullptr) {
+                        atomicAddFixed(&grad_logits_fixed[logit_idx], grad_logit, fixed_scale);
+                    } else {
+                        atomicAdd(&grad_index_logits[logit_idx], grad_logit);
+                    }
                 }
             }
         }
@@ -1400,7 +1422,11 @@ __global__ void kernel_grid_backward_precomputed(
 
             #pragma unroll
             for (uint32_t c = 0; c < N_C; c++) {
+                if (grad_grid_fixed != nullptr) {
+                    atomicAddFixed(&grad_grid_fixed[level_grad_grid - grad_grid + index + c], (float)(w * grad_cur[c]), fixed_scale);
+                } else {
                 atomicAdd(&level_grad_grid[index + c], (scalar_t)(w * grad_cur[c]));
+                }
             }
         }
     }
@@ -1593,16 +1619,16 @@ void kernel_grid_backward_precomputed_wrapper(
     scalar_t *grad_grid,
     const uint32_t B, const uint32_t C, const uint32_t L,
     const uint32_t N_p, const uint32_t N_c
-) {
+, long long *grad_grid_fixed, long long *grad_logits_fixed, const float fixed_scale) {
     static constexpr uint32_t N_THREAD = 256;
     const uint32_t N_C = std::min(2u, C);
     const dim3 blocks = { div_round_up(B * C / N_C, N_THREAD), L, 1 };
 
     switch (C) {
-        case 1: kernel_grid_backward_precomputed<scalar_t, D, 1, 1><<<blocks, N_THREAD>>>(grad, offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits, grad_index_logits, grad_grid, B, L, N_p, N_c); break;
-        case 2: kernel_grid_backward_precomputed<scalar_t, D, 2, 2><<<blocks, N_THREAD>>>(grad, offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits, grad_index_logits, grad_grid, B, L, N_p, N_c); break;
-        case 4: kernel_grid_backward_precomputed<scalar_t, D, 4, 2><<<blocks, N_THREAD>>>(grad, offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits, grad_index_logits, grad_grid, B, L, N_p, N_c); break;
-        case 8: kernel_grid_backward_precomputed<scalar_t, D, 8, 2><<<blocks, N_THREAD>>>(grad, offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits, grad_index_logits, grad_grid, B, L, N_p, N_c); break;
+        case 1: kernel_grid_backward_precomputed<scalar_t, D, 1, 1><<<blocks, N_THREAD>>>(grad, offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits, grad_index_logits, grad_grid, B, L, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale); break;
+        case 2: kernel_grid_backward_precomputed<scalar_t, D, 2, 2><<<blocks, N_THREAD>>>(grad, offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits, grad_index_logits, grad_grid, B, L, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale); break;
+        case 4: kernel_grid_backward_precomputed<scalar_t, D, 4, 2><<<blocks, N_THREAD>>>(grad, offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits, grad_index_logits, grad_grid, B, L, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale); break;
+        case 8: kernel_grid_backward_precomputed<scalar_t, D, 8, 2><<<blocks, N_THREAD>>>(grad, offsets, precomp_h1, precomp_h2, precomp_weights, probe_indices, index_logits, grad_index_logits, grad_grid, B, L, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale); break;
         default: throw std::runtime_error{"Precomputed backward: C must be 1, 2, 4, or 8."};
     }
 }
@@ -1740,7 +1766,8 @@ void hash_encode_backward_precomputed(
     at::Tensor grad_index_logits,
     at::Tensor grad_embeddings,
     const uint32_t B, const uint32_t D, const uint32_t C, const uint32_t L,
-    const uint32_t N_p, const uint32_t N_c
+    const uint32_t N_p, const uint32_t N_c,
+    const double fixed_scale
 ) {
     CHECK_CUDA(grad);
     DEVICE_GUARD(grad);
@@ -1772,13 +1799,41 @@ void hash_encode_backward_precomputed(
     const uint32_t* h1_ptr = reinterpret_cast<const uint32_t*>(precomp_h1.data_ptr<int>());
     const uint32_t* h2_ptr = reinterpret_cast<const uint32_t*>(precomp_h2.data_ptr<int>());
 
+    // Deterministic sink, identical contract to the dense entry. fixed_scale <= 0 leaves the original
+    // float-atomic path bit-identical.
+    at::Tensor grad_fixed, logits_fixed;
+    long long *grad_grid_fixed = nullptr;
+    long long *grad_logits_fixed = nullptr;
+    if (fixed_scale > 0.0) {
+        grad_fixed = at::zeros({grad_embeddings.numel()}, grad_embeddings.options().dtype(at::kLong));
+        grad_grid_fixed = reinterpret_cast<long long *>(grad_fixed.data_ptr<int64_t>());
+        if (grad_index_logits_ptr != nullptr) {
+            logits_fixed = at::zeros({grad_index_logits.numel()}, grad_index_logits.options().dtype(at::kLong));
+            grad_logits_fixed = reinterpret_cast<long long *>(logits_fixed.data_ptr<int64_t>());
+        }
+    }
+
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(grad.scalar_type(), "hash_encode_backward_precomputed", ([&] {
         switch (D) {
-            case 2: kernel_grid_backward_precomputed_wrapper<scalar_t, 2>(grad.data_ptr<scalar_t>(), offsets.data_ptr<int>(), h1_ptr, h2_ptr, precomp_weights.data_ptr<float>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, grad_embeddings.data_ptr<scalar_t>(), B, C, L, N_p, N_c); break;
-            case 3: kernel_grid_backward_precomputed_wrapper<scalar_t, 3>(grad.data_ptr<scalar_t>(), offsets.data_ptr<int>(), h1_ptr, h2_ptr, precomp_weights.data_ptr<float>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, grad_embeddings.data_ptr<scalar_t>(), B, C, L, N_p, N_c); break;
+            case 2: kernel_grid_backward_precomputed_wrapper<scalar_t, 2>(grad.data_ptr<scalar_t>(), offsets.data_ptr<int>(), h1_ptr, h2_ptr, precomp_weights.data_ptr<float>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, grad_embeddings.data_ptr<scalar_t>(), B, C, L, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale); break;
+            case 3: kernel_grid_backward_precomputed_wrapper<scalar_t, 3>(grad.data_ptr<scalar_t>(), offsets.data_ptr<int>(), h1_ptr, h2_ptr, precomp_weights.data_ptr<float>(), probe_indices_ptr, index_logits_ptr, grad_index_logits_ptr, grad_embeddings.data_ptr<scalar_t>(), B, C, L, N_p, N_c, grad_grid_fixed, grad_logits_fixed, fixed_scale); break;
             default: throw std::runtime_error{"Precomputed backward: D must be 2 or 3."};
         }
     }));
+    if (grad_grid_fixed != nullptr) {
+        const float inv = (float)(1.0 / fixed_scale);
+        const int64_t n = grad_embeddings.numel();
+        AT_DISPATCH_FLOATING_TYPES_AND_HALF(grad_embeddings.scalar_type(), "fixed_to_float_pre", ([&] {
+            kernel_fixed_to_float<scalar_t><<<div_round_up((uint32_t)n, 256u), 256>>>(
+                grad_grid_fixed, grad_embeddings.data_ptr<scalar_t>(), n, inv);
+        }));
+        if (grad_logits_fixed != nullptr) {
+            const int64_t m = grad_index_logits.numel();
+            kernel_fixed_to_float32<<<div_round_up((uint32_t)m, 256u), 256>>>(
+                grad_logits_fixed, grad_index_logits.data_ptr<float>(), m, inv);
+        }
+    }
+
 }
 
 

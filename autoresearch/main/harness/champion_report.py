@@ -17,6 +17,7 @@ Usage:
 import re
 import json
 import argparse
+from typing import Optional
 from pathlib import Path
 
 # The champion record lives in main/records/, NOT beside this file. `Path(__file__).with_name(...)`
@@ -127,7 +128,7 @@ def _f(v):
     return f"{v:.3f}" if v is not None else "  -  "
 
 
-def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> str:
+def format_commit(new: dict, old: Optional[dict], desc: str, config: str = "") -> str:
     ns = new["scores"]
     os_ = (old or {}).get("scores", {})
     oh, nh = (old or {}).get("harmonic"), new["harmonic"]
