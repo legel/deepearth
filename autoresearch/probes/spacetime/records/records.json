@@ -156,6 +156,11 @@
           "score": 0.0831,
           "why": "ARCHITECTURE-LIMITED: Earth4D loses to a generic trained PE \u2192 swing bigger on the architecture"
         },
+        "famenv_knn200_terrain": {
+          "gain": -0.001953125,
+          "score": 0.14889323711395264,
+          "why": "PROTOCOL MIGRATION WITHHELD (old protocol='v2-leakfix', mode='ENV', n_shards=12, probe='--env --env_channels alphaearth --n_shards 12'; new mode='ENV(spatial-block)', n_shards=12, probe='')"
+        },
         "famenv_modis_modality": {
           "gain": 0.0411,
           "score": 0.1411,
@@ -256,7 +261,7 @@
           "tag": "v2_baseline_famenv"
         }
       ],
-      "runs": 494
+      "runs": 495
     },
     "mode": "ENV",
     "n_shards": 12,
@@ -267,545 +272,21 @@
     "tag": "v2_baseline_famenv"
   },
   "family_from_spacetime": {
+    "code": {
+      "branch": "deepcal-ensue-autoresearch",
+      "commit": "1916dd509b7a",
+      "dirty": true
+    },
     "fair_baseline": "vs RFF",
-    "fair_st_gain": 0.0772,
+    "fair_st_gain": 0.040687620639801025,
     "ledger": {
-      "deadend_seq": 116,
+      "deadend_seq": 117,
       "deadends": {
-        "anchor_calendar_time_topology-20260730T005250863683Z-a16de0be": {
-          "decision": "DROP",
-          "gain": 0.06876207888126373,
-          "score": 0.16849760711193085,
-          "seq": 1,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_causal_channel_factorization-20260730T012524276887Z-46f1db75": {
-          "decision": "DROP",
-          "gain": 0.07227139174938202,
-          "score": 0.17200691998004913,
-          "seq": 2,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_causal_clock_interaction-20260730T013537880494Z-2e6247fa": {
-          "decision": "DROP",
-          "gain": 0.1265385001897812,
-          "score": 0.1664123684167862,
-          "seq": 3,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_causal_dyadic_continuation-20260730T013111319590Z-ee54cb76": {
-          "decision": "DROP",
-          "gain": 0.07710304856300354,
-          "score": 0.17683857679367065,
-          "seq": 4,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_causal_temporal_tower-20260729T234030562248Z-48f84042": {
-          "decision": "DROP",
-          "gain": 0.07710304856300354,
-          "score": 0.17683857679367065,
-          "seq": 5,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_causal_vertex_lock-20260730T012016919154Z-d52b20e2": {
-          "decision": "DROP",
-          "gain": 0.07862882316112518,
-          "score": 0.1783643513917923,
-          "seq": 6,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_cell_causal_rank_clock-20260730T010558522364Z-75055f91": {
-          "decision": "DROP",
-          "gain": 0.06860950589179993,
-          "score": 0.16834503412246704,
-          "seq": 7,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_absorbing_hash-20260730T021248020330Z-9910f703": {
-          "decision": "DROP",
-          "gain": 0.08951276540756226,
-          "score": 0.18924829363822937,
-          "seq": 8,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_cayley_semicircle-20260730T023412359190Z-c5db2fd2": {
-          "decision": "DROP",
-          "gain": 0.08605432510375977,
-          "score": 0.18578985333442688,
-          "seq": 9,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_anchor_frame_holonomy-20260730T034742676617Z-875c7db3": {
-          "decision": "DROP",
-          "gain": 0.08951276540756226,
-          "score": 0.18924829363822937,
-          "seq": 10,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_base_fiber_holonomy-20260730T030213344612Z-4a3e4758": {
-          "decision": "DROP",
-          "gain": 0.08986878395080566,
-          "score": 0.18960431218147278,
-          "seq": 11,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_boundary_layer-20260730T022006434905Z-ae3b2d25": {
-          "decision": "DROP",
-          "gain": 0.08946190774440765,
-          "score": 0.18919743597507477,
-          "seq": 12,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_c3_temporal_core-20260730T032042728442Z-7f43b843": {
-          "decision": "DROP",
-          "gain": 0.08691893517971039,
-          "score": 0.1866544634103775,
-          "seq": 13,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_dual_carrier_bundle-20260730T042713729429Z-424366df": {
-          "decision": "DROP",
-          "gain": 0.14535652101039886,
-          "score": 0.18523038923740387,
-          "seq": 14,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_ecef_plane_holonomy-20260730T031030088376Z-1eb60ca0": {
-          "decision": "DROP",
-          "gain": 0.09002135694026947,
-          "score": 0.18975688517093658,
-          "seq": 15,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_hodge_contrast_semigroup-20260730T035714043450Z-e2a2d04b": {
-          "decision": "DROP",
-          "gain": 0.08915674686431885,
-          "score": 0.18889227509498596,
-          "seq": 16,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_plane_channel_braid-20260730T042033730914Z-d9880d8b": {
-          "decision": "DROP",
-          "gain": 0.08574916422367096,
-          "score": 0.18548469245433807,
-          "seq": 17,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_plane_gram_wedge_relation-20260730T040733123251Z-6650ee95": {
-          "decision": "DROP",
-          "gain": 0.08671548962593079,
-          "score": 0.1864510178565979,
-          "seq": 18,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_scale_holonomy-20260730T025720449184Z-eaf0c09e": {
-          "decision": "DROP",
-          "gain": 0.09027566015720367,
-          "score": 0.1900111883878708,
-          "seq": 19,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_hash_spatial_partition_normalization-20260730T041634208631Z-179cf6c9": {
-          "decision": "DROP",
-          "gain": 0.0874275267124176,
-          "score": 0.18716305494308472,
-          "seq": 20,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_quaternion_commutator-20260730T034018044700Z-8bc38ba5": {
-          "decision": "DROP",
-          "gain": 0.08997049927711487,
-          "score": 0.18970602750778198,
-          "seq": 21,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_spectral_transport-20260730T022656836528Z-6740929e": {
-          "decision": "DROP",
-          "gain": 0.087376669049263,
-          "score": 0.18711219727993011,
-          "seq": 22,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_clock_support_marginalization-20260730T023951488765Z-2e4cface": {
-          "decision": "DROP",
-          "gain": 0.07110162079334259,
-          "score": 0.1708371490240097,
-          "seq": 23,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_collision_diverse_hash-20260730T015121557367Z-e5ed44d4": {
-          "decision": "DROP",
-          "gain": 0.07588241994380951,
-          "score": 0.17561794817447662,
-          "seq": 24,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_hash_energy_balance-20260730T005023516896Z-1628690b": {
-          "decision": "DROP",
-          "gain": 0.04394263029098511,
-          "score": 0.14367815852165222,
-          "seq": 25,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_hash_phase_code-20260730T004649449027Z-bb725db7": {
-          "decision": "DROP",
-          "gain": 0.07247482240200043,
-          "score": 0.17221035063266754,
-          "seq": 26,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_octahedral_surface_atlas-20260730T005447820916Z-167a2f62": {
-          "decision": "DROP",
-          "gain": 0.0677957534790039,
-          "score": 0.16753128170967102,
-          "seq": 27,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_orthogonal_branch_mixer-20260730T005606298192Z-c68442ce": {
-          "decision": "DROP",
-          "gain": 0.07674703001976013,
-          "score": 0.17648255825042725,
-          "seq": 28,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_orthogonal_fourier-20260730T014232755938Z-1b9b601c": {
-          "decision": "DROP",
-          "gain": 0.07252568006515503,
-          "score": 0.17226120829582214,
-          "seq": 29,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_scale_separated_clock-20260730T004914559339Z-1f35e4ce": {
-          "decision": "DROP",
-          "gain": 0.06662598252296448,
-          "score": 0.1663615107536316,
-          "seq": 30,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_spacetime_bind-20260730T004352973607Z-6a648b73": {
-          "decision": "DROP",
-          "gain": 0.071305051445961,
-          "score": 0.1710405796766281,
-          "seq": 31,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_spatial_spectral_pyramid-20260729T233824652938Z-3939dacb": {
-          "decision": "DROP",
-          "gain": 0.07461091876029968,
-          "score": 0.1743464469909668,
-          "seq": 32,
-          "why": "tie or lower comparable native primary"
-        },
-        "anchor_terminal_ghost-20260730T015931662848Z-c7ea6e27": {
-          "decision": "DROP",
-          "gain": 0.07227139174938202,
-          "score": 0.17200691998004913,
-          "seq": 33,
-          "why": "tie or lower comparable native primary"
-        },
-        "causal_time_reflect-20260729T233620168318Z-22f1a447": {
-          "decision": "DROP",
-          "gain": 0.07593327760696411,
-          "score": 0.17566880583763123,
-          "seq": 34,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp47_exp39_plane_skew_lift-20260730T043803515639Z-04e5e583": {
-          "decision": "DROP",
-          "gain": 0.08941105008125305,
-          "score": 0.18914657831192017,
-          "seq": 35,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp48_exp39_contrast_polar_twist-20260730T044507686098Z-5ecc0506": {
-          "decision": "DROP",
-          "gain": 0.08122266829013824,
-          "score": 0.18095819652080536,
-          "seq": 36,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp49_exp39_spatiotemporal_symplectic_lift-20260730T044815909864Z-be787c93": {
-          "decision": "DROP",
-          "gain": 0.0833079069852829,
-          "score": 0.18304343521595,
-          "seq": 37,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp50_exp39_symmetric_split-20260730T045327218951Z-047b1f57": {
-          "decision": "DROP",
-          "gain": 0.09047910571098328,
-          "score": 0.1902146339416504,
-          "seq": 38,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp51_exp39_projective_cell_retraction-20260730T045941461503Z-b45982a1": {
-          "decision": "DROP",
-          "gain": 0.09058082103729248,
-          "score": 0.1903163492679596,
-          "seq": 39,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp52_exp39_c3_hash_convolution-20260730T051813297220Z-bec9c49d": {
-          "decision": "DROP",
-          "gain": 0.07603499293327332,
-          "score": 0.17577052116394043,
-          "seq": 40,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp53_exp39_temporal_plane_disk_square_atlas-20260730T052935701020Z-91bd91ef": {
-          "decision": "DROP",
-          "gain": 0.08244329690933228,
-          "score": 0.1821788251399994,
-          "seq": 41,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp54_exp39_temporal_vertex_phase_fiber-20260730T053945124276Z-62151ddf": {
-          "decision": "DROP",
-          "gain": 0.08803784847259521,
-          "score": 0.18777337670326233,
-          "seq": 42,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp55_exp39_temporal_balanced_probe_routing-20260730T055905231738Z-54822717": {
-          "decision": "DROP",
-          "gain": 0.08529143035411835,
-          "score": 0.18502695858478546,
-          "seq": 43,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp56_exp39_causal_clock_cell_origin_connection-20260730T061125062112Z-cb962ffb": {
-          "decision": "DROP",
-          "gain": 0.09098769724369049,
-          "score": 0.1907232254743576,
-          "seq": 44,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp57_exp39_causal_terminal_cell_average-20260730T062627676805Z-745b2005": {
-          "decision": "DROP",
-          "gain": 0.09083510935306549,
-          "score": 0.1905706375837326,
-          "seq": 45,
-          "why": "tie or lower comparable native primary"
-        },
         "exp58_exp39_causal_clock_second_jet-INVALIDATED": {
           "gain": 0.09169971942901611,
           "score": 0.19143524765968323,
           "seq": 116,
           "why": "INVALIDATED 2026-07-30: score 0.19143524765968323 (gain 0.09169971942901611 vs 'trained_rff', tag exp58_exp39_causal_clock_second_jet) was reached by 7 accepted single-seed steps of +0.0007/+0.0008/+0.0112/+0.0005/+0.0002/+0.0006/+0.0006, each stacking another --causal_* flag on the same held-out split. Every delta is within single-seed noise and the walk is a maximum selected over repeated runs. Not reproducible in this tree: no mode here emits a 'trained_rff' gain and the --causal_clock_* flags live only in /workspace/codex-earth4d-native-fb35a7f. Replaying the stored command here gives st_gain(vs RFF) +0.0481. Record restored to the last deliberate measurement, v2_exact_migration_family 0.1769. Re-earn it with matched seeds."
-        },
-        "exp59_exp58_causal_clock_third_jet-20260730T064038249312Z-1d1c9d19": {
-          "decision": "DROP",
-          "gain": 0.09164886176586151,
-          "score": 0.19138438999652863,
-          "seq": 46,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp60_exp58_causal_clock_erlang_radius-20260730T064834397628Z-c78f0250": {
-          "decision": "DROP",
-          "gain": 0.09037737548351288,
-          "score": 0.19011290371418,
-          "seq": 47,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp61_exp58_causal_clock_scale_fibration-20260730T065901729901Z-28497666": {
-          "decision": "DROP",
-          "gain": 0.0912928581237793,
-          "score": 0.1910283863544464,
-          "seq": 48,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp62_exp58_causal_clock_scale_fiber_conjugacy-20260730T071039481800Z-6a132254": {
-          "decision": "DROP",
-          "gain": 0.08885160088539124,
-          "score": 0.18858712911605835,
-          "seq": 49,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp63_exp58_causal_clock_gudermannian-20260730T071835957127Z-553bb73c": {
-          "decision": "DROP",
-          "gain": 0.08966535329818726,
-          "score": 0.18940088152885437,
-          "seq": 50,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp64_exp58_causal_clock_hash_radial_completion-20260730T072409107733Z-159daabc": {
-          "decision": "DROP",
-          "gain": 0.08997049927711487,
-          "score": 0.18970602750778198,
-          "seq": 51,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp65_exp58_causal_clock_unitary_rff-20260730T073214089760Z-e7335b37": {
-          "decision": "DROP",
-          "gain": 0.0870715081691742,
-          "score": 0.1868070363998413,
-          "seq": 52,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp66_exp58_causal_clock_oriented_plane_channel_holonomy-20260730T073817940340Z-645d2853": {
-          "decision": "DROP",
-          "gain": 0.09032651782035828,
-          "score": 0.1900620460510254,
-          "seq": 53,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp67_exp58_causal_clock_signed_support-20260730T074241625231Z-74bf0da9": {
-          "decision": "DROP",
-          "gain": 0.09032651782035828,
-          "score": 0.1900620460510254,
-          "seq": 54,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp68_exp58_causal_temporal_freudenthal_cells-20260730T080105141767Z-088e7dc7": {
-          "decision": "DROP",
-          "gain": 0.0876818299293518,
-          "score": 0.18741735816001892,
-          "seq": 55,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp69_exp58_causal_spatial_clock_tensor-20260730T081118263446Z-349c7263": {
-          "decision": "DROP",
-          "gain": 0.09790458530187607,
-          "score": 0.18192452192306519,
-          "seq": 56,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp70_exp58_causal_clock_irrep_direct_sum-20260730T082016018791Z-7824bfe5": {
-          "decision": "DROP",
-          "gain": 0.09012308716773987,
-          "score": 0.18985861539840698,
-          "seq": 57,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp71_exp58_causal_joint4d_hash_core-20260730T083839851661Z-b0a76048": {
-          "decision": "DROP",
-          "gain": 0.07862882316112518,
-          "score": 0.1783643513917923,
-          "seq": 58,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp72_exp58_causal_temporal_hermite_jet-20260730T085223051526Z-58f917bc": {
-          "decision": "DROP",
-          "gain": 0.08315533399581909,
-          "score": 0.1828908622264862,
-          "seq": 59,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp73_exp58_causal_temporal_countsketch-20260730T090400640805Z-b22fb21e": {
-          "decision": "DROP",
-          "gain": 0.0794934332370758,
-          "score": 0.17922896146774292,
-          "seq": 60,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp74_exp58_causal_temporal_sheet_lift-20260730T091704786268Z-74b0d800": {
-          "decision": "DROP",
-          "gain": 0.11306072771549225,
-          "score": 0.18426406383514404,
-          "seq": 61,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp75_exp58_causal_temporal_unsigned_twin_hash-20260730T092343962971Z-6b14cdd9": {
-          "decision": "DROP",
-          "gain": 0.07984945178031921,
-          "score": 0.17958498001098633,
-          "seq": 62,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp76_exp58_spherical_cap_field-20260730T092708257476Z-8fb7ae61": {
-          "decision": "DROP",
-          "gain": 0.07191537320613861,
-          "score": 0.17165090143680573,
-          "seq": 63,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp77_exp58_causal_temporal_gaussian_codebook-20260730T093500754857Z-2c255957": {
-          "decision": "DROP",
-          "gain": 0.09047910571098328,
-          "score": 0.1902146339416504,
-          "seq": 64,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp78_exp58_causal_clock_boundary_householder-20260730T093725091534Z-d3258021": {
-          "decision": "DROP",
-          "gain": 0.09063167870044708,
-          "score": 0.1903672069311142,
-          "seq": 65,
-          "why": "tie or lower comparable native primary"
-        },
-        "exp79_exp58_causal_clock_boundary_frame_barycenter-20260730T094211508022Z-94ff0b06": {
-          "decision": "DROP",
-          "gain": 0.0910894125699997,
-          "score": 0.1908249408006668,
-          "seq": 66,
-          "why": "tie or lower comparable native primary"
-        },
-        "factorized_hash_clock-20260729T233448815118Z-e33c0c0a": {
-          "decision": "DROP",
-          "gain": 0.07456006109714508,
-          "score": 0.1742955893278122,
-          "seq": 67,
-          "why": "tie or lower comparable native primary"
-        },
-        "fc_hh0_ff512_th16": {
-          "gain": 0.1489,
-          "score": 0.1787,
-          "seq": 68,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
-        },
-        "fc_hh0_ff512_th8": {
-          "gain": 0.1269,
-          "score": 0.1726,
-          "seq": 69,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
-        },
-        "fc_hh256_ff0_th0": {
-          "gain": 0.0542,
-          "score": 0.1264,
-          "seq": 70,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
-        },
-        "fc_hh256_ff0_th16": {
-          "gain": 0.0459,
-          "score": 0.1309,
-          "seq": 71,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
-        },
-        "fc_hh256_ff0_th8": {
-          "gain": 0.0491,
-          "score": 0.1221,
-          "seq": 72,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
-        },
-        "fc_hh256_ff1024_th0": {
-          "gain": 0.0987,
-          "score": 0.1578,
-          "seq": 73,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
-        },
-        "fc_hh256_ff1024_th16": {
-          "gain": 0.0702,
-          "score": 0.1654,
-          "seq": 74,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
-        },
-        "fc_hh256_ff1024_th8": {
-          "gain": 0.0994,
-          "score": 0.1717,
-          "seq": 75,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
-        },
-        "fc_hh256_ff256_th0": {
-          "gain": 0.0972,
-          "score": 0.1518,
-          "seq": 76,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
-        },
-        "fc_hh256_ff256_th16": {
-          "gain": 0.0431,
-          "score": 0.1602,
-          "seq": 77,
-          "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
         },
         "fc_hh256_ff256_th8": {
           "gain": 0.1159,
@@ -975,6 +456,12 @@
           "seq": 105,
           "why": "EARNING-BUT-LOW: encoder beats the PE but the absolute ceiling is elsewhere (capacity/objective/data)"
         },
+        "fst_champion": {
+          "gain": 0.040687620639801025,
+          "score": 0.19677551090717316,
+          "seq": 117,
+          "why": "ENCODER-LIMITED: Earth4D contributes only 21% of the score over a generic PE \u2192 ARCHITECTURE lever, change the mechanism"
+        },
         "geodesic_scattering-20260729T232439208197Z-961a4e21": {
           "decision": "DROP",
           "gain": 0.06855864822864532,
@@ -1127,21 +614,31 @@
           "rebaseline_from": 0.19143524765968323,
           "score": 0.1769,
           "tag": "v2_exact_migration_family"
+        },
+        {
+          "gain": 0.040687620639801025,
+          "protocol": "v3-fairbaseline",
+          "rebaseline_from": 0.1769,
+          "score": 0.19677551090717316,
+          "tag": "fst_v3_exact_migration_family"
         }
       ],
-      "runs": 1230
+      "runs": 1232
     },
-    "measurement_mode": "FORECAST(past->future)",
     "mode": "FORECAST(past->future)",
+    "n_seeds": 1,
     "n_shards": 12,
-    "primary": 0.1769,
-    "probe": "--forecast --head_hidden 256 --fourier 1024 --time_harmonics 8 --n_shards 12",
-    "probe_metric": "family_top1_accuracy",
-    "probe_module": "deepearth.autoresearch.programs.spacetime.probe",
-    "protocol": "v2-leakfix",
-    "score": 0.1769,
-    "seed": 0,
-    "tag": "v2_exact_migration_family"
+    "primary": 0.19677551090717316,
+    "probe": "",
+    "probe_module": "deepearth.autoresearch.probes.spacetime.editable_files.probe",
+    "protocol": "v3-fairbaseline",
+    "provisional": true,
+    "score": 0.19677551090717316,
+    "seed_std": null,
+    "seed_values": [
+      0.19677551090717316
+    ],
+    "tag": "fst_v3_exact_migration_family"
   },
   "family_from_vision": {
     "fair_baseline": "vs best-coord-PE",
@@ -1343,7 +840,7 @@
     "fair_baseline": "vs RFF",
     "fair_st_gain": 0.05223272740840912,
     "ledger": {
-      "deadend_seq": 16,
+      "deadend_seq": 21,
       "deadends": {
         "FORECAST-mode-identity-UNMATCHABLE": {
           "gain": 0.0432,
@@ -1362,6 +859,12 @@
           "score": 0.07873054593801498,
           "seq": 15,
           "why": "EARNING: Earth4D contributes 71% of the score over a generic PE \u2192 the mechanism is carrying real signal, push it further"
+        },
+        "coshead_prototype": {
+          "gain": 0.018868885934352875,
+          "score": 0.06525277346372604,
+          "seq": 19,
+          "why": "EARNING: Earth4D contributes 29% of the score over a generic PE \u2192 the mechanism is carrying real signal, push it further"
         },
         "ensue_fix2": {
           "gain": 0.05594547837972641,
@@ -1414,11 +917,35 @@
           "seq": 7,
           "why": "EARNING: Earth4D contributes 54% of the score over a generic PE \u2192 the mechanism is carrying real signal, push it further"
         },
+        "head_steps3200": {
+          "gain": 0.056911809369921684,
+          "score": 0.07059302181005478,
+          "seq": 20,
+          "why": "EARNING: Earth4D contributes 81% of the score over a generic PE \u2192 the mechanism is carrying real signal, push it further"
+        },
+        "knnhead_voteonly": {
+          "gain": 0.03600854054093361,
+          "score": 0.07862882316112518,
+          "seq": 18,
+          "why": "EARNING: Earth4D contributes 46% of the score over a generic PE \u2192 the mechanism is carrying real signal, push it further"
+        },
+        "knnmix_clean_repro": {
+          "gain": 0.05223272740840912,
+          "score": 0.08595259487628937,
+          "seq": 21,
+          "why": "EARNING: Earth4D contributes 61% of the score over a generic PE \u2192 the mechanism is carrying real signal, push it further"
+        },
         "ontology_final": {
           "gain": 0.007476350292563438,
           "score": 0.02461601048707962,
           "seq": 1,
           "why": "ENCODER-LIMITED: the encoder beats the PE but the absolute score is low \u2192 ARCHITECTURE lever, change the mechanism"
+        },
+        "priormix_globalprior_control": {
+          "gain": 0.0434848926961422,
+          "score": 0.07776421308517456,
+          "seq": 17,
+          "why": "EARNING: Earth4D contributes 56% of the score over a generic PE \u2192 the mechanism is carrying real signal, push it further"
         },
         "reorg_verify": {
           "gain": 0.007476350292563438,
@@ -1523,7 +1050,7 @@
           "tag": "knnmix_k256_t02"
         }
       ],
-      "runs": 28
+      "runs": 33
     },
     "mode": "FORECAST(past->future)",
     "n_seeds": 1,
