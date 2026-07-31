@@ -2,7 +2,9 @@
   "calibration": {
     "fair_baseline": null,
     "fair_st_gain": null,
+    "gain": null,
     "ledger": {
+      "deadend_seq": 1,
       "deadends": {
         "cal_earth4d": {
           "gain": null,
@@ -39,14 +41,26 @@
           "tag": "v2_baseline_cal"
         }
       ],
+      "retired": [
+        {
+          "gain": null,
+          "mode": null,
+          "protocol": "v2-leakfix",
+          "score": 0.591,
+          "seq": 1,
+          "tag": "v2_baseline_cal",
+          "why": "record was never an Earth4D measurement: _real_features raised ImportError since 43887e3 so the probe ran its synthetic surrogate, which ignores --feature; the encoder was also unseeded (0.5375/0.5682/0.6062 on three runs of the identical command). Evidence and fair baseline in merge of exp/cal-fairbase."
+        }
+      ],
       "runs": 91
     },
     "mode": null,
     "n_shards": 8,
     "primary": 0.591,
     "probe": "--feature earth4d --n_shards 8 --steps 400 --ensemble 3",
-    "protocol": "v2-leakfix",
-    "score": 0.591,
+    "protocol": null,
+    "read": null,
+    "score": null,
     "tag": "v2_baseline_cal"
   },
   "community_from_env": {

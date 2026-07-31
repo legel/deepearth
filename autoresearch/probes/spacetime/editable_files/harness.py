@@ -854,6 +854,44 @@ def _commit_records_if_unchanged(expected_raw, records, path=RECORDS):
 
 
 
+def retire_record(capability, reason, path=RECORDS):
+    """Withdraw a record that was never a valid measurement, keeping the full audit trail.
+
+    A record can be invalid rather than merely beaten: the probe silently measured a synthetic
+    surrogate, the encoder was unseeded, the split leaked. Such a number is not a high bar to clear,
+    it is a false statement about the encoder -- and because the gate compares against it, it also
+    blocks every subsequent honest run on that row.
+
+    Deleting it by hand is what the doctrine forbids, and rightly: the board would lose the fact that
+    a wrong number was ever believed. So retirement is a harness operation that MOVES the record into
+    the ledger under `retired` with its reason and the sequence number of the retirement, clears the
+    live score so the next run establishes a fresh baseline, and leaves every dead-end untouched.
+    Nothing is destroyed; the row simply stops asserting something false.
+    """
+    raw, records = _read_records(path)
+    record = records.get(capability)
+    if record is None:
+        raise KeyError(f"{capability!r} has no record to retire")
+    ledger = record.setdefault("ledger", {})
+    retired = ledger.setdefault("retired", [])
+    retired.append({
+        "seq": _next_seq(ledger),
+        "score": record.get("score"),
+        "gain": record.get("gain"),
+        "protocol": record.get("protocol"),
+        "mode": record.get("mode"),
+        "tag": (ledger.get("records") or [{}])[-1].get("tag"),
+        "why": reason,
+    })
+    # Clear only what asserts a result. Run counts, dead-ends and the retired history all survive,
+    # so the row's cost and its mistakes stay visible.
+    for field in ("score", "gain", "fair_baseline", "fair_st_gain", "read", "protocol", "mode"):
+        record[field] = None
+    if not _commit_records_if_unchanged(raw, records, path):
+        raise RuntimeError("records.json changed during retirement — rerun")
+    return retired[-1]
+
+
 ENCODER_SHARE_FLOOR = 0.25      # below this, the encoder is adding little over a generic PE
 
 
@@ -1166,6 +1204,12 @@ def main() -> None:
                          "measurable, so the noise barrier becomes 2 sigma instead of a fixed floor")
     ap.add_argument("--ensue", action="store_true")
     ap.add_argument("--log", default=None)
+    ap.add_argument("--retire", default="", metavar="REASON",
+                    help="OPERATOR ACTION, not an experiment: withdraw this capability's record "
+                         "because it was never a valid measurement, giving the reason. The old score "
+                         "moves into the ledger under `retired` and the row reopens. Use when a record "
+                         "is provably wrong (surrogate data, unseeded encoder, leaked split) — never "
+                         "because a run failed to beat it.")
     a = ap.parse_args()
 
     if a.metric in EXCLUDED_CAPABILITIES:
@@ -1175,6 +1219,13 @@ def main() -> None:
     if a.metric not in CAPABILITIES:
         sys.exit("[trace] --metric %r is not an encoder-probeable capability. one of:\n  %s"
                  % (a.metric, "\n  ".join(CAPABILITIES)))
+    if a.retire:
+        entry = retire_record(a.metric, a.retire)
+        print(f"[trace] RETIRED {a.metric}: score {entry['score']} withdrawn — {a.retire}")
+        print(f"[trace] the row is reopened; the next run sets a fresh baseline.")
+        write_scorecard(_read_records()[1])
+        return
+
     modes = for_capability(a.metric)
     if not modes:
         sys.exit(f"[trace] no recording probe mode measures {a.metric!r}. "
