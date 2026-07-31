@@ -31,6 +31,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shlex
 import statistics
 import subprocess
@@ -680,6 +681,29 @@ def _run(module: str, probe_args: str, device: str, log_path: str, result_path: 
 
 
 
+def _same_mode(mode, prev_mode):
+    """Is this run measuring the same MODE as the stored record?
+
+    Exact string equality plus one provenance rule. Records set BEFORE the result contract stored the
+    mode FAMILY only ("ENV"); the contract later appended the split as a submode, so the identical
+    measurement now declares "ENV(spatial-block)". family_from_env has been unrecordable ever since:
+    every run -- including a no-edit control that reproduces the record to six decimals (0.142318
+    against a stored 0.1423) -- was refused as "not like-for-like", and those refusals are still
+    sitting in that capability's dead-end ledger (contract_cutover_famenv, dag_verify, leaf_verify...).
+
+    The rule is narrow on purpose: it applies only when the STORED mode carries no submode, and only to
+    a run whose mode is that same family with a submode appended. It cannot merge two submodes of one
+    family, so FORECAST(past->future) and FORECAST(future+newplace) stay distinct targets -- and no
+    pre-contract record stored a bare "FORECAST" anyway, because the forecast paths already carried
+    their quadrant inside the mode string before the contract existed.
+    """
+    if mode == prev_mode:
+        return True
+    if not mode or not prev_mode or "(" in prev_mode:
+        return False
+    return mode.startswith(prev_mode + "(") and mode.endswith(")")
+
+
 def _same_probe(probe, prev_probe):
     """Compare a migration command after shell-token normalization."""
     if not probe or not prev_probe:
@@ -772,7 +796,7 @@ def _record_gate(
     `beats` now means "beats the standing record BY MORE THAN THE NOISE", not "is a larger float".
     The old meaning is why seven consecutive +0.0006 steps could each be accepted as a new best.
     """
-    mode_ok = (prev is None) or (mode == prev_mode)
+    mode_ok = (prev is None) or _same_mode(mode, prev_mode)
     shards_ok = (prev is None) or (shards == prev_shards)
     barrier = noise_barrier(prev, seed_std, n_seeds)
     beats = key_val is not None and (prev is None or key_val > prev + barrier)
