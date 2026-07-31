@@ -8,7 +8,6 @@ through the ledger, so the next agent sees why — see how the invalidated `fami
 recorded in its dead-ends rather than deleted.
 
 Single owner: only the checkout that owns this board writes it. Everyone else measures with
-`EARTH4D_ALLOW_UNRECORDED=1`, which produces no record by design.
 
 `records.json` is gitignored — it is machine state, and one board with two writers is how a noise-mined
 record became a headline. The git-visible view is `../program/scorecard.txt`, regenerated from this board

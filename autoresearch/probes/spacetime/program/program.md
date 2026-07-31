@@ -283,7 +283,7 @@ checkout — another agent is reading it.
   `graduation.py` will refuse it. Commit before you record.
 - An agent never pushes on its own judgement. Commit everything; the operator decides what leaves.
 - Only the checkout that owns `records.json` writes records; everyone else measures with
-  `EARTH4D_ALLOW_UNRECORDED=1`.
+
 - No config variants as files. An override lives in the `CONFIG` diff, committed *with* its result.
 
 ## Don'ts

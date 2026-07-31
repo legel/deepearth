@@ -124,7 +124,10 @@ CHANNELS = {
     "vision_dino":  (("gbif_tokens/",),                                 768, "vision",       "DINOv3 embedding of the iNaturalist photo. BORROWED: a win here is the vision model's, not the encoder's"),
     "vision_bio":   (("gbif_tokens/",),                                 768, "vision_feats", "BioCLIP-2 embedding of the same photo; same attribution warning"),
     "pheno":        (("gbif_flower.npz",),                                1, "pheno_channel","observed flowering state"),
-    "species_dist": (("gbif_species_dist.npz",),                          0, "sdm_channels", "per-cell species distribution -- the SDM supervision target"),
+    # NOTE: gbif_species_dist.npz is NOT read by this probe. The SDM modes build their target from
+    # cooccur_count_005 + the env channels; gbif_species_dist belongs to fusion (B29/B39/B40). It was
+    # listed here for one commit and that was wrong -- a table that claims a channel the probe cannot
+    # use is worse than no table.
     "cooccur":      (("derived/cooccur_count_005.npy",),                  0, "cooccur_file", "species co-occurrence counts at 0.5 deg -- the community target"),
 }
 
