@@ -1027,10 +1027,6 @@ def main(argv=None):
                   ).to(dev)   # RFF + temporal-harmonic + space x time FiLM (arch levers)
     if CONFIG["tile_quantile"]:
         enc.fit_tile_quantiles(coords[torch.tensor(~test)].to(dev))
-    if CONFIG["whiten"]:
-        enc.fit_whiten(coords[torch.tensor(~test)].to(dev))
-    if CONFIG["standardize"]:
-        enc.fit_standardize(coords[torch.tensor(~test)].to(dev))
     if CONFIG["extent_fit"] or CONFIG["nystrom"] > 0:
         # Fit on TRAIN rows only. Using every row would leak the evaluation period's extent (and, for the
         # anchors, its actual coordinates) into the feature map.
@@ -1039,6 +1035,14 @@ def main(argv=None):
             enc.fit_extent(_train_coords)
         if CONFIG["nystrom"] > 0:
             enc.fit_anchors(_train_coords, seed=a.seed)
+    # AFTER the anchors: fit_whiten/fit_standardize forward the encoder to collect feature statistics,
+    # and with nystrom > 0 that forward reads _anchor_scale, which only fit_anchors() creates. Fitted
+    # first, both raised AttributeError on every capability whose CONFIG carries nystrom > 0 (the
+    # family_from_spacetime champion has nystrom=128), so neither lever could be measured there at all.
+    if CONFIG["whiten"]:
+        enc.fit_whiten(coords[torch.tensor(~test)].to(dev))
+    if CONFIG["standardize"]:
+        enc.fit_standardize(coords[torch.tensor(~test)].to(dev))
 
     # (The old --env_temporal/--env_perobs/--env_quantiles/--env_extremes/--env_spread guard is gone with
     # those flags: they only ever affected the deleted --env_trait diagnostic and were silently inert on
