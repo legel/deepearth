@@ -187,6 +187,7 @@ CONFIG = {
     # best-coord-PE comparison stays fair.
     "env_rff": 0,
     "env_rff_scale": 1.0,
+    "knn_readout": 0,          # k for the non-parametric local-frequency readout (0 = trained linear head)
     # ---- ARCHITECTURE ARMS (earth4d.py). Default-off: the champion path is byte-identical. ----
     "seasonal_time": 0,        # 1 = space-time planes hash annual PHASE; 2 = absolute planes + seasonal planes
     "drop_spatiotemporal": False,
@@ -296,7 +297,7 @@ CAPABILITY_CONFIG = {
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
         "fourier": 0, "time_harmonics": 0,
-        "env_channels": "ae_wb_ph",   # ARM aewbph
+        "knn_readout": 50,   # ARM knn50
     },
     "species_from_env": {
         "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
@@ -677,8 +678,33 @@ def strict_spatiotemporal_holdout(lat, lon, days, frac=0.2, block=0.5, seed=0):
 
 
 def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0):
-    """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy."""
+    """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy.
+
+    knn_readout > 0 swaps the parametric head for a NON-PARAMETRIC one: the k nearest TRAIN rows in this
+    arm's own feature space vote (inverse-distance weighted). The hypothesis is that env->family is a LOCAL
+    DENSITY question -- which families occur in this kind of place -- and a linear softmax over a 64-d
+    AlphaEarth embedding cannot express a local frequency table however many columns are appended to it.
+    Every arm (raw, RFF, Earth4D, env, fused) gets the identical readout, so the comparison stays fair."""
     torch.manual_seed(seed)
+    if CONFIG["knn_readout"] > 0:
+        k = CONFIG["knn_readout"]
+        Xtr = feats[~test].to(dev); ytr = fam[~test].to(dev)
+        Xte = feats[test].to(dev); yte = fam[test].to(dev)
+        Xtr = Xtr / Xtr.norm(dim=1, keepdim=True).clamp_min(1e-6)
+        Xteh = Xte / Xte.norm(dim=1, keepdim=True).clamp_min(1e-6)
+        hits = torch.zeros(Xte.shape[0], dtype=torch.bool, device=dev)
+        top5h = torch.zeros(Xte.shape[0], dtype=torch.bool, device=dev)
+        for i in range(0, Xteh.shape[0], 2048):
+            sim = Xteh[i:i + 2048] @ Xtr.T
+            v, idx = sim.topk(k, dim=1)
+            w = (v.clamp_min(0.0) + 1e-6)
+            votes = torch.zeros(idx.shape[0], n_fam, device=dev)
+            votes.scatter_add_(1, ytr[idx], w)
+            hits[i:i + 2048] = votes.argmax(1) == yte[i:i + 2048]
+            top5h[i:i + 2048] = (votes.topk(5, 1).indices == yte[i:i + 2048, None]).any(1)
+        acc = hits.float().mean().item(); t5 = top5h.float().mean().item()
+        print(f"  [{tag}] knn{k} acc {acc:.4f}", flush=True)
+        return acc, t5
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     train = ~test
