@@ -8,7 +8,7 @@ species_from_env        0.6275  pre-contract  +0.4000    GAIN                   
 flowering_peak_month    0.1983  pre-contract  +0.0128    Earth4D vs RFF, best-head within-tol acc  PHENOLOGY-FUTURE        12      ENCODER-LIMITED      111   1 seed
 family_from_spacetime   0.1968  pre-contract  +0.0407    vs RFF                                    FORECAST(past->future)  12      ENCODER-LIMITED      1232  1 seed
 family_from_env         0.1423  pre-contract  +0.0411    ENV vs best-coord-PE                      ENV                     12      STALE-GAIN(channel)  495   1 seed?
-species_from_spacetime  0.0860  pre-contract  +0.0522    vs RFF                                    FORECAST(past->future)  12      EARNING              33    1 seed
+species_from_spacetime  0.0955  pre-contract  +0.0608    vs RFF                                    FORECAST(past->future)  12      EARNING              34    1 seed
 calibration             —       pre-contract  —          —                                         —                       8       NO-FAIR-BASELINE     91    1 seed?
 ----------------------  ------  ------------  ---------  ----------------------------------------  ----------------------  ------  -------------------  ----  --------
 probed 6/7   ·   earning (fair-gain > 0): 6

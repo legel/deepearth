@@ -848,11 +848,11 @@
   "species_from_spacetime": {
     "code": {
       "branch": "deepcal-ensue-autoresearch",
-      "commit": "508695269dde",
+      "commit": "e448c62af246",
       "dirty": true
     },
     "fair_baseline": "vs RFF",
-    "fair_st_gain": 0.05223272740840912,
+    "fair_st_gain": 0.06082799285650253,
     "ledger": {
       "deadend_seq": 21,
       "deadends": {
@@ -1062,23 +1062,30 @@
           "rebaseline_from": null,
           "score": 0.08595259487628937,
           "tag": "knnmix_k256_t02"
+        },
+        {
+          "gain": 0.06082799285650253,
+          "protocol": "v3-fairbaseline",
+          "rebaseline_from": null,
+          "score": 0.095463328063488,
+          "tag": "sp2_cmac16_dropst_tau01_mainline"
         }
       ],
-      "runs": 33
+      "runs": 34
     },
     "mode": "FORECAST(past->future)",
     "n_seeds": 1,
     "n_shards": 12,
-    "primary": 0.08595259487628937,
+    "primary": 0.095463328063488,
     "probe": "",
     "probe_module": "deepearth.autoresearch.probes.spacetime.editable_files.probe",
     "protocol": "v3-fairbaseline",
     "provisional": true,
-    "score": 0.08595259487628937,
+    "score": 0.095463328063488,
     "seed_std": null,
     "seed_values": [
-      0.08595259487628937
+      0.095463328063488
     ],
-    "tag": "knnmix_k256_t02"
+    "tag": "sp2_cmac16_dropst_tau01_mainline"
   }
 }
