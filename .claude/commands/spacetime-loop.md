@@ -95,6 +95,21 @@ EARTH4D_ALLOW_UNRECORDED=1 python3.12 -m deepearth.autoresearch.probes.spacetime
     --capability <metric> --seed 0 --device cuda:0 --result-json /tmp/r.json
 ```
 
+**Work in your OWN worktree, and point PYTHONPATH at it.** Several agents share this box. If you edit
+`/workspace/deepearth` directly you are changing the tree everyone else is measuring in, and their
+numbers become yours.
+
+```bash
+git worktree add /workspace/<yours>/deepearth -b exp/<tag>     # NOT /workspace/deepearth
+cd /workspace/<yours>/deepearth
+PYTHONPATH=/workspace/<yours> python3.12 -m deepearth.autoresearch...   # NOT /workspace
+```
+
+`PYTHONPATH=/workspace` resolves `deepearth.` to the SHARED checkout, so a worktree run with it executes
+somebody else's code and not your edit. That has already silently invalidated arms twice tonight — once
+where a whole batch ran against another agent's tree, and once where a published dead-end carried a
+number measured through someone else's config.
+
 Both GPUs are usable; check `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader`
 first. Disk is shared and finite — never `cp` the corpus, and clean up `/tmp` after yourself.
 
