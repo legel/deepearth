@@ -251,9 +251,25 @@ CAPABILITY_CONFIG = {
         "forecast": True, "target": "family", "phenology": False,
         "head_hidden": 256, "fourier": 1024, "time_harmonics": 8, "n_shards": 12,
     },
+    # The standing record (0.0521, tag v2_exact_migration_phenology) was set by the PRE-REFACTOR CLI as
+    #     --phenology --forecast --pheno_env --pheno_feats e4d --n_shards 12
+    # and NOTHING else, so every other lever took that CLI's argparse DEFAULT -- not the values CONFIG
+    # now carries, which are the species_from_spacetime champion. (--pheno_env was one of the inert
+    # flags: the `if phenology:` branch returns before any pheno_env code is reached, so the record was
+    # set on the plain PHENOLOGY-FUTURE path.) Reproducing the record therefore means restoring those
+    # defaults explicitly; a partial block is why the control was reading 0.0028-0.017 instead of 0.0521.
+    # Verbatim from probe.py at e2b062c^ (the commit that turned the 33 flags into CONFIG).
     "flowering_peak_month": {
         "forecast": True, "phenology": True, "pheno_feats": "e4d", "pheno_nofair": False,
-        "n_shards": 12, "tile": 0, "tile_offsets": 0, "spatial_cline": 0, "fourier_scale": 10.0,
+        "target": "species", "n_shards": 12, "steps": 800, "lr": 3e-3, "holdout": 0.2,
+        "spatial_levels": 18, "temporal_levels": 18, "log2_hashmap": 20,
+        "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
+        "fourier": 0, "fourier_scale": 10.0, "time_harmonics": 0,
+        "spatial_cline": 0, "cline_scale": 1.0, "spatial_siren": 0, "time_film": 0, "causal_lags": 0,
+        "tile": 0, "tile_offsets": 1, "tile_replace": False, "tile_time": False, "tile_quantile": False,
+        "rec_k": 16, "rec_hidden": 256, "gnn_hops": 2, "pheno_tol": 15.0,
+        "pheno_attn": False, "pheno_species": False, "pheno_spatial": False,
+        "forecast_spatial": False, "recurrence": False, "gnn": False, "train_encoder": False,
     },
     "family_from_env": {
         "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
