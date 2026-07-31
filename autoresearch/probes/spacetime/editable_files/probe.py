@@ -178,6 +178,15 @@ CONFIG = {
     "rec_block_deg": 2.0,
     "rec_fast": False,
     "env_aux_weight": 1.0,
+    # ENV-CHANNEL REPRESENTATION (data lever, not head capacity): 0 = the raw standardized channel.
+    # >0 appends that many frozen random Fourier features OF THE ENV VECTOR, so the LINEAR head can carve
+    # a niche (a region of env space) instead of a halfspace. A trained MLP head over the same channel
+    # (head_hidden=256) overfits at 800 steps and LOST (0.1340 vs 0.1423); a frozen kernel expansion with
+    # a linear readout is the regularized version of the same hypothesis. Every arm that consumes env
+    # (env, fused) sees the identical expansion; the coordinate baselines are untouched, so the ENV vs
+    # best-coord-PE comparison stays fair.
+    "env_rff": 0,
+    "env_rff_scale": 1.0,
     # ---- ARCHITECTURE ARMS (earth4d.py). Default-off: the champion path is byte-identical. ----
     "seasonal_time": 0,        # 1 = space-time planes hash annual PHASE; 2 = absolute planes + seasonal planes
     "drop_spatiotemporal": False,
@@ -283,8 +292,7 @@ CAPABILITY_CONFIG = {
     # head), --fourier 0, --time_harmonics 0, --fourier_scale 10.0, --spatial_cline 0, --tile 0.
     "family_from_env": {
         "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
-        "vision": True, "vision_feats": "dino",   # ARM famenv_vision_dino: BORROWED frozen DINO morphology
-                                     # (env = where, vision = which). Replaces the env channel on this path.
+        "env_rff": 2048, "env_rff_scale": 0.5,   # ARM famenv_envrff
         "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
         "target": "family",          # old CLI default; CONFIG's "species" is a DIFFERENT capability
         "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
@@ -960,6 +968,12 @@ def main(argv=None):
         # science.md rules 1-6, 24 done RIGHT: the positional field should represent the ENVIRONMENT; biology
         # follows. Real env covariates (worldclim+soil+elev) joined by gbifID -> the science-aligned question.
         env = load_env(CONFIG["cache_dir"], gid, channels=CONFIG["env_channels"], fit_mask=~test)  # train-fit transform
+        if CONFIG["env_rff"] > 0:
+            _rng = np.random.default_rng(a.seed)
+            _W = _rng.normal(0, CONFIG["env_rff_scale"], (env.shape[1], CONFIG["env_rff"])).astype(np.float32)
+            _b = _rng.uniform(0, 2 * np.pi, CONFIG["env_rff"]).astype(np.float32)
+            _p = env @ _W + _b
+            env = np.concatenate([env, np.cos(_p).astype(np.float32)], 1)
         if CONFIG["vision"]:
             env = load_vision(CONFIG["cache_dir"], gid, CONFIG["vision_feats"], CONFIG["n_shards"], fit_mask=~test)
         rn = np.stack([lat / 90.0, lon / 180.0], 1).astype(np.float32)
