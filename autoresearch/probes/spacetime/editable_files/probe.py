@@ -133,7 +133,7 @@ CONFIG = {
     "forecast_spatial": False,
     "recurrence": False,
     "gnn": False,
-    "phenology": False,
+    "phenology": True,
     "pheno_nofair": False,
     "pheno_feats": "e4d,rff,raw",
     "pheno_spatial": False,
@@ -228,6 +228,68 @@ from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence impor
 
 
 
+
+
+
+# Per-capability CONFIG. CONFIG above holds the defaults; these override it for the capability the
+# harness declared, and are applied before anything runs.
+#
+# Without this, CONFIG starts at ONE capability's champion and every other capability's control is
+# silently wrong. Measured: with CONFIG at the species_from_spacetime champion, a flowering_peak_month
+# control scored 0.00285 against a standing record of 0.0521 — a 20x discrepancy that looks like a
+# catastrophic regression and is really just the wrong experiment. Any sweep run that way measures
+# nothing, and its arms would have been published as dead-ends that never happened.
+#
+# A run with no edits must reproduce ITS OWN capability's record. That is the invariant.
+CAPABILITY_CONFIG = {
+    "species_from_spacetime": {
+        "forecast": True, "target": "species", "phenology": False,
+        "head_hidden": 512, "fourier": 1024, "fourier_scale": 6400.0, "time_harmonics": 8,
+        "spatial_cline": 64, "n_shards": 12, "tile": 64, "tile_offsets": 4,
+    },
+    "family_from_spacetime": {
+        "forecast": True, "target": "family", "phenology": False,
+        "head_hidden": 256, "fourier": 1024, "time_harmonics": 8, "n_shards": 12,
+    },
+    # The standing record (0.0521, tag v2_exact_migration_phenology) was set by the PRE-REFACTOR CLI as
+    #     --phenology --forecast --pheno_env --pheno_feats e4d --n_shards 12
+    # and NOTHING else, so every other lever took that CLI's argparse DEFAULT -- not the values CONFIG
+    # now carries, which are the species_from_spacetime champion. (--pheno_env was one of the inert
+    # flags: the `if phenology:` branch returns before any pheno_env code is reached, so the record was
+    # set on the plain PHENOLOGY-FUTURE path.) Reproducing the record therefore means restoring those
+    # defaults explicitly; a partial block is why the control was reading 0.0028-0.017 instead of 0.0521.
+    # Verbatim from probe.py at e2b062c^ (the commit that turned the 33 flags into CONFIG).
+    "flowering_peak_month": {
+        "forecast": True, "phenology": True, "pheno_feats": "e4d", "pheno_nofair": False,
+        "target": "species", "n_shards": 12, "steps": 800, "lr": 3e-3, "holdout": 0.2,
+        "spatial_levels": 18, "temporal_levels": 18, "log2_hashmap": 20,
+        "head_hidden": 0,            # old default: LINEAR head (CONFIG's 512 is the species champion)
+        "fourier": 0, "fourier_scale": 10.0, "time_harmonics": 0,
+        "spatial_cline": 0, "cline_scale": 1.0, "spatial_siren": 0, "time_film": 0, "causal_lags": 0,
+        "tile": 0, "tile_offsets": 1, "tile_replace": False, "tile_time": False, "tile_quantile": False,
+        "rec_k": 16, "rec_hidden": 256, "gnn_hops": 2, "pheno_tol": 15.0,
+        "pheno_attn": False, "pheno_species": False, "pheno_spatial": False,
+        "forecast_spatial": False, "recurrence": False, "gnn": False, "train_encoder": False,
+    },
+    "family_from_env": {
+        "env": True, "env_channels": "alphaearth", "forecast": False, "phenology": False,
+        "n_shards": 12, "tile": 0, "spatial_cline": 0, "fourier_scale": 10.0,
+    },
+    "species_from_env": {
+        "sdm_presence": True, "sdm_hard": True, "sdm_channels": "alphaearth", "n_shards": 16,
+        "forecast": False, "phenology": False,
+    },
+    "community_from_env": {
+        "cooccur": True, "cooccur_mech": "both", "cooccur_channels": "all", "n_shards": 12,
+        "forecast": False, "phenology": False,
+    },
+}
+
+
+def apply_capability_config(capability: str) -> None:
+    """Point CONFIG at the declared capability's champion before the run starts."""
+    for k, v in CAPABILITY_CONFIG.get(capability, {}).items():
+        CONFIG[k] = v
 
 
 def load_obs(cache: str, n_shards: int, with_time: bool = False, with_gid: bool = False):
@@ -735,6 +797,7 @@ def main(argv=None):
     ap.add_argument("--capability", default="",
                     help="the capability the harness declared as its objective")
     a = ap.parse_args(argv)
+    apply_capability_config(a.capability)
     _set_result_sink(a.result_json, a.capability, PROTOCOL_VERSION, a, config=CONFIG)
     if not _TRACE_AUTHORIZED:
         authorization_argv = sys.argv[1:] if argv is None else list(argv)
