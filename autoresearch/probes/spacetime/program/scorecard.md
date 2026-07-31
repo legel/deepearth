@@ -7,7 +7,8 @@
 > The index of all loops' scorecards is [`../../../scorecard.md`](../../../scorecard.md).
 >
 > **Every record predates `v5-encoder-only` and is not comparable to anything measured now.** A record
-> is bound to the protocol it was set under; a protocol change re-baselines the board.
+> is bound to the protocol it was set under. When the operator starts a new protocol, one unchanged run
+> establishes its baseline; autoresearch experiments never change or rebaseline the judge.
 
 ## What `v5-encoder-only` measures
 
@@ -21,9 +22,10 @@ score:
 | a bolt-on may be switched on, but the record must declare it | otherwise the board reports the basis as the encoder |
 
 
-The agent picks **one capability from Layer 1, with intention**, declares it as `--metric`, and is then
-free to change anything — data channel, probe mode, encoder internals, objective. What the harness
-enforces is not *which edits are allowed*, it is that the run still measures **the same thing**:
+The agent picks **one capability from Layer 1, with intention**, declares it as `--metric`, and may change
+anything required by one coherent hypothesis **inside `editable_files/**` only**. The harness, scoring,
+definitions, tests, protocol, records, and prepared data remain read-only. The harness also enforces that
+the run still measures **the same thing**:
 
 ```
    measurement identity = capability · mode · split · n_shards · protocol · code hash
@@ -100,7 +102,8 @@ B1 0.323 · B5 0.399 · B16 0.426 · B34 0.433 · B28 0.451
 > received 20,663 features of which the hash grid was 36 — 0.17% — with tile coding at 89.2%; the
 > encoder was frozen at random init; and `fair_gain` could resolve to a gain over the class prior or
 > over the env channel depending on the row. v5 runs Earth4D at 144 dims, trained, against a 144-dim
-> control, with one gain vocabulary. Every row re-baselines on its next run. Expect the numbers to fall.
+> control, with one gain vocabulary. The first unchanged run under v5 establishes each missing baseline;
+> later experiments compare against it and never rebaseline it. Expect the numbers to fall.
 
 Fast **trained**-encoder probes (protocol v5-encoder-only). `fair_gain` = Earth4D − a matched-width
 RFF on the same data, split and head — the same quantity on every capability.
@@ -110,9 +113,9 @@ RFF on the same data, split and head — the same quantity on every capability.
 The numbers live in `scorecard.txt`, which is generated. This file carries no scores: two sources for
 one board is how it drifted.
 
-**Per-record findings belong in the ledger, not here.** A defect in a specific record is recorded as a
-dead-end in `records.json` with its reason and published to Ensue, where the swarm reads it before
-picking. This file describes the scoring, not the history of individual runs.
+**Per-run findings belong in the ledger, not here.** The harness records failed hypotheses and their
+reasons in `records.json` and publishes them to Ensue. Report a suspected record defect to the operator;
+do not investigate, repair, retire, or reinterpret records in the autoresearch loop.
 
 How a record is earned:
 
@@ -120,7 +123,7 @@ How a record is earned:
 |---|---|
 | beats the standing record by more than the noise barrier | 2% of the record, floor 0.002, and 2σ once ≥3 seeds |
 | like-for-like | same capability, mode, split, shard count and protocol |
-| from a clean tree | the CONFIG/`earth4d.py` diff IS the experiment; a dirty tree makes it unrecoverable |
+| from a clean tree | the `editable_files/**` diff IS the experiment; a dirty tree makes it unrecoverable |
 | published | `--ensue` on every run, win or dead-end |
 
 ## Layer 3 — excluded, with reason
