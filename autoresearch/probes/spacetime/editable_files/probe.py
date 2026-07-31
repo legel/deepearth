@@ -45,20 +45,6 @@ PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.editable_files.probe"
 # Must match autoresearch/probes/spacetime/editable_files/harness.py PROTOCOL. Bump both when a change alters what a run MEASURES.
 PROTOCOL_VERSION = "v3-fairbaseline"
 
-_TRACE_AUTHORIZED = False
-if __name__ == "__main__":
-    import sys as _entry_sys
-    from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence import (
-        require_recorded_entrypoint as _require_recorded,
-    )
-
-    _require_recorded(
-        "probe.py",
-        module=PROBE_MODULE,
-        argv=_entry_sys.argv[1:],
-    )
-    _TRACE_AUTHORIZED = True
-
 import argparse
 import csv
 from dataclasses import dataclass
@@ -242,7 +228,6 @@ from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence impor
     phenology_feature_set,
     phenology_mode,
     strict_spatiotemporal_masks,
-    require_recorded_entrypoint,
 )
 
 
@@ -990,13 +975,6 @@ def main(argv=None):
     a = ap.parse_args(argv)
     apply_capability_config(a.capability)
     _set_result_sink(a.result_json, a.capability, PROTOCOL_VERSION, a, config=CONFIG)
-    if not _TRACE_AUTHORIZED:
-        authorization_argv = sys.argv[1:] if argv is None else list(argv)
-        require_recorded_entrypoint(
-            "probe.py",
-            module=PROBE_MODULE,
-            argv=authorization_argv,
-        )
     dev = a.device if torch.cuda.is_available() else "cpu"
     np.random.seed(a.seed)
     torch.manual_seed(a.seed)

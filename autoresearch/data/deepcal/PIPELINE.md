@@ -17,8 +17,7 @@ Alternative: `python -m deepearth.data.deepcal.package nersc_upload` (SFAPI, 150
 
 ## 3. Prepare + run  (any collaborator, any machine)
     python -m deepearth.autoresearch.main.editable_files.lib.prepare        # downloads the zip from the portal (HTTPS, no auth),
-                                                    # extracts, compiles the Earth4D CUDA kernel (install.sh
-                                                    # auto-installs ninja), builds the prepared cache + test I/O
+                                                    # extracts, compiles the Earth4D CUDA kernel (JIT on first import), builds the prepared cache + test I/O
     python -m deepearth.autoresearch.main.editable_files.harness.train autoresearch/main/editable_files/harness/deepcal.yaml --device cuda:1
 Override the source with `DEEPCAL_DATA_URL`. Run from the parent of the `deepearth/` package dir.
 

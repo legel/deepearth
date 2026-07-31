@@ -28,7 +28,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 DEFAULT_TIME_HORIZON = 2.0
-TRACE_AUTH_FD_ENV = "EARTH4D_TRACE_AUTH_FD"
 
 
 def normalize_time_from_train(days, train_mask, horizon=1.0):
@@ -118,65 +117,6 @@ def validate_dynamic_target_causality(
               "horizon-purge, and right-censoring tests pass"
         )
 
-
-def trace_authorization_payload(module, argv):
-    """Canonical one-shot payload binding authorization to module and argv."""
-    return (
-        json.dumps(
-            {"module": str(module), "argv": list(argv)},
-            ensure_ascii=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        + b"\n"
-    )
-
-
-def consume_trace_authorization(module, argv):
-    """Consume the one-shot pipe capability inherited from ``trace.py``."""
-    descriptor = os.environ.pop(TRACE_AUTH_FD_ENV, None)
-    if descriptor is None:
-        return False
-    try:
-        fd = int(descriptor)
-        expected = trace_authorization_payload(module, argv)
-        payload = os.read(fd, len(expected) + 1)
-        os.close(fd)
-    except (OSError, TypeError, ValueError):
-        return False
-    return payload == expected
-
-
-ALLOW_UNRECORDED_ENV = "EARTH4D_ALLOW_UNRECORDED"
-
-
-def require_recorded_entrypoint(
-    name,
-    trace_authorized=None,
-    *,
-    module=None,
-    argv=(),
-):
-    """Require that a probe run be recordable.
-
-    A probe whose result never reaches ``records.json``/Ensue is a run the swarm pays for and
-    cannot learn from, so the default entrypoint is through ``trace.py``, which issues a one-shot
-    authorization bound to (module, argv) and writes the ledger afterwards.
-
-    This is a RECORDING invariant, not a research directive: it constrains where a result goes,
-    never which experiment is allowed. Set ``EARTH4D_ALLOW_UNRECORDED=1`` for runs that
-    deliberately produce no record -- parity checks, smoke tests, debugging.
-    """
-    if trace_authorized is None:
-        trace_authorized = (
-            module is not None and consume_trace_authorization(module, argv)
-        )
-    if trace_authorized or os.environ.get(ALLOW_UNRECORDED_ENV) == "1":
-        return
-    raise ValueError(
-        f"{name} was invoked directly, so its result would never be recorded. Run it through "
-        "deepearth.autoresearch.probes.spacetime.editable_files.harness (which declares --metric and writes the ledger), or set "
-        f"{ALLOW_UNRECORDED_ENV}=1 for a deliberately unrecorded run."
-    )
 
 
 def strict_spatiotemporal_masks(lat, lon, days, future, held_place, block=0.5):

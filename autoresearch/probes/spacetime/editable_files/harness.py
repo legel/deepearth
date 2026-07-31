@@ -480,15 +480,6 @@ MODES: Tuple[Mode, ...] = (
          notes="Record metric is Earth4D's best-head within-tolerance accuracy vs the generic PE's — "
                "NOT propagator_gain, which measures propagation vs static on raw features."),
 
-    # ---- calibration -----------------------------------------------------------------------------
-    Mode("CALIBRATION(<src>,feat=<feat>)",
-         "--probe-module ...lib.calib_probe --probe '--feature earth4d --ensemble N'",
-         capability="calibration", lever=ARCH,
-         notes="Lives in lib/calib_probe.py. Metric is the SINGLE-MODEL softmax AUROC of "
-               "confidence->correctness; 0.5 is the useless floor, so chance is the fair baseline. The "
-               "other uncertainty signals (ens/ent/bald/ensvar) are reported as baselines and must "
-               "never be substituted for the record metric."),
-
 )
 
 # Where to make each kind of change. An agent that has picked a capability needs this more than it
@@ -578,15 +569,14 @@ def _list_modes(argv=None):
 # ============================================================================================================
 
 RECORDS = LOOP / "records" / "records.json"  # the machine record (fill scorecard by breaking these)
-DEFAULT_PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.editable_files.probe"
-TRACE_AUTH_FD_ENV = "EARTH4D_TRACE_AUTH_FD"
+PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.editable_files.probe"
 
 # The encoder-probeable capabilities (scorecard.md Layer 2). The objective must be one of these; the
 # probe MODE and the architecture are the agent's choice. This list and scorecard.md Layer 2/3 are one
 # contract -- change both together.
 CAPABILITIES = [
     "species_from_env", "species_from_spacetime", "family_from_env", "family_from_spacetime",
-    "community_from_env", "calibration", "flowering_peak_month",
+    "community_from_env", "flowering_peak_month",
 ]
 
 # Declared-and-refused, with the reason (scorecard.md Layer 3). These used to sit in CAPABILITIES with
@@ -595,6 +585,12 @@ CAPABILITIES = [
 # explicit refusal is the honest version: the capability is real on the full-model board, it is simply
 # not reachable through the encoder probe.
 EXCLUDED_CAPABILITIES = {
+    "calibration": "cannot resolve an encoder effect: the paired Earth4D-vs-RFF difference has a "
+                   "per-seed spread of +/-0.055 against a 0.0118 barrier, so a single run says "
+                   "nothing. Its record was also never a real measurement -- the probe imported a "
+                   "module as a package, fell silently into a synthetic surrogate that ignores the "
+                   "feature argument, and ran an unseeded encoder (0.5375/0.5682/0.6062 on three "
+                   "identical commands). Retired, and its probe deleted with it",
     "family_from_vision": "borrowed frozen DINO/BioCLIP, and the stored record has no mode or shard "
                           "identity; it is not an Earth4D probe record",
     "lfmc_from_env": "non-encoder head: the capability lives in a downstream head",
@@ -635,52 +631,24 @@ REBASELINE_PROTOCOLS = frozenset({"v1-prefix", "v2-leakfix"})
 FAIR_ORDER = ["best-ctrl", "RFF", "mlp", "GAIN", "prop_acc", "best-coord", "raw"]
 
 
-def _run(module: str, probe_args: str, device: str, log_path: str, result_path: str,
-         capability: str, seed=None) -> int:
+def _run(device: str, log_path: str, result_path: str, capability: str, seed=None) -> int:
     """Invoke the probe.
 
-    The spacetime probe now takes FOUR arguments — capability, seed, device, result-json — because every
-    lever that used to be a flag lives in its CONFIG block, and an experiment is a diff of that block on
-    a branch rather than a command line. `probe_args` stays supported and is passed through when given,
-    because other modules under lib/ (calib_probe) still declare their own flags; for the spacetime
-    probe it should be empty.
+    There is ONE probe and it takes four arguments — capability, seed, device, result-json — because
+    every lever that used to be a flag lives in its CONFIG block, and an experiment is a diff of that
+    block. `--probe`/`--probe-module` existed only for lib/calib_probe, which declared its own flags and
+    served the one capability now excluded; both are gone with it.
     """
-    probe_argv = shlex.split(probe_args or "") + ["--device", device,
-                                                  "--result-json", result_path,
-                                                  "--capability", capability]
-    if seed is not None and "--seed" not in probe_argv:
+    probe_argv = ["--device", device, "--result-json", result_path, "--capability", capability]
+    if seed is not None:
         probe_argv += ["--seed", str(seed)]
-    cmd = [sys.executable, "-m", module] + probe_argv
+    cmd = [sys.executable, "-m", PROBE_MODULE] + probe_argv
     env = dict(os.environ)
     env["PYTHONPATH"] = str(REPO.parent) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    read_fd, write_fd = os.pipe()
-    try:
-        authorization = (
-            json.dumps(
-                {"module": module, "argv": probe_argv},
-                ensure_ascii=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            + b"\n"
-        )
-        os.write(write_fd, authorization)
-        os.close(write_fd)
-        write_fd = -1
-        env[TRACE_AUTH_FD_ENV] = str(read_fd)
-        print(f"[trace] $ {' '.join(cmd)}  (cwd={REPO})", flush=True)
-        with open(log_path, "w") as lf:
-            return subprocess.run(
-                cmd,
-                stdout=lf,
-                stderr=subprocess.STDOUT,
-                env=env,
-                cwd=str(REPO),
-                pass_fds=(read_fd,),
-            ).returncode
-    finally:
-        if write_fd >= 0:
-            os.close(write_fd)
-        os.close(read_fd)
+    print(f"[trace] $ {' '.join(cmd)}  (cwd={REPO})", flush=True)
+    with open(log_path, "w") as lf:
+        return subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT,
+                              env=env, cwd=str(REPO)).returncode
 
 
 
@@ -1213,11 +1181,6 @@ def main() -> None:
         description="Earth4D legacy probe ledger — exact audited protocol migrations only"
     )
     ap.add_argument("--metric", required=True, help="objective capability (one of the scorecard capabilities)")
-    ap.add_argument("--probe", default="",
-                    help="LEGACY passthrough for modules that still declare flags (lib/calib_probe). The "
-                         "spacetime probe takes none: its levers live in CONFIG and an experiment is a "
-                         "diff of that block on a branch. Leave empty.")
-    ap.add_argument("--probe-module", default=DEFAULT_PROBE_MODULE)
     ap.add_argument("--tag", default=None)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--seeds", type=int, default=1,
@@ -1255,19 +1218,18 @@ def main() -> None:
           + ", ".join(m.mode for m in modes), flush=True)
     records_snapshot, preflight_records = _read_records()
 
-    tag = a.tag or ("e4d_" + re.sub(r"\W+", "_", a.probe)[:24].strip("_"))
+    tag = a.tag or f"e4d_{a.metric}"
     log_path = a.log or str(LOOP / "records" / "traces" / f"{tag}.log")
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"[trace] OBJECTIVE={a.metric}  probe='{a.probe}'  tag={tag}", flush=True)
+    print(f"[trace] OBJECTIVE={a.metric}  tag={tag}", flush=True)
     # One run per seed. Seeds are matched across arms by construction: the probe seeds numpy and torch
     # from --seed, so seed k is the same initialization for every configuration compared here.
     seed_results, seed_values = [], []
     for k in range(max(1, a.seeds)):
-        seed_probe = a.probe
         seed_log = log_path if a.seeds == 1 else str(Path(log_path).with_suffix(f".seed{k}.log"))
         result_path = str(Path(seed_log).with_suffix(".result.json"))
-        rc = _run(a.probe_module, seed_probe, a.device, seed_log, result_path, a.metric, seed=k)
+        rc = _run(a.device, seed_log, result_path, a.metric, seed=k)
         text = Path(seed_log).read_text(errors="ignore")
         if rc != 0:
             print(text[-1800:])
@@ -1335,7 +1297,6 @@ def main() -> None:
         prev_mode,
         shards,
         prev_shards,
-        a.probe,
         cur.get("probe"),
         seed_std=seed_std,
         n_seeds=len(seed_values),
@@ -1363,7 +1324,7 @@ def main() -> None:
         print(f"[trace] *** PROTOCOL MIGRATION WITHHELD: the old probe command, mode, and shard count "
               f"must match exactly.\n"
               f"[trace]     old={cur.get('probe')!r} mode={prev_mode!r} shards={prev_shards!r}\n"
-              f"[trace]     new={a.probe!r} mode={mode!r} shards={shards!r}",
+              f"[trace]     new mode={mode!r} shards={shards!r}",
               flush=True)
     if beats and not (mode_ok and shards_ok):
         why = ("mode %r != record mode %r" % (mode, prev_mode) if not mode_ok
@@ -1379,8 +1340,8 @@ def main() -> None:
                "n_seeds": len(seed_values), "seed_values": [float(v) for v in seed_values],
                "seed_std": (float(seed_std) if seed_std is not None else None),
                "provisional": len(seed_values) < 5,
-               "fair_baseline": fair_base, "tag": tag, "probe": a.probe, "mode": mode, "n_shards": shards,
-               "probe_module": a.probe_module, "protocol": PROTOCOL}
+               "fair_baseline": fair_base, "tag": tag, "mode": mode, "n_shards": shards,
+               "protocol": PROTOCOL}
         ledger["records"] = (ledger.get("records", []) + [{"tag": tag, "score": key_val, "gain": fair,
                                                            "protocol": PROTOCOL,
                                                            "rebaseline_from": prev if rebaseline else None}])[-20:]
@@ -1391,7 +1352,7 @@ def main() -> None:
             "why": (
                 f"PROTOCOL MIGRATION WITHHELD (old protocol={prev_proto!r}, mode={prev_mode!r}, "
                 f"n_shards={prev_shards!r}, probe={cur.get('probe')!r}; new mode={mode!r}, "
-                f"n_shards={shards!r}, probe={a.probe!r})"
+                f"n_shards={shards!r})"
             ),
         }
     elif beats and not (mode_ok and shards_ok):
@@ -1427,7 +1388,7 @@ def main() -> None:
         print("[trace] *** DIRTY TREE: this run measured uncommitted changes. The result is not "
               "reproducible by anyone else and is discovery-only. Commit before recording a claim.",
               flush=True)
-    trace = {"metric": a.metric, "tag": tag, "probe": a.probe, "probe_module": a.probe_module,
+    trace = {"metric": a.metric, "tag": tag,
              "code": code,
              "evidence": {"n_seeds": len(seed_values),
                           "seed_values": [float(v) for v in seed_values],
@@ -1438,7 +1399,7 @@ def main() -> None:
 
     # one-screen consistent summary ---------------------------------------------------------------------
     print("\n" + "=" * 76)
-    print(f"OBJECTIVE  {a.metric}   probe='{a.probe}'")
+    print(f"OBJECTIVE  {a.metric}")
     print(header or "(no '=== SPACETIME' header parsed — check the log)")
     print("-" * 76)
     print(f"  primary(score) = {primary}   fair_st_gain = {fair} (vs {fair_base})   all_gains = {gains}")

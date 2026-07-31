@@ -8,7 +8,7 @@ Run from the repo's PARENT directory (the one containing ``deepearth/``) so the 
 It ensures, in order:
   1. DATA   -- the fully pre-processed DeepCal cache (embeddings, tokens, tree, splits) is present under
      ``deepearth/autoresearch/data/deepcal/`` (or an existing local cache), downloading + extracting the NERSC-hosted zips if not.
-  2. KERNEL -- the Earth4D hash-grid CUDA kernel is importable, compiling it (``autoresearch/probes/spacetime/editable_files/install.sh``) if not.
+  2. KERNEL -- the Earth4D hash-grid CUDA kernel is importable (it JIT-compiles itself on first import).
   3. PREPARED -- the assembled dataset (glob + KD-tree neighbor index, ~2.7 min to build) is cached to a single
      ``.pt`` so every training run / experiment spins up in ~1 second.
   4. TEST I/O -- a small held-out inference bundle is materialized so the benchmark harness is ready to score.
@@ -21,9 +21,13 @@ from pathlib import Path
 import urllib.request, urllib.error
 import yaml
 
-REPO = Path(__file__).resolve().parents[1]                       # .../deepearth
-DATA_DIR = REPO / "data" / "deepcal"                             # where prepare.py places the data
-SPACETIME = REPO / "encoders" / "spacetime"
+# Anchor by NAME, not by counting parents: this file moved twice in the restructure and both counted
+# paths silently went stale -- REPO resolved to editable_files/ and SPACETIME to encoders/spacetime,
+# which no longer exists.
+AUTORESEARCH = next(p for p in Path(__file__).resolve().parents if p.name == "autoresearch")
+REPO = AUTORESEARCH.parent                                       # .../deepearth
+DATA_DIR = AUTORESEARCH / "data" / "deepcal"                     # where prepare.py places the data
+SPACETIME = AUTORESEARCH / "probes" / "spacetime" / "editable_files"
 # NERSC data portal (project m5239) -- plain HTTPS, no auth needed to download. Override with DEEPCAL_DATA_URL.
 DATA_URL_BASE = os.environ.get("DEEPCAL_DATA_URL", "https://portal.nersc.gov/cfs/m5239/deepcal")
 DATA_ZIPS = ["deepcal_data.zip"]                                 # the pre-processed cache, split if large
@@ -118,22 +122,17 @@ def _resume_wait(err, pos, attempt, retries):
 
 
 def ensure_kernel() -> None:
-    """Import the Earth4D CUDA hash-grid kernel; build it in place if the compiled extension is absent."""
+    """Import the Earth4D CUDA hash-grid kernel.
+
+    There is nothing to build here: hashencoder/backend.py already tries the installed extension, then
+    a prebuilt .so, then JIT-compiles from src/ and caches under build/. This used to shell out to a
+    171-line install.sh that wrapped a setup.py that wrapped that same JIT path -- five layers to do
+    what the import does by itself. The only real prerequisite is ninja, and torch says so plainly if
+    it is missing.
+    """
     sys.path.insert(0, str(SPACETIME))
-    try:
-        from hashencoder.hashgrid import HashEncoder  # noqa: F401
-        print("[kernel] Earth4D hash-grid CUDA kernel importable")
-        return
-    except Exception as e:
-        print(f"[kernel] not importable ({e}); building via install.sh")
-    install = SPACETIME / "install.sh"
-    if install.exists():
-        subprocess.run(["bash", str(install)], cwd=str(SPACETIME), check=True)
-    else:
-        subprocess.run([sys.executable, "setup.py", "build_ext", "--inplace"],
-                       cwd=str(SPACETIME / "hashencoder"), check=True)
-    from hashencoder.hashgrid import HashEncoder  # noqa: F401  (raise if still broken)
-    print("[kernel] built and importable")
+    from hashencoder.hashgrid import HashEncoder  # noqa: F401
+    print("[kernel] Earth4D hash-grid CUDA kernel importable")
 
 
 def ensure_prepared(config: dict, data_dir: Path, device: str) -> str:

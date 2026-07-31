@@ -127,7 +127,7 @@ own commit with its own tests, separate from any result.
 
 1. Clone `github.com/legel/deepearth` (branch `deepcal`).
 2. `pip install -r requirements.txt`, then build the Earth4D CUDA hash encoder against your torch:
-   `cd autoresearch/probes/spacetime/editable_files && bash install.sh` (the shipped .so is ABI-specific — you MUST rebuild it).
+   `pip install ninja` — the kernel JIT-compiles itself on first import and caches under `hashencoder/build/`.
 3. Read `science.md` (binding), then the `program/` of the loop you are running.
 4. `python -m deepearth.autoresearch.main.editable_files.lib.prepare` — downloads and extracts the audited
    dataset (deepcal_data.zip) from NERSC into `autoresearch/data/deepcal/`.

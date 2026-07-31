@@ -39,8 +39,8 @@ and held-site gate in `autoresearch/probes/spacetime/program/program.md`.
 git clone https://github.com/legel/deepearth.git
 cd deepearth/autoresearch/probes/spacetime/editable_files
 
-# Install dependencies
-bash install.sh
+# Install the one build dependency (the CUDA kernel JIT-compiles itself on first import)
+pip install ninja
 ```
 
 ### Run the LFMC data/split gate
