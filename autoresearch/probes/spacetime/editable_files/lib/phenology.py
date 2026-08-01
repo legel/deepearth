@@ -119,20 +119,36 @@ class GNNDOY(nn.Module):
 
 
 class LSTMDOY(nn.Module):
-    """1-D causal rollout: LSTM over K past neighbours (past->present), each step = [pos-feat || neighbour DOY
-    vec || dt || dlat || dlon]; final hidden -> query (cos,sin) DOY."""
+    """Causal rollout with a wrapped discrete flowering-time likelihood.
 
-    def __init__(self, feat_dim, hidden=256):
+    The recurrent state still consumes the identical strictly-past sequence.  A two-vector regression head
+    collapses a broad or multimodal seasonal posterior to its circular mean, where separated modes can cancel.
+    Twenty-four bins retain those modes at roughly the probe's 15-day decision scale; a wrapped von-Mises target
+    keeps the December/January boundary continuous, and inference returns the most likely interval.
+    """
+
+    def __init__(self, feat_dim, hidden=256, bins=24):
         super().__init__()
         self.lstm = nn.LSTM(feat_dim + 2 + 2, hidden, batch_first=True)   # +neighbour DOY vec +spatial offset (no dt)
-        self.head = nn.Linear(hidden, 2)
+        self.head = nn.Linear(hidden, bins)
+        angle = (torch.arange(bins, dtype=torch.float32) + 0.5) * (2.0 * np.pi / bins)
+        self.register_buffer("centers", torch.stack([torch.cos(angle), torch.sin(angle)], -1))
+        self.target_kappa = float((bins / (2.0 * np.pi)) ** 2)
 
-    def forward(self, nfeat, ndoy, edge, lengths):
+    def logits(self, nfeat, ndoy, edge, lengths):
         x = torch.cat([nfeat, ndoy, edge], -1)                    # [B,K, F+2+2]
         packed = nn.utils.rnn.pack_padded_sequence(x, lengths.cpu().clamp(min=1),
                                                    batch_first=True, enforce_sorted=False)
         _, (h, _) = self.lstm(packed)
-        return F.normalize(self.head(h[-1]), dim=-1)
+        return self.head(h[-1])
+
+    def loss(self, nfeat, ndoy, edge, lengths, target_vec):
+        target = torch.softmax(self.target_kappa * (target_vec @ self.centers.T), dim=-1)
+        return -(target * F.log_softmax(self.logits(nfeat, ndoy, edge, lengths), dim=-1)).sum(-1).mean()
+
+    def forward(self, nfeat, ndoy, edge, lengths):
+        winner = self.logits(nfeat, ndoy, edge, lengths).argmax(-1)
+        return self.centers[winner]
 
 
 class LSTMDOYsp(nn.Module):
@@ -424,7 +440,7 @@ def run_phenology(qfeat_all, feat_dim, days, coords_ll, test, dev, K=16, steps=4
     opt = torch.optim.Adam(lstm.parameters(), lr=lr)
     for _ in range(steps):
         s = torch.randint(0, Btr, (bs,), device=dev)
-        loss = vec_loss(lstm(nftr[s], ndtr[s], etr[s], ltr[s]), yvtr[s])
+        loss = lstm.loss(nftr[s], ndtr[s], etr[s], ltr[s], yvtr[s])
         opt.zero_grad(); loss.backward(); opt.step()
     lstm.eval()
     with torch.no_grad():
