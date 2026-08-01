@@ -19,6 +19,22 @@ WGS84_F = 1.0 / 298.257223563
 WGS84_E2 = 2 * WGS84_F - WGS84_F**2
 ECEF_NORM_FACTOR = 6400000.0
 
+
+def _coefficient_chart_frames() -> torch.Tensor:
+    """Three deterministic, well-spread, right-handed frames for the surface atlas."""
+    directions = ((1.0, 1.0, 1.0), (1.0, -1.0, -1.0), (-1.0, 1.0, -1.0))
+    reference = torch.tensor((0.0, 0.0, 1.0), dtype=torch.float32)
+    frames = []
+    for direction in directions:
+        z_axis = torch.tensor(direction, dtype=torch.float32)
+        z_axis = z_axis / torch.linalg.vector_norm(z_axis)
+        x_axis = torch.cross(reference, z_axis, dim=0)
+        x_axis = x_axis / torch.linalg.vector_norm(x_axis)
+        y_axis = torch.cross(z_axis, x_axis, dim=0)
+        frames.append(torch.stack((x_axis, y_axis, z_axis)))
+    return torch.stack(frames)
+
+
 def to_ecef(lat: torch.Tensor, lon: torch.Tensor, elev: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Convert lat/lon/elev to ECEF coordinates using the WGS84 ellipsoid."""
     lat_rad, lon_rad = torch.deg2rad(lat), torch.deg2rad(lon)
@@ -288,6 +304,9 @@ class Earth4D(nn.Module):
         # decoupled growth for lat/lon vs elevation (xyz -> growth_factor, spatiotemporal -> temporal_growth_factor)
         self.latlon_growth_factor = latlon_growth_factor; self.elev_growth_factor = elev_growth_factor
         self.coordinate_system = coordinate_system; self.resolution_mode = resolution_mode; self.geo_range = geo_range
+        # The canonical static chart plus these three rotated coefficient charts cover the octahedral
+        # seams from different orientations without learned routing or data-dependent preprocessing.
+        self.register_buffer("_coefficient_chart_frames", _coefficient_chart_frames())
         if coordinate_system == 'geographic' and geo_range is None:
             self.geo_range = GeoAdaptiveRange.global_range(); self._geo_range_is_default = True
         else:
@@ -460,8 +479,24 @@ class Earth4D(nn.Module):
                 self.register_buffer('_tile_off', torch.rand(self.tile_offsets, 3, generator=g))
             self.output_dim = self.output_dim + self.tile * self.tile_levels * self.tile_offsets
 
+    def _surface_atlas(self, xyz: torch.Tensor) -> torch.Tensor:
+        """Flatten an ECEF shell to octahedral surface coordinates plus radial displacement."""
+        if self.coordinate_system != 'ecef':
+            return xyz
+        radius = torch.linalg.vector_norm(xyz, dim=-1, keepdim=True).clamp_min(1e-8)
+        unit = xyz / radius
+        folded = unit / unit.abs().sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        u, v, w = folded.unbind(dim=-1)
+        su = torch.where(u >= 0, torch.ones_like(u), -torch.ones_like(u))
+        sv = torch.where(v >= 0, torch.ones_like(v), -torch.ones_like(v))
+        lower_u = (1.0 - v.abs()) * su
+        lower_v = (1.0 - u.abs()) * sv
+        atlas_u = torch.where(w >= 0, u, lower_u)
+        atlas_v = torch.where(w >= 0, v, lower_v)
+        return torch.stack([atlas_u, atlas_v, radius.squeeze(-1) - 1.0], dim=-1)
+
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
-        return self.xyz_encoder(xyz, size=1.0)
+        return self.xyz_encoder(self._surface_atlas(xyz), size=1.0)
 
     def fit_anchors(self, coords: torch.Tensor, seed: int = 0) -> 'Earth4D':
         """Draw the Nystrom anchor set from TRAIN rows and whiten the space-time axes on them."""
@@ -490,9 +525,16 @@ class Earth4D(nn.Module):
         return u, 0.5 * (3.0 * u.square() - 1.0), 0.5 * (5.0 * u.pow(3) - 3.0 * u)
 
     def _deforming_field(self, xyz: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        latent = torch.cat([self.xyt_encoder(xyz, size=1.0),
-                            self.yzt_encoder(xyz, size=1.0),
-                            self.xzt_encoder(xyz, size=1.0)], dim=-1)
+        if self.coordinate_system == 'ecef':
+            frames = self._coefficient_chart_frames.to(dtype=xyz.dtype)
+            rotated = torch.einsum('...d,ked->...ke', xyz, frames)
+            charts = self._surface_atlas(rotated)
+            xyz1, xyz2, xyz3 = charts.unbind(dim=-2)
+        else:
+            xyz1 = xyz2 = xyz3 = xyz
+        latent = torch.cat([self.xyt_encoder(xyz1.contiguous(), size=1.0),
+                            self.yzt_encoder(xyz2.contiguous(), size=1.0),
+                            self.xzt_encoder(xyz3.contiguous(), size=1.0)], dim=-1)
         modes = latent.view(*latent.shape[:-1], self.koopman_pairs, 2)
         # normalize_time_from_train places the observed past in [0, .5], so .25 is its fixed design
         # midpoint, not a statistic fitted on held-out dates.  Bounds make extrapolation numerically stable.
