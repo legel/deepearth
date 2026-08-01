@@ -366,6 +366,15 @@ class Earth4D(nn.Module):
             base_resolution=temporal_base_res, log2_hashmap_size=temporal_log2_hashmap_size,
             desired_resolution=xzt_max_res, enable_learned_probing=enable_learned_probing,
             probing_range=probing_range, index_codebook_size=index_codebook_size)
+        # AUTONOMOUS LATENT DYNAMICS.  Pair the 108 coefficient-field channels into complex modes whose
+        # learned rotation and bounded growth/decay form an exact continuous-time semigroup.  Unlike three
+        # unrelated polynomial multipliers, advancing a mode by dt twice is identical to advancing by 2dt.
+        latent_dim = 3 * temporal_levels * features_per_level
+        if latent_dim % 2:
+            raise ValueError("latent semigroup needs an even coefficient-field width")
+        self.koopman_pairs = latent_dim // 2
+        self.koopman_growth = nn.Parameter(torch.zeros(self.koopman_pairs))
+        self.koopman_frequency = nn.Parameter(torch.zeros(self.koopman_pairs))
         # a relative-only field never reads the four absolute projections, so it can opt out of carrying them
         self.enable_absolute = enable_absolute
         if not enable_absolute:
@@ -481,10 +490,22 @@ class Earth4D(nn.Module):
         return u, 0.5 * (3.0 * u.square() - 1.0), 0.5 * (5.0 * u.pow(3) - 3.0 * u)
 
     def _deforming_field(self, xyz: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        p1, p2, p3 = self._temporal_modes(t)
-        return torch.cat([self.xyt_encoder(xyz, size=1.0) * p1,
-                          self.yzt_encoder(xyz, size=1.0) * p2,
-                          self.xzt_encoder(xyz, size=1.0) * p3], dim=-1)
+        latent = torch.cat([self.xyt_encoder(xyz, size=1.0),
+                            self.yzt_encoder(xyz, size=1.0),
+                            self.xzt_encoder(xyz, size=1.0)], dim=-1)
+        modes = latent.view(*latent.shape[:-1], self.koopman_pairs, 2)
+        # normalize_time_from_train places the observed past in [0, .5], so .25 is its fixed design
+        # midpoint, not a statistic fitted on held-out dates.  Bounds make extrapolation numerically stable.
+        tau = t.clamp(-1.0, 2.0) - 0.25
+        growth = 0.75 * torch.tanh(self.koopman_growth)
+        frequency = torch.nn.functional.softplus(self.koopman_frequency)
+        amplitude = torch.exp(tau * growth)
+        angle = tau * frequency
+        cos_a, sin_a = torch.cos(angle), torch.sin(angle)
+        real, imag = modes[..., 0], modes[..., 1]
+        evolved = torch.stack([amplitude * (cos_a * real - sin_a * imag),
+                               amplitude * (sin_a * real + cos_a * imag)], dim=-1)
+        return evolved.flatten(-2)
 
     def _seasonal_t(self, t: torch.Tensor) -> torch.Tensor:
         """Annual phase of normalized time, in the planes' [-0.9, 0.9] coordinate units."""
