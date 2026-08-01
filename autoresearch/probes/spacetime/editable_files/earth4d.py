@@ -225,8 +225,13 @@ def parse_timestamp(timestamp: str, time_range: Tuple[int, int] = (1900, 2100)) 
     return max(0.0, min(1.0, (unix_ts - start_ts) / (end_ts - start_ts)))
 
 class Earth4D(nn.Module):
-    """Multi-resolution hash-grid encoder over (lat, lon, elev, time): one xyz spatial encoder plus three
-    spatiotemporal projections (xyt, yzt, xzt), with optional absolute and relative (offset) channels."""
+    """Multi-resolution hash-grid encoder over (lat, lon, elev, time).
+
+    The absolute channel is a low-rank continuous 4D field: one base xyz field plus three xyz
+    coefficient fields modulated by fixed polynomial modes of time.  Sharing every coefficient table
+    across time lets the field extrapolate through a forecast boundary instead of looking up unseen
+    absolute-time hash cells.  Relative (offset) channels remain optional and unchanged.
+    """
 
     def __init__(self,
                  spatial_levels: int = 24,
@@ -323,7 +328,9 @@ class Earth4D(nn.Module):
                            int(base_spatial_resolution * (xyz_egf ** (spatial_levels - 1)))]
         else:
             xyz_scale, xyz_max_res = growth_factor, spatial_max_res
-        # spatiotemporal encoders (xyt, yzt, xzt): temporal_growth_factor baseline
+        # The three legacy space-time tables retain their parameter names and exact capacity, but are
+        # evaluated as xyz coefficient fields below.  On the current harness all axis growth factors are
+        # identical, so this is a pure change in field parameterization, not width, capacity, or budget.
         if llgf is not None or egf is not None:
             st_llgf = llgf if llgf is not None else tgf; st_egf = egf if egf is not None else tgf
             xyt_scale = [st_llgf, st_llgf, tgf]
@@ -463,13 +470,21 @@ class Earth4D(nn.Module):
         d2 = torch.cdist(u, a).pow(2) / u.shape[-1]
         return torch.cat([torch.exp(-d2 / (2.0 * s * s)) for s in self.nystrom_scales], dim=-1)
 
-    def _triplane(self, xyz: torch.Tensor, t_scaled: torch.Tensor) -> torch.Tensor:
-        xyzt_scaled = torch.cat([xyz, t_scaled], dim=-1)
-        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
-        yzt = xyzt_scaled[..., 1:]
-        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
-        return torch.cat([self.xyt_encoder(xyt, size=1.0), self.yzt_encoder(yzt, size=1.0),
-                          self.xzt_encoder(xzt, size=1.0)], dim=-1)
+    @staticmethod
+    def _temporal_modes(t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """First three Legendre modes on causal train-normalized time.
+
+        ``normalize_time_from_train`` maps the observed past to [0, 0.5] and leaves the future in the
+        same continuous coordinate system.  The clamp is a fixed stability bound, not fit to test data.
+        """
+        u = t.clamp(-1.0, 2.0)
+        return u, 0.5 * (3.0 * u.square() - 1.0), 0.5 * (5.0 * u.pow(3) - 3.0 * u)
+
+    def _deforming_field(self, xyz: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        p1, p2, p3 = self._temporal_modes(t)
+        return torch.cat([self.xyt_encoder(xyz, size=1.0) * p1,
+                          self.yzt_encoder(xyz, size=1.0) * p2,
+                          self.xzt_encoder(xyz, size=1.0) * p3], dim=-1)
 
     def _seasonal_t(self, t: torch.Tensor) -> torch.Tensor:
         """Annual phase of normalized time, in the planes' [-0.9, 0.9] coordinate units."""
@@ -479,13 +494,9 @@ class Earth4D(nn.Module):
 
     def _encode_spatiotemporal(self, xyzt: torch.Tensor) -> torch.Tensor:
         xyz = xyzt[..., :3]
-        abs_t = (xyzt[..., 3:] * 2 - 1) * 0.9
-        if self.seasonal_time == 1:
-            return self._triplane(xyz, self._seasonal_t(xyzt[..., 3:]))
-        if self.seasonal_time == 2:
-            return torch.cat([self._triplane(xyz, abs_t),
-                              self._triplane(xyz, self._seasonal_t(xyzt[..., 3:]))], dim=-1)
-        return self._triplane(xyz, abs_t)
+        if self.seasonal_time:
+            raise RuntimeError("seasonal_time is incompatible with the continuous deformation field")
+        return self._deforming_field(xyz, xyzt[..., 3:])
 
     def _tile(self, norm_coords: torch.Tensor) -> torch.Tensor:
         """TILE CODING: a sparse one-hot code of the containing cell, per level.
