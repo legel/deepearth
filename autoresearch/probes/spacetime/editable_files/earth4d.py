@@ -385,21 +385,21 @@ class Earth4D(nn.Module):
             base_resolution=temporal_base_res, log2_hashmap_size=temporal_log2_hashmap_size,
             desired_resolution=xzt_max_res, enable_learned_probing=enable_learned_probing,
             probing_range=probing_range, index_codebook_size=index_codebook_size)
-        # EARTH4D--SPHERICAL-RIDGELET HYBRID.  The xyz hash table stays instantiated and counted, but its
-        # 36-D static output is replaced by 18 smooth great-circle partitions.  Unlike point-local cells,
-        # each ridgelet shares evidence along a continental-scale boundary.  Deterministic Fibonacci
-        # initialization consumes no RNG, and training may rotate each normal and change its bounded width.
+        # MULTISCALE SPHERICAL RIDGELETS.  Twelve trainable great-circle directions each emit a coarse
+        # signed half-space plus medium and fine boundary bands.  The 36-D static width is unchanged,
+        # but family ranges may now express continental sides, broad ecotones, and sharp regional fronts
+        # independently.  Deterministic Fibonacci initialization consumes no RNG.
         if self.spatial_dim != 36:
             raise ValueError("spherical ridgelet hybrid requires the production 36-D spatial block")
-        ridgelet_index = torch.arange(18, dtype=torch.float32)
-        ridgelet_z = 1.0 - 2.0 * (ridgelet_index + 0.5) / 18.0
+        ridgelet_index = torch.arange(12, dtype=torch.float32)
+        ridgelet_z = 1.0 - 2.0 * (ridgelet_index + 0.5) / 12.0
         ridgelet_angle = ridgelet_index * (math.pi * (3.0 - math.sqrt(5.0)))
         ridgelet_radius = torch.sqrt((1.0 - ridgelet_z.square()).clamp_min(0.0))
         ridgelet_normals = torch.stack([ridgelet_radius * torch.cos(ridgelet_angle),
                                         ridgelet_radius * torch.sin(ridgelet_angle),
                                         ridgelet_z], dim=-1)
         self.ridgelet_normals = nn.Parameter(ridgelet_normals)
-        self.ridgelet_sharpness_logits = nn.Parameter(torch.zeros(18))
+        self.ridgelet_sharpness_logits = nn.Parameter(torch.zeros(12))
         # AUTONOMOUS LATENT DYNAMICS.  Pair the 108 coefficient-field channels into complex modes whose
         # learned rotation and bounded growth/decay form an exact continuous-time semigroup.  Unlike three
         # unrelated polynomial multipliers, advancing a mode by dt twice is identical to advancing by 2dt.
@@ -519,9 +519,10 @@ class Earth4D(nn.Module):
         signed_distance = unit @ normals.t()
         sharpness = (float(self.base_spatial_resolution) / 4.0) * torch.sigmoid(
             self.ridgelet_sharpness_logits)
-        halfspace = torch.tanh(signed_distance * sharpness)
-        boundary = 1.0 - halfspace.square()
-        return torch.stack([halfspace, boundary], dim=-1).flatten(-2)
+        coarse_side = torch.tanh(signed_distance * (0.25 * sharpness))
+        medium = torch.tanh(signed_distance * sharpness)
+        fine = torch.tanh(signed_distance * (4.0 * sharpness))
+        return torch.stack([coarse_side, 1.0 - medium.square(), 1.0 - fine.square()], dim=-1).flatten(-2)
 
     def fit_anchors(self, coords: torch.Tensor, seed: int = 0) -> 'Earth4D':
         """Draw the Nystrom anchor set from TRAIN rows and whiten the space-time axes on them."""
