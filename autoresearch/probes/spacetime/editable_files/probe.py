@@ -441,6 +441,13 @@ def load_obs(cache: str, n_shards: int, with_time: bool = False, with_gid: bool 
     return lat, lon, fam, n_fam, days, gids, sp
 
 
+def load_historical_gbif_support(cache: str):
+    """Prepared, ID-disjoint 2019--2024 GBIF range support."""
+    z = np.load(Path(cache) / "gbif_densify_bulk.npz")
+    return (z["lat"].astype(np.float32), z["lon"].astype(np.float32),
+            z["species_local"].astype(np.int64), z["gbifID"].astype(np.int64))
+
+
 def load_species(cache: str, n_shards: int):
     """Per-observation species_local id aligned to the SAME shard subsample load_obs uses (for community /
     per-species breadth targets). Additive; used only by --breadth_target."""
@@ -865,7 +872,7 @@ def _smooth_worst_domain_ce(logits, targets, per_group, n_groups):
 
 
 def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0,
-             train_domains=None):
+             train_domains=None, support_feats=None, support_fam=None):
     """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy.
 
     knn_readout > 0 swaps the parametric head for a NON-PARAMETRIC one: the k nearest TRAIN rows in this
@@ -898,6 +905,13 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
     train = ~test
     Xtr, ytr = feats[train].to(dev), fam[train].to(dev)
     Xte, yte = feats[test].to(dev), fam[test].to(dev)
+    if support_feats is not None:
+        Xs, ys = support_feats.to(dev), support_fam.to(dev)
+        if Xs.shape[1] != Xtr.shape[1] or len(Xs) != len(ys):
+            raise ValueError("historical range-support features and species labels must align")
+        Xbank, ybank = torch.cat([Xtr, Xs]), torch.cat([ytr, ys])
+    else:
+        Xbank, ybank = Xtr, ytr
     if head_hidden > 0:
         head = nn.Sequential(nn.Linear(feats.shape[1], head_hidden), nn.ReLU(),
                              nn.Linear(head_hidden, n_fam)).to(dev)
@@ -908,15 +922,15 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
                         if domain_groups is not None else None)
 
     def _knn_logp(Q, K=int(CONFIG["knn_vote_k"]), tau=float(CONFIG["knn_vote_tau"]), chunk=2048):
-        """Soft k-NN class log-posterior of Q against the TRAIN rows, cosine similarity."""
-        Xn = F.normalize(Xtr, dim=-1)
+        """Soft k-NN class log-posterior against dated train + historical support."""
+        Xn = F.normalize(Xbank, dim=-1)
         out = []
         for i in range(0, Q.shape[0], chunk):
             sim = F.normalize(Q[i:i + chunk], dim=-1) @ Xn.t()
             v, j = sim.topk(min(K, sim.shape[1]), dim=-1)
             w = torch.softmax(v / tau, dim=-1)
             p = torch.zeros(j.shape[0], n_fam, device=dev)
-            p.scatter_add_(1, ytr[j], w)
+            p.scatter_add_(1, ybank[j], w)
             out.append((p + 1e-6).log())
         return torch.cat(out)
     opt = torch.optim.Adam(head.parameters(), lr=lr)
@@ -937,7 +951,7 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
 
 def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0,
                        enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0, side=None,
-                       train_domains=None):
+                       train_domains=None, support_coords=None, support_fam=None):
     """Train the ENCODER end-to-end with the head, instead of reading a frozen random hash table.
 
     Every other probe path calls enc(coords) under no_grad on a freshly-initialized Earth4D, so its hash table
@@ -956,6 +970,13 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     train = ~test
     Ctr, ytr = coords[train].to(dev), fam[train].to(dev)
     Cte, yte = coords[test].to(dev), fam[test].to(dev)
+    Cs = ys = None
+    if support_coords is not None:
+        Cs, ys = support_coords.to(dev), support_fam.to(dev)
+        if Cs.shape[1] != Ctr.shape[1] or len(Cs) != len(ys):
+            raise ValueError("historical range-support coordinates and species labels must align")
+        if side is not None:
+            raise ValueError("historical range support is defined for bare space-time only")
     # `side` = static per-observation features (the ENV channel) concatenated to the encoder output, so the
     # FUSED arm can be trained end-to-end. Without it the fused arm always reads a frozen random hash table:
     # train_encoder moved the Earth4D-alone arm 0.0938 -> 0.1105 and left the fused primary byte-identical at
@@ -1017,18 +1038,25 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
         if CONFIG["knn_vote"]:
             Ftr = torch.cat([_feat(Ctr[i:i + 8192], None if Str is None else Str[i:i + 8192])
                              for i in range(0, Ctr.shape[0], 8192)])
+            if Cs is not None:
+                Fs = torch.cat([_feat(Cs[i:i + 8192], None)
+                                for i in range(0, Cs.shape[0], 8192)])
+                Fbank, ybank = torch.cat([Ftr, Fs]), torch.cat([ytr, ys])
+            else:
+                Fs = None
+                Fbank, ybank = Ftr, ytr
             _K, _tau = int(CONFIG["knn_vote_k"]), float(CONFIG["knn_vote_tau"])
-            _Xn = F.normalize(Ftr, dim=-1)
+            _Xn = F.normalize(Fbank, dim=-1)
             _out = []
             for i in range(0, Fte.shape[0], 2048):
                 _sim = F.normalize(Fte[i:i + 2048], dim=-1) @ _Xn.t()
                 _v, _j = _sim.topk(min(_K, _sim.shape[1]), dim=-1)
                 _w = torch.softmax(_v / _tau, dim=-1)
                 _pr = torch.zeros(_j.shape[0], n_fam, device=dev)
-                _pr.scatter_add_(1, ytr[_j], _w)
+                _pr.scatter_add_(1, ybank[_j], _w)
                 _out.append((_pr + 1e-6).log())
             logits = logits + CONFIG["knn_vote"] * torch.cat(_out)
-            del Ftr, _Xn
+            del Ftr, Fbank, Fs, _Xn
         acc = (logits.argmax(-1) == yte).float().mean().item()
         top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
     return acc, top5
@@ -1202,9 +1230,11 @@ def main(argv=None):
 
 
     t0 = time.time()
-    need_gid = CONFIG["env"]
+    historical_support = a.capability == "species_from_spacetime"
+    need_gid = CONFIG["env"] or historical_support
     lat, lon, fam, n_fam, days, gid, sp_obs = load_obs(CONFIG["cache_dir"], CONFIG["n_shards"], with_time=CONFIG["forecast"], with_gid=need_gid)
     obs_index = np.arange(len(lat), dtype=np.int64)
+    target_species = None
     if CONFIG["forecast"]:
         valid_time = np.isfinite(days)
         if not valid_time.all():
@@ -1218,7 +1248,7 @@ def main(argv=None):
         # CAPABILITY LEVER: the classification paths only ever predicted FAMILY, which is why
         # species_from_spacetime / species_from_env were never probeable from this probe at all. Species is a
         # strictly harder target (2141-way vocab vs 166 families) and is the capability the scorecard names.
-        _u, fam = np.unique(sp_obs, return_inverse=True)         # compact the species ids actually present
+        target_species, fam = np.unique(sp_obs, return_inverse=True)  # compact species ids actually present
         fam = fam.astype(np.int64); n_fam = int(fam.max()) + 1
     if CONFIG["forecast"]:
         # Temporal holdout is a forecast split, but direct coordinate classification is
@@ -1276,6 +1306,35 @@ def main(argv=None):
         }
         print(f"  [objective/chrono-groupdro] train-domain counts={_counts.tolist()} "
               f"temperature={_GROUP_DRO_TEMPERATURE:g}", flush=True)
+
+    # DATA intervention: historical occurrences enter only the spatial support
+    # bank used by the existing soft k-NN range decoder. Optimization and the
+    # fixed 2025 train/test corpus are untouched. Unknown per-row dates are
+    # conservatively right-censored at the last pre-corpus day.
+    support_coords = support_fam_t = support_raw = support_rn = None
+    support_rows = 0
+    if historical_support:
+        hlat, hlon, hsp, hgid = load_historical_gbif_support(CONFIG["cache_dir"])
+        class_map = np.full(max(int(hsp.max()), int(target_species.max())) + 1, -1, dtype=np.int64)
+        class_map[target_species] = np.arange(len(target_species), dtype=np.int64)
+        mapped = class_map[hsp]
+        keep = mapped >= 0
+        hlat, hlon, hgid, mapped = hlat[keep], hlon[keep], hgid[keep], mapped[keep]
+        if len(np.intersect1d(gid, hgid)):
+            raise ValueError("historical GBIF support overlaps the fixed 2025 corpus")
+        source_last_day = float((np.datetime64("2024-12-31") - np.datetime64("1970-01-01"))
+                                / np.timedelta64(1, "D"))
+        if not source_last_day < float(np.min(days)):
+            raise ValueError("historical GBIF support can cross the 2025 corpus origin")
+        source_time = np.float32((source_last_day - tmin) / tspan)
+        support_coords = torch.tensor(np.stack([
+            hlat, hlon, np.zeros_like(hlat), np.full_like(hlat, source_time)
+        ], 1))
+        support_fam_t = torch.tensor(mapped)
+        support_rows = len(mapped)
+        print(f"  [historical-range-support] {support_rows:,} disjoint pre-2025 occurrences across "
+              f"{len(np.unique(mapped))} species; classifier training unchanged; soft k-NN bank expanded",
+              flush=True)
 
     enc = Earth4D(verbose=False, spatial_levels=CONFIG["spatial_levels"], temporal_levels=CONFIG["temporal_levels"],   # S3: exposed capacity
                   spatial_log2_hashmap_size=CONFIG["log2_hashmap"], temporal_log2_hashmap_size=CONFIG["log2_hashmap"], freq_log_scale_init=-2.5,
@@ -1432,6 +1491,13 @@ def main(argv=None):
     if CONFIG["forecast"]:
         rn = np.concatenate([rn, tnorm[:, None]], 1)             # fair: baselines get the SAME time feature
     raw = torch.tensor(rn)                                        # raw normalized coords (+time) baseline
+    if support_coords is not None:
+        support_rn = np.stack([
+            support_coords[:, 0].numpy() / 90.0,
+            support_coords[:, 1].numpy() / 180.0,
+            support_coords[:, 3].numpy(),
+        ], 1).astype(np.float32)
+        support_raw = torch.tensor(support_rn)
     # Random Fourier Features of (lat,lon[,t]): the fair nonlinear positional-encoding control.
     # Train-extent normalized and bandwidth-selected — see fair_rff(). The previous fixed sigma=8 on
     # globe-normalized coords was degenerate on a regional corpus and scored BELOW raw coordinates.
@@ -1443,14 +1509,23 @@ def main(argv=None):
     _pad_scaled, _pad_base, _ = fair_rff(rn, FAIR_CONTROL_DIM, train_mask=~test, seed=a.seed)
     assert np.array_equal(_rff_scaled, _pad_scaled) and np.array_equal(_rff_base, _pad_base), (
         "fair control is not width-independent — it must not read e4d.shape[1]")
-    _best = (-1.0, _rff_sigmas[0], None)
+    _fit_rn = rn[~test]
+    _support_lo = _fit_rn.min(0)
+    _support_span = np.maximum(_fit_rn.max(0) - _support_lo, 1e-6)
+    _support_scaled = (None if support_rn is None else
+                       ((support_rn - _support_lo) / _support_span * 2.0 - 1.0).astype(np.float32))
+    _best = (-1.0, _rff_sigmas[0], None, None)
     for _sig in _rff_sigmas:
         _cand = _rff_features(_rff_scaled, _rff_base, _sig)
+        _support_cand = (None if _support_scaled is None else
+                         _rff_features(_support_scaled, _rff_base, _sig))
         _acc, _ = evaluate(_cand, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], f"rff_s{_sig:g}",
-                           CONFIG["head_hidden"], a.seed, train_domains=_train_domains)
+                           CONFIG["head_hidden"], a.seed,
+                           train_domains=_train_domains,
+                           support_feats=_support_cand, support_fam=support_fam_t)
         if _acc > _best[0]:
-            _best = (_acc, _sig, _cand)
-    rff = _best[2]
+            _best = (_acc, _sig, _cand, _support_cand)
+    rff, support_rff = _best[2], _best[3]
     print(f"  [fair-baseline] RFF bandwidth selected: sigma={_best[1]:g} "
           f"(acc {_best[0]:.4f} over {[f'{x:g}' for x in _rff_sigmas]}) — the control gets its best shot")
 
@@ -1664,15 +1739,21 @@ def main(argv=None):
                 "raw_acc": raw_acc, "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "recurrence": True}
 
     raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "raw",
-                               CONFIG["head_hidden"], a.seed, train_domains=_train_domains)
+                               CONFIG["head_hidden"], a.seed,
+                               train_domains=_train_domains,
+                               support_feats=support_raw, support_fam=support_fam_t)
     rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], "rff",
-                               CONFIG['head_hidden'], a.seed, train_domains=_train_domains)
+                               CONFIG['head_hidden'], a.seed,
+                               train_domains=_train_domains,
+                               support_feats=support_rff, support_fam=support_fam_t)
     e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
                                           CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'],
-                                          seed=a.seed, train_domains=_train_domains)
+                                          seed=a.seed, train_domains=_train_domains,
+                                          support_coords=support_coords, support_fam=support_fam_t)
                        if CONFIG["train_encoder"] else
                        evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
-                                CONFIG["head_hidden"], a.seed, train_domains=_train_domains))
+                                CONFIG["head_hidden"], a.seed, train_domains=_train_domains,
+                                support_feats=None, support_fam=None))
     dt = time.time() - t0
     mode = ("FORECAST(future+newplace)" if CONFIG["forecast_spatial"] else "FORECAST(past->future)") if CONFIG["forecast"] else "spatial-block"
     print(f"  {len(lat)} obs, {CONFIG['steps']}-step probe in {dt:.1f}s")
@@ -1689,7 +1770,8 @@ def main(argv=None):
         gains={"vs raw": e4d_acc - raw_acc, "vs RFF": e4d_acc - rff_acc},
         baselines={"raw": raw_acc, "RFF": rff_acc},
         obs=len(lat), held_out=int(test.sum()), n_classes=n_fam, earth4d_dim=int(e4d.shape[1]),
-        seconds=dt, target=CONFIG["target"],
+        seconds=dt, target=CONFIG["target"], historical_range_support_rows=support_rows,
+        historical_range_support="GBIF 2019-2024, right-censored 2024-12-31, retrieval only",
         top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5},
         # ...and how much of the signal actually PRESENT in the coordinates the architecture captured.
         # `captured` near 1.0 => the coordinates are exhausted, stop tuning architecture and add a
