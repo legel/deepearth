@@ -828,7 +828,44 @@ def budgeted(steps, tag="arm"):
     _STEPS_DONE[tag] = n
 
 
-def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0):
+_GROUP_DRO_TEMPERATURE = 10.0
+
+
+def _domain_groups(train_domains, n_train, dev):
+    """Validate train-aligned chronological domain ids and return their row-index banks."""
+    if train_domains is None:
+        return None
+    domains = torch.as_tensor(train_domains, dtype=torch.long, device=dev)
+    if domains.ndim != 1 or domains.numel() != n_train:
+        raise ValueError("chronological domains must align exactly with the training rows")
+    values = torch.unique(domains, sorted=True)
+    groups = [torch.nonzero(domains == value, as_tuple=False).squeeze(1) for value in values]
+    if len(groups) < 2 or any(group.numel() == 0 for group in groups):
+        raise ValueError("GroupDRO needs at least two non-empty chronological domains")
+    return groups
+
+
+def _group_dro_indices(groups, batch_size, generator):
+    """Draw an equal subbatch from every domain with a sampler independent of model RNG use."""
+    per_group = batch_size // len(groups)
+    if per_group * len(groups) != batch_size:
+        raise ValueError("GroupDRO batch size must divide evenly across domains")
+    parts = [group[torch.randint(group.numel(), (per_group,), device=group.device,
+                                 generator=generator)] for group in groups]
+    return torch.cat(parts), per_group
+
+
+def _smooth_worst_domain_ce(logits, targets, per_group, n_groups):
+    losses = torch.stack([
+        F.cross_entropy(logits[i * per_group:(i + 1) * per_group],
+                        targets[i * per_group:(i + 1) * per_group])
+        for i in range(n_groups)
+    ])
+    return torch.logsumexp(_GROUP_DRO_TEMPERATURE * losses, dim=0) / _GROUP_DRO_TEMPERATURE
+
+
+def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0,
+             train_domains=None):
     """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy.
 
     knn_readout > 0 swaps the parametric head for a NON-PARAMETRIC one: the k nearest TRAIN rows in this
@@ -866,6 +903,9 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
                              nn.Linear(head_hidden, n_fam)).to(dev)
     else:
         head = nn.Linear(feats.shape[1], n_fam).to(dev)
+    domain_groups = _domain_groups(train_domains, Xtr.shape[0], dev)
+    domain_generator = (torch.Generator(device=dev).manual_seed(seed)
+                        if domain_groups is not None else None)
 
     def _knn_logp(Q, K=int(CONFIG["knn_vote_k"]), tau=float(CONFIG["knn_vote_tau"]), chunk=2048):
         """Soft k-NN class log-posterior of Q against the TRAIN rows, cosine similarity."""
@@ -881,8 +921,12 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
         return torch.cat(out)
     opt = torch.optim.Adam(head.parameters(), lr=lr)
     for _ in budgeted(steps, tag):
-        idx = torch.randint(0, Xtr.shape[0], (4096,), device=dev)
-        loss = F.cross_entropy(head(Xtr[idx]), ytr[idx])
+        if domain_groups is None:
+            idx = torch.randint(0, Xtr.shape[0], (4096,), device=dev)
+            loss = F.cross_entropy(head(Xtr[idx]), ytr[idx])
+        else:
+            idx, per_group = _group_dro_indices(domain_groups, 4096, domain_generator)
+            loss = _smooth_worst_domain_ce(head(Xtr[idx]), ytr[idx], per_group, len(domain_groups))
         opt.zero_grad(); loss.backward(); opt.step()
     with torch.no_grad():
         logits = head(Xte) + (CONFIG["knn_vote"] * _knn_logp(Xte) if CONFIG["knn_vote"] else 0.0)
@@ -892,7 +936,8 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
 
 
 def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0,
-                       enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0, side=None):
+                       enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0, side=None,
+                       train_domains=None):
     """Train the ENCODER end-to-end with the head, instead of reading a frozen random hash table.
 
     Every other probe path calls enc(coords) under no_grad on a freshly-initialized Earth4D, so its hash table
@@ -923,6 +968,9 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
         fdim = edim + (0 if side is None else Str.shape[1])
     head = (nn.Sequential(nn.Linear(fdim, head_hidden), nn.ReLU(), nn.Linear(head_hidden, n_fam))
             if head_hidden > 0 else nn.Linear(fdim, n_fam)).to(dev)
+    domain_groups = _domain_groups(train_domains, Ctr.shape[0], dev)
+    domain_generator = (torch.Generator(device=dev).manual_seed(seed)
+                        if domain_groups is not None else None)
     opt = torch.optim.Adam([{"params": head.parameters(), "lr": lr},
                             {"params": list(enc.parameters()), "lr": lr * enc_lr_mult, "weight_decay": 0.0}])
     # per-level feature mask over the SPATIAL block (levels are contiguous, features_per_level each)
@@ -935,13 +983,19 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
         for gi, base in enumerate((lr, lr * enc_lr_mult)):
             opt.param_groups[gi]["lr"] = base * min(1.0, (it + 1) / warm_n)      # linear warmup
         keep = n_lv if it >= c2f_n else max(1, int(n_lv * (it + 1) / c2f_n))     # coarse-to-fine
-        idx = torch.randint(0, Ctr.shape[0], (4096,), device=dev)
+        if domain_groups is None:
+            idx = torch.randint(0, Ctr.shape[0], (4096,), device=dev)
+            per_group = None
+        else:
+            idx, per_group = _group_dro_indices(domain_groups, 4096, domain_generator)
         f = enc(Ctr[idx])
         if keep < n_lv:
             f = f * (lvl_of < keep).to(f.dtype)
         if Str is not None:
             f = torch.cat([f, Str[idx]], 1)
-        loss = F.cross_entropy(head(f), ytr[idx])
+        logits = head(f)
+        loss = (F.cross_entropy(logits, ytr[idx]) if domain_groups is None else
+                _smooth_worst_domain_ce(logits, ytr[idx], per_group, len(domain_groups)))
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(enc.parameters(), clip)
         opt.step()
@@ -1202,6 +1256,27 @@ def main(argv=None):
         coords = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), np.zeros_like(lat)], 1))  # [N,4] t=0
     fam_t = torch.tensor(fam)
 
+    # OBJECTIVE swing: future robustness across collection regimes.  Partition TRAIN ONLY into four
+    # equal-count chronological domains, then every coordinate arm uses the same balanced sampler and
+    # smooth worst-domain loss.  No held-out timestamp, label, feature, or prediction enters the cutpoints.
+    _train_domains = None
+    _group_dro_diag = {}
+    if CONFIG["target"] == "family" and CONFIG["forecast"] and not CONFIG["phenology"]:
+        _train_days = np.asarray(days)[~test]
+        _order = np.argsort(_train_days, kind="stable")
+        _domains = np.empty(len(_order), dtype=np.int64)
+        _domains[_order] = np.minimum(np.arange(len(_order)) * 4 // len(_order), 3)
+        _train_domains = torch.tensor(_domains, dtype=torch.long)
+        _counts = np.bincount(_domains, minlength=4)
+        _group_dro_diag = {
+            "group_dro_domains": 4,
+            "group_dro_counts": _counts.tolist(),
+            "group_dro_temperature": _GROUP_DRO_TEMPERATURE,
+            "group_dro_fit": "train timestamps only",
+        }
+        print(f"  [objective/chrono-groupdro] train-domain counts={_counts.tolist()} "
+              f"temperature={_GROUP_DRO_TEMPERATURE:g}", flush=True)
+
     enc = Earth4D(verbose=False, spatial_levels=CONFIG["spatial_levels"], temporal_levels=CONFIG["temporal_levels"],   # S3: exposed capacity
                   spatial_log2_hashmap_size=CONFIG["log2_hashmap"], temporal_log2_hashmap_size=CONFIG["log2_hashmap"], freq_log_scale_init=-2.5,
                   fourier_features=CONFIG["fourier"], fourier_scale=CONFIG["fourier_scale"],
@@ -1372,7 +1447,7 @@ def main(argv=None):
     for _sig in _rff_sigmas:
         _cand = _rff_features(_rff_scaled, _rff_base, _sig)
         _acc, _ = evaluate(_cand, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], f"rff_s{_sig:g}",
-                           CONFIG["head_hidden"], a.seed)
+                           CONFIG["head_hidden"], a.seed, train_domains=_train_domains)
         if _acc > _best[0]:
             _best = (_acc, _sig, _cand)
     rff = _best[2]
@@ -1588,12 +1663,16 @@ def main(argv=None):
         return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc,
                 "raw_acc": raw_acc, "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "recurrence": True}
 
-    raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "raw", CONFIG["head_hidden"], a.seed)
-    rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], "rff", CONFIG['head_hidden'], a.seed)
+    raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "raw",
+                               CONFIG["head_hidden"], a.seed, train_domains=_train_domains)
+    rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], "rff",
+                               CONFIG['head_hidden'], a.seed, train_domains=_train_domains)
     e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
-                                          CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'], seed=a.seed)
+                                          CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'],
+                                          seed=a.seed, train_domains=_train_domains)
                        if CONFIG["train_encoder"] else
-                       evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d", CONFIG["head_hidden"], a.seed))
+                       evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
+                                CONFIG["head_hidden"], a.seed, train_domains=_train_domains))
     dt = time.time() - t0
     mode = ("FORECAST(future+newplace)" if CONFIG["forecast_spatial"] else "FORECAST(past->future)") if CONFIG["forecast"] else "spatial-block"
     print(f"  {len(lat)} obs, {CONFIG['steps']}-step probe in {dt:.1f}s")
@@ -1617,6 +1696,7 @@ def main(argv=None):
         # channel. Low `captured` with a high `ceiling` => the signal is there and the architecture is
         # failing to represent it. Low `ceiling` => the coordinates do not carry this target at all.
         **signal_capture(lat, lon, days, fam_t, test, n_fam, e4d_acc),
+        **_group_dro_diag,
     )
     return {"st_gain": e4d_acc - raw_acc, "st_gain_rff": e4d_acc - rff_acc, "earth4d_acc": e4d_acc, "raw_acc": raw_acc,
             "rff_acc": rff_acc, "obs": len(lat), "seconds": dt, "forecast": CONFIG["forecast"]}
