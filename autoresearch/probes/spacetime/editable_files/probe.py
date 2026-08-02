@@ -894,8 +894,75 @@ def _smooth_worst_domain_ce(logits, targets, per_group, n_groups):
     return torch.logsumexp(_GROUP_DRO_TEMPERATURE * losses, dim=0) / _GROUP_DRO_TEMPERATURE
 
 
+class _LocalCrossEraHead(nn.Module):
+    """Classifier whose hidden geometry preserves local, not global, conspecific range modes."""
+
+    def __init__(self, in_dim, hidden, n_classes):
+        super().__init__()
+        if hidden <= 0:
+            raise ValueError("local cross-era alignment requires the existing nonlinear head")
+        self.trunk = nn.Sequential(nn.Linear(in_dim, hidden), nn.ReLU())
+        self.classifier = nn.Linear(hidden, n_classes)
+
+    def embed(self, x):
+        return self.trunk(x)
+
+    def forward(self, x):
+        return self.classifier(self.embed(x))
+
+    def loss(self, anchor, labels, positive, positive_rows, temperature=0.1, max_pairs=1024):
+        h = self.embed(anchor)
+        classification = F.cross_entropy(self.classifier(h), labels)
+        take = min(int(max_pairs), positive.shape[0])
+        if take == 0:
+            return classification
+        rows = positive_rows[:take]
+        z = F.normalize(h[rows], dim=-1)
+        zp = F.normalize(self.embed(positive[:take]), dim=-1)
+        pair_labels = labels[rows]
+        similarity = (z @ zp.t()) / temperature
+        diagonal = torch.eye(take, dtype=torch.bool, device=anchor.device)
+        # Other occurrences of the same species may be disconnected populations. Exclude them from
+        # the denominator rather than pulling all modes together or treating them as false negatives.
+        same_species = pair_labels[:, None] == pair_labels[None, :]
+        allowed = (~same_species) | diagonal
+        target = torch.arange(take, device=anchor.device)
+        row_loss = F.cross_entropy(similarity.masked_fill(~allowed, -torch.inf), target)
+        col_loss = F.cross_entropy(similarity.t().masked_fill(~allowed.t(), -torch.inf), target)
+        return classification + 0.5 * (row_loss + col_loss)
+
+
+def _nearest_dated_conspecific(current_coords, current_labels, support_coords, support_labels,
+                                dated_rows, chunk=2048):
+    """Map each current row to its geographically nearest exact-dated conspecific support row."""
+    if dated_rows <= 0 or dated_rows > len(support_coords):
+        raise ValueError("dated support tail is required for local cross-era pairing")
+    c = current_coords.detach().cpu().numpy()
+    cy = current_labels.detach().cpu().numpy()
+    split = len(support_coords) - dated_rows
+    s = support_coords[split:].detach().cpu().numpy()
+    sy = support_labels[split:].detach().cpu().numpy()
+
+    def _unit(x):
+        lat = np.deg2rad(x[:, 0]); lon = np.deg2rad(x[:, 1])
+        return np.stack([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)], 1)
+
+    cu, su = _unit(c), _unit(s)
+    partners = np.full(len(c), -1, dtype=np.int64)
+    for cls in np.unique(cy):
+        ci = np.flatnonzero(cy == cls)
+        si = np.flatnonzero(sy == cls)
+        if not len(si):
+            continue
+        for start in range(0, len(ci), chunk):
+            rows = ci[start:start + chunk]
+            nearest = np.argmax(cu[rows] @ su[si].T, axis=1)
+            partners[rows] = split + si[nearest]
+    return torch.tensor(partners, dtype=torch.long)
+
+
 def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0,
-             train_domains=None, support_feats=None, support_fam=None):
+             train_domains=None, support_feats=None, support_fam=None, support_partner_indices=None):
     """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy.
 
     knn_readout > 0 swaps the parametric head for a NON-PARAMETRIC one: the k nearest TRAIN rows in this
@@ -935,7 +1002,16 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
         Xbank, ybank = torch.cat([Xtr, Xs]), torch.cat([ytr, ys])
     else:
         Xbank, ybank = Xtr, ytr
-    if head_hidden > 0:
+    partners = None
+    if support_partner_indices is not None:
+        if support_feats is None:
+            raise ValueError("local cross-era partners require support features")
+        partners = support_partner_indices.to(dev)
+        if partners.shape != ytr.shape or torch.any((partners < -1) | (partners >= len(Xs))):
+            raise ValueError("local cross-era partners must align with current training rows and support")
+    if partners is not None:
+        head = _LocalCrossEraHead(feats.shape[1], head_hidden, n_fam).to(dev)
+    elif head_hidden > 0:
         head = nn.Sequential(nn.Linear(feats.shape[1], head_hidden), nn.ReLU(),
                              nn.Linear(head_hidden, n_fam)).to(dev)
     else:
@@ -960,7 +1036,12 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
     for _ in budgeted(steps, tag):
         if domain_groups is None:
             idx = torch.randint(0, Xtr.shape[0], (4096,), device=dev)
-            loss = F.cross_entropy(head(Xtr[idx]), ytr[idx])
+            if partners is not None:
+                paired = partners[idx]
+                valid_rows = torch.nonzero(paired >= 0, as_tuple=False).squeeze(1)
+                loss = head.loss(Xtr[idx], ytr[idx], Xs[paired[valid_rows]], valid_rows)
+            else:
+                loss = F.cross_entropy(head(Xtr[idx]), ytr[idx])
         else:
             idx, per_group = _group_dro_indices(domain_groups, 4096, domain_generator)
             loss = _smooth_worst_domain_ce(head(Xtr[idx]), ytr[idx], per_group, len(domain_groups))
@@ -974,7 +1055,8 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
 
 def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0,
                        enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0, side=None,
-                       train_domains=None, support_coords=None, support_fam=None):
+                       train_domains=None, support_coords=None, support_fam=None,
+                       support_partner_indices=None):
     """Train the ENCODER end-to-end with the head, instead of reading a frozen random hash table.
 
     Every other probe path calls enc(coords) under no_grad on a freshly-initialized Earth4D, so its hash table
@@ -1000,6 +1082,13 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
             raise ValueError("historical range-support coordinates and species labels must align")
         if side is not None:
             raise ValueError("historical range support is defined for bare space-time only")
+    partners = None
+    if support_partner_indices is not None:
+        if Cs is None:
+            raise ValueError("local cross-era partners require support coordinates")
+        partners = support_partner_indices.to(dev)
+        if partners.shape != ytr.shape or torch.any((partners < -1) | (partners >= len(Cs))):
+            raise ValueError("local cross-era partners must align with current training rows and support")
     # `side` = static per-observation features (the ENV channel) concatenated to the encoder output, so the
     # FUSED arm can be trained end-to-end. Without it the fused arm always reads a frozen random hash table:
     # train_encoder moved the Earth4D-alone arm 0.0938 -> 0.1105 and left the fused primary byte-identical at
@@ -1010,7 +1099,8 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     with torch.no_grad():
         edim = enc(Ctr[:8]).shape[1]
         fdim = edim + (0 if side is None else Str.shape[1])
-    head = (nn.Sequential(nn.Linear(fdim, head_hidden), nn.ReLU(), nn.Linear(head_hidden, n_fam))
+    head = (_LocalCrossEraHead(fdim, head_hidden, n_fam) if partners is not None else
+            nn.Sequential(nn.Linear(fdim, head_hidden), nn.ReLU(), nn.Linear(head_hidden, n_fam))
             if head_hidden > 0 else nn.Linear(fdim, n_fam)).to(dev)
     domain_groups = _domain_groups(train_domains, Ctr.shape[0], dev)
     domain_generator = (torch.Generator(device=dev).manual_seed(seed)
@@ -1032,14 +1122,27 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
             per_group = None
         else:
             idx, per_group = _group_dro_indices(domain_groups, 4096, domain_generator)
-        f = enc(Ctr[idx])
+        if partners is not None:
+            paired = partners[idx]
+            valid_rows = torch.nonzero(paired >= 0, as_tuple=False).squeeze(1)
+            encoded = enc(torch.cat([Ctr[idx], Cs[paired[valid_rows]]], dim=0))
+            f, fp = encoded[:len(idx)], encoded[len(idx):]
+        else:
+            valid_rows = None
+            f, fp = enc(Ctr[idx]), None
         if keep < n_lv:
-            f = f * (lvl_of < keep).to(f.dtype)
+            level_mask = (lvl_of < keep).to(f.dtype)
+            f = f * level_mask
+            if fp is not None:
+                fp = fp * level_mask
         if Str is not None:
             f = torch.cat([f, Str[idx]], 1)
-        logits = head(f)
-        loss = (F.cross_entropy(logits, ytr[idx]) if domain_groups is None else
-                _smooth_worst_domain_ce(logits, ytr[idx], per_group, len(domain_groups)))
+        if partners is not None:
+            loss = head.loss(f, ytr[idx], fp, valid_rows)
+        else:
+            logits = head(f)
+            loss = (F.cross_entropy(logits, ytr[idx]) if domain_groups is None else
+                    _smooth_worst_domain_ce(logits, ytr[idx], per_group, len(domain_groups)))
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(enc.parameters(), clip)
         opt.step()
@@ -1334,8 +1437,8 @@ def main(argv=None):
     # bank used by the existing soft k-NN range decoder. Optimization and the
     # fixed 2025 train/test corpus are untouched. Unknown per-row dates are
     # conservatively right-censored at the last pre-corpus day.
-    support_coords = support_fam_t = support_raw = support_rn = None
-    support_rows = dated_support_rows = 0
+    support_coords = support_fam_t = support_raw = support_rn = support_partner_indices = None
+    support_rows = dated_support_rows = paired_rows = 0
     if historical_support:
         hlat, hlon, hsp, hgid = load_historical_gbif_support(CONFIG["cache_dir"])
         dated = None
@@ -1396,8 +1499,17 @@ def main(argv=None):
         support_rows = len(mapped)
         print(f"  [historical-range-support] {support_rows:,} disjoint pre-forecast occurrences across "
               f"{len(np.unique(mapped))} {CONFIG['target']} classes; includes {dated_support_rows:,} "
-              "exact-dated strict-past rows; classifier training unchanged; soft k-NN bank expanded",
+              "exact-dated strict-past rows; soft k-NN bank expanded" +
+              ("; local cross-era objective enabled" if CONFIG["target"] == "species" else
+               "; classifier training unchanged"),
               flush=True)
+        if CONFIG["target"] == "species" and dated_support_rows:
+            support_partner_indices = _nearest_dated_conspecific(
+                coords[~test], fam_t[~test], support_coords, support_fam_t, dated_support_rows)
+            paired_rows = int((support_partner_indices >= 0).sum())
+            print(f"  [local-cross-era] nearest exact-dated conspecific partner for "
+                  f"{paired_rows:,}/{len(support_partner_indices):,} current training rows; "
+                  "other conspecific modes masked from contrastive negatives", flush=True)
 
     enc = Earth4D(verbose=False, spatial_levels=CONFIG["spatial_levels"], temporal_levels=CONFIG["temporal_levels"],   # S3: exposed capacity
                   spatial_log2_hashmap_size=CONFIG["log2_hashmap"], temporal_log2_hashmap_size=CONFIG["log2_hashmap"], freq_log_scale_init=-2.5,
@@ -1585,7 +1697,8 @@ def main(argv=None):
         _acc, _ = evaluate(_cand, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], f"rff_s{_sig:g}",
                            CONFIG["head_hidden"], a.seed,
                            train_domains=_train_domains,
-                           support_feats=_support_cand, support_fam=support_fam_t)
+                           support_feats=_support_cand, support_fam=support_fam_t,
+                           support_partner_indices=support_partner_indices)
         if _acc > _best[0]:
             _best = (_acc, _sig, _cand, _support_cand)
     rff, support_rff = _best[2], _best[3]
@@ -1804,15 +1917,18 @@ def main(argv=None):
     raw_acc, raw_t5 = evaluate(raw, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "raw",
                                CONFIG["head_hidden"], a.seed,
                                train_domains=_train_domains,
-                               support_feats=support_raw, support_fam=support_fam_t)
+                               support_feats=support_raw, support_fam=support_fam_t,
+                               support_partner_indices=support_partner_indices)
     rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], "rff",
                                CONFIG['head_hidden'], a.seed,
                                train_domains=_train_domains,
-                               support_feats=support_rff, support_fam=support_fam_t)
+                               support_feats=support_rff, support_fam=support_fam_t,
+                               support_partner_indices=support_partner_indices)
     e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
                                           CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'],
                                           seed=a.seed, train_domains=_train_domains,
-                                          support_coords=support_coords, support_fam=support_fam_t)
+                                          support_coords=support_coords, support_fam=support_fam_t,
+                                          support_partner_indices=support_partner_indices)
                        if CONFIG["train_encoder"] else
                        evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
                                 CONFIG["head_hidden"], a.seed, train_domains=_train_domains,
@@ -1835,6 +1951,9 @@ def main(argv=None):
         obs=len(lat), held_out=int(test.sum()), n_classes=n_fam, earth4d_dim=int(e4d.shape[1]),
         seconds=dt, target=CONFIG["target"], historical_range_support_rows=support_rows,
         dated_strict_past_support_rows=dated_support_rows,
+        local_cross_era_paired_rows=paired_rows,
+        local_cross_era_objective=("nearest exact-dated conspecific; disjoint modes masked"
+                                   if paired_rows else "none"),
         historical_range_support="undated GBIF right-censored 2024-12-31 + exact-dated strict-past GBIF; retrieval only",
         top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5},
         # ...and how much of the signal actually PRESENT in the coordinates the architecture captured.
