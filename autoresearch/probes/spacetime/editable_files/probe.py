@@ -932,6 +932,30 @@ class _LocalCrossEraHead(nn.Module):
         return classification + 0.5 * (row_loss + col_loss)
 
 
+class _OrthogonalTemporalHead(nn.Module):
+    """Family classifier with norm-preserving temporal transport in its hidden state."""
+
+    def __init__(self, in_dim, hidden, n_classes):
+        super().__init__()
+        if hidden <= 0 or hidden % 2:
+            raise ValueError("orthogonal temporal transport requires a positive even hidden width")
+        self.trunk = nn.Sequential(nn.Linear(in_dim, hidden), nn.ReLU())
+        self.classifier = nn.Linear(hidden, n_classes)
+        # Exact identity at initialization: this adds no random draws and starts at the promoted static head.
+        self.angular_velocity = nn.Parameter(torch.zeros(hidden // 2))
+
+    def transport(self, hidden, phase):
+        pairs = hidden.reshape(hidden.shape[0], -1, 2)
+        centered_time = phase.to(hidden.dtype).reshape(-1, 1) - 0.5
+        angle = torch.pi * centered_time * torch.tanh(self.angular_velocity).reshape(1, -1)
+        c, s = torch.cos(angle), torch.sin(angle)
+        real, imag = pairs[..., 0], pairs[..., 1]
+        return torch.stack((c * real - s * imag, s * real + c * imag), dim=-1).flatten(1)
+
+    def forward(self, x, phase):
+        return self.classifier(self.transport(self.trunk(x), phase))
+
+
 def _nearest_dated_conspecific(current_coords, current_labels, support_coords, support_labels,
                                 dated_rows, chunk=2048):
     """Map each current row to its geographically nearest exact-dated conspecific support row."""
@@ -962,7 +986,8 @@ def _nearest_dated_conspecific(current_coords, current_labels, support_coords, s
 
 
 def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0,
-             train_domains=None, support_feats=None, support_fam=None, support_partner_indices=None):
+             train_domains=None, support_feats=None, support_fam=None, support_partner_indices=None,
+             temporal_phase=None):
     """Train a linear head feats->family on TRAIN locations; report held-out-block accuracy.
 
     knn_readout > 0 swaps the parametric head for a NON-PARAMETRIC one: the k nearest TRAIN rows in this
@@ -1009,8 +1034,15 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
         partners = support_partner_indices.to(dev)
         if partners.shape != ytr.shape or torch.any((partners < -1) | (partners >= len(Xs))):
             raise ValueError("local cross-era partners must align with current training rows and support")
+    Ptr = Pte = None
+    if temporal_phase is not None:
+        if len(temporal_phase) != len(feats) or partners is not None:
+            raise ValueError("temporal transport must align with observations and cannot replace cross-era pairing")
+        Ptr, Pte = temporal_phase[train].to(dev), temporal_phase[test].to(dev)
     if partners is not None:
         head = _LocalCrossEraHead(feats.shape[1], head_hidden, n_fam).to(dev)
+    elif Ptr is not None:
+        head = _OrthogonalTemporalHead(feats.shape[1], head_hidden, n_fam).to(dev)
     elif head_hidden > 0:
         head = nn.Sequential(nn.Linear(feats.shape[1], head_hidden), nn.ReLU(),
                              nn.Linear(head_hidden, n_fam)).to(dev)
@@ -1041,13 +1073,16 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
                 valid_rows = torch.nonzero(paired >= 0, as_tuple=False).squeeze(1)
                 loss = head.loss(Xtr[idx], ytr[idx], Xs[paired[valid_rows]], valid_rows)
             else:
-                loss = F.cross_entropy(head(Xtr[idx]), ytr[idx])
+                logits = head(Xtr[idx], Ptr[idx]) if Ptr is not None else head(Xtr[idx])
+                loss = F.cross_entropy(logits, ytr[idx])
         else:
             idx, per_group = _group_dro_indices(domain_groups, 4096, domain_generator)
-            loss = _smooth_worst_domain_ce(head(Xtr[idx]), ytr[idx], per_group, len(domain_groups))
+            logits = head(Xtr[idx], Ptr[idx]) if Ptr is not None else head(Xtr[idx])
+            loss = _smooth_worst_domain_ce(logits, ytr[idx], per_group, len(domain_groups))
         opt.zero_grad(); loss.backward(); opt.step()
     with torch.no_grad():
-        logits = head(Xte) + (CONFIG["knn_vote"] * _knn_logp(Xte) if CONFIG["knn_vote"] else 0.0)
+        logits = head(Xte, Pte) if Pte is not None else head(Xte)
+        logits = logits + (CONFIG["knn_vote"] * _knn_logp(Xte) if CONFIG["knn_vote"] else 0.0)
         acc = (logits.argmax(-1) == yte).float().mean().item()
         top5 = (logits.topk(5, -1).indices == yte[:, None]).any(-1).float().mean().item()
     return acc, top5
@@ -1056,7 +1091,7 @@ def evaluate(feats, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0, seed=0
 def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_hidden=0,
                        enc_lr_mult=0.05, warmup=0.15, c2f=0.5, clip=1.0, seed=0, side=None,
                        train_domains=None, support_coords=None, support_fam=None,
-                       support_partner_indices=None):
+                       support_partner_indices=None, temporal_phase=None):
     """Train the ENCODER end-to-end with the head, instead of reading a frozen random hash table.
 
     Every other probe path calls enc(coords) under no_grad on a freshly-initialized Earth4D, so its hash table
@@ -1099,7 +1134,13 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
     with torch.no_grad():
         edim = enc(Ctr[:8]).shape[1]
         fdim = edim + (0 if side is None else Str.shape[1])
+    Ptr = Pte = None
+    if temporal_phase is not None:
+        if len(temporal_phase) != len(coords) or partners is not None:
+            raise ValueError("temporal transport must align with observations and cannot replace cross-era pairing")
+        Ptr, Pte = temporal_phase[train].to(dev), temporal_phase[test].to(dev)
     head = (_LocalCrossEraHead(fdim, head_hidden, n_fam) if partners is not None else
+            _OrthogonalTemporalHead(fdim, head_hidden, n_fam) if Ptr is not None else
             nn.Sequential(nn.Linear(fdim, head_hidden), nn.ReLU(), nn.Linear(head_hidden, n_fam))
             if head_hidden > 0 else nn.Linear(fdim, n_fam)).to(dev)
     domain_groups = _domain_groups(train_domains, Ctr.shape[0], dev)
@@ -1140,7 +1181,7 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
         if partners is not None:
             loss = head.loss(f, ytr[idx], fp, valid_rows)
         else:
-            logits = head(f)
+            logits = head(f, Ptr[idx]) if Ptr is not None else head(f)
             loss = (F.cross_entropy(logits, ytr[idx]) if domain_groups is None else
                     _smooth_worst_domain_ce(logits, ytr[idx], per_group, len(domain_groups)))
         opt.zero_grad(); loss.backward()
@@ -1156,7 +1197,7 @@ def evaluate_trainable(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_
             return f if S is None else torch.cat([f, S], 1)
         Fte = torch.cat([_feat(Cte[i:i + 8192], None if Ste is None else Ste[i:i + 8192])
                          for i in range(0, Cte.shape[0], 8192)])
-        logits = head(Fte)
+        logits = head(Fte, Pte) if Pte is not None else head(Fte)
         # ESTIMATOR PARITY with evaluate(): the frozen champion path adds a soft k-NN class log-vote
         # over the TRAIN rows (knn_vote=0.5 for family_from_spacetime). Omitting it here made A-vs-B a
         # comparison of two ESTIMATORS, not of frozen-vs-trained hash tables. Same K/tau/cosine, over
@@ -1411,6 +1452,18 @@ def main(argv=None):
         test = spatial_holdout(lat, lon, CONFIG["holdout"], seed=a.seed)
         coords = torch.tensor(np.stack([lat, lon, np.zeros_like(lat), np.zeros_like(lat)], 1))  # [N,4] t=0
     fam_t = torch.tensor(fam)
+    temporal_phase = None
+    if CONFIG["target"] == "family" and CONFIG["forecast"] and not CONFIG["phenology"]:
+        phase_fit = np.asarray(days, dtype=np.float32)[~test]
+        phase_origin = float(phase_fit.min())
+        phase_span = max(float(phase_fit.max()) - phase_origin, 1.0)
+        phase_values = (np.asarray(days, dtype=np.float32) - phase_origin) / phase_span
+        if not np.isfinite(phase_values).all():
+            raise ValueError("temporal transport phase must be finite after the forecast split")
+        temporal_phase = torch.tensor(phase_values, dtype=torch.float32)
+        print(f"  [orthogonal-temporal-head] train-fitted phase [0,1]; held-out phase "
+              f"[{phase_values[test].min():.3f},{phase_values[test].max():.3f}]; "
+              "norm-preserving pair rotations", flush=True)
 
     # OBJECTIVE swing: future robustness across collection regimes.  Partition TRAIN ONLY into four
     # equal-count chronological domains, then every coordinate arm uses the same balanced sampler and
@@ -1698,7 +1751,8 @@ def main(argv=None):
                            CONFIG["head_hidden"], a.seed,
                            train_domains=_train_domains,
                            support_feats=_support_cand, support_fam=support_fam_t,
-                           support_partner_indices=support_partner_indices)
+                           support_partner_indices=support_partner_indices,
+                           temporal_phase=temporal_phase)
         if _acc > _best[0]:
             _best = (_acc, _sig, _cand, _support_cand)
     rff, support_rff = _best[2], _best[3]
@@ -1918,21 +1972,25 @@ def main(argv=None):
                                CONFIG["head_hidden"], a.seed,
                                train_domains=_train_domains,
                                support_feats=support_raw, support_fam=support_fam_t,
-                               support_partner_indices=support_partner_indices)
+                               support_partner_indices=support_partner_indices,
+                               temporal_phase=temporal_phase)
     rff_acc, rff_t5 = evaluate(rff, fam_t, test, n_fam, dev, CONFIG['steps'], CONFIG['lr'], "rff",
                                CONFIG['head_hidden'], a.seed,
                                train_domains=_train_domains,
                                support_feats=support_rff, support_fam=support_fam_t,
-                               support_partner_indices=support_partner_indices)
+                               support_partner_indices=support_partner_indices,
+                               temporal_phase=temporal_phase)
     e4d_acc, e4d_t5 = (evaluate_trainable(enc, coords, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
                                           CONFIG['head_hidden'], CONFIG['enc_lr_mult'], CONFIG['enc_warmup'], CONFIG['enc_c2f'],
                                           seed=a.seed, train_domains=_train_domains,
                                           support_coords=support_coords, support_fam=support_fam_t,
-                                          support_partner_indices=support_partner_indices)
+                                          support_partner_indices=support_partner_indices,
+                                          temporal_phase=temporal_phase)
                        if CONFIG["train_encoder"] else
                        evaluate(e4d, fam_t, test, n_fam, dev, CONFIG["steps"], CONFIG["lr"], "earth4d",
                                 CONFIG["head_hidden"], a.seed, train_domains=_train_domains,
-                                support_feats=None, support_fam=None))
+                                support_feats=None, support_fam=None,
+                                temporal_phase=temporal_phase))
     dt = time.time() - t0
     mode = ("FORECAST(future+newplace)" if CONFIG["forecast_spatial"] else "FORECAST(past->future)") if CONFIG["forecast"] else "spatial-block"
     print(f"  {len(lat)} obs, {CONFIG['steps']}-step probe in {dt:.1f}s")
@@ -1955,6 +2013,10 @@ def main(argv=None):
         local_cross_era_objective=("nearest exact-dated conspecific; disjoint modes masked"
                                    if paired_rows else "none"),
         historical_range_support="undated GBIF right-censored 2024-12-31 + exact-dated strict-past GBIF; retrieval only",
+        temporal_transport_head=("shared trunk + exact block-orthogonal hidden rotation + static classifier"
+                                 if temporal_phase is not None else "off"),
+        temporal_phase_fit=("training observation dates only" if temporal_phase is not None else "off"),
+        temporal_transport_pairs=(CONFIG["head_hidden"] // 2 if temporal_phase is not None else 0),
         top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5},
         # ...and how much of the signal actually PRESENT in the coordinates the architecture captured.
         # `captured` near 1.0 => the coordinates are exhausted, stop tuning architecture and add a
