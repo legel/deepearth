@@ -448,6 +448,29 @@ def load_historical_gbif_support(cache: str):
             z["species_local"].astype(np.int64), z["gbifID"].astype(np.int64))
 
 
+def load_dated_gbif_support(cache: str, shard_start: int = 12, shard_stop: int = 26):
+    """Load the disjoint native shards after the fixed 12-shard corpus, with exact event days."""
+    cachep = Path(cache)
+    shards = sorted(
+        p for p in (cachep / "gbif_tokens").glob("chunk*.npz")
+        if p.stem.removeprefix("chunk").isdigit()
+    )[shard_start:shard_stop]
+    if len(shards) != shard_stop - shard_start:
+        raise RuntimeError(f"expected {shard_stop - shard_start} dated support shards, found {len(shards)}")
+    event_time = np.load(cachep / "gbif_eventtime.npz")
+    id2day = dict(zip(event_time["gbifID"].tolist(), event_time["days"].tolist()))
+    lat, lon, species, gid, days = [], [], [], [], []
+    for path in shards:
+        z = np.load(path)
+        ids = z["gbifID"].astype(np.int64)
+        lat.append(z["lat"]); lon.append(z["lon"]); species.append(z["species_local"])
+        gid.append(ids)
+        days.append(np.array([id2day.get(int(i), np.nan) for i in ids], dtype=np.float32))
+    return (np.concatenate(lat).astype(np.float32), np.concatenate(lon).astype(np.float32),
+            np.concatenate(species).astype(np.int64), np.concatenate(gid).astype(np.int64),
+            np.concatenate(days).astype(np.float32))
+
+
 def load_species(cache: str, n_shards: int):
     """Per-observation species_local id aligned to the SAME shard subsample load_obs uses (for community /
     per-species breadth targets). Additive; used only by --breadth_target."""
@@ -1312,15 +1335,21 @@ def main(argv=None):
     # fixed 2025 train/test corpus are untouched. Unknown per-row dates are
     # conservatively right-censored at the last pre-corpus day.
     support_coords = support_fam_t = support_raw = support_rn = None
-    support_rows = 0
+    support_rows = dated_support_rows = 0
     if historical_support:
         hlat, hlon, hsp, hgid = load_historical_gbif_support(CONFIG["cache_dir"])
+        dated = None
         if CONFIG["target"] == "species":
-            class_map = np.full(max(int(hsp.max()), int(target_species.max())) + 1, -1,
+            xlat, xlon, xsp, xgid, xday = load_dated_gbif_support(CONFIG["cache_dir"])
+            class_map = np.full(max(int(hsp.max()), int(xsp.max()), int(target_species.max())) + 1, -1,
                                 dtype=np.int64)
             class_map[target_species] = np.arange(len(target_species), dtype=np.int64)
             mapped = class_map[hsp]
             keep = mapped >= 0
+            xmapped = class_map[xsp]
+            forecast_origin = float(np.min(days[test]))
+            xkeep = np.isfinite(xday) & (xday < forecast_origin) & (xmapped >= 0)
+            dated = (xlat[xkeep], xlon[xkeep], xgid[xkeep], xday[xkeep], xmapped[xkeep])
         else:
             vocab = np.load(Path(CONFIG["cache_dir"]) / "gbif_vocab.npz", allow_pickle=True)
             global_idx = vocab["global_idx"]
@@ -1340,14 +1369,29 @@ def main(argv=None):
         if not source_last_day < float(np.min(days)):
             raise ValueError("historical GBIF support can cross the 2025 corpus origin")
         source_time = np.float32((source_last_day - tmin) / tspan)
-        support_coords = torch.tensor(np.stack([
+        support_coord_np = np.stack([
             hlat, hlon, np.zeros_like(hlat), np.full_like(hlat, source_time)
-        ], 1))
+        ], 1)
+        if dated is not None:
+            xlat, xlon, xgid, xday, xmapped = dated
+            if len(np.intersect1d(gid, xgid)):
+                raise ValueError("dated strict-past support overlaps the fixed corpus")
+            if len(np.intersect1d(hgid, xgid)):
+                raise ValueError("dated strict-past support overlaps the undated historical bank")
+            if not np.all(xday < float(np.min(days[test]))):
+                raise ValueError("dated support crosses the forecast origin")
+            xtime = ((xday - tmin) / tspan).astype(np.float32)
+            support_coord_np = np.concatenate([support_coord_np, np.stack([
+                xlat, xlon, np.zeros_like(xlat), xtime
+            ], 1)])
+            mapped = np.concatenate([mapped, xmapped])
+            dated_support_rows = len(xmapped)
+        support_coords = torch.tensor(support_coord_np)
         support_fam_t = torch.tensor(mapped)
         support_rows = len(mapped)
-        print(f"  [historical-range-support] {support_rows:,} disjoint pre-2025 occurrences across "
-              f"{len(np.unique(mapped))} {CONFIG['target']} classes; classifier training unchanged; "
-              "soft k-NN bank expanded",
+        print(f"  [historical-range-support] {support_rows:,} disjoint pre-forecast occurrences across "
+              f"{len(np.unique(mapped))} {CONFIG['target']} classes; includes {dated_support_rows:,} "
+              "exact-dated strict-past rows; classifier training unchanged; soft k-NN bank expanded",
               flush=True)
 
     enc = Earth4D(verbose=False, spatial_levels=CONFIG["spatial_levels"], temporal_levels=CONFIG["temporal_levels"],   # S3: exposed capacity
@@ -1785,7 +1829,8 @@ def main(argv=None):
         baselines={"raw": raw_acc, "RFF": rff_acc},
         obs=len(lat), held_out=int(test.sum()), n_classes=n_fam, earth4d_dim=int(e4d.shape[1]),
         seconds=dt, target=CONFIG["target"], historical_range_support_rows=support_rows,
-        historical_range_support="GBIF 2019-2024, right-censored 2024-12-31, retrieval only",
+        dated_strict_past_support_rows=dated_support_rows,
+        historical_range_support="undated GBIF right-censored 2024-12-31 + exact-dated strict-past GBIF; retrieval only",
         top5={"raw": raw_t5, "rff": rff_t5, "earth4d": e4d_t5},
         # ...and how much of the signal actually PRESENT in the coordinates the architecture captured.
         # `captured` near 1.0 => the coordinates are exhausted, stop tuning architecture and add a
