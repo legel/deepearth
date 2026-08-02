@@ -1230,7 +1230,7 @@ def main(argv=None):
 
 
     t0 = time.time()
-    historical_support = a.capability == "species_from_spacetime"
+    historical_support = a.capability in ("species_from_spacetime", "family_from_spacetime")
     need_gid = CONFIG["env"] or historical_support
     lat, lon, fam, n_fam, days, gid, sp_obs = load_obs(CONFIG["cache_dir"], CONFIG["n_shards"], with_time=CONFIG["forecast"], with_gid=need_gid)
     obs_index = np.arange(len(lat), dtype=np.int64)
@@ -1315,10 +1315,23 @@ def main(argv=None):
     support_rows = 0
     if historical_support:
         hlat, hlon, hsp, hgid = load_historical_gbif_support(CONFIG["cache_dir"])
-        class_map = np.full(max(int(hsp.max()), int(target_species.max())) + 1, -1, dtype=np.int64)
-        class_map[target_species] = np.arange(len(target_species), dtype=np.int64)
-        mapped = class_map[hsp]
-        keep = mapped >= 0
+        if CONFIG["target"] == "species":
+            class_map = np.full(max(int(hsp.max()), int(target_species.max())) + 1, -1,
+                                dtype=np.int64)
+            class_map[target_species] = np.arange(len(target_species), dtype=np.int64)
+            mapped = class_map[hsp]
+            keep = mapped >= 0
+        else:
+            vocab = np.load(Path(CONFIG["cache_dir"]) / "gbif_vocab.npz", allow_pickle=True)
+            global_idx = vocab["global_idx"]
+            taxonomy = list(csv.DictReader(open(
+                Path(CONFIG["cache_dir"]) / "derived/species_index.csv")))
+            family_name = np.array([taxonomy[i]["family"] for i in global_idx])
+            species_to_family = np.unique(family_name, return_inverse=True)[1].astype(np.int64)
+            if int(hsp.max()) >= len(species_to_family):
+                raise ValueError("historical support species ids exceed the fixed taxonomy vocabulary")
+            mapped = species_to_family[hsp]
+            keep = mapped < n_fam
         hlat, hlon, hgid, mapped = hlat[keep], hlon[keep], hgid[keep], mapped[keep]
         if len(np.intersect1d(gid, hgid)):
             raise ValueError("historical GBIF support overlaps the fixed 2025 corpus")
@@ -1333,7 +1346,8 @@ def main(argv=None):
         support_fam_t = torch.tensor(mapped)
         support_rows = len(mapped)
         print(f"  [historical-range-support] {support_rows:,} disjoint pre-2025 occurrences across "
-              f"{len(np.unique(mapped))} species; classifier training unchanged; soft k-NN bank expanded",
+              f"{len(np.unique(mapped))} {CONFIG['target']} classes; classifier training unchanged; "
+              "soft k-NN bank expanded",
               flush=True)
 
     enc = Earth4D(verbose=False, spatial_levels=CONFIG["spatial_levels"], temporal_levels=CONFIG["temporal_levels"],   # S3: exposed capacity
