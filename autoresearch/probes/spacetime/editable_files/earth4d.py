@@ -400,6 +400,13 @@ class Earth4D(nn.Module):
                                         ridgelet_z], dim=-1)
         self.ridgelet_normals = nn.Parameter(ridgelet_normals)
         self.ridgelet_sharpness_logits = nn.Parameter(torch.zeros(12))
+        # One encoder must resolve local species cells AND broad family fronts. The octahedral hash atlas
+        # remains the base representation; ridgelets enter as a location-dependent residual in the same
+        # 36 channels. Zero initialization makes the starting function exactly the confirmed local atlas,
+        # while gradients immediately reach the gate and can recruit front structure where it is useful.
+        self.spatial_front_gate = nn.Linear(self.spatial_dim * 2, self.spatial_dim)
+        nn.init.zeros_(self.spatial_front_gate.weight)
+        nn.init.zeros_(self.spatial_front_gate.bias)
         # AUTONOMOUS LATENT DYNAMICS.  Pair the 108 coefficient-field channels into complex modes whose
         # learned rotation and bounded growth/decay form an exact continuous-time semigroup.  Unlike three
         # unrelated polynomial multipliers, advancing a mode by dt twice is identical to advancing by 2dt.
@@ -513,6 +520,7 @@ class Earth4D(nn.Module):
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
         if self.coordinate_system != 'ecef':
             return self.xyz_encoder(self._surface_atlas(xyz), size=1.0)
+        local_atlas = self.xyz_encoder(self._surface_atlas(xyz), size=1.0)
         unit = xyz / torch.linalg.vector_norm(xyz, dim=-1, keepdim=True).clamp_min(1e-8)
         normals = self.ridgelet_normals / torch.linalg.vector_norm(
             self.ridgelet_normals, dim=-1, keepdim=True).clamp_min(1e-8)
@@ -522,7 +530,9 @@ class Earth4D(nn.Module):
         coarse_side = torch.tanh(signed_distance * (0.25 * sharpness))
         medium = torch.tanh(signed_distance * sharpness)
         fine = torch.tanh(signed_distance * (4.0 * sharpness))
-        return torch.stack([coarse_side, 1.0 - medium.square(), 1.0 - fine.square()], dim=-1).flatten(-2)
+        fronts = torch.stack([coarse_side, 1.0 - medium.square(), 1.0 - fine.square()], dim=-1).flatten(-2)
+        gate = torch.tanh(self.spatial_front_gate(torch.cat([local_atlas, fronts], dim=-1)))
+        return local_atlas + gate * fronts
 
     def fit_anchors(self, coords: torch.Tensor, seed: int = 0) -> 'Earth4D':
         """Draw the Nystrom anchor set from TRAIN rows and whiten the space-time axes on them."""
