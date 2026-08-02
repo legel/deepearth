@@ -1351,16 +1351,21 @@ def main(argv=None):
             xkeep = np.isfinite(xday) & (xday < forecast_origin) & (xmapped >= 0)
             dated = (xlat[xkeep], xlon[xkeep], xgid[xkeep], xday[xkeep], xmapped[xkeep])
         else:
+            xlat, xlon, xsp, xgid, xday = load_dated_gbif_support(CONFIG["cache_dir"])
             vocab = np.load(Path(CONFIG["cache_dir"]) / "gbif_vocab.npz", allow_pickle=True)
             global_idx = vocab["global_idx"]
             taxonomy = list(csv.DictReader(open(
                 Path(CONFIG["cache_dir"]) / "derived/species_index.csv")))
             family_name = np.array([taxonomy[i]["family"] for i in global_idx])
             species_to_family = np.unique(family_name, return_inverse=True)[1].astype(np.int64)
-            if int(hsp.max()) >= len(species_to_family):
+            if max(int(hsp.max()), int(xsp.max())) >= len(species_to_family):
                 raise ValueError("historical support species ids exceed the fixed taxonomy vocabulary")
             mapped = species_to_family[hsp]
             keep = mapped < n_fam
+            xmapped = species_to_family[xsp]
+            forecast_origin = float(np.min(days[test]))
+            xkeep = np.isfinite(xday) & (xday < forecast_origin) & (xmapped < n_fam)
+            dated = (xlat[xkeep], xlon[xkeep], xgid[xkeep], xday[xkeep], xmapped[xkeep])
         hlat, hlon, hgid, mapped = hlat[keep], hlon[keep], hgid[keep], mapped[keep]
         if len(np.intersect1d(gid, hgid)):
             raise ValueError("historical GBIF support overlaps the fixed 2025 corpus")
