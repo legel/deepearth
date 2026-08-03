@@ -3,16 +3,18 @@
 ## Goal
 Make the phylogenetic species-graph impute biology for species from their relatives.
 
-This loop has two deliberately different gates:
+This loop has two deliberately different levels of evidence:
 
 1. **Standalone research screen:** improve one biological capability's masked-imputation score against
    the strongest matched null tree. This establishes that the *real phylogeny*, rather than merely an
    extra graph module, carries the gain.
-2. **Full-model graduation:** maximize `bio_gain`, the mean of B56–B62 (capability WITH the graph −
-   WITHOUT), while holding every biological capability floor. This establishes that the screened
-   mechanism helps the production model.
+2. **Full-model integration:** periodically measure `bio_gain`, the mean of B56–B62 (capability WITH
+   the graph − WITHOUT), while holding every biological capability floor. This establishes whether
+   accumulated encoder progress is being used by the production model.
 
-The null-tree screen chooses and validates hypotheses; the seven-term full-model score decides promotion.
+The null-tree screen chooses and validates hypotheses, and an exact two-seed confirmation decides
+**encoder promotion**. The seven-term full-model score is the integration test; it is reported honestly
+but does not gate pushing a confirmed encoder-specific breakthrough.
 **Done when** every B56–B62 gain is > +0.02, every applicable standalone fair gain is positive, and no
 biological capability regresses.
 
@@ -73,7 +75,7 @@ One structural change per round that satisfies a science.md rule this encoder fa
 the mechanism unchanged. Filters: upholds science.md · fair controls (untouched baseline + mechanism ablation) ·
 beats the ±0.008 noise floor.
 
-## ③ Run — standalone screen first, then full-model graduation
+## ③ Run — standalone screen and confirmation; periodic full-model integration
 
 `TAG` = `bio_<short-name>`. First run the fixed standalone evaluator for the capability. For example,
 the family-imputation row is:
@@ -94,8 +96,10 @@ python -m deepearth.autoresearch.probes.biological.harness.board \
   --capability family_from_phylo --result-json /tmp/$TAG.seed0.json /tmp/$TAG.seed1.json --tag $TAG
 ```
 
-Only a screen-clearing mechanism earns the full-model run. `VARIANT` is the champion path with that one
-bold hypothesis applied:
+Only a screen-clearing mechanism earns the exact two-seed confirmation. A confirmed encoder breakthrough
+may be promoted immediately under the encoder gate below. Periodically—after a promotion or a small batch
+of accumulated encoder promotions—run full-model integration. `VARIANT` is the champion path with those
+encoder changes applied:
 
 ```
 rm -f autoresearch/data/deepcal/prepared_*.pt                                                  # cache round-trip is lossy — rm before every run
@@ -115,10 +119,14 @@ Emits `bio_gain` + Δ vs control · capability floor · per-benchmark Δ · the 
 ## ⑤ Decide
 
 Keep a standalone candidate only if its masked-imputation fair gain against the strongest null tree
-rises beyond the single-seed noise floor. Promote it only if the subsequent full-model `bio_gain` also
-rises beyond noise and the capability floor (B7, B21, B41, B53, B54, B55, B63) does not regress. The
-standalone score attributes the mechanism; the full-model score checks product value. Neither substitutes
-for the other.
+rises beyond the single-seed noise floor. Promote it as an **encoder breakthrough** only when the exact
+two matched seeds confirm the declared margin, each seed beats its strongest paired null, the result is
+clean and attributable, and no registered standalone encoder capability regresses. Push that confirmed
+encoder breakthrough to `deepcal-ensue-autoresearch` with the before→after encoder score in the commit.
+
+Run full-model `bio_gain` periodically as an integration scorecard. A fusion regression is real follow-up
+work, but it does not erase or block a confirmed encoder-specific result: the standalone score attributes
+the encoder mechanism, while fusion measures whether the current product consumes it effectively.
 
 **`bio_gain` can be negative, and a negative is information.** Until recently it could not be: B57, B58
 and B62 were rectified at zero in `evaluate.py` while B56, B59, B60 and B61 were not, and
