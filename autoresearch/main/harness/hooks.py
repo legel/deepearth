@@ -1,8 +1,8 @@
 """Independent runtime hooks for the two encoder loops -- monkeypatch a live model, NEVER edit core.
 
 Measures an encoder's marginal contribution + its bottleneck without touching fusion.py / evaluate.py.
-Everything here is reversible and lives in programs/ so the champion path stays byte-identical; consolidate
-into core later. Minimal by design -- this is the fast-feedback measurement layer only.
+Everything here is reversible and lives in the harness so the champion path stays byte-identical;
+consolidate into core later. Minimal by design -- this is the fast-feedback measurement layer only.
 """
 from __future__ import annotations
 import contextlib
@@ -85,7 +85,7 @@ def instrument(spacetime_gain: bool = False) -> None:
       - always: the biological bottleneck  ``[profile] refined_seed_norm=...`` (cheap: one graph call).
       - if spacetime_gain: a SECOND eval under ``ablate_spacetime`` and the ``*_spacetime_gain`` deltas
         (this is the S0 instrument -- it *creates* st_gain). Doubles eval time only when requested.
-    Launch experiments through ``programs/run_experiment.py`` so this is installed before training."""
+    Launch experiments through ``main/harness/run_experiment.py`` so this is installed before training."""
     from deepearth.autoresearch.main.harness import evaluate as ev
     if getattr(ev, "_programs_instrumented", False):
         return
@@ -103,8 +103,14 @@ def instrument(spacetime_gain: bool = False) -> None:
                     # SIGNED, not clamped. This used to be max(0.0, ...), so a mechanism that HURT a
                     # capability recorded 0.000 -- indistinguishable from one that did nothing. science.md
                     # rule 18 says a modality that measurably hurts is a bug to be found and fixed, and
-                    # this is the instrument that would find it. The biological gains (B56-B62) were never
-                    # clamped; this was an asymmetry between the two sibling loops, not a decision.
+                    # this is the instrument that would find it.
+                    #
+                    # Signing it here was necessary but not sufficient, and for a while not even
+                    # effective: `definitions.normalized` clipped every key to [0,1], `format_benchmarks`
+                    # re-printed the clipped value, and `score.parse_log`'s dict overwrite let that later
+                    # row win -- so this fix was inert at the only place that reads it. `normalized` now
+                    # clips by kind. (The comment here also used to claim the biological gains B56-B62
+                    # were never clamped. Three of the seven -- B57, B58, B62 -- were.)
                     raw[gain] = float(raw[cap]) - float(abl[cap])
                     print(f"  {gain:<34} {raw[gain]:.3f}  (spacetime-gain: WITH {raw[cap]:.3f} - WITHOUT {abl[cap]:.3f})", flush=True)
         return raw

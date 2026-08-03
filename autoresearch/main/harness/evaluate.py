@@ -426,17 +426,17 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 out["B63_myco_from_species_f1"] = _macro_f1(torch.cat(myco_sp_p), t, torch.ones_like(t, dtype=torch.bool), 5)
             if myco_p_abl:                                                  # B62 = species-graph contribution to symbiosis (phylo-conserved)
                 f1a = _macro_f1(torch.cat(myco_p_abl), t, torch.ones_like(t, dtype=torch.bool), 5)
-                if not (isinstance(f1a, float) and np.isnan(f1a)): out["B62_mycorrhiza_phylo_graph_gain"] = max(0.0, f1 - f1a)
+                if not (isinstance(f1a, float) and np.isnan(f1a)): out["B62_mycorrhiza_phylo_graph_gain"] = f1 - f1a
     _lf = _lfmc_corr(lfmc_p, lfmc_t)                                        # B34 ecophysiology; B58 = species-graph contribution to it
     if _lf is not None:
         out["B34_lfmc_from_env"] = _lf
         _lfa = _lfmc_corr(lfmc_p_abl, lfmc_t)
-        if _lfa is not None: out["B58_lfmc_phylo_graph_gain"] = max(0.0, _lf - _lfa)
+        if _lfa is not None: out["B58_lfmc_phylo_graph_gain"] = _lf - _lfa
     _fa = _auc(flower_p, flower_t)                                          # B26 phenology; B57 = species-graph contribution to it
     if _fa is not None:
         out["B26_flowering_auc"] = _fa
         _faa = _auc(flower_p_abl, flower_t)
-        if _faa is not None: out["B57_flowering_phylo_graph_gain"] = max(0.0, _fa - _faa)
+        if _faa is not None: out["B57_flowering_phylo_graph_gain"] = _fa - _faa
     if flower_fid:                                                          # B27: 1 - mean|imagined-vision flowering - real-vision flowering|
         out["B27_flowering_fidelity"] = float(1.0 - torch.cat(flower_fid).mean())
     if "B7_family_from_phylo" in out and "_B7_ablated" in out:              # B56: phylogenomic-graph contribution (rule 27 ablation)

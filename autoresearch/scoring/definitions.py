@@ -77,10 +77,25 @@ def net_value(k: str, v: float) -> float:
 
 
 def normalized(raw: Dict[str, float]) -> Dict[str, float]:
-    """Each benchmark's score clipped to [0,1], NaNs dropped. Every benchmark in this suite is already
-    defined on a naturally-[0,1] metric, so the score IS the raw value -- no baseline/target remap,
-    because a hand-set target below the attainable maximum is an artificial ceiling."""
-    return {k: float(min(1.0, max(0.0, v))) for k, v in raw.items()
+    """Each benchmark's score clipped to its OWN natural range, NaNs dropped. No baseline/target remap,
+    because a hand-set target below the attainable maximum is an artificial ceiling.
+
+    A capability metric is naturally [0,1]. An ablation-delta is a DIFFERENCE of two of them, so its
+    natural range is [-1,1] -- and this used to clip every key to [0,1] regardless, on a docstring that
+    asserted "every benchmark in this suite is already defined on a naturally-[0,1] metric". That was
+    false for all 13 `_gain` keys, and it rectified every one of them before `net_value` ever saw them:
+
+      * the entire negative half of `net_value`'s affine map (0.0 at a full -1) was unreachable, so a
+        mechanism that HURT a capability scored identically to one that did nothing;
+      * it silently defeated the deliberately-signed spacetime gains in `main/harness/hooks.py`, because
+        `format_benchmarks` re-prints the clipped value and `score.parse_log`'s dict overwrite lets the
+        later, clipped row win;
+      * `bio_gain` -- the mean of B56..B62, and the biological loop's whole objective -- could only ever
+        be biased upward, while `program.md` decides keep/discard on whether it rose.
+
+    Clipping by kind is what makes a regression representable. `net_value` does its own [-1,1] clamp, so
+    nothing downstream needs a pre-clamp; this only stops one from destroying the sign first."""
+    return {k: float(min(1.0, max(-1.0 if is_diagnostic(k) else 0.0, v))) for k, v in raw.items()
             if not (isinstance(v, float) and math.isnan(v))}
 
 

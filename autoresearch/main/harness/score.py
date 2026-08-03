@@ -13,6 +13,14 @@ restricts it to the encoder's benchmark subset, and reports:
 
 The full-suite net_score is untouched -- this is an added lens, not a replacement (science.md rule 32).
 
+A GAIN MAY NOW BE NEGATIVE, and that is the fix rather than a regression. Three of the seven BIO_GAIN
+deltas (B57, B58, B62) were rectified at zero in evaluate.py while the other four were not, and
+`definitions.normalized` then clipped all thirteen `_gain` keys to [0,1] on top of that. So `bio_gain`
+-- the mean of the seven, and the biological loop's whole objective -- could only ever be biased
+upward, and a mechanism that hurt flowering, LFMC or mycorrhiza was indistinguishable from one that did
+nothing. Both clamps are gone. Expect the first measured `bio_gain` to sit BELOW every value stored in
+a log written before that change; it is not comparable to them, because they could not represent a loss.
+
 Usage:
   python -m deepearth.autoresearch.main.harness.score --log run.log [--encoder biological|spacetime|both]
          [--champion autoresearch/main/records/champion_scores.json] [--json out.json] [--ensue-tag biological]
