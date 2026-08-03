@@ -10,6 +10,9 @@ Sources (`build_seed`): text · vision · fused · fused_white · fused_zca · r
 text_bandstop{A}_{B} · routed_hipass{P}. The hipass variants SVD out the top-P principal components of
 E1 on the thesis that those PCs are exactly what the tree would otherwise re-encode.
 
+`text` is the frozen BioCLIP-2.5 ViT-H taxon-text prior required by science rule 26.  E1 remains an
+explicit input to the legacy topology-filtering variants below; it is not the canonical text seed.
+
 EDITABLE. Nothing in here decides what a number means -- it decides what the encoder is given.
 """
 import glob
@@ -181,7 +184,10 @@ def build_seed(source: str, cache: str, E1: torch.Tensor, medoid: bool, dev, ene
     """Return an [N, dim] seed tensor for the requested source, each per-vector L2-normed for a fair
     cosine-NN comparison (text seed too, so no source gets a norm advantage)."""
     if source == "text":
-        return F.normalize(E1.to(dev), dim=-1)
+        text = np.load(Path(cache) / "bioclip_taxon_text_emb.npy").astype(np.float32)
+        if text.shape[0] != E1.shape[0]:
+            raise ValueError(f"BioCLIP taxon prior has {text.shape[0]} rows, expected {E1.shape[0]}")
+        return F.normalize(torch.from_numpy(text).to(dev), dim=-1)
     if pool in ("attn", "qfilt"):
         D, B = _pooled_seeds(cache, E1.shape[0], pool, temp, keep)        # ROUND-3 denoised aggregation
     elif medoid:
