@@ -550,9 +550,13 @@ class Earth4D(nn.Module):
         return torch.stack([atlas_u, atlas_v, radius.squeeze(-1) - 1.0], dim=-1)
 
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
-        if self.coordinate_system != 'ecef':
-            return self.xyz_encoder(self._surface_atlas(xyz), size=1.0)
         local_atlas = self.xyz_encoder(self._surface_atlas(xyz), size=1.0)
+        return self._fuse_spatial_fronts(local_atlas, xyz)
+
+    def _fuse_spatial_fronts(self, local_atlas: torch.Tensor, xyz: torch.Tensor) -> torch.Tensor:
+        """Apply the absolute spherical-front residual to an already-read spatial hash field."""
+        if self.coordinate_system != 'ecef':
+            return local_atlas
         unit = xyz / torch.linalg.vector_norm(xyz, dim=-1, keepdim=True).clamp_min(1e-8)
         normals = self.ridgelet_normals / torch.linalg.vector_norm(
             self.ridgelet_normals, dim=-1, keepdim=True).clamp_min(1e-8)
@@ -603,6 +607,10 @@ class Earth4D(nn.Module):
         latent = torch.cat([self.xyt_encoder(xyz1.contiguous(), size=1.0),
                             self.yzt_encoder(xyz2.contiguous(), size=1.0),
                             self.xzt_encoder(xyz3.contiguous(), size=1.0)], dim=-1)
+        return self._evolve_latent(latent, t)
+
+    def _evolve_latent(self, latent: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """Evolve already-read coefficient-field features through the autonomous temporal flow."""
         modes = latent.view(*latent.shape[:-1], self.koopman_pairs, 2)
         # normalize_time_from_train places the observed past in [0, .5], so .25 is its fixed design
         # midpoint, not a statistic fitted on held-out dates.  Bounds make extrapolation numerically stable.
@@ -616,6 +624,33 @@ class Earth4D(nn.Module):
         evolved = torch.stack([amplitude * (cos_a * real - sin_a * imag),
                                amplitude * (sin_a * real + cos_a * imag)], dim=-1)
         return evolved.flatten(-2)
+
+    def transform_precomputed(self, flat: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        """Apply the normal absolute-field transformations to precomputed raw hash features.
+
+        The sparse fusion path detaches ``flat`` as a leaf before calling this method.  Keeping the
+        transformations here makes the fast path functionally equivalent to :meth:`forward` while
+        preserving gradients both to the raw hash leaf and to the ridgelet/temporal parameters.
+        """
+        norm_coords = self._normalize_coords(coords)
+        raw_dim = self.spatial_dim + 3 * self.temporal_levels * self.features_per_level
+        if flat.shape[-1] != raw_dim:
+            raise ValueError(f"precomputed Earth4D raw width {flat.shape[-1]} != expected {raw_dim}")
+        spatial = self._fuse_spatial_fronts(flat[..., :self.spatial_dim], norm_coords[..., :3])
+        feats = (spatial if self.drop_spatiotemporal else
+                 torch.cat([spatial, self._evolve_latent(flat[..., self.spatial_dim:],
+                                                         norm_coords[..., 3:])], dim=-1))
+        if self.tile > 0:
+            feats = torch.cat([feats, self._tile(norm_coords)], dim=-1)
+        if self.nystrom > 0:
+            feats = torch.cat([feats, self._nystrom(norm_coords)], dim=-1)
+        if self.fourier_features > 0:
+            feats = torch.cat([feats, self._fourier(norm_coords)], dim=-1)
+        if self.time_harmonics > 0:
+            feats = torch.cat([feats, self._time_harmonics(norm_coords)], dim=-1)
+        if self.spatial_cline > 0:
+            feats = torch.cat([feats, self._cline(norm_coords)], dim=-1)
+        return feats
 
     def _seasonal_t(self, t: torch.Tensor) -> torch.Tensor:
         """Annual phase of normalized time, in the planes' [-0.9, 0.9] coordinate units."""
@@ -792,16 +827,17 @@ class Earth4D(nn.Module):
     def precompute(self, coords: torch.Tensor) -> dict:
         """Precompute hash indices/weights for a fixed coordinate set (N, 4). Enables forward_precomputed()."""
         norm_coords = self._normalize_coords(coords)
-        t_scaled = (norm_coords[..., 3:] * 2 - 1) * 0.9
-        xyzt_scaled = torch.cat([norm_coords[..., :3], t_scaled], dim=-1)
         xyz = norm_coords[..., :3]
-        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
-        yzt = xyzt_scaled[..., 1:]
-        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
-        stats = {'xyz': self.xyz_encoder.precompute(xyz, size=1.0),
-                 'xyt': self.xyt_encoder.precompute(xyt, size=1.0),
-                 'yzt': self.yzt_encoder.precompute(yzt, size=1.0),
-                 'xzt': self.xzt_encoder.precompute(xzt, size=1.0)}
+        if self.coordinate_system == 'ecef':
+            frames = self._coefficient_chart_frames.to(dtype=xyz.dtype)
+            rotated = torch.einsum('...d,ked->...ke', xyz, frames)
+            xyz1, xyz2, xyz3 = self._surface_atlas(rotated).unbind(dim=-2)
+        else:
+            xyz1 = xyz2 = xyz3 = xyz
+        stats = {'xyz': self.xyz_encoder.precompute(self._surface_atlas(xyz), size=1.0),
+                 'xyt': self.xyt_encoder.precompute(xyz1.contiguous(), size=1.0),
+                 'yzt': self.yzt_encoder.precompute(xyz2.contiguous(), size=1.0),
+                 'xzt': self.xzt_encoder.precompute(xyz3.contiguous(), size=1.0)}
         total_bytes = sum(s['total_bytes'] for s in stats.values()); total_mb = total_bytes / (1024 * 1024)
         self._precomputed = True; self._precomp_coords_count = coords.shape[0]
         if self.verbose:

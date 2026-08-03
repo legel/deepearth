@@ -475,7 +475,8 @@ class DeepEarth(nn.Module):
                                       for n, p in manifold_positions.items()}
         # Sparse-hash path: read the absolute encoder from precomputed indices as a detached leaf so its hash trains through sparse Adam; the leaf grad is captured for the sparse step (plus dy_dx for the resolution gradient).
         if getattr(self, "_sparse_hash", False) and batch_indices is not None:
-            flat = self.read_absolute_leaf(batch_indices)
+            raw = self.read_absolute_leaf(batch_indices)
+            flat = self.absolute_encoder.transform_precomputed(raw, query_coords)
         else:
             flat = self.absolute_encoder(query_coords)
         pos_s, pos_t = self._project_position(flat)
@@ -489,7 +490,12 @@ class DeepEarth(nn.Module):
     def context_from_flat(self, flat: torch.Tensor, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
                           manifold_positions: Optional[Dict[str, torch.Tensor]] = None,
                           neighbor_values: Optional[Dict[str, torch.Tensor]] = None) -> dict:
-        """Same as :meth:`context` but the absolute encoding is supplied as an already-read leaf ``flat``, keeping the precompute+detach out of the compiled region."""
+        """Same as :meth:`context` but the raw absolute hash encoding is supplied as an already-read leaf.
+
+        The learned spatial-front and temporal-flow transformations remain inside the differentiable region;
+        only the sparse hash-table read itself stays outside compilation.
+        """
+        flat = self.absolute_encoder.transform_precomputed(flat, query_coords)
         pos_s, pos_t = self._project_position(flat)
         if self.smooth_geo is not None:
             pos_s = pos_s + self.smooth_geo(query_coords)
