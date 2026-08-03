@@ -2,8 +2,41 @@
 
 ## Goal
 Make the phylogenetic species-graph impute biology for species from their relatives.
-**Maximize one scalar: `bio_gain`** = mean of the seven graph-refinement gains (B56–B62 = capability WITH
-the graph − WITHOUT). **Done when** every gain > +0.02 and no biological capability regresses.
+
+This loop has two deliberately different gates:
+
+1. **Standalone research screen:** improve one biological capability's masked-imputation score against
+   the strongest matched null tree. This establishes that the *real phylogeny*, rather than merely an
+   extra graph module, carries the gain.
+2. **Full-model graduation:** maximize `bio_gain`, the mean of B56–B62 (capability WITH the graph −
+   WITHOUT), while holding every biological capability floor. This establishes that the screened
+   mechanism helps the production model.
+
+The null-tree screen chooses and validates hypotheses; the seven-term full-model score decides promotion.
+**Done when** every B56–B62 gain is > +0.02, every applicable standalone fair gain is positive, and no
+biological capability regresses.
+
+## Authority and scope
+
+Scientific experiments edit only `editable_files/phylogenomic.py` or its local `editable_files/lib/**`
+(`seeds.py` = the rule-26 lever, `training.py` = the rule-9/25/10-11 levers). The fixed evaluators
+(`harness/probe.py`, `harness/traitprobe.py`), the board (`harness/board.py`), the fair control
+(`harness/nulltree.py`) and the pollitree stages own validation data, splits, metrics, controls and
+reporting, and are never edited to win a run. Fusion consumes the same public `SpeciesGraph` entrypoint
+as the fixed probe and must not import biological probe code directly.
+
+## The fair control: a null tree, not the seed
+
+`bio_gain` compares the graph against **its own seed**. That is an ablation, not a control — it
+confounds the tree with the parameter count, the training loop and the objective, and it is a hard bar
+only because E1 already scores ~0.89 family-NN unaided. The probe's recordable gain is therefore
+`vs null-tree`: the SAME operator with the SAME parameters and budget, run on a tree that is not the
+phylogeny (five tip-label permutations of the identical buffers, plus a seed-built dendrogram; the
+strongest is the baseline). `vs seed` is still reported and can never set a record. See
+[`scorecard.md`](scorecard.md) and `harness/nulltree.py`.
+
+Expect `vs null-tree` to be ≤ 0 at first. That is this program's own redundancy diagnosis becoming
+measurable rather than being asserted — and it points at the Seed row of the search space below.
 
 ## Requirements (science.md — this encoder must satisfy)
 | rule | requirement | status |
@@ -40,9 +73,30 @@ One structural change per round that satisfies a science.md rule this encoder fa
 the mechanism unchanged. Filters: upholds science.md · fair controls (untouched baseline + mechanism ablation) ·
 beats the ±0.008 noise floor.
 
-## ③ Run — one variable, fixed budget
-`VARIANT` = the champion path with your one bold hypothesis applied (it may bundle several coordinated changes
-under a single thesis). `TAG` = `bio_<short-name>`.
+## ③ Run — standalone screen first, then full-model graduation
+
+`TAG` = `bio_<short-name>`. First run the fixed standalone evaluator for the capability. For example,
+the family-imputation row is:
+
+```
+python -m deepearth.autoresearch.probes.biological.harness.probe \
+  --cache_dir autoresearch/data/deepcal --result-json /tmp/$TAG.json
+python -m deepearth.autoresearch.probes.biological.harness.board \
+  --capability family_from_phylo --result-json /tmp/$TAG.json --tag $TAG
+```
+
+The other recordable modes and their evaluator flags are listed in `program/scorecard.md`. A screen is
+evidence only when `vs null-tree` clears the noise barrier; `--no_control` is diagnostic.
+For confirmation, run the evaluator once per matched seed and pass both files to one board command:
+
+```
+python -m deepearth.autoresearch.probes.biological.harness.board \
+  --capability family_from_phylo --result-json /tmp/$TAG.seed0.json /tmp/$TAG.seed1.json --tag $TAG
+```
+
+Only a screen-clearing mechanism earns the full-model run. `VARIANT` is the champion path with that one
+bold hypothesis applied:
+
 ```
 rm -f autoresearch/data/deepcal/prepared_*.pt                                                  # cache round-trip is lossy — rm before every run
 python -m deepearth.autoresearch.main.harness.run_experiment VARIANT --cache_dir autoresearch/data/deepcal --tag TAG > TAG.log 2>&1
@@ -59,8 +113,20 @@ Emits `bio_gain` + Δ vs control · capability floor · per-benchmark Δ · the 
 (tree engaging?). Isolation (`_ablate_species`, graph ON vs OFF) is already inside the B56–B62 gains.
 
 ## ⑤ Decide
-Keep if `bio_gain` rises beyond the single-seed noise floor **and** the capability floor (B7, B21, B41,
-B53, B54, B55, B63) does not regress. Else: read the bottleneck, set the next hypothesis.
+
+Keep a standalone candidate only if its masked-imputation fair gain against the strongest null tree
+rises beyond the single-seed noise floor. Promote it only if the subsequent full-model `bio_gain` also
+rises beyond noise and the capability floor (B7, B21, B41, B53, B54, B55, B63) does not regress. The
+standalone score attributes the mechanism; the full-model score checks product value. Neither substitutes
+for the other.
+
+**`bio_gain` can be negative, and a negative is information.** Until recently it could not be: B57, B58
+and B62 were rectified at zero in `evaluate.py` while B56, B59, B60 and B61 were not, and
+`scoring/definitions.py::normalized` then clipped all thirteen `_gain` keys to `[0,1]` regardless. The
+objective was therefore a mean of seven terms where three could not represent a loss, and a mechanism
+that hurt flowering, LFMC or mycorrhiza scored exactly like one that did nothing. Both clamps are gone.
+Any `bio_gain` in a log or trace written before that is not comparable to one written after — it was
+measured on an instrument that could only round up.
 
 ## Search space (axes, non-exhaustive — invert or invent past them)
 | axis | rule | structural move |

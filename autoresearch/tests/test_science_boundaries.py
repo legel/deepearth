@@ -14,19 +14,19 @@ class ScienceBoundaryTests(unittest.TestCase):
         """Guard responsibilities, not replaceable scientific filenames or mechanisms."""
         violations = []
         fixed_probes = []
-        for path in (AUTORESEARCH / "probes").rglob("probe.py"):
+        for path in (AUTORESEARCH / "probes").rglob("*.py"):
             if "editable_files" in path.parts:
                 continue
+            if path.name not in {"probe.py", "traitprobe.py"}:
+                continue
             tree = ast.parse(path.read_text())
-            if any(
-                isinstance(node, ast.ImportFrom)
-                and any(alias.name == "build_candidate_encoder" for alias in node.names)
-                for node in ast.walk(tree)
-            ):
-                fixed_probes.append(path)
+            fixed_probes.append(path)
         self.assertTrue(fixed_probes, "no fixed probes were discovered")
         scientific_state = {"CONFIG", "CAPABILITY_CONFIG", "CHANNELS"}
-        forbidden_calls = {"Earth4D", "backward", "cross_entropy", "mse_loss"}
+        forbidden_calls = {
+            "Earth4D", "backward", "cross_entropy", "binary_cross_entropy",
+            "binary_cross_entropy_with_logits", "mse_loss",
+        }
         for source in fixed_probes:
             tree = ast.parse(source.read_text())
             for node in ast.walk(tree):

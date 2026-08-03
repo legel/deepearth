@@ -137,19 +137,35 @@ def suite_mismatch(before: Dict[str, float], after: Dict[str, float]) -> Tuple[L
 
 # -- probe boards ----------------------------------------------------------------------------------
 
+# Calibrated against noise OBSERVED in a probe, not invented. Moved here from
+# `probes/spacetime/harness.py`, which kept its own copy of both the constants and the function -- the
+# duplicate `noise_barrier` the audit has been warning about. The evidence:
+#
+#   * a second agent walked family_from_spacetime 0.1769 -> 0.19143 in seven accepted single-seed steps
+#     of +0.0007 / +0.0008 / +0.0112 / +0.0005 / +0.0002 / +0.0006 / +0.0006;
+#   * a verification run took flowering_peak_month 0.0521 -> 0.052131, a delta of +0.000031.
+#
+# MIN_CONFIRMATION_SEEDS deliberately did NOT move: it is a probe's operator policy for when to call a
+# result confirmed, not a definition of what a number means, and nothing here consumes it.
+MIN_REL_IMPROVEMENT = 0.02      # 2% of the standing record
+MIN_ABS_IMPROVEMENT = 0.002     # ...and never less than this in absolute terms
+SEED_SIGMA_MULTIPLE = 2.0       # with >=3 seeds, must also clear 2 sigma of the seed spread
+
+
 def noise_barrier(prev: Optional[float], seed_std: Optional[float] = None, n_seeds: int = 1) -> float:
     """How much a new probe score must beat the standing record BY to count as a record at all.
 
-    2% of the record, never below 0.002; with >=3 seeds the measured spread also has to clear 2 sigma.
-    Without >=3 seeds there is no spread to measure, so only the fixed floor applies and the result
-    stays provisional -- a single seed cannot distinguish a lever from a draw. This exists because
-    "beats" once meant "is a larger float", which is how seven consecutive +0.0006 steps were each
-    accepted as a new best on family_from_spacetime before the walk was invalidated."""
+    Two regimes. With >=3 seeds the spread is measurable, so the barrier is the larger of the fixed
+    floor and 2 sigma -- the run has to land outside its own noise. Without them there is no spread to
+    measure, so only the fixed floor applies and the result stays provisional: a single seed cannot
+    distinguish a lever from a draw, whatever it scores. This exists because "beats" once meant "is a
+    larger float", which is how seven consecutive +0.0006 steps were each accepted as a new best on
+    family_from_spacetime before the walk was invalidated."""
     if prev is None:
         return 0.0
-    floor = max(0.02 * abs(prev), 0.002)
+    floor = max(MIN_REL_IMPROVEMENT * abs(prev), MIN_ABS_IMPROVEMENT)
     if seed_std is not None and n_seeds >= 3:
-        return max(floor, 2.0 * seed_std)
+        return max(floor, SEED_SIGMA_MULTIPLE * float(seed_std))
     return floor
 
 
@@ -238,9 +254,22 @@ METRICS: Tuple[Metric, ...] = (
            question="When does a plant flower, from where and when it is?"),
 
     # ---- the species graph earns these from phylogeny --------------------------------------------
+    #
+    # `capability=` on the five rows below is what makes the biological loop able to graduate at all.
+    # It was absent on every biological metric, so `capability_to_benchmark()` returned nothing for
+    # them and `graduation.CAPABILITY_BENCH["biological"]` evaluated to `{}` -- every record on that
+    # board failed the very first blocker, "no benchmark mapped", before any evidence was considered.
+    # The five names match `graduation.LOOP_CAPABILITIES["biological"]` exactly; that list and these
+    # rows are one contract.
+    #
+    # NOTE the gain rows (B56/B61/B62) deliberately carry NO capability. A capability must name an
+    # ABSOLUTE score whose marginal is the fair gain. Point one at a gain and `score` and `fair_gain`
+    # become the same number, the encoder's share is identically 1.0, and the bottleneck reads EARNING
+    # forever regardless of what the encoder did.
     Metric("B7_family_from_phylo", "family from the phylogenomic embedding, accuracy",
            rule="R7 one embedding per species; R8 self-supervised on a dated tree",
-           surface=(_BIOLOGICAL,), question="Does the embedding preserve evolutionary structure?"),
+           surface=(_BIOLOGICAL,), capability="family_from_phylo",
+           question="Does the embedding preserve evolutionary structure?"),
     Metric("B56_family_phylo_graph_gain", "family accuracy gained FROM the species graph",
            rule="R29 exact O(N) two-pass OU-GP",
            surface=(_BIOLOGICAL,), question="Does graph refinement add over the raw seed?"),
@@ -252,11 +281,46 @@ METRICS: Tuple[Metric, ...] = (
            surface=(_BIOLOGICAL,), question="Is symbiosis phylogenetically conserved?"),
     Metric("B63_myco_from_species_f1", "mycorrhiza type given species identity, macro-F1",
            rule="R28 no fuzzy science",
-           surface=(_BIOLOGICAL,), question="Can symbiosis be imputed from relatives?"),
+           surface=(_BIOLOGICAL,), capability="myco_from_species",
+           question="Can symbiosis be imputed from relatives?"),
     Metric("B55_pollinator_phylo_transfer_recall",
            "a plant's pollinators from its relatives' pollinators, recall@10",
            rule="R27 interactions across two trees",
-           surface=(_BIOLOGICAL, _MAIN), question="Does interaction signal travel along phylogeny?"),
+           surface=(_BIOLOGICAL, _MAIN), capability="pollinator_transfer",
+           question="Does interaction signal travel along phylogeny?"),
+    Metric("B21_community_from_species_recall",
+           "the co-occurring species set given a species identity, recall@10",
+           rule="R10-12 an observation of A updates its in-context neighbours",
+           surface=(_BIOLOGICAL, _MAIN), capability="community_from_species",
+           question="Does co-occurrence travel along phylogeny, or only along space?"),
+    Metric("B41_pollinator_from_species_recall", "a plant's pollinators from its identity, recall@10",
+           rule="R27 interactions across two trees",
+           surface=(_BIOLOGICAL, _MAIN), capability="pollinator_from_species",
+           question="Which pollinators does a plant identity imply?"),
+
+    # ---- biological rows with no probe capability: scored, owned, but not cheaply estimable ---------
+    # These are in `score.BIO_GAIN` / `score.BIO_CAP` -- they move `bio_gain` and the no-regression
+    # floor -- but had no registry row at all, so `unowned()` reported them and nothing said which file
+    # was responsible for moving them. Owning them without a `capability` is the honest state: the
+    # surface is known, the cheap probe estimate is not.
+    Metric("B57_flowering_phylo_graph_gain", "flowering AUC gained from the species graph",
+           rule="R29 exact O(N) two-pass OU-GP",
+           surface=(_BIOLOGICAL, _SPACETIME), question="Is phenology phylogenetically conserved?"),
+    Metric("B58_lfmc_phylo_graph_gain", "LFMC correlation gained from the species graph",
+           rule="R29 exact O(N) two-pass OU-GP",
+           surface=(_BIOLOGICAL, _MAIN), question="Is ecophysiology phylogenetically conserved?"),
+    Metric("B59_pollinator_phylo_graph_gain", "pollinator recall gained from the species graph",
+           rule="R27 interactions across two trees",
+           surface=(_BIOLOGICAL, _MAIN), question="Does the graph carry interaction signal?"),
+    Metric("B60_community_phylo_graph_gain", "env->community recall gained from the species graph",
+           rule="R24 dense 4D field; R10-12 neighbours update together",
+           surface=(_BIOLOGICAL, _MAIN), question="Does the graph carry niche/community signal?"),
+    Metric("B53_pollinator_calibration_mrr", "pollinator posterior calibration given species, MRR",
+           rule="R28 no fuzzy science",
+           surface=(_BIOLOGICAL, _MAIN), question="Is the interaction posterior honest, not just ranked?"),
+    Metric("B54_pollinator_dist_kl", "pollinator visitation distribution given species, KL",
+           rule="R28 no fuzzy science",
+           surface=(_BIOLOGICAL, _MAIN), question="Does the predicted visitation mass match observed?"),
     # ---- the probe->fusion bridge: the SAME quantity the probe reports, on the 799M model ----------
     # hooks.ablate_spacetime computes capability WITH Earth4D minus WITHOUT. That is `vs RFF` at
     # full-model scale. Declaring these is what lets a spacetime probe finding reach a champion score
@@ -586,26 +650,48 @@ SCORING_DEFS = ("net_value", "net_score", "noise_barrier", "signal_capture", "sc
 # Modules that must import on any box. earth4d/probe are excluded on purpose — they pull the CUDA
 # extension in at import time, so off-box they are covered by the static checks instead.
 CORE_MODULES = ("deepearth.autoresearch.scoring.definitions",
+                "deepearth.autoresearch.scoring.contract",
                 "deepearth.autoresearch.scoring.graduation",
                 "deepearth.autoresearch.main.harness.evaluate",
                 "deepearth.autoresearch.main.harness.score",
                 "deepearth.autoresearch.main.harness.hooks",
                 "deepearth.autoresearch.main.harness.champion_report",
-                "deepearth.autoresearch.probes.spacetime.harness")
+                "deepearth.autoresearch.probes.spacetime.harness",
+                "deepearth.autoresearch.probes.biological.harness.board")
 
 _E4D_REL = "probes/spacetime/editable_files/earth4d.py"
 _PROBE_REL = "probes/spacetime/probe.py"
-# Discover the whole editable space-time surface. Autoresearch may replace or rename
-# internal science modules without teaching the fixed audit their filenames.
-_SPACETIME_PY = tuple(
-    str(path.relative_to(AUTORESEARCH))
-    for path in sorted((AUTORESEARCH / _SPACETIME).rglob("*.py"))
-    if "__pycache__" not in path.parts
-)
+
+# Each loop's fixed evaluator and the ONE gain label that counts as fair on its board. Every check
+# below iterates this rather than naming the spacetime probe, because an audit that covers one of two
+# loops is exactly as good as no audit for the loop it skips -- and the biological loop is the one
+# that just grew declare() sites, a fair control and a board to protect.
+# A loop may have MORE THAN ONE fixed evaluator -- the biological loop splits its capabilities across
+# probe.py (family, interaction) and traitprobe.py (trait, community, symbiosis). Scanning only the
+# first would report the others as unproduced, which is what "one probe file per loop" did.
+LOOP_PROBES = {
+    "spacetime": (("probes/spacetime/probe.py",), "vs RFF",
+                  "deepearth.autoresearch.probes.spacetime.harness"),
+    "biological": (("probes/biological/harness/probe.py",
+                    "probes/biological/harness/traitprobe.py"), "vs null-tree",
+                   "deepearth.autoresearch.probes.biological.harness.board"),
+}
+# Discover each loop's whole editable surface. Autoresearch may replace or rename internal science
+# modules without teaching the fixed audit their filenames.
+def _editable_py(rel: str) -> tuple:
+    return tuple(str(path.relative_to(AUTORESEARCH))
+                 for path in sorted((AUTORESEARCH / rel).rglob("*.py"))
+                 if "__pycache__" not in path.parts)
+
+
+_SPACETIME_PY = _editable_py(_SPACETIME)
+_BIOLOGICAL_PY = _editable_py(_BIOLOGICAL)
 CHANGED_FILES = tuple(dict.fromkeys((
-    _PROBE_REL, "scoring/definitions.py", "scoring/graduation.py",
+    *(rel for rels, _l, _m in LOOP_PROBES.values() for rel in rels),
+    "scoring/definitions.py", "scoring/contract.py", "scoring/graduation.py",
     "main/harness/evaluate.py", "main/harness/score.py", "probes/spacetime/harness.py",
-    *_SPACETIME_PY,
+    "probes/biological/harness/board.py", "probes/biological/harness/nulltree.py",
+    *_SPACETIME_PY, *_BIOLOGICAL_PY,
 )))
 
 
@@ -776,8 +862,12 @@ _PATH_RE = re.compile(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+\.(?:py|md|json|yaml|ym
 def _md_path_exists(md: Path, ref: str) -> bool:
     """A path named in prose resolves if it resolves from ANY root a reader would try."""
     stripped = ref[len("autoresearch/"):] if ref.startswith("autoresearch/") else ref
-    roots = (AUTORESEARCH, AUTORESEARCH / "probes/spacetime", AUTORESEARCH / "probes/spacetime/editable_files",
-             AUTORESEARCH / "probes/biological/editable_files", AUTORESEARCH / "main/editable_files", md.parent)
+    # Every loop contributes both its own root and its editable root, derived rather than listed: the
+    # hand-written list omitted `probes/biological`, so a correct reference in that loop's program.md
+    # to `editable_files/phylogenomic.py` was reported as a broken path.
+    roots = [AUTORESEARCH, AUTORESEARCH / "main/editable_files", md.parent]
+    for loop in LOOP_PROBES:
+        roots += [AUTORESEARCH / "probes" / loop, AUTORESEARCH / "probes" / loop / "editable_files"]
     return any((r / c).exists() for r in roots for c in (ref, stripped))
 
 
@@ -817,15 +907,41 @@ def BENCHMARKS_or_none():
 
 def _audit_scoring(A: _Audit) -> None:
     A.section("SCORING CONSISTENCY — one owner for every number")
+    # ONE fair label per loop. A preference list over several is how three different quantities came to
+    # share a single column of the spacetime board; the biological loop inherits the same rule so that
+    # `vs seed` -- the operator measured against its own input -- can never be read as a fair gain.
+    import importlib
+    for loop, (_rel, fair_label, module) in sorted(LOOP_PROBES.items()):
+        try:
+            board = importlib.import_module(module)
+            A.check(list(board.FAIR_ORDER) == [fair_label],
+                    f"{loop}: FAIR_ORDER == [{fair_label!r}]", repr(board.FAIR_ORDER))
+            A.check(board.PROTOCOL in board.PROTOCOL_HISTORY,
+                    f"{loop}: PROTOCOL {board.PROTOCOL!r} is in PROTOCOL_HISTORY")
+        except Exception as exc:                                  # noqa: BLE001
+            A.check(False, f"{loop}: board constants readable", f"{type(exc).__name__}: {exc}")
     try:
         from deepearth.autoresearch.probes.spacetime import harness as ph
-        A.check(list(ph.FAIR_ORDER) == ["vs RFF"], "harness.FAIR_ORDER == ['vs RFF']", repr(ph.FAIR_ORDER))
         cfg = _science_literal_dict("CONFIG")
         want = encoder_output_dim(cfg)
         A.check(ph.FAIR_CONTROL_DIM == want, "FAIR_CONTROL_DIM == encoder output_dim under v5 CONFIG",
                 f"control {ph.FAIR_CONTROL_DIM} vs encoder {want}")
     except Exception as exc:                                      # noqa: BLE001
         A.check(False, "probe harness constants readable", f"{type(exc).__name__}: {exc}")
+
+    # The gate, the board writer and the noise barrier must be the SHARED objects, not per-loop copies.
+    try:
+        from deepearth.autoresearch.probes.spacetime import harness as ph
+        from deepearth.autoresearch.probes.biological.harness import board as bb
+        from deepearth.autoresearch.scoring import contract as K
+        from deepearth.autoresearch.scoring import definitions as D
+        for loop, mod in (("spacetime", ph), ("biological", bb)):
+            A.check(mod.noise_barrier is D.noise_barrier,
+                    f"{loop}: noise_barrier IS definitions.noise_barrier")
+            A.check(mod.ProbeResult is K.ProbeResult, f"{loop}: ProbeResult IS contract.ProbeResult")
+            A.check(mod.declare is K.declare, f"{loop}: declare IS contract.declare")
+    except Exception as exc:                                      # noqa: BLE001
+        A.check(False, "both loops share one contract", f"{type(exc).__name__}: {exc}")
 
     # score.py used to HAND-COPY these under a comment saying "keep byte-identical". Identity, not
     # equality: a copy that agrees today is a copy that drifts tomorrow.
@@ -853,13 +969,27 @@ def _audit_scoring(A: _Audit) -> None:
                 A.warn(f"second definition of {n.name}()",
                        f"{p.relative_to(AUTORESEARCH)}:{n.lineno} — definitions.py is the owner")
 
-    # Every probe row must publish exactly one fair gain, and none may pre-declare itself diagnostic:
-    # `strongest_fair_gain` picks the MINIMUM over labels matching FAIR_ORDER, so two "vs RFF" entries
-    # silently change which baseline a record was gated on.
-    for line, cap, labels, diag in sorted(_declare_sites(_tree(_PROBE_REL))):
-        name = f"probe.py:{line} declare({cap or '<computed>'})"
-        A.check(labels.count("vs RFF") == 1, f"{name} has exactly one 'vs RFF' gain", f"gains={labels}")
-        A.check(not diag, f"{name} is not diagnostic=True")
+    # Every probe row must publish exactly one fair gain: `fair_gain` picks the MINIMUM over labels
+    # matching FAIR_ORDER, so two matching entries silently change which baseline a record was gated
+    # on. A site may declare itself diagnostic ONLY with a computed flag -- a literal `diagnostic=True`
+    # is a row that can never record and should not be pretending to be a capability.
+    for loop, (rels, fair_label, _module) in sorted(LOOP_PROBES.items()):
+        for rel in rels:
+            for line, cap, labels, diag in sorted(_declare_sites(_tree(rel))):
+                name = f"{loop} {Path(rel).name}:{line} declare({cap or '<computed>'})"
+                A.check(labels.count(fair_label) == 1,
+                        f"{name} has exactly one {fair_label!r} gain", f"gains={labels}")
+                A.check(not diag, f"{name} is not literally diagnostic=True")
+
+
+def _excluded_capabilities(loop: str) -> dict:
+    """A loop's declared-and-refused capabilities, with their reasons. Empty if it declares none."""
+    import importlib
+    try:
+        return dict(getattr(importlib.import_module(LOOP_PROBES[loop][2]),
+                            "EXCLUDED_CAPABILITIES", {}) or {})
+    except Exception:                                             # noqa: BLE001
+        return {}
 
 
 def _audit_propagation(A: _Audit) -> None:
@@ -871,20 +1001,45 @@ def _audit_propagation(A: _Audit) -> None:
         A.check(False, "graduation/evaluate import", f"{type(exc).__name__}: {exc}")
         return
 
-    tree = _tree(_PROBE_REL)
-    literal = {c for _, c, _, _ in _declare_sites(tree) if c}
-    # One declare() computes its capability from CONFIG["target"]; resolve it from the module's own
-    # string constants rather than pretending the row does not exist.
     known = {c for caps in gr.CAPABILITY_BENCH.values() for c in caps}
-    strings = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
-    declared = literal | (strings & known)
+
+    def _declared_by(rels) -> set:
+        """Capabilities a fixed evaluator actually emits.
+
+        Some declare() sites compute their capability from a config value rather than writing a
+        literal, so the module's own string constants are consulted too -- resolving the row rather
+        than pretending it does not exist.
+        """
+        out = set()
+        for rel in rels:
+            tree = _tree(rel)
+            literal = {c for _, c, _, _ in _declare_sites(tree) if c}
+            strings = {n.value for n in ast.walk(tree)
+                       if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+            out |= literal | (strings & known)
+        return out
+
+    # Both loops are checked. This used to be guarded by `if loop == "spacetime"`, so the biological
+    # rows were only ever tested for "does the benchmark exist" -- never for whether anything actually
+    # produces them, which was the state that let all five sit unreachable without a single failure.
+    declared = {}
+    for loop, (rels, _label, _module) in LOOP_PROBES.items():
+        try:
+            declared[loop] = _declared_by(rels)
+        except Exception as exc:                                  # noqa: BLE001
+            A.check(False, f"{loop}: fixed evaluator is parseable", f"{type(exc).__name__}: {exc}")
+            declared[loop] = set()
 
     for loop, caps in gr.CAPABILITY_BENCH.items():
-        for cap, bench in caps.items():
+        for cap, bench in sorted(caps.items()):
             A.check(bench in BENCHMARKS, f"{loop}:{cap} -> {bench} is a declared benchmark")
-            if loop == "spacetime":
-                A.check(cap in declared, f"{loop}:{cap} is produced by a probe declare() site",
-                        "" if cap in declared else "no declare(capability=...) in probe.py emits it")
+            if loop in declared:
+                emitted = cap in declared[loop]
+                # A capability the loop explicitly refuses is not a hole -- it is a documented refusal.
+                refused = cap in _excluded_capabilities(loop)
+                A.check(emitted or refused,
+                        f"{loop}:{cap} is produced by a declare() site, or refused with a reason",
+                        "" if emitted or refused else "nothing emits it and nothing explains why")
 
     ghosts = [m.name for m in METRICS if m.name not in BENCHMARKS]
     A.check(not ghosts, "every Metric row names a real benchmark", ", ".join(ghosts))
@@ -895,11 +1050,12 @@ def _audit_propagation(A: _Audit) -> None:
 def _audit_assumptions(A: _Audit) -> None:
     A.section("ASSUMPTIONS — does the prose still describe the tree?")
     bad = []
-    for md in sorted(AUTORESEARCH.glob("probes/spacetime/**/*.md")):
-        for ref in sorted(set(_PATH_RE.findall(md.read_text()))):
-            if not _md_path_exists(md, ref):
-                bad.append(f"{md.relative_to(AUTORESEARCH)} -> {ref}")
-    A.check(not bad, "every path named in probes/spacetime/**/*.md exists on disk")
+    for loop in sorted(LOOP_PROBES):
+        for md in sorted(AUTORESEARCH.glob(f"probes/{loop}/**/*.md")):
+            for ref in sorted(set(_PATH_RE.findall(md.read_text()))):
+                if not _md_path_exists(md, ref):
+                    bad.append(f"{md.relative_to(AUTORESEARCH)} -> {ref}")
+    A.check(not bad, "every path named in probes/*/**/*.md exists on disk")
     for b in bad:
         A.bullet(b)
 

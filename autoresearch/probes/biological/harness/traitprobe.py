@@ -35,8 +35,10 @@ from deepearth.autoresearch.probes.biological.editable_files.lib.training import
 from deepearth.autoresearch.probes.biological.harness.probe import (
     load_species, load_trait, nn_trait_acc, nn_trait_ap, nn_trait_num,
 )
-
-
+from deepearth.autoresearch.probes.biological.harness.board import PROTOCOL, _set_result_sink, declare
+from deepearth.autoresearch.probes.biological.harness.nulltree import (
+    FAIR_CONTROL_DRAWS, fair_gain as nulltree_fair_gain, null_family,
+)
 # --- COMMUNITY / CO-OCCURRENCE axis (rule 10-12; flag-gated --cooccur; default path never calls these) ----
 # HONEST JOIN provenance: gbif_tokens/*.npz["species_local"] is the row's index into the 2141-vocab
 # (gbif_vocab.npz), the SAME vocab load_species/the graph use (data.py L68). obs_cache.npy is row-aligned
@@ -582,7 +584,7 @@ def run_cooccur(a, dev):
             seed = build_seed(src, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
                               pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
             s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
-                                      a.steps, a.mask_frac, a.lr, a.impute_steps)
+                                      a.steps, a.mask_frac, a.lr, a.impute_steps, run_seed=sd)
             agg[src]["seed"].append(scorer(s, test))
             agg[src]["graph"].append(scorer(rep, test))
             agg[src]["impute"].append(scorer(imp, test))
@@ -597,6 +599,43 @@ def run_cooccur(a, dev):
         sm, ss = m(agg[src]["seed"]); gm, gs = m(agg[src]["graph"]); im, iis = m(agg[src]["impute"])
         print(f"  {src:7s} | {sm:.4f} +/- {ss:.4f} | {gm:.4f} +/- {gs:.4f} | {im:.4f} +/- {iis:.4f} | {gm - sm:+.4f}")
     print(f"  [profile] {len(a.seeds)} seeds x {len(a.sources)} sources in {time.time()-t0:.1f}s")
+
+    # THE RECORDABLE ARM: first source, masked imputation, with every null paired to every seed/split.
+    # The source sweep still prints above; only this one predeclared arm can set a record.
+    src0 = a.sources[0]
+    seed0 = build_seed(src0, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                       pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+    primary_values = list(agg[src0]["impute"])
+    seed_values = list(agg[src0]["seed"])
+    null_runs = {}
+    if not a.no_control:
+        members = null_family(seed0, tree, tip_row, draws=a.control_draws)
+        null_runs = {label: [] for label, _, _ in members}
+        for sd in a.seeds:
+            split_rng = torch.Generator(device="cpu").manual_seed(sd)
+            paired_test = (torch.rand(N, generator=split_rng) < a.holdout).to(dev)
+            for label, ntree, ntip in members:
+                _, _, imp = train_graph(seed0, ntree, ntip, paired_test, dev, a.d_model,
+                                        a.steps, a.mask_frac, a.lr, a.impute_steps, run_seed=sd)
+                null_runs[label].append(scorer(imp, paired_test))
+    nulls = {label: m(values)[0] for label, values in null_runs.items()}
+    for label, values in null_runs.items():
+        mean_value, std_value = m(values)
+        print(f"  [control] {label:32s} {mean_value:.4f} +/- {std_value:.4f}", flush=True)
+    primary_m, seed_m = m(primary_values)[0], m(seed_values)[0]
+    fair, best_label, best_null = nulltree_fair_gain(primary_m, nulls)
+    declare(capability="community_from_species",
+            mode=f"COOCCUR-IMPUTE(res={a.cooccur_res},topk={a.cooccur_topk})",
+            metric="cooccur_micro_ap", value=primary_m, split="species-random",
+            gains={"vs null-tree": fair, "vs seed": primary_m - seed_m},
+            baselines={"seed": seed_m, **nulls,
+                       **({"null-tree/best": best_null} if best_null is not None else {})},
+            diagnostic=(fair is None),
+            diagnostic_reason=("--no_control: no null-tree baseline, so there is no fair gain"
+                               if fair is None else ""),
+            seed_score=seed_m, source=src0, n_seeds_swept=len(a.seeds),
+            primary_seed_values=primary_values, strongest_null=best_label)
+
     import json
     summary = {"axis": "cooccur_community", "res": a.cooccur_res, "topk": a.cooccur_topk, "metric": "micro-AP",
                "seeds": a.seeds, "N": N, "present": int(obs.sum().item())}
@@ -646,7 +685,7 @@ def run_myco_supervised(a, dev):
             for v in variants:
                 if v == "unsup":
                     s, rep, imp = train_graph(seed, tree, tip_row, test, dev, a.d_model,
-                                              a.steps, a.mask_frac, a.lr, a.impute_steps)
+                                              a.steps, a.mask_frac, a.lr, a.impute_steps, run_seed=sd)
                 else:
                     s, rep, imp, _ = train_graph_trait_supervised(
                         seed, tree, tip_row, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
@@ -673,6 +712,44 @@ def run_myco_supervised(a, dev):
             summary["rows"].append({"source": src, "variant": v, "seed": round(sm, 4), "graph": round(gm, 4),
                                     "graph_std": round(gs, 4), "impute": round(im, 4),
                                     "graph_gain": round(gm - sm, 4)})
+    # THE RECORDABLE ARM: first source, unsupervised masked imputation, with every null paired to every
+    # seed/split. This keeps the tree attributable without letting a supervised head carry the label.
+    src0 = a.sources[0]
+    seed0 = build_seed(src0, a.cache_dir, E1, a.vision_medoid, dev, energy_ratio=a.energy_ratio,
+                       pool=a.vision_pool, temp=a.pool_temp, keep=a.pool_keep)
+    primary_values = list(agg[src0]["unsup"]["impute"])
+    seed_values = list(agg[src0]["unsup"]["seed"])
+    null_runs = {}
+    if not a.no_control:
+        members = null_family(seed0, tree, tip_row, draws=a.control_draws)
+        null_runs = {label: [] for label, _, _ in members}
+        for sd in a.seeds:
+            split_rng = torch.Generator(device="cpu").manual_seed(sd)
+            paired_test = (torch.rand(N, generator=split_rng) < a.holdout).to(dev)
+            for label, ntree, ntip in members:
+                _, _, imp = train_graph(seed0, ntree, ntip, paired_test, dev, a.d_model,
+                                        a.steps, a.mask_frac, a.lr, a.impute_steps, run_seed=sd)
+                null_runs[label].append(scorer(imp, paired_test))
+    nulls = {label: m(values)[0] for label, values in null_runs.items()}
+    for label, values in null_runs.items():
+        mean_value, std_value = m(values)
+        print(f"  [control] {label:32s} {mean_value:.4f} +/- {std_value:.4f}", flush=True)
+    primary_m, seed_m = m(primary_values)[0], m(seed_values)[0]
+    fair, best_label, best_null = nulltree_fair_gain(primary_m, nulls)
+    declare(capability="myco_from_species", mode="MYCO-IMPUTE(unsup)",
+            metric="myco_nn_accuracy", value=primary_m, split="species-random",
+            gains={"vs null-tree": fair, "vs seed": primary_m - seed_m},
+            baselines={"seed": seed_m, **nulls,
+                       **({"null-tree/best": best_null} if best_null is not None else {})},
+            diagnostic=(fair is None),
+            diagnostic_reason=("--no_control: no null-tree baseline, so there is no fair gain"
+                               if fair is None else ""),
+            # The FungalRoot label is a per-GENUS majority, so a nearest congener predicts it almost
+            # trivially. That is precisely what the null trees neutralize: a permuted tree cannot
+            # exploit congenery, so anything left in the fair gain is not the genus shortcut.
+            seed_score=seed_m, source=src0, n_classes=nclass, n_observed=n_obs,
+            primary_seed_values=primary_values, strongest_null=best_label)
+
     import json
     print("[myco_supervised] " + json.dumps(summary))
     print(f"  [profile] {len(a.seeds)}s x {len(a.sources)}src x {len(variants)}v in {time.time()-t0:.1f}s")
@@ -1235,6 +1312,14 @@ def main(argv=None):
     ap.add_argument("--route_contrast", action="store_true",
                     help="TEST3: seed-only vision-text gap on community vs lep (routing contrast)")
     ap.add_argument("--device", default="cuda")
+    # THE FAIR CONTROL (nulltree.py). On by default: without it a run measures the operator against
+    # its own input, which is the ablation this loop mistook for a control for its whole history.
+    ap.add_argument("--no_control", action="store_true",
+                    help="skip the null-tree family — screens fast, but the result is DIAGNOSTIC and can never record")
+    ap.add_argument("--control_draws", type=int, default=FAIR_CONTROL_DRAWS,
+                    help="tip-label permutations in the null family (the seed-dendrogram is always added)")
+    ap.add_argument("--result-json", dest="result_json", default="",
+                    help="write the ProbeResult here for the board to gate")
     ap.add_argument("--globi_guild", action="store_true",
                     help="RETEST: REAL GloBI pollinator-guild signature (dominant-guild acc + guild-frac AP) as a phylo target")
     ap.add_argument("--globi_min_partners", type=int, default=3,
@@ -1249,6 +1334,11 @@ def main(argv=None):
                     help="USDA: subset of ordinal columns to test (default all three)")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
+    _set_result_sink(a.result_json, "", PROTOCOL, a, {
+        "sources": list(a.sources), "d_model": a.d_model, "steps": a.steps, "mask_frac": a.mask_frac,
+        "lr": a.lr, "holdout": a.holdout, "operator": a.operator, "impute_steps": a.impute_steps,
+        "control_draws": a.control_draws, "train_encoder": True,
+    })
     if isinstance(a.mask_curriculum, str) and a.mask_curriculum:   # 'easy2hard:LO:HI' -> (sched, lo, hi) tuple
         _p = a.mask_curriculum.split(":")
         a.mask_curriculum = (_p[0], float(_p[1]), float(_p[2]))

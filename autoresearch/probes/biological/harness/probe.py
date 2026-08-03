@@ -21,6 +21,13 @@ import torch
 import torch.nn.functional as F
 
 from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import SpeciesGraph, build_tree_buffers
+from deepearth.autoresearch.probes.biological.editable_files.lib.training import (
+    train_graph_family, train_interaction_graphs,
+)
+from deepearth.autoresearch.probes.biological.harness.board import PROTOCOL, _set_result_sink, declare
+from deepearth.autoresearch.probes.biological.harness.nulltree import (
+    FAIR_CONTROL_DRAWS, fair_gain as nulltree_fair_gain, null_family,
+)
 
 
 def load_species(cache: str):
@@ -237,8 +244,6 @@ def run_interaction(a, dev):
     qtest = (torch.rand(Nq, generator=gq) < a.holdout).to(dev) if a.bidir_mask else torch.zeros(Nq, dtype=torch.bool, device=dev)
     qtrain = ~qtest
 
-    plant = SpeciesGraph(N, a.d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
-                         species_text=E1).to(dev)                # tree1: plant phylogeny
     if a.poll_dist == "covis":                                  # tree2 from co-visitation over TRAIN plants (no held-out leak)
         base = Pfrq if a.covis_weighted else Ptgt              # weighted: shared-visitation MASS (seed-orthogonal, richer than binary)
         A = base.clone(); A[~train[Pmap]] = 0.0                # (frequency-weighted) bipartite adjacency, TRAIN plants only
@@ -272,52 +277,42 @@ def run_interaction(a, dev):
         poll_dist = torch.tensor(Dreal / (Dreal.max() + 1e-9), device=dev)  # normalised patristic tree distance
     else:
         poll_dist = SpeciesGraph.distance_from_embedding(F.normalize(poll_text, dim=-1))  # tree2 distance from BioCLIP prior
-    poll = SpeciesGraph(Nq, a.d_model, operator="ou-attention", phylo_distance=poll_dist,
-                        n_heads=4, n_layers=2, species_text=poll_text).to(dev)        # tree2: pollinator phylogeny
-    W = torch.nn.Parameter(torch.eye(a.d_model, device=dev) + 0.01 * torch.randn(a.d_model, a.d_model, device=dev))
-
-    def embeds(refine_plant, refine_poll):
-        Pm = test if refine_plant else None                     # hide held-out plants' seed -> reconstruct from relatives
-        Qm = qtest if (refine_poll and a.bidir_mask) else None   # hide held-out pollinators' seed -> reconstruct from relatives
-        P = plant(mask=Pm) if refine_plant else plant._seed()
-        Q = poll(mask=Qm) if refine_poll else poll._seed()
-        return P, Q
-
-    params = list(plant.parameters()) + list(poll.parameters()) + [W]
-    opt = torch.optim.Adam(params, lr=a.lr)
-
     qcol = qtest if a.bidir_mask else None                      # bidirectional: metric measures held-out plant x held-out pollinator
-    with torch.no_grad():                                       # untouched-seed baseline (no refinement, head=identity-ish)
-        Ps, Qs = plant._seed(), poll._seed()
-        seed_ap = interaction_ap(Ps, Qs, torch.eye(a.d_model, device=dev), Pmap, Ptgt, test, qcol=qcol)
 
-    t0 = time.time(); last = float("nan")
-    for step in range(a.steps):                                # train the bilinear interaction head + both graphs
-        # rule 27/25: also mask a fraction of TRAIN plants -> recover their interactions from relatives
-        mask = ((torch.rand(N, device=dev) < a.mask_frac) & train) | test if not a.no_mask else test
-        P = plant(mask=mask)
-        if a.bidir_mask:                                        # rule-27 both-ways: also mask a fraction of TRAIN pollinators
-            qmask = ((torch.rand(Nq, device=dev) < a.mask_frac) & qtrain) | qtest if not a.no_mask else qtest
-            Q = poll(mask=qmask)
-        else:
-            Q = poll()
-        logits = (P[Pmap] @ W) @ Q.t()                          # [Np, Nq]
-        sel = train[Pmap]                                       # supervise on TRAIN plants only (held-out never seen)
-        if a.bidir_mask:                                        # ...and TRAIN pollinators only (held-out pollinators never supervised)
-            loss = F.binary_cross_entropy_with_logits(logits[sel][:, qtrain], Ptgt[sel][:, qtrain])
-        else:
-            loss = F.binary_cross_entropy_with_logits(logits[sel], Ptgt[sel])
-        if not torch.isfinite(loss):
-            print(f"  DIVERGED (nan) at step {step}"); break
-        opt.zero_grad(); loss.backward()
-        torch.nn.utils.clip_grad_norm_(params, 1.0)
-        opt.step(); last = loss.item()
+    def fit_two_tree(plant_tree, plant_tip_row):
+        """Fit one clean arm through the editable mechanism and score it with the fixed evaluator."""
+        (plant, poll, interaction, last_loss,
+         initial_plant_seed, initial_pollinator_seed) = train_interaction_graphs(
+            E1, poll_text, plant_tree, plant_tip_row, poll_dist, Pmap, Ptgt,
+            train, test, qtrain, qtest, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+            run_seed=a.seed, bidirectional_mask=a.bidir_mask, no_mask=a.no_mask)
+
+        def embeds(refine_plant, refine_poll):
+            plant_mask = test if refine_plant else None
+            poll_mask = qtest if (refine_poll and a.bidir_mask) else None
+            plant_rep = plant(mask=plant_mask) if refine_plant else plant._seed()
+            poll_rep = poll(mask=poll_mask) if refine_poll else poll._seed()
+            return plant_rep, poll_rep
+
+        with torch.no_grad():
+            p2, q2 = embeds(True, True)
+            p1, q1 = embeds(True, False)
+            p0, q0 = embeds(False, False)
+            return {
+                "two_tree": interaction_ap(p2, q2, interaction, Pmap, Ptgt, test, qcol=qcol),
+                "one_tree": interaction_ap(p1, q1, interaction, Pmap, Ptgt, test, qcol=qcol),
+                "no_tree": interaction_ap(p0, q0, interaction, Pmap, Ptgt, test, qcol=qcol),
+                "seed": interaction_ap(initial_plant_seed, initial_pollinator_seed,
+                                       torch.eye(a.d_model, device=dev),
+                                       Pmap, Ptgt, test, qcol=qcol),
+                "loss": last_loss,
+            }
+
+    t0 = time.time()
+    real = fit_two_tree(tree, tip_row)
     dt = time.time() - t0
-
-    with torch.no_grad():
-        P2, Q2 = embeds(True, True);  two_tree = interaction_ap(P2, Q2, W, Pmap, Ptgt, test, qcol=qcol)
-        P1, Q1 = embeds(True, False); one_tree = interaction_ap(P1, Q1, W, Pmap, Ptgt, test, qcol=qcol)
-        P0, Q0 = embeds(False, False); no_tree = interaction_ap(P0, Q0, W, Pmap, Ptgt, test, qcol=qcol)
+    two_tree, one_tree = real["two_tree"], real["one_tree"]
+    no_tree, seed_ap, last = real["no_tree"], real["seed"], real["loss"]
     cross = two_tree - one_tree
     print(f"=== BIOLOGICAL encoder (standalone, rule-27 TWO-TREE) | plants={N} interacting={Pmap.numel()} "
           f"pollinators={Nq} held-out={int(test.sum())} ===")
@@ -325,7 +320,29 @@ def run_interaction(a, dev):
           f"one-tree(plant only) {one_tree:.4f} | TWO-TREE {two_tree:.4f}")
     print(f"  cross_tree_gain (two-tree - one-tree) {cross:+.4f}   bio_gain (two-tree - seed-only) {two_tree - seed_ap:+.4f}")
     print(f"  [profile] final_bce={last:.5f}  {a.steps} steps in {dt:.1f}s ({dt/max(a.steps,1)*1000:.0f} ms/step)")
-    return {"bio_gain": two_tree - seed_ap, "cross_tree_gain": cross, "two_tree_ap": two_tree,
+
+    nulls = {}
+    if not a.no_control:
+        for label, ntree, ntip in null_family(E1, tree, tip_row, draws=a.control_draws):
+            nulls[label] = fit_two_tree(ntree, ntip)["two_tree"]
+            print(f"  [control] {label:32s} {nulls[label]:.4f}", flush=True)
+    fair, best_label, best_null = nulltree_fair_gain(two_tree, nulls)
+    if fair is not None:
+        print(f"  vs null-tree (FAIR) {fair:+.4f}   strongest null: {best_label} {best_null:.4f}")
+    declare(capability="pollinator_transfer",
+            mode=f"TWO-TREE(poll_dist={a.poll_dist},bidir={a.bidir_mask})",
+            metric="interaction_micro_ap", value=two_tree, split="species-random",
+            gains={"vs null-tree": fair, "vs seed": two_tree - seed_ap},
+            baselines={"seed": seed_ap, "one-tree": one_tree, "no-tree": no_tree, **nulls,
+                       **({"null-tree/best": best_null} if best_null is not None else {})},
+            diagnostic=(fair is None),
+            diagnostic_reason=("--no_control: no null-tree baseline, so there is no fair gain"
+                               if fair is None else ""),
+            seed_score=seed_ap, cross_tree_gain=cross, n_plants=N, n_pollinators=Nq,
+            interacting=int(Pmap.numel()), held_out=int(test.sum()), strongest_null=best_label,
+            seconds=dt)
+    return {"bio_gain": two_tree - seed_ap, "fair_gain": fair, "cross_tree_gain": cross,
+            "two_tree_ap": two_tree, "null_scores": nulls,
             "one_tree_ap": one_tree, "seed_ap": seed_ap, "no_tree_ap": no_tree, "steps": a.steps, "seconds": dt}
 
 
@@ -353,8 +370,23 @@ def main(argv=None):
     ap.add_argument("--bidir_mask", action="store_true")        # rule-27 both-ways: also hold out+mask a fraction of pollinators, recover via pollinator relatives; metric = held-out plant x held-out pollinator
     ap.add_argument("--covis_weighted", action="store_true")    # covis edges from log1p visitation-FREQUENCY mass (marg_poll_frq) not binary adjacency -> richer seed-orthogonal 2nd tree
     ap.add_argument("--device", default="cuda")
+    # THE FAIR CONTROL (nulltree.py). On by default: a run without it measures the operator against its
+    # own input, which is the ablation this loop mistook for a control for its whole history.
+    ap.add_argument("--no_control", action="store_true",
+                    help="skip the null-tree family — screens fast, but the result is DIAGNOSTIC and can never record")
+    ap.add_argument("--control_draws", type=int, default=FAIR_CONTROL_DRAWS,
+                    help="tip-label permutations in the null family (the seed-dendrogram is always added)")
+    ap.add_argument("--result-json", dest="result_json", default="",
+                    help="write the ProbeResult here for the board to gate")
     a = ap.parse_args(argv)
     dev = a.device if torch.cuda.is_available() else "cpu"
+    _set_result_sink(a.result_json, "", PROTOCOL, a, {
+        "objective": a.objective, "d_model": a.d_model, "steps": a.steps, "mask_frac": a.mask_frac,
+        "lr": a.lr, "holdout": a.holdout, "operator": "latent-clade", "supervised": a.supervised,
+        "no_recon": a.no_recon, "vision_seed": a.vision_seed, "fuse_seed": a.fuse_seed,
+        "random_seed_text": a.random_seed_text, "control_draws": a.control_draws,
+        "train_encoder": True,
+    })
 
     if a.objective == "interaction":                            # rule-27 plant<->pollinator bilinear across two trees (additive, isolated path)
         return run_interaction(a, dev)
@@ -369,9 +401,6 @@ def main(argv=None):
     g = torch.Generator(device="cpu").manual_seed(a.seed)
     test = (torch.rand(N, generator=g) < a.holdout).to(dev)   # held-out species (same-family relatives stay in train)
 
-    graph = SpeciesGraph(N, a.d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
-                         species_text=E1).to(dev)              # seed = probe(E1) + free ; refined by the tree
-
     # objective: family (default, single hard label) OR trait (functional-trait axis the seed may not saturate)
     trait_kind = None
     if a.objective == "trait":
@@ -384,71 +413,70 @@ def main(argv=None):
             return nn_family_acc(emb, fam_id, test)
         head_out = int(fam_id.max().item()) + 1
 
-    fam_head = torch.nn.Linear(a.d_model, head_out).to(dev) if a.supervised else None
-    params = list(graph.parameters()) + (list(fam_head.parameters()) if fam_head is not None else [])
-    opt = torch.optim.Adam(params, lr=a.lr)
-
-    with torch.no_grad():
-        seed = graph._seed().detach()
-    seed_acc = score(seed)
+    def fit(tree_buf, tip_row_):
+        """Fit and score one arm; the editable trainer is identical for real and null trees."""
+        target = trait_Y if a.objective == "trait" else fam_id
+        observed = trait_obs if a.objective == "trait" else None
+        seed_rep, refined_rep, refined_impute, movement, last_loss = train_graph_family(
+            E1, tree_buf, tip_row_, test, dev, a.d_model, a.steps, a.mask_frac, a.lr,
+            run_seed=a.seed, supervised=a.supervised, no_recon=a.no_recon,
+            sup_graph_only=a.sup_graph_only, sup_masked=a.sup_masked, sup_weight=a.sup_weight,
+            target_kind=(trait_kind or "cat"), target=target, target_obs=observed,
+            target_out=head_out)
+        return {"seed": score(seed_rep), "rep": score(refined_rep),
+                "impute": score(refined_impute), "move": movement, "loss": last_loss}
 
     t0 = time.time()
-    last_loss = float("nan")
-    for step in range(a.steps):                                # rule 25: mask TRAIN species, reconstruct from relatives
-        mask = (torch.rand(N, device=dev) < a.mask_frac) & (~test)
-        if not mask.any():
-            continue
-        refined = graph(mask=mask)
-        target = graph._seed().detach()
-        loss = (1.0 - F.cosine_similarity(refined[mask], target[mask], dim=-1)).mean()  # scale-invariant (family-NN uses direction)
-        if a.no_recon:
-            loss = loss * 0.0                                  # train ONLY the CE term -> seed untouched, clean bio_gain
-        if fam_head is not None:                               # co-train: make the REFINED emb family-separable (TRAIN only)
-            if a.sup_graph_only:                               # CE grads shape ONLY the operator: run it on a DETACHED seed
-                h0 = graph._seed().detach()
-                h0 = torch.where(mask.unsqueeze(-1), graph.mask_token, h0)
-                sup_refined = graph.clade(h0)                  # operator on frozen seed -> only clade/tree params get CE grad
-            else:
-                sup_refined = refined
-            if a.sup_masked:                                   # supervise the MASKED-and-reconstructed TRAIN species (== held-out imputation task)
-                sel = mask                                     # these tips saw mask_token -> reconstructed purely from relatives
-            else:
-                sel = ~test                                    # all TRAIN species (keep their own seed)
-            if a.objective == "trait":
-                sel = sel & trait_obs                          # only species with an observed trait carry a target
-                if sel.any():
-                    logits = fam_head(sup_refined[sel])
-                    if trait_kind == "cat":
-                        sup_loss = F.cross_entropy(logits, trait_Y[sel])
-                    else:                                      # multi-label -> BCE over the label vector
-                        sup_loss = F.binary_cross_entropy_with_logits(logits, trait_Y[sel])
-                    loss = loss + a.sup_weight * sup_loss
-            else:
-                logits = fam_head(sup_refined[sel])            # classify family from the refined embedding
-                loss = loss + a.sup_weight * F.cross_entropy(logits, fam_id[sel])
-        if not torch.isfinite(loss):
-            print(f"  DIVERGED (nan) at step {step}"); break
-        opt.zero_grad(); loss.backward()
-        torch.nn.utils.clip_grad_norm_(graph.parameters(), 1.0)
-        opt.step(); last_loss = loss.item()
+    real = fit(tree, tip_row)
+    seed_acc, rep_acc, impute_acc, move = real["seed"], real["rep"], real["impute"], real["move"]
 
-    with torch.no_grad():
-        seed = graph._seed().detach()
-        refined_impute = graph(mask=test)                      # IMPUTATION: held-out species from relatives (rule 25)
-        refined_rep = graph(mask=None)                         # REPRESENTATION: all species refined (no mask)
-        seed_acc = score(seed)
-        impute_acc = score(refined_impute)
-        rep_acc = score(refined_rep)
-        move = (refined_rep - seed).norm(dim=-1).mean().item()
+    # THE FAIR CONTROL. Same operator, same budget, a tree that is not the phylogeny — see nulltree.py.
+    nulls = {}
+    if not a.no_control:
+        for label, ntree, ntip in null_family(E1, tree, tip_row, draws=a.control_draws):
+            nulls[label] = fit(ntree, ntip)["impute"]
+            print(f"  [control] {label:32s} {nulls[label]:.4f}", flush=True)
+    fair, best_label, best_null = nulltree_fair_gain(impute_acc, nulls)
     dt = time.time() - t0
+
     metric = ("trait[%s]-NN %s" % (a.trait_key, "AP" if trait_kind == "multi" else "acc")) if a.objective == "trait" else "family-NN acc"
     print(f"=== BIOLOGICAL encoder (standalone) | N={N} in-tree={tip_row.numel()} held-out={int(test.sum())} obj={a.objective} ===")
     print(f"  {metric} | seed {seed_acc:.4f} | refined-representation {rep_acc:.4f} | imputed-from-relatives {impute_acc:.4f}")
-    print(f"  {'trait_gain' if a.objective=='trait' else 'bio_gain'} (representation) {rep_acc - seed_acc:+.4f}   (imputation) {impute_acc - seed_acc:+.4f}")
-    print(f"  [profile] refined_seed_norm={move:.4f}  final_recon_mse={last_loss:.5f}")
-    print(f"  {a.steps} steps in {dt:.1f}s ({dt/max(a.steps,1)*1000:.0f} ms/step)")
-    return {"bio_gain": rep_acc - seed_acc, "imputation_gain": impute_acc - seed_acc, "seed_acc": seed_acc,
-            "trait_gain": rep_acc - seed_acc, "refined_seed_norm": move, "steps": a.steps, "seconds": dt}
+    print(f"  vs seed (NOT fair, the old bio_gain) {rep_acc - seed_acc:+.4f}   (imputation) {impute_acc - seed_acc:+.4f}")
+    if fair is not None:
+        print(f"  vs null-tree (FAIR) {fair:+.4f}   strongest null: {best_label} {best_null:.4f}")
+    print(f"  [profile] refined_seed_norm={move:.4f}  final_recon_mse={real['loss']:.5f}")
+    print(f"  {a.steps} steps in {dt:.1f}s")
+
+    metric_name = (f"trait_{a.trait_key}_nn_" + ("ap" if trait_kind == "multi" else "acc")
+                   if a.objective == "trait" else "family_nn_accuracy")
+    baselines = {"seed": seed_acc, **nulls}
+    if best_null is not None:
+        baselines["null-tree/best"] = best_null
+    declare(
+        capability=("family_from_phylo" if a.objective == "family" else ""),
+        mode=f"MASK-RECON(latent-clade,mask={a.mask_frac})",
+        metric=metric_name, value=impute_acc, split="species-random",
+        # The labels are written out LITERALLY, not assembled into a variable first, because the audit
+        # reads this call statically to check that exactly one fair label is published. A computed dict
+        # is invisible to it, and an invisible fair label is how a board silently gates on the wrong
+        # baseline. `vs null-tree` is None when --no_control is set; fair_gain skips None entries, and
+        # the run is declared diagnostic below so it cannot record anyway.
+        gains={"vs null-tree": fair, "vs seed": impute_acc - seed_acc},
+        baselines=baselines,
+        # A run with the control switched off measures the encoder against its own input and nothing
+        # else. It is a legitimate quick screen, but it can never set a record, and saying so here is
+        # better than letting it onto the board against a baseline that is not one.
+        diagnostic=(fair is None or a.objective != "family"),
+        diagnostic_reason=("--no_control: no null-tree baseline, so there is no fair gain" if fair is None
+                           else f"objective {a.objective!r} is not a board capability" if a.objective != "family"
+                           else ""),
+        seed_score=seed_acc, imputation=impute_acc, refined_seed_norm=move,
+        n_species=N, in_tree=int(tip_row.numel()), held_out=int(test.sum()),
+        control_members=sorted(nulls), seconds=dt)
+    return {"bio_gain": impute_acc - seed_acc, "fair_gain": fair, "imputation_gain": impute_acc - seed_acc,
+            "seed_acc": seed_acc, "null_scores": nulls,
+            "refined_seed_norm": move, "steps": a.steps, "seconds": dt}
 
 
 if __name__ == "__main__":

@@ -22,10 +22,13 @@ from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import
 )
 
 
-def train_graph(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, mask_frac, lr, impute_steps):
+def train_graph(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, mask_frac, lr,
+                impute_steps, *, run_seed=None):
     """Phylo-refine one seed via the latent-clade operator (rule-25 mask-reconstruct). Identical protocol for
     every seed source. `impute_steps`>0 uses that many extra masked-imputation refinement passes at eval for
     the held-out species (push imputation-from-relatives, since pure-vision single-pass imputation was net-neg)."""
+    if run_seed is not None:
+        torch.manual_seed(run_seed)
     N = seed.shape[0]
     graph = SpeciesGraph(N, d_model, operator="latent-clade", tree=tree, tip_row=tip_row,
                          species_text=seed).to(dev)
@@ -47,6 +50,130 @@ def train_graph(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, ma
         for _ in range(max(0, impute_steps - 1)):   # extra imputation refinement rounds for the held-out set
             imp = graph(mask=test)
     return s, rep, imp
+
+
+def train_graph_family(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, mask_frac, lr,
+                       *, run_seed=0, supervised=False, no_recon=False, sup_graph_only=False,
+                       sup_masked=False, sup_weight=1.0, target_kind="cat", target=None,
+                       target_obs=None, target_out=None):
+    """Fit the standalone family/trait candidate and return its three representations.
+
+    The fixed probe owns the split, target, budget and scoring. This editable function owns the
+    mechanism used to fit the candidate, including masked reconstruction and the optional supervised
+    auxiliary objective. Re-seeding here makes the real tree and every null-tree arm start from the
+    same parameters and consume the same mask stream.
+    """
+    torch.manual_seed(run_seed)
+    n_species = seed.shape[0]
+    graph = SpeciesGraph(n_species, d_model, operator="latent-clade", tree=tree,
+                         tip_row=tip_row, species_text=seed).to(dev)
+    head = torch.nn.Linear(d_model, int(target_out)).to(dev) if supervised else None
+    params = list(graph.parameters()) + (list(head.parameters()) if head is not None else [])
+    opt = torch.optim.Adam(params, lr=lr)
+    last_loss = float("nan")
+
+    for _ in range(steps):
+        mask = (torch.rand(n_species, device=dev) < mask_frac) & (~test)
+        if not mask.any():
+            continue
+        refined = graph(mask=mask)
+        seed_target = graph._seed().detach()
+        loss = (1.0 - F.cosine_similarity(refined[mask], seed_target[mask], dim=-1)).mean()
+        if no_recon:
+            loss = loss * 0.0
+
+        if head is not None:
+            if sup_graph_only:
+                h0 = graph._seed().detach()
+                h0 = torch.where(mask.unsqueeze(-1), graph.mask_token, h0)
+                supervised_rep = graph.clade(h0)
+            else:
+                supervised_rep = refined
+            selected = mask if sup_masked else ~test
+            if target_obs is not None:
+                selected = selected & target_obs
+            if selected.any():
+                logits = head(supervised_rep[selected])
+                if target_kind == "cat":
+                    supervised_loss = F.cross_entropy(logits, target[selected])
+                else:
+                    supervised_loss = F.binary_cross_entropy_with_logits(logits, target[selected])
+                loss = loss + sup_weight * supervised_loss
+
+        if not torch.isfinite(loss):
+            break
+        opt.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(params, 1.0)
+        opt.step()
+        last_loss = loss.item()
+
+    with torch.no_grad():
+        seed_rep = graph._seed().detach()
+        representation = graph(mask=None)
+        imputation = graph(mask=test)
+        movement = (representation - seed_rep).norm(dim=-1).mean().item()
+    return seed_rep, representation, imputation, movement, last_loss
+
+
+def train_interaction_graphs(plant_seed: torch.Tensor, pollinator_seed: torch.Tensor,
+                             plant_tree, plant_tip_row, pollinator_distance: torch.Tensor,
+                             plant_rows: torch.Tensor, interaction_targets: torch.Tensor,
+                             train_plants: torch.Tensor, test_plants: torch.Tensor,
+                             train_pollinators: torch.Tensor, test_pollinators: torch.Tensor,
+                             dev, d_model, steps, mask_frac, lr, *, run_seed=0,
+                             bidirectional_mask=False, no_mask=False):
+    """Fit the editable two-tree interaction mechanism from a clean deterministic start.
+
+    The fixed evaluator supplies the split, targets and budget and scores the returned models. Calling
+    this function independently for the real phylogeny and each null guarantees that neither the
+    pollinator graph nor the bilinear head carries state between arms.
+    """
+    torch.manual_seed(run_seed)
+    plant = SpeciesGraph(plant_seed.shape[0], d_model, operator="latent-clade",
+                         tree=plant_tree, tip_row=plant_tip_row,
+                         species_text=plant_seed).to(dev)
+    pollinator = SpeciesGraph(pollinator_seed.shape[0], d_model, operator="ou-attention",
+                              phylo_distance=pollinator_distance, n_heads=4, n_layers=2,
+                              species_text=pollinator_seed).to(dev)
+    interaction = torch.nn.Parameter(
+        torch.eye(d_model, device=dev) + 0.01 * torch.randn(d_model, d_model, device=dev))
+    params = list(plant.parameters()) + list(pollinator.parameters()) + [interaction]
+    opt = torch.optim.Adam(params, lr=lr)
+    last_loss = float("nan")
+    with torch.no_grad():
+        initial_plant_seed = plant._seed().detach().clone()
+        initial_pollinator_seed = pollinator._seed().detach().clone()
+
+    for _ in range(steps):
+        plant_mask = test_plants if no_mask else (
+            ((torch.rand(plant_seed.shape[0], device=dev) < mask_frac) & train_plants) | test_plants)
+        plant_rep = plant(mask=plant_mask)
+        if bidirectional_mask:
+            pollinator_mask = test_pollinators if no_mask else (
+                ((torch.rand(pollinator_seed.shape[0], device=dev) < mask_frac)
+                 & train_pollinators) | test_pollinators)
+            pollinator_rep = pollinator(mask=pollinator_mask)
+        else:
+            pollinator_rep = pollinator()
+        logits = (plant_rep[plant_rows] @ interaction) @ pollinator_rep.t()
+        selected = train_plants[plant_rows]
+        if bidirectional_mask:
+            loss = F.binary_cross_entropy_with_logits(
+                logits[selected][:, train_pollinators],
+                interaction_targets[selected][:, train_pollinators])
+        else:
+            loss = F.binary_cross_entropy_with_logits(logits[selected], interaction_targets[selected])
+        if not torch.isfinite(loss):
+            break
+        opt.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(params, 1.0)
+        opt.step()
+        last_loss = loss.item()
+
+    return (plant, pollinator, interaction, last_loss,
+            initial_plant_seed, initial_pollinator_seed)
 
 
 def _oot_tree(cache, gidx, tip_row, keep_mask):

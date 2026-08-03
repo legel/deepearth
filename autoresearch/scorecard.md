@@ -16,7 +16,7 @@ a drifted scorecard is worse than none.
 | loop | numbers | meaning | status |
 |---|---|---|---|
 | **spacetime** — Earth4D probe | [`probes/spacetime/program/scorecard.txt`](probes/spacetime/program/scorecard.txt) | [`probes/spacetime/program/scorecard.md`](probes/spacetime/program/scorecard.md) | 7 capabilities probed, 6 earning a positive fair gain |
-| **biological** — biological probe | [`probes/biological/program/scorecard.txt`](probes/biological/program/scorecard.txt) | — | not yet run under a contract; no records |
+| **biological** — biological probe | [`probes/biological/program/scorecard.txt`](probes/biological/program/scorecard.txt) | [`probes/biological/program/scorecard.md`](probes/biological/program/scorecard.md) | 4 capabilities under contract (`v1-nulltree`), none probed yet |
 | **main** — fusion, runs last | [`main/program/scorecard.txt`](main/program/scorecard.txt) | [`main/program/BENCHMARKS.md`](main/program/BENCHMARKS.md) | 36 benchmarks, arithmetic 0.6153 |
 
 Programs and rules: [`README.md`](README.md) · [`science.md`](science.md) ·
