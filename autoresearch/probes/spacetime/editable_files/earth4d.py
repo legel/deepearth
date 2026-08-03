@@ -416,28 +416,30 @@ class Earth4D(nn.Module):
             base_resolution=temporal_base_res, log2_hashmap_size=temporal_log2_hashmap_size,
             desired_resolution=xzt_max_res, enable_learned_probing=enable_learned_probing,
             probing_range=probing_range, index_codebook_size=index_codebook_size)
-        # MULTISCALE SPHERICAL RIDGELETS.  Twelve trainable great-circle directions each emit a coarse
-        # signed half-space plus medium and fine boundary bands.  The 36-D static width is unchanged,
-        # but family ranges may now express continental sides, broad ecotones, and sharp regional fronts
-        # independently.  Deterministic Fibonacci initialization consumes no RNG.
-        if self.spatial_dim != 36:
-            raise ValueError("spherical ridgelet hybrid requires the production 36-D spatial block")
-        ridgelet_index = torch.arange(12, dtype=torch.float32)
-        ridgelet_z = 1.0 - 2.0 * (ridgelet_index + 0.5) / 12.0
-        ridgelet_angle = ridgelet_index * (math.pi * (3.0 - math.sqrt(5.0)))
-        ridgelet_radius = torch.sqrt((1.0 - ridgelet_z.square()).clamp_min(0.0))
-        ridgelet_normals = torch.stack([ridgelet_radius * torch.cos(ridgelet_angle),
-                                        ridgelet_radius * torch.sin(ridgelet_angle),
-                                        ridgelet_z], dim=-1)
-        self.ridgelet_normals = nn.Parameter(ridgelet_normals)
-        self.ridgelet_sharpness_logits = nn.Parameter(torch.zeros(12))
-        # One encoder must resolve local species cells AND broad family fronts. The octahedral hash atlas
-        # remains the base representation; ridgelets enter as a location-dependent residual in the same
-        # 36 channels. Zero initialization makes the starting function exactly the confirmed local atlas,
-        # while gradients immediately reach the gate and can recruit front structure where it is useful.
-        self.spatial_front_gate = nn.Linear(self.spatial_dim * 2, self.spatial_dim)
-        nn.init.zeros_(self.spatial_front_gate.weight)
-        nn.init.zeros_(self.spatial_front_gate.bias)
+        # MULTISCALE SPHERICAL RIDGELETS.  These belong to the absolute spatial field.  A relative-only
+        # Earth4D never calls _encode_spatial and must not inherit the production absolute-width contract.
+        # The production absolute path remains fixed at 36 channels: twelve trainable great-circle
+        # directions each emit a coarse signed half-space plus medium and fine boundary bands.
+        self.enable_absolute = enable_absolute
+        if self.enable_absolute:
+            if self.spatial_dim != 36:
+                raise ValueError("spherical ridgelet hybrid requires the production 36-D spatial block")
+            ridgelet_index = torch.arange(12, dtype=torch.float32)
+            ridgelet_z = 1.0 - 2.0 * (ridgelet_index + 0.5) / 12.0
+            ridgelet_angle = ridgelet_index * (math.pi * (3.0 - math.sqrt(5.0)))
+            ridgelet_radius = torch.sqrt((1.0 - ridgelet_z.square()).clamp_min(0.0))
+            ridgelet_normals = torch.stack([ridgelet_radius * torch.cos(ridgelet_angle),
+                                            ridgelet_radius * torch.sin(ridgelet_angle),
+                                            ridgelet_z], dim=-1)
+            self.ridgelet_normals = nn.Parameter(ridgelet_normals)
+            self.ridgelet_sharpness_logits = nn.Parameter(torch.zeros(12))
+            # One encoder must resolve local species cells AND broad family fronts. The octahedral hash atlas
+            # remains the base representation; ridgelets enter as a location-dependent residual in the same
+            # 36 channels. Zero initialization makes the starting function exactly the confirmed local atlas,
+            # while gradients immediately reach the gate and can recruit front structure where it is useful.
+            self.spatial_front_gate = nn.Linear(self.spatial_dim * 2, self.spatial_dim)
+            nn.init.zeros_(self.spatial_front_gate.weight)
+            nn.init.zeros_(self.spatial_front_gate.bias)
         # AUTONOMOUS LATENT DYNAMICS.  Pair the 108 coefficient-field channels into complex modes whose
         # learned rotation and bounded growth/decay form an exact continuous-time semigroup.  Unlike three
         # unrelated polynomial multipliers, advancing a mode by dt twice is identical to advancing by 2dt.
@@ -448,7 +450,6 @@ class Earth4D(nn.Module):
         self.koopman_growth = nn.Parameter(torch.zeros(self.koopman_pairs))
         self.koopman_frequency = nn.Parameter(torch.zeros(self.koopman_pairs))
         # a relative-only field never reads the four absolute projections, so it can opt out of carrying them
-        self.enable_absolute = enable_absolute
         if not enable_absolute:
             self.xyz_encoder = self.xyt_encoder = self.yzt_encoder = self.xzt_encoder = None
 
