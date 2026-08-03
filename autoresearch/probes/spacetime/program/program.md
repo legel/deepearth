@@ -11,7 +11,7 @@ the research doctrine in a separate maintenance task.
 
 ### The only editable source
 
-Edit only `autoresearch/probes/spacetime/editable_files/**`.
+Edit only `autoresearch/probes/spacetime/editable_files/earth4d.py`, its `lib/**`, or its hash kernel.
 
 Everything inside that surface is fair game when required by the hypothesis: representation, objective,
 data loader, channel, optimizer behavior, or causal mechanism. One experiment is one coherent hypothesis
@@ -23,6 +23,7 @@ idea.
 The following are categorically read-only in this loop, for every reason:
 
 - `autoresearch/probes/spacetime/harness.py`
+- `autoresearch/probes/spacetime/probe.py`
 - `autoresearch/scoring/**`, including `definitions.py`
 - tests outside `editable_files/**`
 - protocol, graduation, scorecard, and record-management code
@@ -122,7 +123,7 @@ LOOP FOREVER:
 2. Read current insights for the declared capability.
 3. Pick and predeclare one substantive hypothesis.
 4. Create an isolated experiment worktree/branch.
-5. Edit only `editable_files/**`.
+5. Edit only the Earth4D entrypoint or its local scientific `lib/`/hash implementation.
 6. Commit the experimental diff before running; dirty runs cannot qualify.
 7. Run one deterministic screen with `--ensue`, redirecting the full log to scratch.
 8. Read only the native result, fair control, barrier decision, and relevant diagnostics.

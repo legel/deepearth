@@ -65,17 +65,16 @@ survives its own validation is what earns a place in fusion. So a probe loop's j
 aggregate; it is to recover a real signal on one capability and prove the signal is the encoder's, not
 borrowed from a frozen pretrained embedding.
 
-Every loop has the same four directories, so scope is never ambiguous:
+Every loop keeps its fixed judge separate from its editable science, so scope is never ambiguous:
 
 ```
 autoresearch/<loop>/
   program/                the contract: objective, scorecard, what counts as evidence
+  harness.py or harness/  fixed runner, splits, controls, metrics, and records
+  probe.py                fixed capability validation where applicable
   editable_files/
-     harness.py           the loop itself — one file (spacetime is the reference shape)
-     probe.py             what gets computed
-     lib/                 mechanisms the probe calls
-     data/                the DATA lever: sources added, moved and removed
-                          based on the signal they provide
+     earth4d.py or phylogenomic.py   public science entrypoint
+     lib/                 modular scientific mechanisms composed by that entrypoint
   records/                harness-written board, traces, ledgers — never hand-edited
 ```
 

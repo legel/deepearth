@@ -23,7 +23,8 @@ score:
 
 
 The agent picks **one capability from Layer 1, with intention**, declares it as `--metric`, and may change
-anything required by one coherent hypothesis **inside `editable_files/**` only**. The harness, scoring,
+anything required by one coherent hypothesis in the Earth4D entrypoint, its `lib/**`, or hash kernel.
+The fixed probe, harness, scoring,
 definitions, tests, protocol, records, and prepared data remain read-only. The harness also enforces that
 the run still measures **the same thing**:
 
@@ -123,7 +124,7 @@ How a record is earned:
 |---|---|
 | beats the standing record by more than the noise barrier | 2% of the record, floor 0.002, and 2σ once ≥3 seeds |
 | like-for-like | same capability, mode, split, shard count and protocol |
-| from a clean tree | the `editable_files/**` diff IS the experiment; a dirty tree makes it unrecoverable |
+| from a clean tree | the Earth4D/`lib/**` diff IS the experiment; a dirty tree makes it unrecoverable |
 | published | `--ensue` on every run, win or dead-end |
 
 ## Layer 3 — excluded, with reason

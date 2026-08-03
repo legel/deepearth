@@ -51,7 +51,8 @@ autoresearch/
     spacetime/          Earth4D space-time encoder
       harness.py          this probe's own judge: contract, registry, gate, ledger, publish
       determinism.py      attributes the trained path's nondeterminism
-      editable_files/     SCIENCE: earth4d.py, hashencoder/, probe.py, lib/
+      probe.py             fixed evaluation implementation
+      editable_files/     SCIENCE: earth4d.py, hashencoder/, lib/
       program/  records/
     biological/         biological encoder — same shape
 
@@ -84,7 +85,7 @@ that move it · the probe capability that estimates it cheaply.
 ## Scope — what an experiment may edit
 
 ```
-   IN SCOPE      <loop>/editable_files/**    the model, the objective, the data, the config
+   IN SCOPE      <loop>/editable_files/**    public model entrypoint + modular scientific lib
    OUT OF SCOPE  harness/**                  the shared judge
                  <loop>/harness*             the loop's own judge
                  <loop>/records/**           the board and its ledgers
@@ -102,8 +103,8 @@ board that number appears on: bump the protocol, and say so.
 | loop | program/ | harness (the judge) | editable_files/ (the science) | records/ |
 |---|---|---|---|---|
 | `main/` | `autoresearch.md`, `BENCHMARKS.md`, `CHAMPION_REPORT.md`, `audit.md`, `GRADUATION_BLUEPRINT.md` | `evaluate.py`, `champion_report.py`, `hooks.py`, `score.py`, `run_experiment.py` | `fusion/fusion.py`, `train.py`, `deepcal.yaml`, `champion.yaml`, `lib/{data,prepare,recipes}` | `champion_scores.json`, `graduation.jsonl` |
-| `probes/spacetime/` | `program.md`, `scorecard.md`, `scorecard.txt`, `box-operations.md` | `harness.py`, `determinism.py` | `earth4d.py`, `hashencoder/`, `probe.py`, `lib/{recurrence,phenology,dyntargets}.py` | `records.json`, `traces/` |
-| `probes/biological/` | `program.md` | *(still inside `editable_files/harness/` — not yet split)* | `phylogenomic.py`, `lib/traitprobe.py` | — |
+| `probes/spacetime/` | `program.md`, `scorecard.md`, `scorecard.txt`, `box-operations.md` | `harness.py`, `probe.py`, `determinism.py` | package API, `earth4d.py`, `hashencoder/`, and modular `lib/` science | `records.json`, `traces/` |
+| `probes/biological/` | `program.md` | `harness/` | `phylogenomic.py`, `lib/{seeds,training}.py` | — |
 
 ## Boundaries between the loops
 
@@ -114,8 +115,8 @@ board that number appears on: bump the protocol, and say so.
   is a prediction that gets tested: *probe says capability X improved → champion re-measures B(X) → did it
   move?* Each crossing appends a row to `main/records/graduation.jsonl`, and that ledger is the only thing
   that will ever tell you whether a probe gain transfers.
-- **Each loop is independent CODE.** No loop imports a sibling. Sharing is allowed only *downward*, into
-  `harness/` — code no loop owns.
+- **Each probe is a fixed consumer of its loop's public science entrypoint.** Fusion imports those same
+  entrypoints (`earth4d.py` and `phylogenomic.py`), never probe code or their private `lib/` modules.
 - **Each loop optimizes its own metric under its own evals.** No loop is scored on another's number.
 - **No loop writes another loop's `records/`.**
 - **One program per surface.** Two definitions of the same surface means one is stale — reconcile before
