@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ship DeepEarth Improvement"
+  short_description: "Turn proven research into clean public PRs"
+  default_prompt: "Use $ship-deepearth-improvement to prepare a minimal, tested production PR against Lance’s current main branch."
