@@ -563,3 +563,133 @@ def run_field_decode(kind, coords4, rn_in, fam, test, n_fam, dev, enc=None, feat
             t5s += (logits.topk(5, -1).indices == yy[:, None]).any(-1).sum().item()
             tot += b.shape[0]
     return accs / tot, t5s / tot, tot
+class LocalCrossEraHead(nn.Module):
+    """Classifier preserving local, rather than globally collapsed, range modes."""
+
+    def __init__(self, in_dim: int, hidden: int, n_classes: int):
+        super().__init__()
+        if hidden <= 0:
+            raise ValueError("local cross-era alignment requires a positive hidden width")
+        self.trunk = nn.Sequential(nn.Linear(in_dim, hidden), nn.ReLU())
+        self.classifier = nn.Linear(hidden, n_classes)
+
+    def embed(self, x: torch.Tensor) -> torch.Tensor:
+        return self.trunk(x)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.classifier(self.embed(x))
+
+    def loss(
+        self,
+        anchor: torch.Tensor,
+        labels: torch.Tensor,
+        positive: torch.Tensor,
+        positive_rows: torch.Tensor,
+        temperature: float = 0.1,
+        max_pairs: int = 1024,
+    ) -> torch.Tensor:
+        h = self.embed(anchor)
+        classification = F.cross_entropy(self.classifier(h), labels)
+        take = min(int(max_pairs), positive.shape[0])
+        if take == 0:
+            return classification
+        rows = positive_rows[:take]
+        z = F.normalize(h[rows], dim=-1)
+        zp = F.normalize(self.embed(positive[:take]), dim=-1)
+        pair_labels = labels[rows]
+        similarity = (z @ zp.t()) / temperature
+        diagonal = torch.eye(take, dtype=torch.bool, device=anchor.device)
+        # Disconnected populations of one species are neither positives nor negatives.
+        same_species = pair_labels[:, None] == pair_labels[None, :]
+        allowed = (~same_species) | diagonal
+        target = torch.arange(take, device=anchor.device)
+        row_loss = F.cross_entropy(similarity.masked_fill(~allowed, -torch.inf), target)
+        col_loss = F.cross_entropy(similarity.t().masked_fill(~allowed.t(), -torch.inf), target)
+        return classification + 0.5 * (row_loss + col_loss)
+
+
+class OrthogonalTemporalHead(nn.Module):
+    """Classifier with norm-preserving temporal transport in its hidden state."""
+
+    def __init__(self, in_dim: int, hidden: int, n_classes: int):
+        super().__init__()
+        if hidden <= 0 or hidden % 2:
+            raise ValueError("orthogonal temporal transport requires a positive even hidden width")
+        self.trunk = nn.Sequential(nn.Linear(in_dim, hidden), nn.ReLU())
+        self.classifier = nn.Linear(hidden, n_classes)
+        # Identity initialization preserves the promoted static head at step zero.
+        self.angular_velocity = nn.Parameter(torch.zeros(hidden // 2))
+
+    def transport(self, hidden: torch.Tensor, phase: torch.Tensor) -> torch.Tensor:
+        pairs = hidden.reshape(hidden.shape[0], -1, 2)
+        centered_time = phase.to(hidden.dtype).reshape(-1, 1) - 0.5
+        angle = torch.pi * centered_time * torch.tanh(self.angular_velocity).reshape(1, -1)
+        c, s = torch.cos(angle), torch.sin(angle)
+        real, imag = pairs[..., 0], pairs[..., 1]
+        return torch.stack((c * real - s * imag, s * real + c * imag), dim=-1).flatten(1)
+
+    def forward(self, x: torch.Tensor, phase: torch.Tensor) -> torch.Tensor:
+        return self.classifier(self.transport(self.trunk(x), phase))
+
+
+def build_probe_readout(
+    in_dim: int,
+    hidden: int,
+    n_classes: int,
+    *,
+    cross_era: bool = False,
+    temporal: bool = False,
+) -> nn.Module:
+    """Build the production Earth4D readout behind the fixed probe contract.
+
+    The probe decides only which validated tensors are available. Scientific
+    experiments may change the implementation selected here without changing
+    benchmark data, optimization, or scoring code.
+    """
+    if cross_era and temporal:
+        raise ValueError("cross-era and temporal readouts are mutually exclusive")
+    if cross_era:
+        return LocalCrossEraHead(in_dim, hidden, n_classes)
+    if temporal:
+        return OrthogonalTemporalHead(in_dim, hidden, n_classes)
+    if hidden > 0:
+        return nn.Sequential(nn.Linear(in_dim, hidden), nn.ReLU(), nn.Linear(hidden, n_classes))
+    return nn.Linear(in_dim, n_classes)
+
+
+def nearest_dated_conspecific(
+    current_coords: torch.Tensor,
+    current_labels: torch.Tensor,
+    support_coords: torch.Tensor,
+    support_labels: torch.Tensor,
+    dated_rows: int,
+    chunk: int = 2048,
+) -> torch.Tensor:
+    """Map current rows to their geographically nearest dated conspecific support."""
+    if dated_rows <= 0 or dated_rows > len(support_coords):
+        raise ValueError("dated support tail is required for local cross-era pairing")
+    current = current_coords.detach().cpu().numpy()
+    current_y = current_labels.detach().cpu().numpy()
+    split = len(support_coords) - dated_rows
+    support = support_coords[split:].detach().cpu().numpy()
+    support_y = support_labels[split:].detach().cpu().numpy()
+
+    def unit(x: np.ndarray) -> np.ndarray:
+        lat = np.deg2rad(x[:, 0])
+        lon = np.deg2rad(x[:, 1])
+        return np.stack(
+            [np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)], axis=1
+        )
+
+    current_unit, support_unit = unit(current), unit(support)
+    partners = np.full(len(current), -1, dtype=np.int64)
+    for cls in np.unique(current_y):
+        current_idx = np.flatnonzero(current_y == cls)
+        support_idx = np.flatnonzero(support_y == cls)
+        if not len(support_idx):
+            continue
+        for start in range(0, len(current_idx), chunk):
+            rows = current_idx[start : start + chunk]
+            nearest = np.argmax(current_unit[rows] @ support_unit[support_idx].T, axis=1)
+            partners[rows] = split + support_idx[nearest]
+    return torch.tensor(partners, dtype=torch.long)

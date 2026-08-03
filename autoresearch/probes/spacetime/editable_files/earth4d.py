@@ -7,17 +7,48 @@ import warnings
 import math
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import Optional, Literal, Tuple, Dict, Any
+from typing import Optional, Literal, Tuple, Dict, Any, Sequence
 import torch
 import torch.nn as nn
 
 from hashencoder.hashgrid import HashEncoder
+from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence import (
+    LocalCrossEraHead,
+    OrthogonalTemporalHead,
+    build_probe_readout,
+    nearest_dated_conspecific,
+)
 
 # WGS84 ellipsoid
 WGS84_A = 6378137.0
 WGS84_F = 1.0 / 298.257223563
 WGS84_E2 = 2 * WGS84_F - WGS84_F**2
 ECEF_NORM_FACTOR = 6400000.0
+
+class SmoothGeoField(nn.Module):
+    """Smooth transferable Fourier field over latitude, longitude, elevation, and time."""
+
+    def __init__(
+        self,
+        d_model: int,
+        per_scale: int = 32,
+        sigmas: Sequence[float] = (1.0, 4.0, 16.0, 64.0),
+    ) -> None:
+        super().__init__()
+        basis = torch.cat([torch.randn(4, per_scale) * scale for scale in sigmas], dim=1)
+        self.register_buffer("B", basis)
+        self.register_buffer(
+            "coord_scale", torch.tensor([1 / 90.0, 1 / 180.0, 1 / 3000.0, 1 / 60.0])
+        )
+        n_features = 2 * per_scale * len(sigmas)
+        self.proj = nn.Sequential(
+            nn.Linear(n_features, d_model), nn.GELU(), nn.Linear(d_model, d_model)
+        )
+
+    def forward(self, coords: torch.Tensor) -> torch.Tensor:
+        projected = (coords * self.coord_scale) @ self.B * (2.0 * math.pi)
+        return self.proj(torch.cat([torch.cos(projected), torch.sin(projected)], dim=-1))
+
 
 
 def _coefficient_chart_frames() -> torch.Tensor:

@@ -563,10 +563,8 @@ MODES: Tuple[Mode, ...] = (
 # needs the file layout.
 LEVER_SITES = {
     DATA: [
-        "autoresearch/probes/spacetime/editable_files/probe.py: load_env / load_vision / load_env_species "
-        "(which channel feeds the head)",
-        "flags: --env_channels, --env_extra, --sdm_channels, --vision --vision_feats, --pheno_channel",
-        "data prep: occurrence densification, channel fusion, per-entity aggregation",
+        "autoresearch/probes/spacetime/editable_files/lib/: scientific channel transforms and objectives",
+        "new raw channels require a separate fixed-protocol maintenance change",
     ],
     ARCH: [
         "autoresearch/probes/spacetime/editable_files/earth4d.py: __init__, forward, training objective (the encoder itself)",
@@ -645,7 +643,7 @@ def _list_modes(argv=None):
 # ============================================================================================================
 
 RECORDS = LOOP / "records" / "records.json"  # the machine record (fill scorecard by breaking these)
-PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.editable_files.probe"
+PROBE_MODULE = "deepearth.autoresearch.probes.spacetime.probe"
 
 # The encoder-probeable capabilities (scorecard.md Layer 2). The objective must be one of these; the
 # probe MODE and the architecture are the agent's choice. This list and scorecard.md Layer 2/3 are one
@@ -1442,12 +1440,27 @@ def _insights(capability: str = "", ensue: bool = True) -> int:
 # the corpus does not have.
 def _channels(cap: str = "") -> int:
     import ast as _ast
-    import re as _re
-    src = (LOOP / "editable_files" / "probe.py").read_text()
-    CH = _ast.literal_eval(_re.search(r"CHANNELS = (\{.*?\n\})", src, _re.S).group(1))
-    RP = _ast.literal_eval(_re.search(r"REPAIRED = (\{.*?\n\})", src, _re.S).group(1))
-    CFG = _ast.literal_eval(_re.search(r"CONFIG = (\{.*?\n\})", src, _re.S).group(1))
-    CAP = _ast.literal_eval(_re.search(r"CAPABILITY_CONFIG = (\{.*?\n\})", src, _re.S).group(1))
+    science_sources = tuple((LOOP / "editable_files").rglob("*.py"))
+    src = "\n".join(path.read_text() for path in science_sources)
+
+    def science_literal(name):
+        """Find a uniquely declared science value without coupling to an internal filename."""
+        found = []
+        for path in science_sources:
+            tree = _ast.parse(path.read_text())
+            for node in tree.body:
+                if isinstance(node, (_ast.Assign, _ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, _ast.Assign) else [node.target]
+                    if any(isinstance(target, _ast.Name) and target.id == name for target in targets):
+                        found.append((path, _ast.literal_eval(node.value)))
+        if len(found) != 1:
+            raise RuntimeError(f"expected one editable declaration of {name}, found {[str(p) for p, _ in found]}")
+        return found[0][1]
+
+    CH = science_literal("CHANNELS")
+    RP = science_literal("REPAIRED")
+    CFG = science_literal("CONFIG")
+    CAP = science_literal("CAPABILITY_CONFIG")
     cache = Path(CFG["cache_dir"])
     if not cache.is_absolute():
         cache = REPO.parent / cache if (REPO.parent / cache).exists() else AUTORESEARCH.parent / cache

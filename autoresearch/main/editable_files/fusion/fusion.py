@@ -13,7 +13,7 @@ import torch.utils.checkpoint
 import torch.nn as nn
 import torch.nn.functional as F
 
-from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D
+from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D, SmoothGeoField
 from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import SpeciesGraph
 
 
@@ -63,29 +63,6 @@ class ManifoldField(nn.Module):
 
     def forward(self, neighbor_positions: torch.Tensor) -> torch.Tensor:
         return self.encode(neighbor_positions)
-
-
-class SmoothGeoField(nn.Module):
-    """Random Fourier Features over (lat, lon, elev, time): a smooth, continuous geo encoding that generalizes to
-    held-out locations, unlike the memorizing hash grid whose fine cells are untrained at unseen points. A transferable
-    low-frequency spatial prior complementing, not replacing, the absolute hash memory.
-    (Rahimi & Recht RFF / Tancik Fourier-features; SatCLIP's generalizing geo prior.)
-    """
-
-    def __init__(self, d_model: int, per_scale: int = 32, sigmas: Sequence[float] = (1.0, 4.0, 16.0, 64.0)):
-        super().__init__()
-        # Sigma-bank (Fourier-features): each scale is a fixed Gaussian projection giving a shift-invariant RBF kernel
-        # at that bandwidth (low sigma = broad/transferable, high = fine). Multi-scale coverage without per-cell
-        # parameters, so it generalizes to held-out locations by construction.
-        B = torch.cat([torch.randn(4, per_scale) * s for s in sigmas], dim=1)   # [4, per_scale*n_scales]
-        self.register_buffer("B", B)
-        self.register_buffer("coord_scale", torch.tensor([1 / 90.0, 1 / 180.0, 1 / 3000.0, 1 / 60.0]))  # lat°, lon°, elev m, time
-        n_features = 2 * per_scale * len(sigmas)                               # cos+sin over every scale's directions
-        self.proj = nn.Sequential(nn.Linear(n_features, d_model), nn.GELU(), nn.Linear(d_model, d_model))
-
-    def forward(self, coords: torch.Tensor) -> torch.Tensor:
-        x = (coords * self.coord_scale) @ self.B * (2.0 * math.pi)             # [B, per_scale*n_scales]
-        return self.proj(torch.cat([torch.cos(x), torch.sin(x)], dim=-1))       # [B, d_model]
 
 
 class NeighborContext(nn.Module):

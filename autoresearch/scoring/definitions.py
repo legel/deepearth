@@ -191,82 +191,76 @@ class Metric:
         return self.capability is not None
 
 
-_E4D = "probes/spacetime/editable_files/earth4d.py"
-_PROBE = "probes/spacetime/editable_files/probe.py"
-_REC = "probes/spacetime/editable_files/lib/recurrence.py"
-_PHEN = "probes/spacetime/editable_files/lib/phenology.py"
-_DYN = "probes/spacetime/editable_files/lib/dyntargets.py"
-_PHYLO = "probes/biological/editable_files/phylogenomic.py"
-_TRAIT = "probes/biological/editable_files/lib/traitprobe.py"
-_FUSION = "main/editable_files/fusion/fusion.py"
-_DATA = "main/editable_files/lib/data.py"
+_SPACETIME = "probes/spacetime/editable_files"
+_BIOLOGICAL = "probes/biological/editable_files"
+_MAIN = "main/editable_files"
 
 METRICS: Tuple[Metric, ...] = (
     # ---- the coordinate encoder earns these from space and time ---------------------------------
     Metric("B5_species_from_spacetime_top10", "species identity from bare (lat,lon,elev,t), top-10",
            rule="R1 causal autoregressive forecast; R24 dense 4D field",
-           surface=(_E4D, _PROBE, _REC), capability="species_from_spacetime",
+           surface=(_SPACETIME,), capability="species_from_spacetime",
            question="What must a coordinate become for a species to be predictable from it?"),
     Metric("B8_family_from_spacetime", "family from bare space-time, accuracy",
            rule="R1 causal autoregressive forecast; R2b relative encoder",
-           surface=(_E4D, _PROBE, _REC), capability="family_from_spacetime",
+           surface=(_SPACETIME,), capability="family_from_spacetime",
            question="Does the encoder carry structure across a forecast boundary?"),
     Metric("B1_species_from_env_top10", "species from the environment vector, top-10",
            rule="R18 all data must lift induction",
-           surface=(_DYN, _PROBE, _DATA), capability="species_from_env",
+           surface=(_SPACETIME, _MAIN), capability="species_from_env",
            question="Which environment makes a species present?"),
     Metric("B6_family_from_env", "family from environment (niche determinism), accuracy",
            rule="R18 all data must lift induction",
-           surface=(_DYN, _PROBE, _DATA), capability="family_from_env",
+           surface=(_SPACETIME, _MAIN), capability="family_from_env",
            question="Is a family's niche recoverable from environment alone?"),
     Metric("B20_community_from_env_recall", "the whole local species set from environment, recall@10",
            rule="R24 dense 4D field; R18 all data must lift",
-           surface=(_DYN, _DATA), capability="community_from_env",
+           surface=(_SPACETIME, _MAIN), capability="community_from_env",
            question="Which species co-occur here, as a set rather than one at a time?"),
     Metric("B28_flowering_peak_month_mrr", "true peak-flowering month over a 12-month sweep, MRR",
            rule="R1 causal autoregressive forecast",
-           surface=(_PHEN, _E4D), capability="flowering_peak_month",
+           surface=(_SPACETIME,), capability="flowering_peak_month",
            question="When does a plant flower, from where and when it is?"),
 
     # ---- the species graph earns these from phylogeny --------------------------------------------
     Metric("B7_family_from_phylo", "family from the phylogenomic embedding, accuracy",
            rule="R7 one embedding per species; R8 self-supervised on a dated tree",
-           surface=(_PHYLO,), question="Does the embedding preserve evolutionary structure?"),
+           surface=(_BIOLOGICAL,), question="Does the embedding preserve evolutionary structure?"),
     Metric("B56_family_phylo_graph_gain", "family accuracy gained FROM the species graph",
            rule="R29 exact O(N) two-pass OU-GP",
-           surface=(_PHYLO,), question="Does graph refinement add over the raw seed?"),
+           surface=(_BIOLOGICAL,), question="Does graph refinement add over the raw seed?"),
     Metric("B61_trait_phylo_graph_gain", "trait macro-F1 gained from the species graph",
            rule="R25 maskable phylo embedding",
-           surface=(_PHYLO, _TRAIT), question="Which traits are conserved enough to impute?"),
+           surface=(_BIOLOGICAL,), question="Which traits are conserved enough to impute?"),
     Metric("B62_mycorrhiza_phylo_graph_gain", "mycorrhiza macro-F1 gained from the species graph",
            rule="R29 exact O(N) two-pass OU-GP",
-           surface=(_PHYLO, _TRAIT), question="Is symbiosis phylogenetically conserved?"),
+           surface=(_BIOLOGICAL,), question="Is symbiosis phylogenetically conserved?"),
     Metric("B63_myco_from_species_f1", "mycorrhiza type given species identity, macro-F1",
            rule="R28 no fuzzy science",
-           surface=(_TRAIT,), question="Can symbiosis be imputed from relatives?"),
+           surface=(_BIOLOGICAL,), question="Can symbiosis be imputed from relatives?"),
     Metric("B55_pollinator_phylo_transfer_recall",
            "a plant's pollinators from its relatives' pollinators, recall@10",
            rule="R27 interactions across two trees",
-           surface=(_PHYLO, _FUSION), question="Does interaction signal travel along phylogeny?"),
+           surface=(_BIOLOGICAL, _MAIN), question="Does interaction signal travel along phylogeny?"),
     # ---- the probe->fusion bridge: the SAME quantity the probe reports, on the 799M model ----------
     # hooks.ablate_spacetime computes capability WITH Earth4D minus WITHOUT. That is `vs RFF` at
     # full-model scale. Declaring these is what lets a spacetime probe finding reach a champion score
     # at all; until now they were computed by --st-gain and dropped.
     Metric("B1_species_spacetime_gain", "species-from-env accuracy gained FROM Earth4D",
-           rule="R18 all data must lift induction", surface=(_E4D, _FUSION),
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN),
            capability="species_from_env",
            question="Does the coordinate encoder add anything the env channel does not already carry?"),
     Metric("B6_family_spacetime_gain", "family-from-env accuracy gained FROM Earth4D",
-           rule="R18 all data must lift induction", surface=(_E4D, _FUSION),
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN),
            capability="family_from_env"),
     Metric("B34_lfmc_spacetime_gain", "LFMC correlation gained FROM Earth4D",
-           rule="R18 all data must lift induction", surface=(_E4D, _FUSION)),
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
     Metric("B42_mycorrhiza_spacetime_gain", "mycorrhiza macro-F1 gained FROM Earth4D",
-           rule="R18 all data must lift induction", surface=(_E4D, _FUSION)),
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
     Metric("B51_pollinator_spacetime_gain", "pollinator recall gained FROM Earth4D",
-           rule="R18 all data must lift induction", surface=(_E4D, _FUSION)),
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
     Metric("B23_calibration_spacetime_gain", "species-posterior calibration gained FROM Earth4D",
-           rule="R18 all data must lift induction", surface=(_E4D, _FUSION)),
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
 )
 
 _BY_NAME = {m.name: m for m in METRICS}
@@ -277,8 +271,25 @@ def metric(name: str) -> Optional[Metric]:
 
 
 def metrics_for_surface(path_fragment: str) -> Tuple[Metric, ...]:
-    """Every metric a given editable file is responsible for. The routing an agent needs."""
-    return tuple(m for m in METRICS if any(path_fragment in s for s in m.surface))
+    """Every metric owned by a surface containing a matching file or directory.
+
+    Registry rows name stable editable roots, so internal science files may be
+    renamed or replaced without changing the fixed metric contract.
+    """
+    matches = {
+        str(path.relative_to(AUTORESEARCH))
+        for path in AUTORESEARCH.rglob("*")
+        if path_fragment in str(path.relative_to(AUTORESEARCH))
+    }
+    return tuple(
+        m
+        for m in METRICS
+        if any(
+            path_fragment in surface
+            or any(path == surface or path.startswith(surface + "/") for path in matches)
+            for surface in m.surface
+        )
+    )
 
 
 def metrics_for_capability(capability: str) -> Tuple[Metric, ...]:
@@ -549,7 +560,7 @@ DELETED_METHODS = ("_siren", "_causal_state", "_film_harmonics", "fit_whiten", "
 # What each loop's editable tree is allowed to weigh. CEILINGS, checked as an inequality: this repo
 # was cleaned specifically to stop file proliferation, so a directory that grows past its budget has
 # to raise the number in the same commit that grows it, where a reviewer sees it.
-EDITABLE_BUDGET = {"probes/spacetime/editable_files": 11,
+EDITABLE_BUDGET = {"probes/spacetime/editable_files": 12,
                    "probes/biological/editable_files": 12,
                    "main/editable_files": 13}
 
@@ -568,16 +579,19 @@ CORE_MODULES = ("deepearth.autoresearch.scoring.definitions",
                 "deepearth.autoresearch.probes.spacetime.harness")
 
 _E4D_REL = "probes/spacetime/editable_files/earth4d.py"
-_PROBE_REL = "probes/spacetime/editable_files/probe.py"
-# The files v5 touched. Every one gets the undefined-name sweep.
-CHANGED_FILES = (_E4D_REL, _PROBE_REL, "scoring/definitions.py", "scoring/graduation.py",
-                 "main/harness/evaluate.py", "main/harness/score.py", "probes/spacetime/harness.py",
-                 "probes/spacetime/editable_files/hashencoder/hashgrid.py",
-                 # the probe's libraries: dead code with undefined names is still a landmine, and it
-                 # is the cheapest possible signal that a module has outlived its callers.
-                 "probes/spacetime/editable_files/lib/dyntargets.py",
-                 "probes/spacetime/editable_files/lib/phenology.py",
-                 "probes/spacetime/editable_files/lib/recurrence.py")
+_PROBE_REL = "probes/spacetime/probe.py"
+# Discover the whole editable space-time surface. Autoresearch may replace or rename
+# internal science modules without teaching the fixed audit their filenames.
+_SPACETIME_PY = tuple(
+    str(path.relative_to(AUTORESEARCH))
+    for path in sorted((AUTORESEARCH / _SPACETIME).rglob("*.py"))
+    if "__pycache__" not in path.parts
+)
+CHANGED_FILES = tuple(dict.fromkeys((
+    _PROBE_REL, "scoring/definitions.py", "scoring/graduation.py",
+    "main/harness/evaluate.py", "main/harness/score.py", "probes/spacetime/harness.py",
+    *_SPACETIME_PY,
+)))
 
 
 class _Audit:
@@ -666,6 +680,14 @@ def _literal_dict(rel: str, name: str) -> Dict[str, object]:
             return {k.value: ast.literal_eval(v) for k, v in zip(n.value.keys, n.value.values)
                     if isinstance(k, ast.Constant)}
     return {}
+
+
+def _science_literal_dict(name: str) -> Dict[str, object]:
+    """Discover one editable declaration by responsibility, independent of its filename."""
+    found = [(rel, value) for rel in _SPACETIME_PY if (value := _literal_dict(rel, name))]
+    if len(found) != 1:
+        raise ValueError(f"expected one space-time declaration of {name}, found {[rel for rel, _ in found]}")
+    return found[0][1]
 
 
 def _e4d_defaults() -> Dict[str, object]:
@@ -783,7 +805,7 @@ def _audit_scoring(A: _Audit) -> None:
     try:
         from deepearth.autoresearch.probes.spacetime import harness as ph
         A.check(list(ph.FAIR_ORDER) == ["vs RFF"], "harness.FAIR_ORDER == ['vs RFF']", repr(ph.FAIR_ORDER))
-        cfg = _literal_dict(_PROBE_REL, "CONFIG")
+        cfg = _science_literal_dict("CONFIG")
         want = encoder_output_dim(cfg)
         A.check(ph.FAIR_CONTROL_DIM == want, "FAIR_CONTROL_DIM == encoder output_dim under v5 CONFIG",
                 f"control {ph.FAIR_CONTROL_DIM} vs encoder {want}")
@@ -895,7 +917,8 @@ def _audit_conciseness(A: _Audit) -> None:
 def _audit_structure(A: _Audit) -> None:
     A.section("DIRECTORY STRUCTURE — the judge and the judged stay apart")
     leaks = sorted({str(p.relative_to(AUTORESEARCH)) for p in AUTORESEARCH.rglob("editable_files/**/harness*")
-                    if "__pycache__" not in str(p) and (p.is_dir() or p.suffix == ".py")})
+                    if "__pycache__" not in str(p)
+                    and ((p.is_dir() and any(p.iterdir())) or p.suffix == ".py")})
     A.check(not leaks, "no harness/ directory or module inside any editable_files/")
     for l in leaks:
         A.bullet(f"{l} — an editable tree cannot contain its own judge")
@@ -931,14 +954,16 @@ def _audit_hygiene(A: _Audit) -> None:
 
     # Every CONFIG key the probe READS must be a key the probe DEFINES. Regex surgery deleted flags
     # and left their reads; CONFIG["enc_lr_mult"] is a KeyError on a path train_encoder=True always takes.
-    cfg = _literal_dict(_PROBE_REL, "CONFIG")
-    missing = sorted({(n.lineno, n.slice.value) for n in ast.walk(_tree(_PROBE_REL))
+    cfg = _science_literal_dict("CONFIG")
+    missing = sorted({(rel, n.lineno, n.slice.value)
+                      for rel in (_PROBE_REL, *_SPACETIME_PY)
+                      for n in ast.walk(_tree(rel))
                       if isinstance(n, ast.Subscript) and getattr(n.value, "id", None) == "CONFIG"
                       and isinstance(n.slice, ast.Constant) and n.slice.value not in cfg})
     A.check(not missing, "every CONFIG[...] read in probe.py is a defined CONFIG key")
-    for ln, k in missing:
-        A.bullet(f"probe.py:{ln}  CONFIG[{k!r}] — KeyError at runtime")
-    preset_bad = sorted({(cap, k) for cap, d in _literal_dict(_PROBE_REL, "CAPABILITY_CONFIG").items()
+    for rel, ln, k in missing:
+        A.bullet(f"{rel}:{ln}  CONFIG[{k!r}] — KeyError at runtime")
+    preset_bad = sorted({(cap, k) for cap, d in _science_literal_dict("CAPABILITY_CONFIG").items()
                          for k in d if k not in cfg})
     A.check(not preset_bad, "every CAPABILITY_CONFIG preset key exists in CONFIG",
             ", ".join(f"{c}:{k}" for c, k in preset_bad))

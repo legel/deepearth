@@ -2,6 +2,11 @@
 
 Earth4D is a planetary-scale 4D (_x_, _y_, _z_, _t_) space-time positional encoder for Earth observation data. 
 
+The package root is the stable candidate contract consumed by the fixed probe; `earth4d.py` is the
+core encoder used by main fusion. Reusable mechanisms live in `lib/`, whose internal filenames may
+change without editing the probe or downstream model. `hashencoder/` owns the low-level kernel.
+Validation code lives one directory above this editable surface and must not be imported by fusion.
+
 Built on NVIDIA's [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/) architecture, extended to 4D space-time, and enhanced with [learned hash probing](https://research.nvidia.com/labs/toronto-ai/compact-ngp/) (Takikawa et al., 2023), Earth4D efficiently encodes (**latitude**, **longitude**, **elevation**, **time**) into learnable features at multiple scales—from sub-meter spatial resolution to sub-second temporal precision.
 
 ## Core Innovation
