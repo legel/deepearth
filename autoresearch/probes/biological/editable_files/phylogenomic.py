@@ -415,13 +415,15 @@ class SpeciesGraph(nn.Module):
         super().__init__()
         self.operator = operator
         # Species seed (science.md rule 26): decode a FROZEN BioCLIP-2 text prior through a small learned probe, so the
-        # phylo/ecological geometry of the text space is preserved and the probe *discovers* structure in it; a zero-init
-        # per-species residual keeps congeners separable. No text -> a plain discriminative free table.
+        # phylo/ecological geometry of the text space is preserved and the probe *discovers* structure in it.  With a
+        # scientific prior there is deliberately no private per-species residual: unseen species must use the same
+        # shared text->probe path, and masked reconstruction must predict transferable biology rather than memorize an
+        # arbitrary identity table. No text -> a plain discriminative free table.
         if species_text is not None:
             self.register_buffer("species_text", species_text)             # [N, text_dim], frozen (requires_grad False)
             self.probe = nn.Sequential(nn.Linear(species_text.shape[1], d_model), nn.LayerNorm(d_model),
                                        nn.GELU(), nn.Linear(d_model, d_model))
-            self.free = nn.Parameter(torch.zeros(n_species, d_model))        # residual on the BioCLIP prior (init 0)
+            self.register_parameter("free", None)
         else:
             self.register_buffer("species_text", None); self.probe = None
             self.free = nn.Parameter(torch.randn(n_species, d_model) * 0.02)  # discriminative component
@@ -481,7 +483,7 @@ class SpeciesGraph(nn.Module):
         The no-probe branch returns `free + 0` (a plain tensor, grad still flows) rather than the raw Parameter, so
         that caching it on the module (fusion `_refined_species = _seed()` under _ablate_species) never registers a
         Parameter — otherwise the next non-ablated forward's plain-tensor assign raises a TypeError (eval-only path)."""
-        return self.free + 0.0 if self.probe is None else self.probe(self.species_text) + self.free
+        return self.free + 0.0 if self.probe is None else self.probe(self.species_text)
 
     def forward(self, mask: torch.Tensor = None) -> torch.Tensor:
         """Refine and return the species representations ``[n_species, d_model]``.
