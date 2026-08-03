@@ -1,4 +1,4 @@
-"""Stage 2b MATCH: embed candidate binomials with BioCLIP-2.5 (SAME text format as build_pollinator.py),
+"""Fixed stage 2b MATCH: embed candidate binomials with BioCLIP-2.5 (SAME text format as build_pollinator.py),
 NN-match (cosine) each USED pollinator_taxon_text_emb row to its nearest candidate. Confident matches
 (cosine > 0.98) recover the name. Writes derived/pollinator_names_recovered.csv (idx,name,cosine)."""
 import sys, json, csv, time

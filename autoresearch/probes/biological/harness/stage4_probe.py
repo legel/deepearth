@@ -1,4 +1,4 @@
-"""Stage 4 RULE-27 TEST: run the two-tree bilinear probe with the REAL dated pollinator tree
+"""Fixed stage 4 RULE-27 TEST: run the two-tree bilinear probe with the REAL dated pollinator tree
 (--poll_dist realtree) vs the text-prior tree, multi-seed, plant-graph fixed. Report cross_tree_gain
 (two_tree - one_tree) per seed and mean, and whether realtree clears the +0.008 floor.
 
@@ -7,7 +7,7 @@ import sys, json, argparse
 sys.path.insert(0, "/workspace")
 sys.path.insert(0, "/workspace/deepearth/autoresearch/probes/biological")
 from ensue_log import log_stage
-from deepearth.autoresearch.probes.biological import probe as P
+from deepearth.autoresearch.probes.biological.harness import probe as P
 
 def run(poll_dist, seed, steps=400):
     argv = ["--objective", "interaction", "--cache_dir", "/workspace/deepearth/autoresearch/data/deepcal",

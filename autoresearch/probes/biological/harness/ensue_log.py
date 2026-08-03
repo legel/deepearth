@@ -1,4 +1,4 @@
-"""Durable Ensue + file logger for the pollitree pipeline. Import and call log_stage()."""
+"""Fixed durable Ensue + file logger for the pollitree validation pipeline."""
 import json, sys, time, urllib.request
 from pathlib import Path
 

@@ -1,4 +1,4 @@
-"""Stage 1 ASSESS: which pollinator vocab indices are USED (poll_used), their frequencies,
+"""Fixed stage 1 ASSESS: which pollinator vocab indices are USED (poll_used), their frequencies,
 and confirm the BioCLIP-2.5 text format used to build pollinator_taxon_text_emb.npy."""
 import sys, json
 sys.path.insert(0, "/workspace")

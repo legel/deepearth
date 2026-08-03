@@ -1,4 +1,4 @@
-"""Stage 2a HARVEST: pull candidate pollinator binomials (with full GBIF taxonomy) from the GBIF
+"""Fixed stage 2a HARVEST: pull candidate pollinator binomials (with full GBIF taxonomy) from the GBIF
 backbone for the major pollinator clades, so we can embed them with BioCLIP-2.5 and NN-match to the
 used pollinator_taxon_text_emb rows. Durable: writes derived/pollinator_candidates.jsonl incrementally."""
 import sys, json, time, urllib.request, urllib.parse

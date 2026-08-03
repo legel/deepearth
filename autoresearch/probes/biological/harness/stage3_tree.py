@@ -1,4 +1,4 @@
-"""Stage 3 TREE: build a DATED patristic distance matrix over the USED pollinators, aligned to the
+"""Fixed stage 3 TREE: build a DATED patristic distance matrix over the USED pollinators, aligned to the
 `poll_used` ordering that probe.load_interactions produces. Strategy:
   (a) Open Tree of Life induced subtree over recovered names (rotl/OToL) gives TOPOLOGY;
   (b) since OToL branch lengths are not dated, we date via a TAXONOMIC-RANK ultrametric using the
@@ -22,7 +22,7 @@ DER = D / "derived"
 # probe restricts to plants in E1 vocab; we align by loading the same gidx. To keep Stage3 self-contained and
 # EXACTLY consistent with the probe, we import the probe's loader.
 import torch
-from deepearth.autoresearch.probes.biological import probe as P
+from deepearth.autoresearch.probes.biological.harness import probe as P
 E1, fam_id, tree, tip_row, gidx = P.load_species(str(D))
 Pmap, Ptgt, poll_text, Pfrq = P.load_interactions(str(D), gidx, "cpu")
 # recompute poll_used identically (probe does np.unique internally; reproduce to get the ordered ids)

@@ -8,7 +8,7 @@ Objective (standalone `bio_gain`): family-NN accuracy of the graph-refined speci
 seed, on held-out species reconstructed from relatives (rule-25 mask). >0 ⟹ the phylogeny adds
 family-discriminative structure the seed lacks. Reuses SpeciesGraph unchanged (no core edit).
 
-  python -m deepearth.autoresearch.probes.biological.editable_files.harness.probe --cache_dir autoresearch/data/deepcal --steps 400
+  python -m deepearth.autoresearch.probes.biological.harness.probe --cache_dir autoresearch/data/deepcal --steps 400
 """
 import argparse
 import csv
