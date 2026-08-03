@@ -82,10 +82,10 @@ old absolute `primary < 0.20` rule, re-entering through the denominator. The spa
 
 | capability | benchmark | evaluator | metric |
 |---|---|---|---|
-| `family_from_phylo` | `B7_family_from_phylo` | `harness/probe.py` | family-NN accuracy, held-out species reconstructed with their own seed masked |
-| `myco_from_species` | `B63_myco_from_species_f1` | `harness/traitprobe.py --myco_supervised` | myco-NN accuracy from masked-species imputation |
-| `community_from_species` | `B21_community_from_species_recall` | `harness/traitprobe.py --cooccur` | co-occurrence micro-AP from masked-species imputation |
-| `pollinator_transfer` | `B55_pollinator_phylo_transfer_recall` | `harness/probe.py --objective interaction` | interaction micro-AP |
+| `family_from_phylo` | `B64_family_phylo_masked_imputation` | `harness/probe.py` | family-NN accuracy, held-out species reconstructed with their own seed masked |
+| `myco_from_species` | `B65_myco_phylo_masked_imputation_f1` | `harness/traitprobe.py --myco_supervised` | myco from a seed-masked species, macro-F1 |
+| `community_from_species` | `B66_community_phylo_masked_recall` | `harness/traitprobe.py --cooccur` | community from a seed-masked species, recall@10 |
+| `pollinator_transfer` | `B67_pollinator_phylo_masked_recall` | `harness/probe.py --objective interaction` | own pollinators from a seed-masked plant, recall@10 |
 
 The benchmark column is the **graduation join**, derived from `scoring/definitions.py::METRICS` rather
 than written here, so this table cannot drift from the thing that enforces it. Run

@@ -20,12 +20,15 @@ biological capability regresses.
 
 ## Authority and scope
 
-Scientific experiments edit only `editable_files/phylogenomic.py` or its local `editable_files/lib/**`
-(`seeds.py` = the rule-26 lever, `training.py` = the rule-9/25/10-11 levers). The fixed evaluators
+Scientific experiments edit only `editable_files/phylogenomic.py` or its local `editable_files/lib/**`.
+Only mechanisms expressed through the public `SpeciesGraph` API can graduate: `seeds.py` and
+`training.py` may screen rule-26/rule-25 recipes, but a winning recipe must be represented by that public
+API before a champion run. The fixed evaluators
 (`harness/probe.py`, `harness/traitprobe.py`), the board (`harness/board.py`), the fair control
 (`harness/nulltree.py`) and the pollitree stages own validation data, splits, metrics, controls and
 reporting, and are never edited to win a run. Fusion consumes the same public `SpeciesGraph` entrypoint
-as the fixed probe and must not import biological probe code directly.
+and its shared `masked_reconstruction_loss` operation as the fixed probe; it must not import biological
+probe code directly.
 
 ## The fair control: a null tree, not the seed
 

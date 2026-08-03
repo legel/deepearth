@@ -148,3 +148,9 @@ can raise a probe number while adding nothing to the model.
 Before proposing a graduation, check the champion for the mechanism first. `scoring/graduation.py`
 enforces the rest: a probe record crosses only as a **prediction that gets tested** — the champion
 re-measures the benchmark and the result is recorded either way.
+
+The two controls remain intentionally distinct. Layer 1 asks whether Earth4D beats a trained,
+matched-width RFF architecture. The canonical champion suite separately reports the production
+Earth4D marginal by removing both absolute and relative Earth4D while retaining environmental and
+neighbor-value inputs. Graduation tests whether the probe's directional prediction transfers; it does
+not equate the two numerical gains.

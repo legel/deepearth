@@ -61,6 +61,10 @@ training  train_encoder=True, deterministic, 800 steps per arm
 gain      Earth4D - strongest matched RFF control
 ```
 
+This is the standalone architecture control. Full-model evaluation always measures a second, distinct
+quantity: capability with Earth4D minus capability with all absolute and relative Earth4D channels
+removed. That production marginal is part of the fixed benchmark suite and is never flag-gated.
+
 Run one seed with:
 
 ```bash
