@@ -29,9 +29,12 @@ RECORD = next(p for p in Path(__file__).resolve().parents
               if p.name == "autoresearch") / "main" / "records" / "champion_scores.json"
 
 try:                                                        # canonical order so EVERY benchmark is listed (inactive ones marked, never silently missing)
-    from deepearth.autoresearch.main.harness.evaluate import BENCHMARKS as _CANON, suite_mismatch
+    from deepearth.autoresearch.main.harness.evaluate import (
+        BENCHMARKS as _CANON, BENCHMARK_PROTOCOL, suite_mismatch,
+    )
 except Exception:
     _CANON = []
+    BENCHMARK_PROTOCOL = "unknown"
 
     def suite_mismatch(before, after):
         return sorted(set(after) - set(before)), sorted(set(before) - set(after))
@@ -102,12 +105,18 @@ DESC = {
     "B61_trait_phylo_graph_gain": "trait macro-F1 gained from species-graph refinement",
     "B62_mycorrhiza_phylo_graph_gain": "mycorrhiza macro-F1 gained from species-graph refinement",
     "B63_myco_from_species_f1": "mycorrhiza imputation given species identity, macro-F1",
+    "B64_family_phylo_masked_imputation": "seed-masked species -> family from relatives, NN accuracy",
+    "B65_myco_phylo_masked_imputation_f1": "seed-masked species -> mycorrhiza from relatives, macro-F1",
+    "B66_community_phylo_masked_recall": "seed-masked species -> community from relatives, recall@10",
+    "B67_pollinator_phylo_masked_recall": "seed-masked plant -> own pollinators from relatives, recall@10",
 }
 
 
 def parse_run(log_path: str) -> dict:
     """Extract {Bxx_name: score}, harmonic (net_score) and arithmetic mean from a train/eval run log."""
     txt = Path(log_path).read_text()
+    protocol_match = re.search(r"^BENCHMARK PROTOCOL:\s*(\S+)", txt, re.M)
+    protocol = protocol_match.group(1) if protocol_match else None
     scores = {}
     # score may be followed by trailing text on the diagnostic lines, e.g. "B24_geo_information_gain 0.593 (net
     # contrib 0.997)" -- match the score after the name, not requiring end-of-line, so B24/B56-B62 are captured.
@@ -115,11 +124,12 @@ def parse_run(log_path: str) -> dict:
         scores[m.group(1)] = float(m.group(2))                 # last occurrence wins (final eval)
     try:                                                       # RECOMPUTE the net from scores with the live logic, so
         from deepearth.autoresearch.main.harness.evaluate import net_score, arithmetic_net   # every champion record is comparable
-        return {"scores": scores, "harmonic": float(net_score(scores)), "arithmetic": float(arithmetic_net(scores))}
+        return {"benchmark_protocol": protocol, "scores": scores,
+                "harmonic": float(net_score(scores)), "arithmetic": float(arithmetic_net(scores))}
     except Exception:                                          # fallback: parse whatever the log printed
         h = re.search(r"net_score:\s+([0-9.]+)", txt)
         a = re.search(r"arithmetic mean:\s+([0-9.]+)", txt)
-        return {"scores": scores, "harmonic": float(h.group(1)) if h else None,
+        return {"benchmark_protocol": protocol, "scores": scores, "harmonic": float(h.group(1)) if h else None,
                 "arithmetic": float(a.group(1)) if a else None}
 
 
@@ -189,16 +199,25 @@ def main():
     new = parse_run(a.log)
     if not new["scores"]:
         raise SystemExit(f"no Bxx scores found in {a.log}")
+    if new.get("benchmark_protocol") != BENCHMARK_PROTOCOL:
+        raise SystemExit(f"run log benchmark protocol {new.get('benchmark_protocol')!r} does not match "
+                         f"the live protocol {BENCHMARK_PROTOCOL!r}; re-run with the current evaluator")
     old = json.loads(RECORD.read_text()) if RECORD.exists() else None
-    print(format_commit(new, old, a.desc, a.config))
+    comparable_old = old if (old or {}).get("benchmark_protocol") == BENCHMARK_PROTOCOL else None
+    if old is not None and comparable_old is None:
+        print(f"[benchmark protocol changed: {(old or {}).get('benchmark_protocol')!r} -> "
+              f"{BENCHMARK_PROTOCOL!r}; establishing a new baseline]\n")
+    print(format_commit(new, comparable_old, a.desc, a.config))
     if a.save:
         import getpass, datetime
         hist = (old or {}).get("history", [])
         hist.append({"user": getpass.getuser(),
                      "timestamp": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                     "label": a.desc, "config": a.config, "harmonic": new["harmonic"],
+                     "label": a.desc, "config": a.config, "benchmark_protocol": BENCHMARK_PROTOCOL,
+                     "harmonic": new["harmonic"],
                      "arithmetic": new["arithmetic"], "scores": new["scores"]})   # append every champion -> both users' records plot over time
-        RECORD.write_text(json.dumps({"label": a.desc, "config": a.config, "harmonic": new["harmonic"],
+        RECORD.write_text(json.dumps({"label": a.desc, "config": a.config,
+                                      "benchmark_protocol": BENCHMARK_PROTOCOL, "harmonic": new["harmonic"],
                                       "arithmetic": new["arithmetic"], "scores": new["scores"],
                                       "history": hist}, indent=2))
         print(f"\n[champion_scores.json updated: {len(new['scores'])} benchmarks, "

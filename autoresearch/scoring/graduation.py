@@ -45,8 +45,12 @@ AUTORESEARCH = next(p for p in _HERE.parents if p.name == "autoresearch")
 sys.path.insert(0, str(AUTORESEARCH.parent.parent))   # dir holding the deepearth package
 
 from deepearth.autoresearch.scoring.definitions import capability_to_benchmark  # noqa: E402
+from deepearth.autoresearch.main.harness.evaluate import BENCHMARK_PROTOCOL  # noqa: E402
+from deepearth.autoresearch.probes.biological.harness.board import PROTOCOL as BIO_PROTOCOL  # noqa: E402
+from deepearth.autoresearch.probes.spacetime.harness import PROTOCOL as ST_PROTOCOL  # noqa: E402
 CHAMPION = AUTORESEARCH / "main" / "records" / "champion_scores.json"
 LEDGER = AUTORESEARCH / "main" / "records" / "graduation.jsonl"
+CURRENT_PROBE_PROTOCOL = {"biological": BIO_PROTOCOL, "spacetime": ST_PROTOCOL}
 
 
 # ==============================================================================================
@@ -104,7 +108,8 @@ def read_champion() -> Dict[str, Any]:
 # ELIGIBILITY
 # ==============================================================================================
 
-def blockers(loop: str, capability: str, rec: Dict[str, Any], bench_ok: bool) -> List[str]:
+def blockers(loop: str, capability: str, rec: Dict[str, Any], bench_ok: bool,
+             champion_protocol: Optional[str] = None) -> List[str]:
     """Why this record may NOT cross. Empty list = eligible.
 
     Each rule exists because its absence has already corrupted this board once."""
@@ -115,6 +120,13 @@ def blockers(loop: str, capability: str, rec: Dict[str, Any], bench_ok: bool) ->
     elif not bench_ok:
         out.append(f"mapped benchmark {CAPABILITY_BENCH[loop][capability]!r} is absent from the "
                    f"champion record — it was never scored, so there is no 'before' to move")
+    expected_probe = CURRENT_PROBE_PROTOCOL.get(loop)
+    if rec.get("protocol") != expected_probe:
+        out.append(f"probe protocol {rec.get('protocol')!r} is superseded; current {loop} protocol is "
+                   f"{expected_probe!r} — re-baseline this capability before graduation")
+    if champion_protocol != BENCHMARK_PROTOCOL:
+        out.append(f"champion benchmark protocol {champion_protocol!r} is not the current "
+                   f"{BENCHMARK_PROTOCOL!r} — establish a fresh champion baseline")
     code = rec.get("code") or {}
     if code.get("dirty"):
         out.append("code.dirty — the tree that produced this number had uncommitted changes, so the "
@@ -133,7 +145,8 @@ def blockers(loop: str, capability: str, rec: Dict[str, Any], bench_ok: bool) ->
 
 def survey(loop: str) -> List[Dict[str, Any]]:
     """Every capability on this loop's board, with its verdict."""
-    champ = read_champion().get("scores", {})
+    champion = read_champion()
+    champ = champion.get("scores", {})
     rows = []
     for capability, rec in sorted(read_records(loop).items()):
         bench = CAPABILITY_BENCH.get(loop, {}).get(capability)
@@ -147,7 +160,8 @@ def survey(loop: str) -> List[Dict[str, Any]]:
             "n_seeds": rec.get("n_seeds"),
             "commit": (rec.get("code") or {}).get("commit"),
             "bench_before": champ.get(bench) if bench else None,
-            "blockers": blockers(loop, capability, rec, bench in champ if bench else False),
+            "blockers": blockers(loop, capability, rec, bench in champ if bench else False,
+                                 champion.get("benchmark_protocol")),
         })
     return rows
 
@@ -193,7 +207,8 @@ def do_open(target: str, force: bool) -> None:
 
     champ = read_champion()
     bench = CAPABILITY_BENCH[loop].get(capability)
-    stop = blockers(loop, capability, rec, bench in champ.get("scores", {}) if bench else False)
+    stop = blockers(loop, capability, rec, bench in champ.get("scores", {}) if bench else False,
+                    champ.get("benchmark_protocol"))
     if stop and not force:
         print(f"[graduate] {target} is NOT eligible:")
         for b in stop:
@@ -220,6 +235,7 @@ def do_open(target: str, force: bool) -> None:
                   "branch": (rec.get("code") or {}).get("branch")},
         "champion_before": {"label": champ.get("label"), "harmonic": champ.get("harmonic"),
                             "arithmetic": champ.get("arithmetic"),
+                            "benchmark_protocol": champ.get("benchmark_protocol"),
                             "bench_value": champ.get("scores", {}).get(bench) if bench else None,
                             "n_benchmarks": len(champ.get("scores", {}))},
         "forced": bool(stop),
@@ -253,14 +269,26 @@ def do_close(cid: str, log_path: str) -> None:
     before_champ = read_champion()
     before_scores = before_champ.get("scores", {})
 
-    # THE SUITE MUST BE THE SAME SUITE. net_score averages over whatever keys are in the dict, and
-    # hooks.instrument(spacetime_gain=True) INJECTS six `*_spacetime_gain` keys into that same dict.
-    # Each lands near 0.5 through _net_value, and the harmonic mean is dominated by its near-zero
-    # terms, so merely passing --st-gain RAISES the net. Comparing across that boundary would record
-    # a flag as a result. Refuse.
+    if after.get("benchmark_protocol") != BENCHMARK_PROTOCOL:
+        raise SystemExit(f"[graduate] run protocol {after.get('benchmark_protocol')!r} does not match "
+                         f"the live benchmark protocol {BENCHMARK_PROTOCOL!r}")
+    if before_champ.get("benchmark_protocol") != BENCHMARK_PROTOCOL:
+        raise SystemExit(f"[graduate] champion protocol {before_champ.get('benchmark_protocol')!r} does not match "
+                         f"the live benchmark protocol {BENCHMARK_PROTOCOL!r}; establish a new baseline first")
+    if row.get("champion_before", {}).get("benchmark_protocol") != BENCHMARK_PROTOCOL:
+        raise SystemExit("[graduate] this crossing was opened under a different benchmark protocol; "
+                         "discard it and open a new crossing")
+
+    # THE SUITE MUST BE THE SAME SUITE.  Earth4D gains are canonical now, but optional labels and
+    # holdout-specific endpoints can still make a run incomplete.  A crossing is a paired experiment;
+    # changing the measured set invalidates the pair.
     missing = sorted(set(before_scores) - set(after["scores"]))
     added = sorted(set(after["scores"]) - set(before_scores))
     suite_changed = bool(missing or added)
+    if suite_changed:
+        raise SystemExit("[graduate] refusing to close: before/after benchmark suites differ\n"
+                         f"    added: {', '.join(added) or '(none)'}\n"
+                         f"    missing: {', '.join(missing) or '(none)'}")
 
     bench = row["bench"]
     b_before = row["champion_before"]["bench_value"]
@@ -278,7 +306,7 @@ def do_close(cid: str, log_path: str) -> None:
         "bench_delta": delta,
         # The question the whole ledger exists to answer. Deliberately strict: the mapped benchmark
         # must move UP, and no other benchmark may regress (science.md rule 30).
-        "transferred": bool(delta is not None and delta > 0 and not regressions),
+        "transferred": bool(not suite_changed and delta is not None and delta > 0 and not regressions),
         "regressions": regressions,
         "suite_changed": suite_changed,
         "suite_added": added,
@@ -291,12 +319,6 @@ def do_close(cid: str, log_path: str) -> None:
     print(f"    net harmonic {_fmt(row['champion_before']['harmonic'])} -> {_fmt(after['harmonic'])}"
           f"   arithmetic {_fmt(row['champion_before']['arithmetic'])} -> {_fmt(after['arithmetic'])}")
     print(f"    regressions (>0.005): {', '.join(regressions) if regressions else 'none'}")
-    if suite_changed:
-        print(f"    *** SUITE CHANGED — the two runs did not score the same benchmarks, so the net "
-              f"comparison above is NOT valid.\n"
-              f"        added:   {', '.join(added) or '(none)'}\n"
-              f"        missing: {', '.join(missing) or '(none)'}\n"
-              f"        Most likely cause: one run passed --st-gain and the other did not.")
     print(f"    TRANSFERRED: {row['transferred']}")
     if not row["transferred"] and delta is not None and delta <= 0:
         print(f"    A probe gain that does not move its benchmark is information about the PROBE, "

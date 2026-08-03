@@ -14,11 +14,19 @@ memorization. A benchmark whose inputs or split are absent is reported inactive 
 tune a definition to inflate a result -- improve the model.
 """
 from __future__ import annotations
+import contextlib
+import functools
 from typing import Dict, List
 import math
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+
+# Increment whenever a benchmark definition, split, control, or suite membership changes.  Champion
+# records and graduation crossings carry this value so an old instrument can never be compared with a
+# new one merely because the benchmark names happen to overlap.
+BENCHMARK_PROTOCOL = "v2-aligned-encoder-controls"
 
 def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, num_classes: int) -> float:
     """Macro-F1 over the observed rows: mean per-class F1 (unweighted), so rare classes count as much as common."""
@@ -38,7 +46,7 @@ def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, 
     return float(np.mean(f1s)) if f1s else float("nan")
 
 
-# The 62-benchmark suite (B1-B62), in suite order. Each is (given-set -> target, metric); the tag names the science.md
+# The declared benchmark suite, in suite order. Each is (given-set -> target, metric); the tag names the science.md
 # capability (A/Q) it realizes. Benchmarks whose required inputs or holdout split are absent report inactive and drop
 # out of the net score. Metrics are already in [0,1] (top-k, accuracy, macro-F1, cosine, recall@k, MRR).
 BENCHMARKS: List[str] = [
@@ -115,12 +123,62 @@ BENCHMARKS: List[str] = [
     "B61_trait_phylo_graph_gain",       # ablation-delta (trait family): trait macro-F1 gained from the species-graph refinement (traits are phylo-conserved)
     "B62_mycorrhiza_phylo_graph_gain",  # ablation-delta (symbiosis family): mycorrhiza macro-F1 gained from the species-graph refinement (symbiosis is phylo-conserved)
     "B63_myco_from_species_f1",         # symbiosis imputation GIVEN the species identity (isolates phylo imputation from env->species inference); honest bar = BioCLIP-NN 0.584
+    "B64_family_phylo_masked_imputation",   # held-out species seed masked -> family from phylogenetic relatives
+    "B65_myco_phylo_masked_imputation_f1", # held-out species seed masked -> mycorrhiza from relatives
+    "B66_community_phylo_masked_recall",   # held-out species seed masked -> local community from relatives
+    "B67_pollinator_phylo_masked_recall",  # held-out plant seed masked -> its pollinators from relatives
 ]
 
 
+@contextlib.contextmanager
+def _masked_species_graph(model, mask: torch.Tensor):
+    """Force the production graph to reconstruct ``mask`` species whenever fusion asks for it.
+
+    The fixed evaluator owns the holdout.  The candidate graph still owns the reconstruction mechanism.
+    Revealing the categorical identity now selects a masked, relative-reconstructed species token instead
+    of leaking that species' learned seed into the prediction.
+    """
+    graph = getattr(model, "species_graph", None)
+    if graph is None:
+        yield
+        return
+    original = graph.forward
+
+    def forward(candidate_mask=None):
+        return original(mask if candidate_mask is None else candidate_mask)
+
+    graph.forward = forward
+    try:
+        yield
+    finally:
+        graph.forward = original
+
+
+def _fixed_species_holdout(n_species: int, device, fraction: float = 0.2) -> torch.Tensor:
+    """Protocol-owned deterministic species split, paired across every biological benchmark."""
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    held = torch.rand(n_species, generator=generator) < fraction
+    if n_species > 1 and not held.any():
+        held[0] = True
+    if n_species > 1 and held.all():
+        held[-1] = False
+    return held.to(device)
+
+
+def _nearest_family_accuracy(emb: torch.Tensor, family: torch.Tensor, held: torch.Tensor) -> float:
+    """Held-out species -> nearest non-held species in cosine space -> family accuracy."""
+    train = ~held
+    if not held.any() or not train.any():
+        return float("nan")
+    reference = F.normalize(emb[train].float(), dim=-1)
+    query = F.normalize(emb[held].float(), dim=-1)
+    nearest = (query @ reference.t()).argmax(-1)
+    return float((family[train][nearest] == family[held]).float().mean())
+
+
 @torch.no_grad()
-def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, float]:
-    """Score the 26-benchmark suite over the held-out split. Context is built once per batch and the encoder is run
+def _evaluate_benchmarks_once(model, source, device, batch: int = 1536) -> Dict[str, float]:
+    """Score the canonical suite once over the held-out split. Context is built once per batch and the encoder is run
     once per distinct given-set (multiple targets decoded from a single encode), so the whole suite costs a bounded
     number of passes over the test set. Benchmarks whose inputs/split are unavailable are simply omitted (inactive)."""
     model.eval()
@@ -129,6 +187,8 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     traits = [t for t in getattr(source, "trait_classes", {})]
     trait_nc = source.trait_classes if traits else {}
     fam = source.class_group if hasattr(source, "class_group") else None    # family index per species class
+    species_holdout = (_fixed_species_holdout(len(fam), fam.device)
+                       if fam is not None and getattr(model, "species_graph", None) is not None else None)
     holdout = getattr(source, "holdout", "spatial")
 
     vision = [v for v in ("vision_dino", "vision_bio") if v in have]
@@ -138,6 +198,7 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     acc: Dict[str, list] = {}                              # key -> [sum, count]
     lfmc_p, lfmc_t = [], []                                # B34: predicted vs true live fuel moisture over the eval set
     myco_p, myco_t, myco_sp_p = [], [], []                 # B42 myco-from-env / B63 myco-from-species (isolates phylo imputation)
+    myco_mask_p, myco_mask_t = [], []                       # B65: held-out species seed masked
     flower_p, flower_t = [], []                            # B26: predicted flowering probability vs true label over the eval set
     lfmc_p_abl, flower_p_abl, myco_p_abl = [], [], []      # B57/B58/B62: the same predictions with the species graph ABLATED (phylo-graph-gain deltas)
     flower_fid = []                                        # B27: |flowering(env-only) - flowering(env+real photo)| — imagined-vs-real fidelity
@@ -249,6 +310,13 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                         else:
                             msp = infer(["identity"], ["myco"])["myco"].argmax(-1)[mv]
                         myco_sp_p.append(msp.detach().cpu())
+                        if species_holdout is not None:
+                            hm = mv & species_holdout[tid]
+                            if hm.any():
+                                with _masked_species_graph(model, species_holdout):
+                                    masked_myco = infer(["identity"], ["myco"])["myco"].argmax(-1)
+                                myco_mask_p.append(masked_myco[hm].detach().cpu())
+                                myco_mask_t.append(source.myco[tid][hm].detach().cpu())
                         if getattr(model, "species_graph", None) is not None:   # B62: same mycorrhiza prediction, species graph ablated
                             model._ablate_species = True
                             myco_p_abl.append(infer(U, ["myco"])["myco"].argmax(-1)[mv].detach().cpu())
@@ -298,12 +366,6 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             add("B8_family_from_spacetime", fam_hit(L_blank, tid), B)
             if "phylo" in have:
                 add("B7_family_from_phylo", fam_hit(infer(["phylo"], ["identity"])["identity"], tid), B)
-                # B56 ablation-delta (rule 27 / phylo families): family-from-phylo WITH minus WITHOUT the species graph
-                # refinement — isolates the phylogenomic contribution.
-                if getattr(model, "species_graph", None) is not None:
-                    model._ablate_species = True
-                    add("_B7_ablated", fam_hit(infer(["phylo"], ["identity"])["identity"], tid), B)
-                    model._ablate_species = False
 
         # ---- trait leave-one-out (each trait from all other observed variables) ----
         for t in traits:
@@ -357,6 +419,15 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                     model._ablate_species = False
             add("B21_community_from_species_recall", recall_sum(infer(["identity"], ["community"])["community"], tset), B)
             add("B22_companions_recall", recall_sum(infer(["identity"] + U, ["community"])["community"], tset), B)
+            if species_holdout is not None:
+                hm = species_holdout[tid]
+                if hm.any():
+                    masked_target = tset.clone()
+                    masked_target.scatter_(1, tid[:, None], False)  # probe target excludes self
+                    with _masked_species_graph(model, species_holdout):
+                        masked = infer(["identity"], ["community"])["community"]
+                    add("B66_community_phylo_masked_recall",
+                        recall_sum(masked[hm], masked_target[hm]), int(hm.sum()))
 
         # ---- plant-pollinator interactions (GloBI): the pollinator distribution is the TARGET only (leak-safe) ----
         if hasattr(source, "poll_idx") and getattr(model, "poll_head", None) is not None and c0 < community_cap:
@@ -380,6 +451,12 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 add("B53_pollinator_calibration_mrr", (1.0 / (rank.float() + 1))[vi].sum().item(), nv)
                 q = torch.softmax(Lp, -1).gather(1, pidx); kl = torch.where(pfrq > 0, pfrq * (torch.log(pfrq + 1e-9) - torch.log(q + 1e-9)), torch.zeros_like(pfrq)).sum(1)
                 add("B54_pollinator_dist_kl", torch.exp(-kl)[vi].sum().item(), nv)   # exp(-KL) of true pollinator freq vs predicted
+                if species_holdout is not None:
+                    hm = vi & species_holdout[tid]
+                    if hm.any():
+                        with _masked_species_graph(model, species_holdout):
+                            masked = infer(["identity"], ["pollinator"])["pollinator"]
+                        add("B67_pollinator_phylo_masked_recall", recall_sum(masked[hm], tset[hm]), int(hm.sum()))
                 # B55 cross-tree phylogenomic interaction induction (rule 27): can the model predict a plant's pollinators
                 # from its RELATIVES' pollinators? Target = pollinators observed for the plant's phylogenetic neighbors.
                 if hasattr(source, "neighbors"):
@@ -427,6 +504,11 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             if myco_p_abl:                                                  # B62 = species-graph contribution to symbiosis (phylo-conserved)
                 f1a = _macro_f1(torch.cat(myco_p_abl), t, torch.ones_like(t, dtype=torch.bool), 5)
                 if not (isinstance(f1a, float) and np.isnan(f1a)): out["B62_mycorrhiza_phylo_graph_gain"] = f1 - f1a
+    if myco_mask_p:
+        f1 = _macro_f1(torch.cat(myco_mask_p), torch.cat(myco_mask_t),
+                       torch.ones_like(torch.cat(myco_mask_t), dtype=torch.bool), 5)
+        if not (isinstance(f1, float) and np.isnan(f1)):
+            out["B65_myco_phylo_masked_imputation_f1"] = f1
     _lf = _lfmc_corr(lfmc_p, lfmc_t)                                        # B34 ecophysiology; B58 = species-graph contribution to it
     if _lf is not None:
         out["B34_lfmc_from_env"] = _lf
@@ -439,9 +521,17 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
         if _faa is not None: out["B57_flowering_phylo_graph_gain"] = _fa - _faa
     if flower_fid:                                                          # B27: 1 - mean|imagined-vision flowering - real-vision flowering|
         out["B27_flowering_fidelity"] = float(1.0 - torch.cat(flower_fid).mean())
-    if "B7_family_from_phylo" in out and "_B7_ablated" in out:              # B56: phylogenomic-graph contribution (rule 27 ablation)
-        out["B56_family_phylo_graph_gain"] = out["B7_family_from_phylo"] - out["_B7_ablated"]
-    out.pop("_B7_ablated", None)
+    if species_holdout is not None:
+        graph = model.species_graph
+        masked = graph(mask=species_holdout)
+        seed = graph._seed()
+        family_masked = _nearest_family_accuracy(masked, fam, species_holdout)
+        family_seed = _nearest_family_accuracy(seed, fam, species_holdout)
+        if not np.isnan(family_masked):
+            out["B64_family_phylo_masked_imputation"] = family_masked
+        if not np.isnan(family_masked) and not np.isnan(family_seed):
+            # B56 now measures the graph's marginal on the same held-out-species task as B64.
+            out["B56_family_phylo_graph_gain"] = family_masked - family_seed
     if "B51_pollinator_from_env_recall" in out and "_B51_ablated" in out:   # B59: species-graph contribution to interaction prediction
         out["B59_pollinator_phylo_graph_gain"] = out["B51_pollinator_from_env_recall"] - out["_B51_ablated"]
     out.pop("_B51_ablated", None)
@@ -473,6 +563,19 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     return out
 
 
+@torch.no_grad()
+def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, float]:
+    """Run the canonical suite, including the signed production Earth4D ablation on every run."""
+    raw = _evaluate_benchmarks_once(model, source, device, batch=batch)
+    from deepearth.autoresearch.main.harness.hooks import ST_GAIN_MAP, ablate_earth4d
+    with ablate_earth4d(model):
+        ablated = _evaluate_benchmarks_once(model, source, device, batch=batch)
+    for capability, gain in ST_GAIN_MAP.items():
+        if capability in raw and capability in ablated:
+            raw[gain] = float(raw[capability]) - float(ablated[capability])
+    return raw
+
+
 def observed_any(observed: Dict[str, torch.Tensor], name: str) -> bool:
     """True if variable ``name`` is observed for at least one row in the batch (so it can serve as a given)."""
     return name in observed and bool(observed[name].any())
@@ -488,41 +591,16 @@ def observed_any(observed: Dict[str, torch.Tensor], name: str) -> bool:
 from deepearth.autoresearch.scoring.definitions import (        # noqa: E402  (must follow BENCHMARKS)
     SCORE_FLOOR as _SCORE_FLOOR,                    # noqa: F401  (re-exported for existing callers)
     is_diagnostic,
+    net_score as _shared_net_score,
     net_value as _net_value,
     normalized,
+    arithmetic_net,
     suite_mismatch,                                 # noqa: F401  (re-exported: before/after guard)
 )
 
-_BENCHMARK_SET = frozenset(BENCHMARKS)   # the net averages over THIS, never over the caller's dict
-
-
-def net_score(raw: Dict[str, float]) -> float:
-    """North star = HARMONIC mean (power mean p=-1) of ALL active benchmarks -- capabilities AND ablation-deltas
-    (deltas safely renormalized by _net_value so their inclusion can only help, never nuke). Harmonic so lifting the
-    WEAKEST benchmark helps most and none can be sacrificed for another; 100% inclusion so a champion must carry the
-    entire suite, not a favoured subset.
-
-    THE NET AVERAGES OVER THE DECLARED SUITE, NOT OVER WHATEVER THE CALLER PUT IN `raw`.
-
-    It used to iterate every key present, which let a CLI flag change the denominator: hooks.instrument
-    (--st-gain) writes six *_spacetime_gain keys into this same dict, none of them in BENCHMARKS. Each
-    maps through _net_value to ~0.5, and the harmonic mean is currently dominated by near-zero
-    benchmarks (harmonic 0.3487 vs arithmetic 0.6153), so adding six 0.5s RAISES the net by
-    construction. A --st-gain run and a plain run were not comparable, and a champion ledger could
-    straddle both with nothing flagging it -- which defeats the whole point of a before/after report.
-    Undeclared keys are still reported; they just cannot move the north star.
-    """
-    vals = [_net_value(k, v) for k, v in normalized(raw).items() if k in _BENCHMARK_SET]
-    if not vals:
-        return 0.0
-    return float(len(vals) / sum(1.0 / v for v in vals))
-
-
-def arithmetic_net(raw: Dict[str, float]) -> float:
-    """Arithmetic mean of the active CAPABILITY scores -- reported alongside the harmonic north star for legibility
-    (it moves when any benchmark improves, whereas the harmonic mean is dominated by the current weakest)."""
-    vals = [v for k, v in normalized(raw).items() if not is_diagnostic(k)]
-    return float(sum(vals) / len(vals)) if vals else 0.0
+# Re-export the canonical scorer with this evaluator's declared suite bound.  There is no second
+# implementation here for the harness and registry to drift between.
+net_score = functools.partial(_shared_net_score, suite=BENCHMARKS)
 
 
 def format_benchmarks(raw: Dict[str, float]) -> str:
@@ -531,7 +609,8 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
     normed = normalized(raw)
     caps = {k: v for k, v in normed.items() if not is_diagnostic(k)}
     diags = {k: v for k, v in normed.items() if is_diagnostic(k)}
-    lines = ["benchmark                             score"]
+    lines = [f"BENCHMARK PROTOCOL: {BENCHMARK_PROTOCOL}",
+             "benchmark                             score"]
     for k in sorted(caps, key=lambda k: caps[k]):              # weakest-first: the harmonic mean's binding benchmarks lead
         lines.append(f"  {k:<34} {caps[k]:6.3f}")
     defined_caps = [b for b in BENCHMARKS if not is_diagnostic(b)]

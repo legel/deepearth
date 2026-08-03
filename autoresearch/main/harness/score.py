@@ -57,7 +57,9 @@ BIO_GAIN = [
 BIO_CAP = [  # pure-biological capabilities (species-graph is the primary encoder) -- the no-regression floor
     "B7_family_from_phylo", "B21_community_from_species_recall", "B41_pollinator_from_species_recall",
     "B53_pollinator_calibration_mrr", "B54_pollinator_dist_kl", "B55_pollinator_phylo_transfer_recall",
-    "B63_myco_from_species_f1",
+    "B63_myco_from_species_f1", "B64_family_phylo_masked_imputation",
+    "B65_myco_phylo_masked_imputation_f1", "B66_community_phylo_masked_recall",
+    "B67_pollinator_phylo_masked_recall",
 ]
 BIOLOGICAL = BIO_CAP + BIO_GAIN
 
@@ -146,10 +148,14 @@ def _present(raw: Dict[str, float], ids: List[str]) -> List[str]:
 
 
 def gain_scalar(raw: Dict[str, float], gains: List[str]) -> Optional[float]:
-    """The loop's OBJECTIVE: mean raw ablation-gain delta over the encoder's gain benchmarks (~0 today,
-    maximise positive). None if no gain benchmark is present yet (e.g. spacetime-gain not wired)."""
-    vals = [raw[k] for k in gains if k in raw]
-    return float(sum(vals) / len(vals)) if vals else None
+    """Mean raw gain only when the complete declared vector is present.
+
+    Averaging a convenient subset lets a run improve its objective by omitting a difficult endpoint.
+    Missing labels therefore make the objective unscorable, not easier.
+    """
+    if any(k not in raw for k in gains):
+        return None
+    return float(sum(raw[k] for k in gains) / len(gains)) if gains else None
 
 
 def subset_score(raw: Dict[str, float], ids: List[str]) -> Dict[str, float]:
@@ -168,6 +174,7 @@ def evaluate_encoder(encoder: str, raw: Dict[str, float]) -> Dict:
     spec = ENCODERS[encoder]
     ids = spec["caps"] + spec["gains"]
     scalar = gain_scalar(raw, spec["gains"])
+    missing_gains = [k for k in spec["gains"] if k not in raw]
     floor = subset_score(raw, spec["caps"])
     scoped = subset_score(raw, ids)
     per_bench = {k: raw[k] for k in _present(raw, ids)}
@@ -175,6 +182,7 @@ def evaluate_encoder(encoder: str, raw: Dict[str, float]) -> Dict:
         "encoder": encoder,
         "objective": spec["objective"],
         "scalar": scalar,                         # the ONE number the loop maximises (None if gains not wired)
+        "missing_gains": missing_gains,
         "capability_floor_arith": floor["arithmetic"],   # must-not-regress constraint
         "scoped_harmonic": scoped["harmonic"],
         "scoped_arith": scoped["arithmetic"],
@@ -205,6 +213,7 @@ def build_trace(encoder: str, raw: Dict[str, float], diag: Dict[str, float], met
         "encoder": encoder,
         "objective": res["objective"],
         "scalar": res["scalar"],
+        "missing_gains": res["missing_gains"],
         "scalar_delta_vs_champion": scalar_delta,
         "noise_flag": (scalar_delta is not None and abs(scalar_delta) < noise_floor),
         "capability_floor_arith": round(res["capability_floor_arith"], 4),
@@ -227,8 +236,10 @@ def summary(trace: Dict) -> str:
     sd = trace["scalar_delta_vs_champion"]
     flag = " (within noise)" if trace["noise_flag"] else ""
     L.append(f"=== {trace['encoder'].upper()} experiment | objective {trace['objective']} ===")
-    L.append(f"  {trace['objective']} = {s if s is not None else 'n/a (gains not wired)'}"
+    L.append(f"  {trace['objective']} = {s if s is not None else 'n/a (incomplete gain vector)'}"
              + (f"   Δ vs champion {sd:+.4f}{flag}" if sd is not None else ""))
+    if trace.get("missing_gains"):
+        L.append("  missing required gains: " + ", ".join(trace["missing_gains"]))
     L.append(f"  capability floor (arith) {trace['capability_floor_arith']:.4f}   scoped harmonic {trace['scoped_harmonic']:.4f}")
     L.append(f"  steps@budget {trace['throughput_steps']}   final_loss {trace['final_loss']}   nan={trace['stability']['nan']}")
     if trace["per_benchmark_delta"]:

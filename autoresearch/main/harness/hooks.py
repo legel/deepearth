@@ -36,10 +36,13 @@ def refinement_norm(model) -> Dict[str, float]:
 
 
 @contextlib.contextmanager
-def ablate_spacetime(model):
-    """SPACETIME 'null spatial prior' control: zero the ABSOLUTE Earth4D position contribution at runtime
-    (the projected pos_s / pos_t) so coordinates carry no spatial signal. Relative + value tokens remain.
-    This is the S0 instrument -- st_gain = capability WITH this off vs ON. No core edit."""
+def ablate_earth4d(model):
+    """Production Earth4D ablation: remove both absolute and relative coordinate encodings.
+
+    This is deliberately *not* the probe's trained matched-RFF control.  It answers the production
+    question "what does Earth4D contribute to fusion?" by leaving environmental/value tokens and
+    non-Earth4D priors intact while removing every Earth4D-derived position vector.
+    """
     patched = []
     for attr in ("absolute_proj_s", "absolute_proj_t"):
         m = getattr(model, attr, None)
@@ -48,11 +51,30 @@ def ablate_spacetime(model):
         orig = m.forward
         m.forward = (lambda o: (lambda *a, **k: torch.zeros_like(o(*a, **k))))(orig)
         patched.append((m, orig))
+
+    # The neighbor field owns the relative Earth4D channel.  Zero its encoded position while leaving
+    # NeighborContext's value features and field marker untouched, so this remains an encoder ablation
+    # rather than a neighbor-data ablation.
+    neighbors = getattr(model, "neighbors", None)
+    relative = getattr(neighbors, "space_time", None)
+    if relative is not None:
+        orig = relative.forward
+        relative.forward = (lambda o: (
+            lambda query_coords, neighbor_coords, *a, **k:
+                torch.zeros((*neighbor_coords.shape[:2], model.d_model),
+                            device=neighbor_coords.device,
+                            dtype=next(relative.parameters()).dtype)
+        ))(orig)
+        patched.append((relative, orig))
     try:
         yield
     finally:
         for m, orig in patched:
             m.forward = orig
+
+
+# Compatibility name for existing callers.  The semantics are now the honest total-Earth4D ablation.
+ablate_spacetime = ablate_earth4d
 
 
 @contextlib.contextmanager
@@ -68,7 +90,7 @@ def ablate_species(model):
         model._ablate_species = prev
 
 
-# capability -> spacetime-gain name (mirrors score.ST_GAIN); the S0 instrument built by monkeypatch, no core edit
+# capability -> production Earth4D-ablation gain name (mirrors score.ST_GAIN)
 ST_GAIN_MAP = {
     "B1_species_from_env_top10": "B1_species_spacetime_gain",
     "B6_family_from_env": "B6_family_spacetime_gain",
@@ -79,12 +101,14 @@ ST_GAIN_MAP = {
 }
 
 
-def instrument(spacetime_gain: bool = False) -> None:
+def instrument(spacetime_gain: bool = True) -> None:
     """Wrap ``evaluate.evaluate_benchmarks`` (in-process monkeypatch) so a run emits the encoder feedback
     signal INTO its own log -- with NO edit to evaluate.py / fusion.py:
       - always: the biological bottleneck  ``[profile] refined_seed_norm=...`` (cheap: one graph call).
-      - if spacetime_gain: a SECOND eval under ``ablate_spacetime`` and the ``*_spacetime_gain`` deltas
-        (this is the S0 instrument -- it *creates* st_gain). Doubles eval time only when requested.
+      - Earth4D gains are part of ``evaluate_benchmarks`` itself, so every run emits the same suite.
+
+    ``spacetime_gain`` remains in the signature for old launchers but is ignored.  A CLI flag must not
+    be able to change which scientific quantities a champion run measures.
     Launch experiments through ``main/harness/run_experiment.py`` so this is installed before training."""
     from deepearth.autoresearch.main.harness import evaluate as ev
     if getattr(ev, "_programs_instrumented", False):
@@ -94,26 +118,7 @@ def instrument(spacetime_gain: bool = False) -> None:
     def wrapped(model, source, device, *a, **k):
         for key, val in refinement_norm(model).items():
             print(f"[profile] {key}={val:.6g}", flush=True)
-        raw = orig(model, source, device, *a, **k)
-        if spacetime_gain:
-            with torch.no_grad(), ablate_spacetime(model):
-                abl = orig(model, source, device, *a, **k)
-            for cap, gain in ST_GAIN_MAP.items():
-                if cap in raw and cap in abl:
-                    # SIGNED, not clamped. This used to be max(0.0, ...), so a mechanism that HURT a
-                    # capability recorded 0.000 -- indistinguishable from one that did nothing. science.md
-                    # rule 18 says a modality that measurably hurts is a bug to be found and fixed, and
-                    # this is the instrument that would find it.
-                    #
-                    # Signing it here was necessary but not sufficient, and for a while not even
-                    # effective: `definitions.normalized` clipped every key to [0,1], `format_benchmarks`
-                    # re-printed the clipped value, and `score.parse_log`'s dict overwrite let that later
-                    # row win -- so this fix was inert at the only place that reads it. `normalized` now
-                    # clips by kind. (The comment here also used to claim the biological gains B56-B62
-                    # were never clamped. Three of the seven -- B57, B58, B62 -- were.)
-                    raw[gain] = float(raw[cap]) - float(abl[cap])
-                    print(f"  {gain:<34} {raw[gain]:.3f}  (spacetime-gain: WITH {raw[cap]:.3f} - WITHOUT {abl[cap]:.3f})", flush=True)
-        return raw
+        return orig(model, source, device, *a, **k)
 
     ev.evaluate_benchmarks = wrapped
     ev._programs_instrumented = True

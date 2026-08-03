@@ -35,6 +35,12 @@ class _DummySpeciesGraph(torch.nn.Module):
             out = torch.where(mask.unsqueeze(-1), self.offset.expand_as(out), out)
         return out
 
+    def masked_reconstruction_loss(self, mask, target, metric="cosine", reconstructed=None):
+        out = self(mask) if reconstructed is None else reconstructed
+        if metric == "cosine":
+            return (1.0 - torch.nn.functional.cosine_similarity(out[mask], target[mask], dim=-1)).mean()
+        return torch.nn.functional.mse_loss(out[mask], target[mask])
+
 
 class BiologicalContractTests(unittest.TestCase):
     def test_recordable_entrypoints_declare_trained_encoder(self):

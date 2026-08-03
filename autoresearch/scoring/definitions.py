@@ -255,24 +255,16 @@ METRICS: Tuple[Metric, ...] = (
 
     # ---- the species graph earns these from phylogeny --------------------------------------------
     #
-    # `capability=` on the five rows below is what makes the biological loop able to graduate at all.
-    # It was absent on every biological metric, so `capability_to_benchmark()` returned nothing for
-    # them and `graduation.CAPABILITY_BENCH["biological"]` evaluated to `{}` -- every record on that
-    # board failed the very first blocker, "no benchmark mapped", before any evidence was considered.
-    # The five names match `graduation.LOOP_CAPABILITIES["biological"]` exactly; that list and these
-    # rows are one contract.
-    #
-    # NOTE the gain rows (B56/B61/B62) deliberately carry NO capability. A capability must name an
-    # ABSOLUTE score whose marginal is the fair gain. Point one at a gain and `score` and `fair_gain`
-    # become the same number, the encoder's share is identically 1.0, and the bottleneck reads EARNING
-    # forever regardless of what the encoder did.
+    # Graduation targets are the B64-B67 masked-species endpoints below.  The older observation-row
+    # scores remain useful capability floors, but they do not reproduce the probes' held-out-species
+    # question and therefore carry no probe capability mapping.
     Metric("B7_family_from_phylo", "family from the phylogenomic embedding, accuracy",
            rule="R7 one embedding per species; R8 self-supervised on a dated tree",
-           surface=(_BIOLOGICAL,), capability="family_from_phylo",
+           surface=(_BIOLOGICAL,),
            question="Does the embedding preserve evolutionary structure?"),
-    Metric("B56_family_phylo_graph_gain", "family accuracy gained FROM the species graph",
-           rule="R29 exact O(N) two-pass OU-GP",
-           surface=(_BIOLOGICAL,), question="Does graph refinement add over the raw seed?"),
+    Metric("B56_family_phylo_graph_gain", "masked-family accuracy gained from graph imputation over the seed",
+           rule="R25 maskable phylo embedding; R29 exact O(N) two-pass OU-GP",
+           surface=(_BIOLOGICAL,), question="Does relative reconstruction add over the raw seed?"),
     Metric("B61_trait_phylo_graph_gain", "trait macro-F1 gained from the species graph",
            rule="R25 maskable phylo embedding",
            surface=(_BIOLOGICAL,), question="Which traits are conserved enough to impute?"),
@@ -281,17 +273,17 @@ METRICS: Tuple[Metric, ...] = (
            surface=(_BIOLOGICAL,), question="Is symbiosis phylogenetically conserved?"),
     Metric("B63_myco_from_species_f1", "mycorrhiza type given species identity, macro-F1",
            rule="R28 no fuzzy science",
-           surface=(_BIOLOGICAL,), capability="myco_from_species",
+           surface=(_BIOLOGICAL,),
            question="Can symbiosis be imputed from relatives?"),
     Metric("B55_pollinator_phylo_transfer_recall",
            "a plant's pollinators from its relatives' pollinators, recall@10",
            rule="R27 interactions across two trees",
-           surface=(_BIOLOGICAL, _MAIN), capability="pollinator_transfer",
+           surface=(_BIOLOGICAL, _MAIN),
            question="Does interaction signal travel along phylogeny?"),
     Metric("B21_community_from_species_recall",
            "the co-occurring species set given a species identity, recall@10",
            rule="R10-12 an observation of A updates its in-context neighbours",
-           surface=(_BIOLOGICAL, _MAIN), capability="community_from_species",
+           surface=(_BIOLOGICAL, _MAIN),
            question="Does co-occurrence travel along phylogeny, or only along space?"),
     Metric("B41_pollinator_from_species_recall", "a plant's pollinators from its identity, recall@10",
            rule="R27 interactions across two trees",
@@ -321,17 +313,31 @@ METRICS: Tuple[Metric, ...] = (
     Metric("B54_pollinator_dist_kl", "pollinator visitation distribution given species, KL",
            rule="R28 no fuzzy science",
            surface=(_BIOLOGICAL, _MAIN), question="Does the predicted visitation mass match observed?"),
-    # ---- the probe->fusion bridge: the SAME quantity the probe reports, on the 799M model ----------
-    # hooks.ablate_spacetime computes capability WITH Earth4D minus WITHOUT. That is `vs RFF` at
-    # full-model scale. Declaring these is what lets a spacetime probe finding reach a champion score
-    # at all; until now they were computed by --st-gain and dropped.
+    # ---- biological probe->fusion bridge: same held-out-species intervention, production readouts ----
+    Metric("B64_family_phylo_masked_imputation", "family of a seed-masked species from relatives, NN accuracy",
+           rule="R25 maskable phylo embedding", surface=(_BIOLOGICAL, _MAIN),
+           capability="family_from_phylo",
+           question="Can the production graph impute a held-out species' family from relatives?"),
+    Metric("B65_myco_phylo_masked_imputation_f1", "mycorrhiza of a seed-masked species from relatives, macro-F1",
+           rule="R25 maskable phylo embedding; R29 exact O(N) two-pass OU-GP",
+           surface=(_BIOLOGICAL, _MAIN), capability="myco_from_species",
+           question="Can the production graph impute conserved symbiosis without the species seed?"),
+    Metric("B66_community_phylo_masked_recall", "community of a seed-masked species from relatives, recall@10",
+           rule="R10-12 neighbours update together; R25 maskable phylo embedding",
+           surface=(_BIOLOGICAL, _MAIN), capability="community_from_species",
+           question="Does relative reconstruction carry co-occurrence structure?"),
+    Metric("B67_pollinator_phylo_masked_recall", "pollinators of a seed-masked plant from relatives, recall@10",
+           rule="R27 interactions across two trees", surface=(_BIOLOGICAL, _MAIN),
+           capability="pollinator_transfer",
+           question="Does interaction signal reach a plant when its own species seed is hidden?"),
+
+    # ---- production Earth4D marginal: all Earth4D channels WITH minus WITHOUT ----------------------
+    # This is deliberately distinct from the standalone probe's matched-RFF architectural control.
     Metric("B1_species_spacetime_gain", "species-from-env accuracy gained FROM Earth4D",
            rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN),
-           capability="species_from_env",
            question="Does the coordinate encoder add anything the env channel does not already carry?"),
     Metric("B6_family_spacetime_gain", "family-from-env accuracy gained FROM Earth4D",
-           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN),
-           capability="family_from_env"),
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
     Metric("B34_lfmc_spacetime_gain", "LFMC correlation gained FROM Earth4D",
            rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
     Metric("B42_mycorrhiza_spacetime_gain", "mycorrhiza macro-F1 gained FROM Earth4D",
@@ -340,6 +346,42 @@ METRICS: Tuple[Metric, ...] = (
            rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
     Metric("B23_calibration_spacetime_gain", "species-posterior calibration gained FROM Earth4D",
            rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
+
+    # ---- remaining spacetime score ownership -------------------------------------------------------
+    Metric("B23_species_calibration_mrr", "species posterior calibration from environment, MRR",
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
+    Metric("B29_species_dist_30m_skill", "30 m species distribution skill",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B39_species_dist_3km_skill", "3 km species distribution skill",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B40_species_dist_300m_skill", "300 m species distribution skill",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B34_lfmc_from_env", "live fuel moisture from environment",
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
+    Metric("B42_mycorrhiza_from_env", "mycorrhiza from environment, macro-F1",
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
+    Metric("B50_pollinator_from_spacetime_recall", "pollinators from bare spacetime, recall@10",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B51_pollinator_from_env_recall", "pollinators from environment, recall@10",
+           rule="R18 all data must lift induction", surface=(_SPACETIME, _MAIN)),
+    Metric("B26_flowering_auc", "flowering from environment, ROC-AUC",
+           rule="R1 causal forecast; R18 all data must lift", surface=(_SPACETIME, _MAIN)),
+    Metric("B27_flowering_fidelity", "flowering agreement between imagined and observed vision",
+           rule="R1 causal forecast", surface=(_SPACETIME, _MAIN)),
+    Metric("B16_infer_clay_cos", "clay field reconstruction, anomaly cosine",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B17_infer_soil_cos", "soil field reconstruction, anomaly cosine",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B18_infer_climate_cos", "climate field reconstruction, anomaly cosine",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B43_infer_hydro_cos", "hydrology field reconstruction, anomaly cosine",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B44_infer_topo_cos", "topography field reconstruction, anomaly cosine",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B46_infer_chm_cos", "canopy-height field reconstruction, anomaly cosine",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
+    Metric("B47_infer_naip_ir_cos", "aerial infrared reconstruction, anomaly cosine",
+           rule="R24 dense 4D field", surface=(_SPACETIME, _MAIN)),
 )
 
 _BY_NAME = {m.name: m for m in METRICS}
@@ -377,7 +419,12 @@ def metrics_for_capability(capability: str) -> Tuple[Metric, ...]:
 
 def capability_to_benchmark() -> Dict[str, str]:
     """The probe->champion join, DERIVED from the registry so it cannot drift from it."""
-    return {m.capability: m.name for m in METRICS if m.capability}
+    grouped = {cap: metrics_for_capability(cap) for cap in {m.capability for m in METRICS if m.capability}}
+    duplicate = {cap: rows for cap, rows in grouped.items() if len(rows) != 1}
+    if duplicate:
+        detail = ", ".join(f"{cap}={[m.name for m in rows]}" for cap, rows in sorted(duplicate.items()))
+        raise ValueError(f"every probe capability must have exactly one graduation benchmark: {detail}")
+    return {cap: rows[0].name for cap, rows in grouped.items()}
 
 
 def unowned(declared_suite: Iterable[str]) -> Tuple[str, ...]:
@@ -463,20 +510,15 @@ SCIENCE_AXES: Tuple[Axis, ...] = (
          note="Satisfied on the champion suite, and the denominator is now the DECLARED suite, so an "
               "injected key set can no longer move the north star."),
 
-    # The axis this whole three-loop design exists for, and the one with no instrument.
+    # The axis this whole three-loop design exists for.
     Axis("probe->fusion", "a probe measures what an encoder CONTRIBUTES, so that measurement must be "
                           "the same quantity fusion scores -- only cheaper",
          instrument="hooks.ablate_spacetime + B*_spacetime_gain", status="measured",
-         note="The probe scores fair_gain = Earth4D minus the strongest fair baseline (a MARGINAL). "
-              "The champion scores B5/B8 = absolute accuracy of the full model, with no encoder "
-              "ablation in the declared suite. Those are different quantities, so a probe gain has no "
-              "defined relationship to a benchmark score and `graduation.py` is currently comparing a "
-              "marginal against an absolute. The fusion-side counterpart already exists half-built: "
-              "hooks.ablate_spacetime computes capability WITH Earth4D minus WITHOUT, which IS "
-              "fair_gain at full-model scale. It is not in BENCHMARKS, it is flag-gated behind "
-              "--st-gain, and it is clamped at max(0.0, ...). Declare those six keys, drop the clamp, "
-              "and the probe becomes a cheap ESTIMATOR of the expensive quantity -- which is the only "
-              "thing that would justify running it at all."),
+         note="The probe's matched-RFF gain is an architecture screen, while the canonical champion "
+              "suite always measures a distinct production marginal: capability with all Earth4D "
+              "channels minus capability with absolute and relative Earth4D removed. Graduation maps "
+              "the screen to an absolute capability prediction; the ledger measures whether that "
+              "prediction transfers instead of pretending the two controls are numerically identical."),
 
     Axis("R30", "every champion improvement reported before->after, no metric regressing",
          instrument="champion_report.format_commit", status="measured",
