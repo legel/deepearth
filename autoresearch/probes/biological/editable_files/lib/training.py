@@ -39,7 +39,7 @@ def train_graph(seed: torch.Tensor, tree, tip_row, test, dev, d_model, steps, ma
             continue
         refined = graph(mask=mask)
         target = graph._seed().detach()
-        loss = (1.0 - F.cosine_similarity(refined[mask], target[mask], dim=-1)).mean()
+        loss = graph.masked_reconstruction_loss(mask, target, metric="cosine", reconstructed=refined)
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(graph.parameters(), 1.0)
         opt.step()
@@ -78,7 +78,7 @@ def train_graph_family(seed: torch.Tensor, tree, tip_row, test, dev, d_model, st
             continue
         refined = graph(mask=mask)
         seed_target = graph._seed().detach()
-        loss = (1.0 - F.cosine_similarity(refined[mask], seed_target[mask], dim=-1)).mean()
+        loss = graph.masked_reconstruction_loss(mask, seed_target, metric="cosine", reconstructed=refined)
         if no_recon:
             loss = loss * 0.0
 

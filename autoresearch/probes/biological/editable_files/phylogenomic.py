@@ -485,6 +485,26 @@ class SpeciesGraph(nn.Module):
         Parameter — otherwise the next non-ablated forward's plain-tensor assign raises a TypeError (eval-only path)."""
         return self.free + 0.0 if self.probe is None else self.probe(self.species_text)
 
+    def masked_reconstruction_loss(self, mask: torch.Tensor, target: torch.Tensor,
+                                   metric: str = "cosine",
+                                   reconstructed: torch.Tensor = None) -> torch.Tensor:
+        """Public rule-25 operation shared by standalone screens and production training.
+
+        The caller owns how the mask and target are selected; the graph owns how a hidden species is
+        reconstructed.  Keeping this operation on the production ``SpeciesGraph`` API prevents a probe
+        training helper from discovering a mechanism that fusion cannot actually execute.
+        """
+        if not mask.any():
+            return self._seed().sum() * 0.0
+        reconstructed = self(mask=mask) if reconstructed is None else reconstructed
+        reconstructed = reconstructed[mask]
+        expected = target[mask]
+        if metric == "cosine":
+            return (1.0 - F.cosine_similarity(reconstructed, expected, dim=-1)).mean()
+        if metric == "mse":
+            return F.mse_loss(reconstructed, expected)
+        raise ValueError(f"unknown masked reconstruction metric {metric!r}")
+
     def forward(self, mask: torch.Tensor = None) -> torch.Tensor:
         """Refine and return the species representations ``[n_species, d_model]``.
 
