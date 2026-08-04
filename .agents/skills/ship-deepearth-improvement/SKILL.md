@@ -92,9 +92,12 @@ Use the bundled PR template. Keep the public description concise and factual:
 
 - **What:** the production behavior changed.
 - **Why:** the user/scientific capability it improves.
+- **Science:** cite the exact `autoresearch/science.md` rule number(s), explain how the mechanism realizes them, and name the capability expected to improve.
 - **How:** the implementation at a useful abstraction level.
 - **Evidence:** exact baseline and candidate results, protocol, seeds, and focused tests.
 - **Scope:** explicit non-goals and compatibility statement.
+
+Do not open a scientific PR whose description cannot connect the production mechanism to a named `science.md` rule and a measured full-fusion capability change. Encoder-only evidence may motivate the work, but it is not the customer-facing improvement claim.
 
 Push only the delivery branch. Target `legel/deepearth:main`. Open the PR only when the user has authorized external publication or explicitly asked to create the PR.
 
