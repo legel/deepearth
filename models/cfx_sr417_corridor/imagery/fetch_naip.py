@@ -33,6 +33,7 @@ Usage:
 import os
 import sys
 import json
+import shutil
 import argparse
 import datetime
 import numpy as np
@@ -287,6 +288,11 @@ def download_naip_mosaic(items, bbox, data_dir):
     }
     with open(os.path.join(data_dir, "naip_meta.json"), "w") as f:
         json.dump(meta_info, f, indent=2)
+
+    # Raw per-tile downloads are superseded by the mosaicked RGB/NIR/NDVI outputs above;
+    # clean up so re-runs don't silently accumulate multi-GB of scratch tiles (found leaving
+    # 1.9GB behind for site3_gee_creek's own use of this function — never cleaned up before).
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return meta_info
 
