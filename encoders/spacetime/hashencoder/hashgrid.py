@@ -1,5 +1,5 @@
 import enum
-from math import ceil
+from math import ceil, isfinite
 from cachetools import cached
 import numpy as np
 
@@ -17,6 +17,16 @@ except ImportError:
 
 from .backend import _backend
 
+_FIXED_POINT_BITS = 36
+
+
+def _fixed_scale(grad: torch.Tensor) -> float:
+    if not torch.are_deterministic_algorithms_enabled():
+        return 0.0
+    gmax = grad.detach().abs().max().item()
+    if not isfinite(gmax) or gmax <= 0.0:
+        return 0.0
+    return (2.0 ** _FIXED_POINT_BITS) / gmax
 class _hash_encode(Function):
     @staticmethod
     @custom_fwd(cast_inputs=torch.half, device_type='cuda')
@@ -117,7 +127,7 @@ class _hash_encode_second_backward(Function):
         else:
             index_logits_f32 = index_logits
 
-        _backend.hash_encode_backward(grad, inputs, embeddings, offsets, grad_embeddings, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs_f32, probe_indices, index_logits_f32, grad_index_logits, N_f, N_p, N_c)
+        _backend.hash_encode_backward(grad, inputs, embeddings, offsets, grad_embeddings, B, D, C, L, per_level_scale, base_resolution, calc_grad_inputs, dy_dx, grad_inputs_f32, probe_indices, index_logits_f32, grad_index_logits, N_f, N_p, N_c, _fixed_scale(grad))
 
         if inputs.dtype != embeddings.dtype:
             grad_inputs = grad_inputs_f32.to(inputs.dtype)
@@ -194,7 +204,7 @@ def _hash_encode_bwd_cuda(grad: torch.Tensor, inp: torch.Tensor, emb: torch.Tens
     grad_idx = (torch.zeros_like(idx_f32) if idx_f32.numel() > 0
                 else torch.empty(0, dtype=torch.float32, device=grad.device))
     _backend.hash_encode_backward(grad, inp, emb, off, grad_emb, B, D, C, L, pls_log2, base, calc, dy_dx,
-                                  grad_inp, probe, idx_f32, grad_idx, N_f, N_p, N_c)
+                                  grad_inp, probe, idx_f32, grad_idx, N_f, N_p, N_c, _fixed_scale(grad))
     return grad_inp, grad_emb, grad_idx
 
 
@@ -319,7 +329,7 @@ class _hash_encode_precomputed(Function):
             grad, offsets,
             h1_used, h2_used, weights,
             probe_indices, index_logits, grad_index_logits, grad_embeddings,
-            B, D, C, L, N_p, N_c
+            B, D, C, L, N_p, N_c, _fixed_scale(grad)
         )
 
         # per_level_scale gradient: same formula as the standard backward, from the freshly recomputed dy_dx.
@@ -704,7 +714,8 @@ class HashEncoder(nn.Module):
             probe_indices, index_logits, grad_index_logits, self._adam_grad_buffer,
             B, self.input_dim, self.level_dim, self.num_levels,
             self.N_p if self.enable_learned_probing else 1,
-            self.N_c if self.enable_learned_probing else 0
+            self.N_c if self.enable_learned_probing else 0,
+            _fixed_scale(grad)
         )
 
     def adam_step(self, batch_indices):
