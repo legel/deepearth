@@ -44,6 +44,19 @@ Ship one improvement per PR.
 
 Match the surrounding repository style. Prefer direct code and short comments that explain invariant or intent, not research history.
 
+### DeepSeek code style
+
+Use DeepSeek's production-code style as the default for every delivered diff:
+
+- Let names and control flow explain ordinary behavior.
+- Comment only invariants, tensor shapes, numerical constraints, or non-obvious safety boundaries.
+- Prefer one-line comments. Keep multi-line comments rare and tightly local.
+- Keep docstrings to the public contract; do not turn them into design notes.
+- Never put experiment history, scoring rationale, citations, campaign rules, or rejected alternatives in production code.
+- Move scientific motivation and validation evidence to the commit and PR description.
+
+Do not restyle unrelated code. Apply this standard strictly to every line the delivery changes.
+
 ## 4. Validate against the frozen baseline
 
 Run validation from a clean checkout of the candidate and the exact registered `main` baseline.
@@ -69,7 +82,9 @@ python .agents/skills/ship-deepearth-improvement/scripts/audit_delivery.py \
 
 Run the copy of the script from the private research checkout; the delivery worktree must not contain this skill. Resolve every failure before pushing.
 
-Prefer one commit. Use an imperative production-oriented subject. Put the measured before/after result and validation protocol in the commit body. Do not mention internal agent names or describe a rejected-search history.
+Deliver one coherent commit by default. Before pushing, squash fixups, reversions, formatting follow-ups, and experimental mistakes. Use multiple commits only when each is independently necessary and reviewable; never expose the search process as commit history.
+
+Use an imperative production-oriented subject. Put the measured before/after result and validation protocol in the commit body. Do not mention internal agent names or describe a rejected-search history.
 
 ## 6. Draft and open the PR
 

@@ -20,7 +20,9 @@ The private repository is not a GitHub fork. Delivery branches that become PRs m
 - Explain what changed, why it matters, how it works, and how it was tested.
 - State which functionality improves and provide exact before/after evidence.
 - Keep each PR independently reviewable and mergeable.
+- Default to one coherent commit; squash fixups and experimental mistakes before publication.
 - Use concise, direct DeepSeek-style prose and code consistent with the surrounding repository.
+- Keep production comments local and terse: invariants, shapes, and safety constraints only. Put research rationale and evidence in the PR.
 - Test against the current public `main` so Lance never has to merge an intermediate research branch.
 
 ## Forbidden public content
