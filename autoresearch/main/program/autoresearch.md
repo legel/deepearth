@@ -51,12 +51,18 @@ the DATA itself are all in scope. Never tune a scoring definition to inflate a r
 focus, opportunities the inspiration.
 
 ## The loop
-1. Read `results.tsv` + the per-benchmark profile; form a hypothesis grounded in `science.md`.
-2. Edit a model/config/data file; `git commit` (report every benchmark score in order + the means).
-3. Train (`python -m deepearth.autoresearch.main.editable_files.train`); every active config carries the
-   universal rule-20 budget, `time_budget_s: 600`. Do not override it per experiment or compare a longer run.
-4. Read `grep "^net_score:" run.log`; empty ⇒ crash (`tail -50`), fix at the root or revert.
-5. Append to `results.tsv`. Keep the commit if the mean rose with no metric regressed; else revert.
+1. Read the current scorecards and graduation ledger. Pick one weakness and state one causal hypothesis.
+2. Change only the scientific surface that can test it. Commit the candidate before running.
+3. Screen in the owning encoder loop. Only a clean, exact two-seed encoder record can cross to fusion.
+4. Open its crossing with `python -m deepearth.autoresearch.scoring.graduation --open LOOP:CAPABILITY`.
+5. Run the unchanged fusion control and candidate at the same two seeds and the fixed 600-second budget.
+6. Close the crossing with both paired logs. Report probe delta, mapped-benchmark delta, propagation ratio,
+   harmonic delta, arithmetic delta, worst regression, steps, and peak VRAM.
+7. Keep an encoder record when its own gate passes. Call it a fusion breakthrough only when the mapped
+   benchmark, harmonic mean, and arithmetic mean all rise with no material regression.
+
+The probe score discovers signal; the paired fusion result measures uptake. Never infer one from the other,
+never compare against a stale champion JSON, and never change a metric to make a candidate pass.
 
 **Simplicity wins** (science.md rule 19 — DeepSeek parsimony: terse code, minimal comments). **Never stop**: think
 harder, read the papers, combine near-misses, try radical architecture. Launch dataset downloads/preprocessing when
@@ -106,8 +112,8 @@ worktree, not the shared loop repo, so concurrent candidate runs are never conta
 | `comm_attached` | `autoresearch/main/editable_files/fusion/fusion.py` | `false` | let the community-head loss shape the backbone (un-detached) |
 | `mod_encoder` | `autoresearch/main/editable_files/fusion/fusion.py` | `"linear"` | modality tokenizer for continuous vars: `"linear"` (bare Linear) / `"mlp2"` (2-layer MLP) / `"mlp2ln"` (+LayerNorm) |
 | `read_op` | `autoresearch/main/editable_files/fusion/fusion.py` | `"mha"` | Perceiver READ operator: `mha`(stock) / `slot`(competitive slot-attn) / `typed`(variable-vs-context split, gated) / `crossself`(latents co-attend field+selves). All tested NEUTRAL vs champion. |
-| `neighbor_op` | `autoresearch/main/editable_files/fusion/fusion.py` | `"add"` | neighbor token value×position combine: `add` / `film` / `gate` / `bind`(Hadamard value⊙pos term). **bind PROMOTED** (+0.0013). film NaN-collapses. |
-| `token_op` | `autoresearch/main/editable_files/fusion/fusion.py` | `"add"` | query variable-token value×position combine: `add` / `bind` / `film`(FiLM by pos) / `filmbind`. **film PROMOTED** (+0.0034). |
+| `neighbor_op` | `autoresearch/main/editable_files/fusion/fusion.py` | `"add"` | neighbor token value×position combine: `add` / `film` / `gate` / `bind`(Hadamard value⊙pos term). Legacy results are not current-protocol evidence. |
+| `token_op` | `autoresearch/main/editable_files/fusion/fusion.py` | `"add"` | query variable-token value×position combine: `add` / `bind` / `film`(FiLM by pos) / `filmbind`. Legacy results are not current-protocol evidence. |
 | `read_cond` | `autoresearch/main/editable_files/fusion/fusion.py` | `false` | location-aware read: FiLM the read query by the query GLOBAL position. Tested NEGATIVE (-0.0033). |
 | `joint_decode` | `autoresearch/main/editable_files/fusion/fusion.py` | `false` | cross-variable joint decoder: variables attend to each other (self-attn over pooled beliefs) before decoding. Tested NEGATIVE (-0.0042). |
 | `grad_checkpoint` | `autoresearch/main/editable_files/fusion/fusion.py` | `false` | recompute read+processor-block activations in backward (memory<->compute). NOTE: torch.compile largely overrides it; latent blocks are tiny anyway, so limited effect. |

@@ -17,13 +17,18 @@ answers the question the whole three-loop design is premised on and which nothin
 **when a probe finds a gain, does the benchmark move?** A capability whose probe gains never transfer is
 a capability the probe is mis-measuring -- and you learn that from ten rows instead of five hundred runs.
 
-Lifecycle, because this tool cannot train (a champion run needs a GPU and the rule-20 budget):
+Lifecycle, because this tool cannot train (a fusion run needs a GPU and the rule-20 budget):
 
     graduation.py --status                     what is eligible, what is blocked, and why   [no GPU]
     graduation.py --open spacetime:family_from_spacetime
                                              snapshot bench_before + the probe record -> PENDING row
-    < run the champion at time_budget_s=600 with the probe's commit applied, capture run.log >
-    graduation.py --close <id> --log run.log   fill bench_after -> transferred: true/false
+    < run paired CONTROL and CANDIDATE fusion jobs at time_budget_s=600 >
+    graduation.py --close <id> \
+      --baseline-log control.seed0.log --baseline-log control.seed1.log \
+      --log candidate.seed0.log --log candidate.seed1.log
+
+The close step compares the two live logs. It never compares a candidate against a stale champion
+JSON written under another seed, suite, or protocol.
 
 Eligibility is deliberately strict. A probe record that cannot be REPLAYED cannot be graduated, because
 step 2 replays it: `code.dirty` means the CONFIG/earth4d diff that produced the number is unrecoverable
@@ -108,7 +113,19 @@ def read_champion() -> Dict[str, Any]:
 # ELIGIBILITY
 # ==============================================================================================
 
-def blockers(loop: str, capability: str, rec: Dict[str, Any], bench_ok: bool,
+def _probe_before(rec: Dict[str, Any]) -> Optional[float]:
+    """Previous comparable probe record, if the board retained one."""
+    rows = (rec.get("ledger") or {}).get("records") or []
+    current = rec.get("score", rec.get("primary"))
+    protocol = rec.get("protocol")
+    comparable = [r.get("score") for r in rows
+                  if r.get("protocol") == protocol and r.get("score") is not None]
+    if comparable and current is not None and comparable[-1] == current:
+        comparable = comparable[:-1]
+    return float(comparable[-1]) if comparable else None
+
+
+def blockers(loop: str, capability: str, rec: Dict[str, Any], bench_ok: bool = True,
              champion_protocol: Optional[str] = None) -> List[str]:
     """Why this record may NOT cross. Empty list = eligible.
 
@@ -117,16 +134,10 @@ def blockers(loop: str, capability: str, rec: Dict[str, Any], bench_ok: bool,
     if capability not in CAPABILITY_BENCH.get(loop, {}):
         out.append(f"no benchmark mapped for {loop}:{capability} — add it to CAPABILITY_BENCH or "
                    f"record why the capability is not champion-reachable")
-    elif not bench_ok:
-        out.append(f"mapped benchmark {CAPABILITY_BENCH[loop][capability]!r} is absent from the "
-                   f"champion record — it was never scored, so there is no 'before' to move")
     expected_probe = CURRENT_PROBE_PROTOCOL.get(loop)
     if rec.get("protocol") != expected_probe:
         out.append(f"probe protocol {rec.get('protocol')!r} is superseded; current {loop} protocol is "
                    f"{expected_probe!r} — re-baseline this capability before graduation")
-    if champion_protocol != BENCHMARK_PROTOCOL:
-        out.append(f"champion benchmark protocol {champion_protocol!r} is not the current "
-                   f"{BENCHMARK_PROTOCOL!r} — establish a fresh champion baseline")
     code = rec.get("code") or {}
     if code.get("dirty"):
         out.append("code.dirty — the tree that produced this number had uncommitted changes, so the "
@@ -140,6 +151,12 @@ def blockers(loop: str, capability: str, rec: Dict[str, Any], bench_ok: bool,
                    f"needs >=2 matched seeds before a probe record is a claim")
     if rec.get("score") is None and rec.get("primary") is None:
         out.append("record carries no score")
+    before = _probe_before(rec)
+    after = rec.get("score", rec.get("primary"))
+    if before is None:
+        out.append("no prior same-protocol probe record — this is a baseline, not an improvement")
+    elif after is None or after <= before:
+        out.append(f"probe did not improve its prior record ({before} -> {after})")
     return out
 
 
@@ -160,8 +177,8 @@ def survey(loop: str) -> List[Dict[str, Any]]:
             "n_seeds": rec.get("n_seeds"),
             "commit": (rec.get("code") or {}).get("commit"),
             "bench_before": champ.get(bench) if bench else None,
-            "blockers": blockers(loop, capability, rec, bench in champ if bench else False,
-                                 champion.get("benchmark_protocol")),
+            "probe_before": _probe_before(rec),
+            "blockers": blockers(loop, capability, rec),
         })
     return rows
 
@@ -205,10 +222,8 @@ def do_open(target: str, force: bool) -> None:
     if rec is None:
         raise SystemExit(f"[graduate] {loop} has no record for {capability!r}")
 
-    champ = read_champion()
     bench = CAPABILITY_BENCH[loop].get(capability)
-    stop = blockers(loop, capability, rec, bench in champ.get("scores", {}) if bench else False,
-                    champ.get("benchmark_protocol"))
+    stop = blockers(loop, capability, rec)
     if stop and not force:
         print(f"[graduate] {target} is NOT eligible:")
         for b in stop:
@@ -220,39 +235,87 @@ def do_open(target: str, force: bool) -> None:
     if any(r["id"] == cid and r["state"] == "pending" for r in read_ledger()):
         raise SystemExit(f"[graduate] {cid} is already pending; close it with --close before reopening")
 
+    probe_after = rec.get("score", rec.get("primary"))
+    probe_before = _probe_before(rec)
     row = {
         "id": cid,
         "state": "pending",
         "loop": loop,
         "capability": capability,
         "bench": bench,
-        "probe": {"tag": rec.get("tag"), "score": rec.get("score", rec.get("primary")),
+        "probe": {"tag": rec.get("tag"), "score": probe_after,
+                  "score_before": probe_before,
+                  "score_delta": (probe_after - probe_before
+                                  if probe_after is not None and probe_before is not None else None),
                   "fair_gain": rec.get("fair_st_gain"), "fair_baseline": rec.get("fair_baseline"),
                   "mode": rec.get("mode"), "n_shards": rec.get("n_shards"),
                   "protocol": rec.get("protocol"), "n_seeds": rec.get("n_seeds"),
                   "seed_std": rec.get("seed_std"), "provisional": rec.get("provisional"),
                   "commit": (rec.get("code") or {}).get("commit"),
                   "branch": (rec.get("code") or {}).get("branch")},
-        "champion_before": {"label": champ.get("label"), "harmonic": champ.get("harmonic"),
-                            "arithmetic": champ.get("arithmetic"),
-                            "benchmark_protocol": champ.get("benchmark_protocol"),
-                            "bench_value": champ.get("scores", {}).get(bench) if bench else None,
-                            "n_benchmarks": len(champ.get("scores", {}))},
         "forced": bool(stop),
         "blockers_at_open": stop,
     }
     append_ledger(row)
     print(f"[graduate] OPENED {cid}")
-    print(f"    predicts   {bench} moves up from {row['champion_before']['bench_value']}")
+    print(f"    predicts   {bench} moves up against its paired fusion control")
     print(f"    probe      {row['probe']['score']} (fair-gain {row['probe']['fair_gain']} vs "
           f"{row['probe']['fair_baseline']}, {row['probe']['n_seeds']} seeds)")
     print(f"    replay     git checkout {row['probe']['commit']} -- the encoder + CONFIG diff")
-    print(f"\n    Now run the champion at the rule-20 budget, then:\n"
+    print(f"\n    Now run matched control and candidate fusion jobs at the rule-20 budget, then:\n"
           f"      python -m deepearth.autoresearch.scoring.graduation "
-          f"--close {cid} --log run.log")
+          f"--close {cid} --baseline-log control.seed0.log --baseline-log control.seed1.log "
+          f"--log candidate.seed0.log --log candidate.seed1.log")
 
 
-def do_close(cid: str, log_path: str) -> None:
+def compare_fusion(control: Dict[str, Any], candidate: Dict[str, Any], bench: str,
+                   probe_delta: Optional[float] = None) -> Dict[str, Any]:
+    """Paired encoder-to-fusion propagation scorecard. Scoring definitions stay untouched."""
+    before, after = control["scores"], candidate["scores"]
+    missing = sorted(set(before) - set(after))
+    added = sorted(set(after) - set(before))
+    if missing or added:
+        raise ValueError("benchmark suites differ\n"
+                         f"    added: {', '.join(added) or '(none)'}\n"
+                         f"    missing: {', '.join(missing) or '(none)'}")
+    bench_before, bench_after = before.get(bench), after.get(bench)
+    bench_delta = (bench_after - bench_before
+                   if bench_before is not None and bench_after is not None else None)
+    deltas = {name: after[name] - value for name, value in before.items()}
+    regressions = sorted(name for name, delta in deltas.items() if delta < -0.005)
+    harmonic_delta = candidate["harmonic"] - control["harmonic"]
+    arithmetic_delta = candidate["arithmetic"] - control["arithmetic"]
+    transferred = bool(bench_delta is not None and bench_delta > 0 and not regressions)
+    return {
+        "bench_before": bench_before,
+        "bench_after": bench_after,
+        "bench_delta": bench_delta,
+        "propagation_ratio": (bench_delta / probe_delta
+                              if bench_delta is not None and probe_delta is not None and probe_delta > 0 else None),
+        "harmonic_delta": harmonic_delta,
+        "arithmetic_delta": arithmetic_delta,
+        "worst_delta": min(deltas.items(), key=lambda item: item[1]) if deltas else None,
+        "regressions": regressions,
+        "transferred": transferred,
+        "fusion_breakthrough": bool(transferred and harmonic_delta > 0 and arithmetic_delta > 0),
+    }
+
+
+def _mean_runs(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    names = set(runs[0]["scores"])
+    if any(set(run["scores"]) != names for run in runs[1:]):
+        raise ValueError("benchmark suites differ across seeds")
+    n = len(runs)
+    return {
+        "scores": {name: sum(run["scores"][name] for run in runs) / n for name in names},
+        "harmonic": sum(run["harmonic"] for run in runs) / n,
+        "arithmetic": sum(run["arithmetic"] for run in runs) / n,
+        "steps": [run.get("steps") for run in runs],
+        "peak_vram_mb": max((run.get("peak_vram_mb") or 0.0) for run in runs),
+    }
+
+
+def do_close(cid: str, log_paths: List[str], baseline_log_paths: List[str]) -> None:
     from deepearth.autoresearch.main.harness.champion_report import parse_run
 
     rows = read_ledger()
@@ -262,65 +325,69 @@ def do_close(cid: str, log_path: str) -> None:
                          + "\n  ".join(r["id"] for r in rows if r["state"] == "pending"))
     row = match[-1]
 
-    after = parse_run(log_path)
-    if not after["scores"]:
-        raise SystemExit(f"[graduate] no Bxx scores found in {log_path}")
-
-    before_champ = read_champion()
-    before_scores = before_champ.get("scores", {})
-
-    if after.get("benchmark_protocol") != BENCHMARK_PROTOCOL:
-        raise SystemExit(f"[graduate] run protocol {after.get('benchmark_protocol')!r} does not match "
-                         f"the live benchmark protocol {BENCHMARK_PROTOCOL!r}")
-    if before_champ.get("benchmark_protocol") != BENCHMARK_PROTOCOL:
-        raise SystemExit(f"[graduate] champion protocol {before_champ.get('benchmark_protocol')!r} does not match "
-                         f"the live benchmark protocol {BENCHMARK_PROTOCOL!r}; establish a new baseline first")
-    if row.get("champion_before", {}).get("benchmark_protocol") != BENCHMARK_PROTOCOL:
-        raise SystemExit("[graduate] this crossing was opened under a different benchmark protocol; "
-                         "discard it and open a new crossing")
-
-    # THE SUITE MUST BE THE SAME SUITE.  Earth4D gains are canonical now, but optional labels and
-    # holdout-specific endpoints can still make a run incomplete.  A crossing is a paired experiment;
-    # changing the measured set invalidates the pair.
-    missing = sorted(set(before_scores) - set(after["scores"]))
-    added = sorted(set(after["scores"]) - set(before_scores))
-    suite_changed = bool(missing or added)
-    if suite_changed:
-        raise SystemExit("[graduate] refusing to close: before/after benchmark suites differ\n"
-                         f"    added: {', '.join(added) or '(none)'}\n"
-                         f"    missing: {', '.join(missing) or '(none)'}")
+    if len(log_paths) != 2 or len(baseline_log_paths) != 2:
+        raise SystemExit("[graduate] fusion confirmation requires exactly two control and two candidate logs")
+    controls = [parse_run(path) for path in baseline_log_paths]
+    candidates = [parse_run(path) for path in log_paths]
+    for label, parsed_runs, paths in (("control", controls, baseline_log_paths),
+                                      ("candidate", candidates, log_paths)):
+        for parsed, path in zip(parsed_runs, paths):
+            if not parsed["scores"]:
+                raise SystemExit(f"[graduate] no Bxx scores found in {path}")
+            if parsed.get("benchmark_protocol") != BENCHMARK_PROTOCOL:
+                raise SystemExit(f"[graduate] {label} protocol {parsed.get('benchmark_protocol')!r} does not "
+                                 f"match the live benchmark protocol {BENCHMARK_PROTOCOL!r}")
+    control_seeds = [run.get("training_seed") for run in controls]
+    candidate_seeds = [run.get("training_seed") for run in candidates]
+    if None in control_seeds + candidate_seeds or control_seeds != candidate_seeds or len(set(control_seeds)) != 2:
+        raise SystemExit("[graduate] logs must declare the same two distinct training_seed values in paired order")
+    try:
+        control, after = _mean_runs(controls), _mean_runs(candidates)
+    except ValueError as exc:
+        raise SystemExit(f"[graduate] refusing to close: {exc}") from exc
 
     bench = row["bench"]
-    b_before = row["champion_before"]["bench_value"]
-    b_after = after["scores"].get(bench) if bench else None
-    delta = (b_after - b_before) if (b_after is not None and b_before is not None) else None
-
-    regressions = sorted(n for n, v in after["scores"].items()
-                         if n in before_scores and v < before_scores[n] - 0.005)
+    try:
+        result = compare_fusion(control, after, bench, row["probe"].get("score_delta"))
+    except ValueError as exc:
+        raise SystemExit(f"[graduate] refusing to close: {exc}") from exc
 
     row.update({
         "state": "closed",
-        "champion_after": {"harmonic": after["harmonic"], "arithmetic": after["arithmetic"],
-                           "bench_value": b_after, "n_benchmarks": len(after["scores"]),
-                           "log": str(Path(log_path).resolve())},
-        "bench_delta": delta,
-        # The question the whole ledger exists to answer. Deliberately strict: the mapped benchmark
-        # must move UP, and no other benchmark may regress (science.md rule 30).
-        "transferred": bool(not suite_changed and delta is not None and delta > 0 and not regressions),
-        "regressions": regressions,
-        "suite_changed": suite_changed,
-        "suite_added": added,
-        "suite_missing": missing,
+        "fusion_control": {"harmonic": control["harmonic"], "arithmetic": control["arithmetic"],
+                           "bench_value": result["bench_before"],
+                           "n_benchmarks": len(control["scores"]),
+                           "steps": control["steps"], "peak_vram_mb": control["peak_vram_mb"],
+                           "seeds": control_seeds,
+                           "logs": [str(Path(path).resolve()) for path in baseline_log_paths]},
+        "fusion_candidate": {"harmonic": after["harmonic"], "arithmetic": after["arithmetic"],
+                             "bench_value": result["bench_after"],
+                             "n_benchmarks": len(after["scores"]),
+                             "steps": after["steps"], "peak_vram_mb": after["peak_vram_mb"],
+                             "seeds": candidate_seeds,
+                             "logs": [str(Path(path).resolve()) for path in log_paths]},
+        **result,
     })
     rewrite_ledger(rows)
 
     print(f"[graduate] CLOSED {cid}")
-    print(f"    {bench}: {_fmt(b_before)} -> {_fmt(b_after)} ({_fmt(delta, signed=True)})")
-    print(f"    net harmonic {_fmt(row['champion_before']['harmonic'])} -> {_fmt(after['harmonic'])}"
-          f"   arithmetic {_fmt(row['champion_before']['arithmetic'])} -> {_fmt(after['arithmetic'])}")
-    print(f"    regressions (>0.005): {', '.join(regressions) if regressions else 'none'}")
-    print(f"    TRANSFERRED: {row['transferred']}")
-    if not row["transferred"] and delta is not None and delta <= 0:
+    print(f"    probe: {row['probe'].get('score_before')} -> {row['probe'].get('score')} "
+          f"({_fmt(row['probe'].get('score_delta'), signed=True)})")
+    print(f"    {bench}: {_fmt(result['bench_before'])} -> {_fmt(result['bench_after'])} "
+          f"({_fmt(result['bench_delta'], signed=True)})")
+    print(f"    propagation ratio: {_fmt(result['propagation_ratio'])} (diagnostic; probe/fusion scales differ)")
+    print(f"    net harmonic {_fmt(control['harmonic'])} -> {_fmt(after['harmonic'])} "
+          f"({_fmt(result['harmonic_delta'], signed=True)})")
+    print(f"    net arithmetic {_fmt(control['arithmetic'])} -> {_fmt(after['arithmetic'])} "
+          f"({_fmt(result['arithmetic_delta'], signed=True)})")
+    print(f"    steps: control {control['steps']}  candidate {after['steps']}")
+    print(f"    peak VRAM MB: control {control['peak_vram_mb']:.1f}  candidate {after['peak_vram_mb']:.1f}")
+    worst = result["worst_delta"]
+    worst_text = f"{worst[0]} {_fmt(worst[1], signed=True)}" if worst else "n/a"
+    print(f"    worst delta: {worst_text}")
+    print(f"    regressions (>0.005): {', '.join(result['regressions']) if result['regressions'] else 'none'}")
+    print(f"    TRANSFERRED: {row['transferred']}   FUSION BREAKTHROUGH: {row['fusion_breakthrough']}")
+    if not row["transferred"] and result["bench_delta"] is not None and result["bench_delta"] <= 0:
         print(f"    A probe gain that does not move its benchmark is information about the PROBE, "
               f"not a failed experiment. Log it against the capability in Ensue.")
 
@@ -401,7 +468,8 @@ def main(argv=None) -> None:
                     help="snapshot the champion 'before' and open a pending crossing")
     ap.add_argument("--close", dest="close_id", default="", metavar="ID",
                     help="fill in the 'after' from a champion run log and score the crossing")
-    ap.add_argument("--log", default="", help="champion run log (required with --close)")
+    ap.add_argument("--log", action="append", default=[], help="candidate fusion run log (repeat twice)")
+    ap.add_argument("--baseline-log", action="append", default=[], help="paired control fusion run log (repeat twice)")
     ap.add_argument("--force", action="store_true",
                     help="open a crossing despite blockers; the row is marked forced with its reasons")
     a = ap.parse_args(argv)
@@ -409,9 +477,9 @@ def main(argv=None) -> None:
     if a.open_target:
         do_open(a.open_target, a.force)
     elif a.close_id:
-        if not a.log:
-            raise SystemExit("[graduate] --close needs --log <champion run log>")
-        do_close(a.close_id, a.log)
+        if not a.log or not a.baseline_log:
+            raise SystemExit("[graduate] --close needs --baseline-log <control> --log <candidate>")
+        do_close(a.close_id, a.log, a.baseline_log)
     else:
         do_status()
 

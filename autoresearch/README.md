@@ -111,10 +111,10 @@ board that number appears on: bump the protocol, and say so.
 - **Only `main/` trains the full fusion model, and it runs LAST.** A probe trains a light head on encoder
   features in minutes. A probe record is not a champion result; it is a candidate signal.
 - **Probe results reach `main` through `graduation.py`, never by copying a score.** A probe score and a
-  benchmark score are different instruments on different models — neither bounds the other. What crosses
-  is a prediction that gets tested: *probe says capability X improved → champion re-measures B(X) → did it
-  move?* Each crossing appends a row to `main/records/graduation.jsonl`, and that ledger is the only thing
-  that will ever tell you whether a probe gain transfers.
+  benchmark score are different instruments on different models. A crossing runs paired fusion control
+  and candidate jobs at the same two seeds, then reports the mapped-benchmark delta, aggregate deltas,
+  worst regression, and a diagnostic propagation ratio. The ledger records whether encoder signal was
+  transferred and, separately, whether it became a full fusion breakthrough.
 - **Each probe is a fixed consumer of its loop's public science entrypoint.** Fusion imports those same
   entrypoints (`earth4d.py` and `phylogenomic.py`), never probe code or their private `lib/` modules.
 - **Each loop optimizes its own metric under its own evals.** No loop is scored on another's number.

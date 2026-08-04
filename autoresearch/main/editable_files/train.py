@@ -43,6 +43,7 @@ def train_and_evaluate(config, device):
     torch.set_float32_matmul_precision("high")   # [Ensue] enable TF32 tensor cores for fp32 matmuls (~1.3-2x, Earth4D hash stays fp32) — free throughput
     seed = config.get("training", {}).get("seed", 0)   # fixed seed -> matched-init A/B: backbone benchmarks bit-identical across runs, so a detached head's causal effect is isolated (no run-to-run noise masquerading as regression).
     torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
+    print(f"training_seed:     {seed}", flush=True)
     d = config["data"]
     # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reused across runs; keyed by the data settings that change the assembled set.
     import hashlib, json
@@ -233,6 +234,7 @@ def train_and_evaluate(config, device):
     if _dw != 1.0 and hasattr(source, "has_vision"):
         _sw = torch.where(source.has_vision[source.train_index], torch.tensor(1.0, device=device),
                           torch.tensor(_dw, device=device))
+    nonfinite_streak = 0
     for step in range(steps):
         if step == 10:
             t_budget_start = time.time()
@@ -261,12 +263,18 @@ def train_and_evaluate(config, device):
                 ctx = model.context_from_flat(flat, coords, nbr_coords, manifold_coords, nbr_values)
                 loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
             if torch.isfinite(loss):
+                nonfinite_streak = 0
                 opt.zero_grad(); loss.backward()
                 model.sparse_hash_step(flat, idx)                        # sparse Adam on the absolute hash table
                 torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
                 if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
                 if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
                 opt.step(); clamp_res()   # AdamW on everything else
+            else:
+                nonfinite_streak += 1; opt.zero_grad(set_to_none=True)
+                print(f"  non-finite loss at step {step} ({nonfinite_streak}/3)", flush=True)
+                if nonfinite_streak >= 3:
+                    raise FloatingPointError("three consecutive non-finite losses")
             model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
             if step % 500 == 0:
                 print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
@@ -286,7 +294,12 @@ def train_and_evaluate(config, device):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
                 loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
         if not torch.isfinite(loss):                    # backstop: never let one bad step poison the weights
-            opt.zero_grad(set_to_none=True); sched.step(); continue
+            nonfinite_streak += 1; opt.zero_grad(set_to_none=True); sched.step()
+            print(f"  non-finite loss at step {step} ({nonfinite_streak}/3)", flush=True)
+            if nonfinite_streak >= 3:
+                raise FloatingPointError("three consecutive non-finite losses")
+            continue
+        nonfinite_streak = 0
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
         if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
@@ -372,6 +385,7 @@ def main():
     ap.add_argument("--cache_dir", default=None)
     ap.add_argument("--eval_ckpt", default=None, help="score an existing checkpoint (skip training)")
     ap.add_argument("--time_budget", type=float, default=None, help="stop training after N seconds (experiment budget)")
+    ap.add_argument("--seed", type=int, default=None, help="training seed for a paired confirmation")
     ap.add_argument("--tag", default=None, help="a label for this run (recorded, e.g. the experiment id)")
     ap.add_argument("--save", action="store_true", help="save the checkpoint (off by default; on only for champion runs)")
     a = ap.parse_args()
@@ -388,6 +402,8 @@ def main():
         config["_eval_ckpt"] = a.eval_ckpt
     if a.time_budget is not None:
         config["training"]["time_budget_s"] = a.time_budget
+    if a.seed is not None:
+        config["training"]["seed"] = a.seed
     if a.tag is not None:
         config["_tag"] = a.tag
     model, _ = train_and_evaluate(config, a.device)

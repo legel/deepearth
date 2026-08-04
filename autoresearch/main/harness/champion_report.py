@@ -117,6 +117,13 @@ def parse_run(log_path: str) -> dict:
     txt = Path(log_path).read_text()
     protocol_match = re.search(r"^BENCHMARK PROTOCOL:\s*(\S+)", txt, re.M)
     protocol = protocol_match.group(1) if protocol_match else None
+    seed_match = re.search(r"^training_seed:\s*(-?\d+)", txt, re.M)
+    seed = int(seed_match.group(1)) if seed_match else None
+    steps_match = re.search(r"^trained\s+(\d+)\s+steps\b", txt, re.M)
+    vram_match = re.search(r"^peak_vram_mb:\s+([0-9.]+)", txt, re.M)
+    meta = {"training_seed": seed,
+            "steps": int(steps_match.group(1)) if steps_match else None,
+            "peak_vram_mb": float(vram_match.group(1)) if vram_match else None}
     scores = {}
     # score may be followed by trailing text on the diagnostic lines, e.g. "B24_geo_information_gain 0.593 (net
     # contrib 0.997)" -- match the score after the name, not requiring end-of-line, so B24/B56-B62 are captured.
@@ -124,12 +131,12 @@ def parse_run(log_path: str) -> dict:
         scores[m.group(1)] = float(m.group(2))                 # last occurrence wins (final eval)
     try:                                                       # RECOMPUTE the net from scores with the live logic, so
         from deepearth.autoresearch.main.harness.evaluate import net_score, arithmetic_net   # every champion record is comparable
-        return {"benchmark_protocol": protocol, "scores": scores,
+        return {"benchmark_protocol": protocol, **meta, "scores": scores,
                 "harmonic": float(net_score(scores)), "arithmetic": float(arithmetic_net(scores))}
     except Exception:                                          # fallback: parse whatever the log printed
         h = re.search(r"net_score:\s+([0-9.]+)", txt)
         a = re.search(r"arithmetic mean:\s+([0-9.]+)", txt)
-        return {"benchmark_protocol": protocol, "scores": scores, "harmonic": float(h.group(1)) if h else None,
+        return {"benchmark_protocol": protocol, **meta, "scores": scores, "harmonic": float(h.group(1)) if h else None,
                 "arithmetic": float(a.group(1)) if a else None}
 
 
