@@ -577,7 +577,7 @@ def rasterize_mukey_map(geojson_path, params, dem_path, out_path):
     return out_path
 
 
-def main(lat=PROPERTY_LAT, lon=PROPERTY_LON, radius_km=RADIUS_KM):
+def main(lat=PROPERTY_LAT, lon=PROPERTY_LON, radius_km=RADIUS_KM, dem_path=None):
     bbox = bbox_from_center(lat, lon, radius_km)
     print(f"Querying SSURGO for ({lat}, {lon}), radius {radius_km} km")
     print(f"  Bounding box: {[round(x,5) for x in bbox]}")
@@ -618,8 +618,10 @@ def main(lat=PROPERTY_LAT, lon=PROPERTY_LON, radius_km=RADIUS_KM):
     if mukeys:
         geojson_path = os.path.join(DATA_DIR, "ssurgo_mapunits.geojson")
         mukey_tif    = os.path.join(DATA_DIR, "mukey_map.tif")
-        dem_path     = os.path.join(BASE_DIR, "..", "dem", "data", "sr417_corridor_dem.tif")
-        dem_path     = os.path.normpath(dem_path)
+        if dem_path is None:
+            # Default: main AOI's own raw DEM, unchanged behavior for existing callers.
+            dem_path = os.path.join(BASE_DIR, "..", "dem", "data", "sr417_corridor_dem.tif")
+            dem_path = os.path.normpath(dem_path)
         print("\n── Soil Spatial Map ─────────────────────────────────────────")
         gj = download_mukey_polygons(mukeys, bbox, geojson_path)
         if gj and os.path.exists(dem_path):
