@@ -242,6 +242,7 @@ class DeepEarth(nn.Module):
         smooth_geo: bool = False,
         smooth_geo_sigmas: Optional[Sequence[float]] = None,
         smooth_geo_per_scale: int = 32,
+        absolute_temporal_basis: str = "hash",
         alphaearth_geo: bool = False,
         n_pollinators: int = 0,
         pollinator_distance: Optional[torch.Tensor] = None,
@@ -301,6 +302,7 @@ class DeepEarth(nn.Module):
         # Absolute location memory: coarse regional/long-period memorization (~200M, 20% of Earth4D); fine structure lives in the relative encoder.
         self.absolute_encoder = Earth4D(verbose=False, spatial_levels=18, temporal_levels=18,
                                         spatial_log2_hashmap_size=20, temporal_log2_hashmap_size=20,
+                                        temporal_basis=absolute_temporal_basis,
                                         freq_log_scale_init=-2.5)   # start coarse (~1 km finest); learned from there
         # Project Earth4D's [xyz | xyt|yzt|xzt] as separate spatial/spatiotemporal channels; each variable learns a
         # softmax prior over which it reads, so time-invariant modalities can shut time out while vision keeps it.
@@ -498,7 +500,8 @@ class DeepEarth(nn.Module):
                                       for n, p in manifold_positions.items()}
         # Sparse-hash path: read the absolute encoder from precomputed indices as a detached leaf so its hash trains through sparse Adam; the leaf grad is captured for the sparse step (plus dy_dx for the resolution gradient).
         if getattr(self, "_sparse_hash", False) and batch_indices is not None:
-            flat = self.read_absolute_leaf(batch_indices)
+            raw = self.read_absolute_leaf(batch_indices)
+            flat = self.absolute_encoder.transform_precomputed(raw, query_coords)
         else:
             flat = self.absolute_encoder(query_coords)
         pos_s, pos_t = self._project_position(flat)
@@ -512,7 +515,8 @@ class DeepEarth(nn.Module):
     def context_from_flat(self, flat: torch.Tensor, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
                           manifold_positions: Optional[Dict[str, torch.Tensor]] = None,
                           neighbor_values: Optional[Dict[str, torch.Tensor]] = None) -> dict:
-        """Same as :meth:`context` but the absolute encoding is supplied as an already-read leaf ``flat``, keeping the precompute+detach out of the compiled region."""
+        """Build context from a raw, precomputed absolute-field leaf."""
+        flat = self.absolute_encoder.transform_precomputed(flat, query_coords)
         pos_s, pos_t = self._project_position(flat)
         if self.smooth_geo is not None:
             pos_s = pos_s + self.smooth_geo(query_coords)
@@ -550,7 +554,7 @@ class DeepEarth(nn.Module):
         """Read the absolute encoder from precomputed indices as a detached leaf (requires_grad) and stash the per-
         sub-encoder dy_dx + inputs so :meth:`sparse_hash_step` can form the per_level_scale (resolution) gradient. Keep
         this out of any compiled region (it launches the eager hash kernel)."""
-        flat, dydx, inputs = self.absolute_encoder.forward_precomputed(batch_indices, return_dydx=True)
+        flat, dydx, inputs = self.absolute_encoder.forward_precomputed(batch_indices, return_dydx=True, raw=True)
         self._abs_dydx = dydx
         self._abs_inputs = inputs
         leaf = flat.detach().requires_grad_(True)

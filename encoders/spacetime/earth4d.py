@@ -255,6 +255,7 @@ class Earth4D(nn.Module):
                  coordinate_system: Literal['geographic', 'ecef'] = 'ecef',
                  geo_range: Optional[GeoAdaptiveRange] = None,
                  resolution_mode: str = 'balanced',
+                 temporal_basis: Literal['hash', 'polynomial'] = 'hash',
                  enable_absolute: bool = True,
                  freq_log_scale_init: float = 0.0,
                  enable_relative: bool = False,
@@ -273,7 +274,10 @@ class Earth4D(nn.Module):
         self.features_per_level = features_per_level
         # decoupled growth for lat/lon vs elevation (xyz -> growth_factor, spatiotemporal -> temporal_growth_factor)
         self.latlon_growth_factor = latlon_growth_factor; self.elev_growth_factor = elev_growth_factor
+        if temporal_basis not in ('hash', 'polynomial'):
+            raise ValueError(f"unknown temporal_basis {temporal_basis!r}")
         self.coordinate_system = coordinate_system; self.resolution_mode = resolution_mode; self.geo_range = geo_range
+        self.temporal_basis = temporal_basis
         if coordinate_system == 'geographic' and geo_range is None:
             self.geo_range = GeoAdaptiveRange.global_range(); self._geo_range_is_default = True
         else:
@@ -364,14 +368,40 @@ class Earth4D(nn.Module):
     def _encode_spatial(self, xyz: torch.Tensor) -> torch.Tensor:
         return self.xyz_encoder(xyz, size=1.0)
 
+    @staticmethod
+    def _temporal_modes(t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """First three Legendre modes over continuous normalized time."""
+        u = t.clamp(-1.0, 2.0)
+        return u, 0.5 * (3.0 * u.square() - 1.0), 0.5 * (5.0 * u.pow(3) - 3.0 * u)
+
     def _encode_spatiotemporal(self, xyzt: torch.Tensor) -> torch.Tensor:
-        t_scaled = (xyzt[..., 3:] * 2 - 1) * 0.9
-        xyzt_scaled = torch.cat([xyzt[..., :3], t_scaled], dim=-1)
-        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
-        yzt = xyzt_scaled[..., 1:]
-        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
+        if self.temporal_basis == 'polynomial':
+            xyz, t = xyzt[..., :3], xyzt[..., 3:]
+            p1, p2, p3 = self._temporal_modes(t)
+            return torch.cat([self.xyt_encoder(xyz, size=1.0) * p1,
+                              self.yzt_encoder(xyz, size=1.0) * p2,
+                              self.xzt_encoder(xyz, size=1.0) * p3], dim=-1)
+        t = (xyzt[..., 3:] * 2 - 1) * 0.9
+        scaled = torch.cat([xyzt[..., :3], t], dim=-1)
+        xyt = torch.cat([scaled[..., :2], scaled[..., 3:]], dim=-1)
+        yzt = scaled[..., 1:]
+        xzt = torch.cat([scaled[..., :1], scaled[..., 2:]], dim=-1)
         return torch.cat([self.xyt_encoder(xyt, size=1.0), self.yzt_encoder(yzt, size=1.0),
                           self.xzt_encoder(xzt, size=1.0)], dim=-1)
+
+    def transform_precomputed(self, flat: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        """Apply continuous temporal modes to raw precomputed spatial coefficient fields."""
+        if self.temporal_basis == 'hash':
+            return flat
+        spatial = flat[..., :self.spatial_dim]
+        coefficients = flat[..., self.spatial_dim:]
+        width = self.temporal_levels * self.features_per_level
+        if coefficients.shape[-1] != 3 * width:
+            raise ValueError(f"precomputed coefficient width {coefficients.shape[-1]} != expected {3 * width}")
+        t = self._normalize_coords(coords)[..., 3:]
+        p1, p2, p3 = self._temporal_modes(t)
+        c1, c2, c3 = coefficients.split(width, dim=-1)
+        return torch.cat([spatial, c1 * p1, c2 * p2, c3 * p3], dim=-1)
 
     def _learnable_freq(self, norm: torch.Tensor) -> torch.Tensor:
         """Learnable per-axis frequency (scale + center), bounded to [-0.9, 0.9] by tanh."""
@@ -394,12 +424,18 @@ class Earth4D(nn.Module):
                 time_norm = coords[..., 3]
         norm = torch.stack([x_norm, y_norm, z_norm, time_norm * 2 - 1], dim=-1)     # time to [-1,1] like the rest
         norm = self._learnable_freq(norm); t = norm[..., 3:]
-        projections = [norm[..., :3],
-                       torch.cat([norm[..., :2], t], dim=-1),
-                       torch.cat([norm[..., 1:3], t], dim=-1),
-                       torch.cat([norm[..., :1], norm[..., 2:3], t], dim=-1)]
+        if self.temporal_basis == 'polynomial':
+            projections = [norm[..., :3]] * 4
+        else:
+            projections = [norm[..., :3],
+                           torch.cat([norm[..., :2], t], dim=-1),
+                           torch.cat([norm[..., 1:3], t], dim=-1),
+                           torch.cat([norm[..., :1], norm[..., 2:3], t], dim=-1)]
         encoders = [self.xyz_encoder, self.xyt_encoder, self.yzt_encoder, self.xzt_encoder]
         feats = [enc(proj, size=1.0).reshape(*proj.shape[:-1], L, F) for enc, proj in zip(encoders, projections)]
+        if self.temporal_basis == 'polynomial':
+            for i, mode in enumerate(self._temporal_modes(norm[..., 3:]), start=1):
+                feats[i] = feats[i] * mode.unsqueeze(-1)
         return torch.stack(feats, dim=-3)
 
     def forward(self, *args, **kwargs) -> torch.Tensor:
@@ -482,12 +518,16 @@ class Earth4D(nn.Module):
     def precompute(self, coords: torch.Tensor) -> dict:
         """Precompute hash indices/weights for a fixed coordinate set (N, 4). Enables forward_precomputed()."""
         norm_coords = self._normalize_coords(coords)
-        t_scaled = (norm_coords[..., 3:] * 2 - 1) * 0.9
-        xyzt_scaled = torch.cat([norm_coords[..., :3], t_scaled], dim=-1)
         xyz = norm_coords[..., :3]
-        xyt = torch.cat([xyzt_scaled[..., :2], xyzt_scaled[..., 3:]], dim=-1)
-        yzt = xyzt_scaled[..., 1:]
-        xzt = torch.cat([xyzt_scaled[..., :1], xyzt_scaled[..., 2:]], dim=-1)
+        if self.temporal_basis == 'polynomial':
+            xyt = yzt = xzt = xyz
+            self._precomp_modes = self._temporal_modes(norm_coords[..., 3:])
+        else:
+            t = (norm_coords[..., 3:] * 2 - 1) * 0.9
+            scaled = torch.cat([xyz, t], dim=-1)
+            xyt = torch.cat([scaled[..., :2], scaled[..., 3:]], dim=-1)
+            yzt = scaled[..., 1:]
+            xzt = torch.cat([scaled[..., :1], scaled[..., 2:]], dim=-1)
         stats = {'xyz': self.xyz_encoder.precompute(xyz, size=1.0),
                  'xyt': self.xyt_encoder.precompute(xyt, size=1.0),
                  'yzt': self.yzt_encoder.precompute(yzt, size=1.0),
@@ -502,21 +542,29 @@ class Earth4D(nn.Module):
         return {'total_bytes': total_bytes, 'total_mb': total_mb,
                 'bytes_per_coord': total_bytes / coords.shape[0], 'num_coords': coords.shape[0], 'encoders': stats}
 
-    def forward_precomputed(self, batch_indices: torch.Tensor, return_dydx: bool = False):
+    def forward_precomputed(self, batch_indices: torch.Tensor, return_dydx: bool = False, raw: bool = False):
         """Forward using precomputed indices/weights (call precompute() first).
 
         When ``return_dydx`` is True, also return per-sub-encoder ``dy_dx`` and the normalized ``inputs`` each used
         (order xyz, xyt, yzt, xzt), so the sparse path can form each sub-encoder's per_level_scale gradient without
-        materializing dense embedding grads. Returns ``(features, [dy_dx...], [inputs...])`` in that case."""
+        materializing dense embedding grads. ``raw`` leaves polynomial coefficient fields unmodulated."""
         if not hasattr(self, '_precomputed') or not self._precomputed:
             raise RuntimeError("Must call precompute() before forward_precomputed()")
         encs = [self.xyz_encoder, self.xyt_encoder, self.yzt_encoder, self.xzt_encoder]
+        if return_dydx and self.temporal_basis == 'polynomial' and not raw:
+            raise ValueError("polynomial precomputed derivatives require raw=True")
         if not return_dydx:
             spatial_features = self.xyz_encoder.forward_precomputed(batch_indices)
             spatiotemporal_features = torch.cat([self.xyt_encoder.forward_precomputed(batch_indices),
                                                  self.yzt_encoder.forward_precomputed(batch_indices),
                                                  self.xzt_encoder.forward_precomputed(batch_indices)], dim=-1)
-            return torch.cat([spatial_features, spatiotemporal_features], dim=-1)
+            flat = torch.cat([spatial_features, spatiotemporal_features], dim=-1)
+            if self.temporal_basis == 'hash' or raw:
+                return flat
+            p1, p2, p3 = (mode[batch_indices] for mode in self._precomp_modes)
+            width = self.temporal_levels * self.features_per_level
+            c1, c2, c3 = spatiotemporal_features.split(width, dim=-1)
+            return torch.cat([spatial_features, c1 * p1, c2 * p2, c3 * p3], dim=-1)
         outs, dydx, inputs = [], [], []
         for en in encs:
             o, dd, inp = en.forward_precomputed(batch_indices, return_dydx=True)
@@ -526,6 +574,7 @@ class Earth4D(nn.Module):
     def clear_precomputed(self):
         """Clear precomputed buffers to free memory."""
         self._precomputed = False; self._precomp_coords_count = 0
+        self._precomp_modes = None
         self.xyz_encoder.clear_precomputed(); self.xyt_encoder.clear_precomputed()
         self.yzt_encoder.clear_precomputed(); self.xzt_encoder.clear_precomputed()
 
