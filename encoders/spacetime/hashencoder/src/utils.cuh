@@ -39,6 +39,12 @@
 // ATOMIC ADD FOR HALF PRECISION
 // =============================================================================
 
+// Integer atomics make colliding gradient accumulation order-independent.
+static inline __device__ void atomicAddFixed(long long *address, float val, float scale) {
+    atomicAdd(reinterpret_cast<unsigned long long *>(address),
+              static_cast<unsigned long long>(static_cast<long long>(llrintf(val * scale))));
+}
+
 // half atomicAdd (CUDA>=10, ARCH>=70; slow vs float/__half2)
 static inline __device__ at::Half atomicAdd(at::Half *address, at::Half val) {
     return atomicAdd(reinterpret_cast<__half*>(address), val);
