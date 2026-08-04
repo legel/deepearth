@@ -1,0 +1,28 @@
+{
+  "bbox_wsen": [
+    -81.31824596425551,
+    28.663577063063062,
+    -81.25683203574448,
+    28.717450936936938
+  ],
+  "service": "https://3dhp.nationalmap.gov/arcgis/rest/services/usgs_3dhp_all/FeatureServer",
+  "layers_queried": {
+    "flowline": 50,
+    "waterbody": 60
+  },
+  "flowlines": {
+    "count": 48,
+    "total_length_km": 24.091,
+    "named": [
+      "Gee Creek",
+      "Howell Creek",
+      "Soldier Creek"
+    ]
+  },
+  "waterbodies": {
+    "count": 167,
+    "feature_types": [
+      "Lake"
+    ]
+  }
+}

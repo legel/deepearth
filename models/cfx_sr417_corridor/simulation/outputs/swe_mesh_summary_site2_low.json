@@ -1,0 +1,51 @@
+{
+  "site": "site2",
+  "site_label": "Retention pond + 3 houses near SR417",
+  "n_triangles": 682768,
+  "n_ground_triangles": 401055,
+  "n_roof_triangles": 281713,
+  "n_buildings": 5,
+  "n_edges": 1023859,
+  "n_frames": 55,
+  "n_steps": 32689,
+  "wall_s": 1159.9821691513062,
+  "peak_rain_mm_hr": 40.0,
+  "rain_duration_min": 4.0,
+  "total_min": 8.0,
+  "ground_h_max_m": 1.0577010385659729,
+  "roof_h_max_m": 0.02,
+  "mass_balance_m3": {
+    "rain_vol_m3": 393.2418353712322,
+    "infil_vol_m3": 264.65144573914546,
+    "outflow_vol_m3": 0.4970755701234305,
+    "stored_vol_m3": 128.09332826621787
+  },
+  "mass_balance_residual_pct": -3.6120914133119662e-06,
+  "n_impervious_road_triangles": 82158,
+  "lake": {
+    "area_m2": 5628.438472448277,
+    "level_rise_final_m": 0.0025649547499860407,
+    "level_rise_peak_m": 0.0025649547499860407,
+    "level_rise_peak_cm": 0.2564954749986041,
+    "volume_added_peak_m3": 14.436689994910383
+  },
+  "single_house_check": {
+    "building_index": 4,
+    "roof_area_m2": 68.27175290303683,
+    "n_roof_triangles": 969,
+    "volume_final_cm3": 12276.112835761249,
+    "volume_peak_cm3": 34654.311445196756,
+    "volume_peak_liters": 34.654311445196754
+  },
+  "flow_tracers": {
+    "n_seeded": 2500,
+    "n_local_min": 1605,
+    "n_left_mesh": 1,
+    "n_max_steps": 894
+  },
+  "test_area": {
+    "lat": 28.36633,
+    "lon": -81.434606,
+    "radius_km": 0.196
+  }
+}

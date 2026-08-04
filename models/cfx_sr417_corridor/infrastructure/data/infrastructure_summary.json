@@ -1,0 +1,32 @@
+{
+  "aoi": {
+    "lat": 28.36687,
+    "lon": -81.43299,
+    "radius_km": 30.0
+  },
+  "generated": "2026-07-24T23:32:04.420097Z",
+  "nwis_gauges": {
+    "count": 66,
+    "shingle_creek_gauges": [
+      "02263692",
+      "02263800"
+    ]
+  },
+  "nwis_daily": {
+    "02263692": {
+      "name": "SHINGLE CREEK AT OAK RIDGE ROAD NR PINE CASTLE, FL",
+      "records": 2,
+      "start": "2021-07-25",
+      "end": "2026-07-24"
+    },
+    "02263800": {
+      "name": "SHINGLE CREEK AT AIRPORT NEAR KISSIMMEE, FL",
+      "records": 1820,
+      "start": "2021-07-25",
+      "end": "2026-07-24"
+    }
+  },
+  "sfwmd_structures": {
+    "count": 72
+  }
+}

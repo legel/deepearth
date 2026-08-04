@@ -1,0 +1,15 @@
+{
+  "n_points": 70684237,
+  "n_total_query_area": 70903812,
+  "decimation_step": 1,
+  "color_by": "naip",
+  "full": true,
+  "classification_histogram": {
+    "unclassified": 44077001,
+    "ground": 22605396,
+    "building": 3774751,
+    "water": 129241,
+    "bridge_deck": 53855,
+    "class_20": 43993
+  }
+}

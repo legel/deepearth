@@ -103,8 +103,29 @@ export async function createVoxelLayer(geoMeta) {
   console.log(`Voxel layer: ${nVoxels.toLocaleString()} voxels, ` +
     `cell=${cellX.toFixed(2)}m, zRes=${zRes}m, waterSurface=${waterSurface.toFixed(2)}m`);
 
+  // Live vertical-exaggeration support (2026-07-28) — each instance's Y position/scale was
+  // baked in at construction time using the VERT_EXAG imported above; there's no live-updating
+  // equivalent of terrain.js's updateExag() for an InstancedMesh (position/scale live inside
+  // per-instance 4x4 matrices, not a single shared geometry), so this rescales every instance's
+  // matrix in place by a ratio (newExag/oldExag) instead — same "own rescale-by-ratio" pattern
+  // this project's own rain particles / draped overlays already use elsewhere.
+  const m = new THREE.Matrix4();
+  const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  function rescale(ratio) {
+    for (let i = 0; i < nVoxels; i++) {
+      mesh.getMatrixAt(i, m);
+      m.decompose(p, q, s);
+      p.y *= ratio;
+      s.y *= ratio;
+      m.compose(p, q, s);
+      mesh.setMatrixAt(i, m);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
   return {
     mesh,
     getDepthAtInstance(id) { return instanceDepths[id]; },
+    rescale,
   };
 }

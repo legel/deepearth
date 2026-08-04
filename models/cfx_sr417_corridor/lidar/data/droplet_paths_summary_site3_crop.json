@@ -1,0 +1,22 @@
+{
+  "site": "site3_crop",
+  "site_label": "Site3 GNN-training crop \u2014 near Gee Creek pour point (USGS 02234400)",
+  "n_droplets_seeded": 3000,
+  "n_paths_written": 2970,
+  "n_ground_triangles": 654085,
+  "n_roof_triangles": 422433,
+  "n_buildings_meshed": 14,
+  "max_steps": 400,
+  "step_m": 0.4,
+  "settle_counts": {
+    "local_min": 465,
+    "left_mesh": 44,
+    "max_steps": 2491
+  },
+  "test_area": {
+    "lat": 28.703898850286457,
+    "lon": -81.29064288498651,
+    "radius_km": 0.25
+  },
+  "architecture": "v2: DEM ground surface + per-building LiDAR roof meshes, droplets shed off roofs (edge or local min) to the ground, never settle on a raised surface"
+}

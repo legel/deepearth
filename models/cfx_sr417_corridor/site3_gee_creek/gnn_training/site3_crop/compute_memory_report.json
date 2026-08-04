@@ -1,0 +1,94 @@
+{
+  "platform": "Apple Silicon MPS (unified memory \u2014 no separate discrete-GPU VRAM pool)",
+  "mesh_triangles": 710302,
+  "mesh_edges": 1065089,
+  "mps_recommended_max_mb": 12713.115648,
+  "n_scenarios": 8,
+  "total_sweep_wall_s": 3373.4705522060394,
+  "per_scenario": [
+    {
+      "scenario": "low_short",
+      "wall_s": 344.1446499824524,
+      "mps_peak_current_allocated_mb": 214.389248,
+      "mps_peak_driver_allocated_mb": 279.658496,
+      "mps_recommended_max_mb": 12713.115648,
+      "process_peak_rss_mb": 2627.01056,
+      "n_triangles": 710302,
+      "n_edges": 1065089
+    },
+    {
+      "scenario": "mediumlow_short",
+      "wall_s": 370.72076392173767,
+      "mps_peak_current_allocated_mb": 207.999232,
+      "mps_peak_driver_allocated_mb": 279.642112,
+      "mps_recommended_max_mb": 12713.115648,
+      "process_peak_rss_mb": 2627.01056,
+      "n_triangles": 710302,
+      "n_edges": 1065089
+    },
+    {
+      "scenario": "medium_short",
+      "wall_s": 430.49786901474,
+      "mps_peak_current_allocated_mb": 207.999232,
+      "mps_peak_driver_allocated_mb": 279.642112,
+      "mps_recommended_max_mb": 12713.115648,
+      "process_peak_rss_mb": 2807.742464,
+      "n_triangles": 710302,
+      "n_edges": 1065089
+    },
+    {
+      "scenario": "mediumhigh_short",
+      "wall_s": 432.4743239879608,
+      "mps_peak_current_allocated_mb": 207.999232,
+      "mps_peak_driver_allocated_mb": 279.642112,
+      "mps_recommended_max_mb": 12713.115648,
+      "process_peak_rss_mb": 2963.390464,
+      "n_triangles": 710302,
+      "n_edges": 1065089
+    },
+    {
+      "scenario": "high_short",
+      "wall_s": 411.2980606555939,
+      "mps_peak_current_allocated_mb": 207.999232,
+      "mps_peak_driver_allocated_mb": 279.642112,
+      "mps_recommended_max_mb": 12713.115648,
+      "process_peak_rss_mb": 3215.11424,
+      "n_triangles": 710302,
+      "n_edges": 1065089
+    },
+    {
+      "scenario": "veryhigh_short",
+      "wall_s": 419.0552861690521,
+      "mps_peak_current_allocated_mb": 207.999232,
+      "mps_peak_driver_allocated_mb": 279.642112,
+      "mps_recommended_max_mb": 12713.115648,
+      "process_peak_rss_mb": 3215.11424,
+      "n_triangles": 710302,
+      "n_edges": 1065089
+    },
+    {
+      "scenario": "medium_long",
+      "wall_s": 643.2930300235748,
+      "mps_peak_current_allocated_mb": 208.224,
+      "mps_peak_driver_allocated_mb": 279.642112,
+      "mps_recommended_max_mb": 12713.115648,
+      "process_peak_rss_mb": 3215.11424,
+      "n_triangles": 710302,
+      "n_edges": 1065089
+    },
+    {
+      "scenario": "high_sharp",
+      "wall_s": 319.4532790184021,
+      "mps_peak_current_allocated_mb": 207.999232,
+      "mps_peak_driver_allocated_mb": 279.642112,
+      "mps_recommended_max_mb": 12713.115648,
+      "process_peak_rss_mb": 3215.11424,
+      "n_triangles": 710302,
+      "n_edges": 1065089
+    }
+  ],
+  "peak_mps_current_allocated_mb": 214.389248,
+  "peak_mps_driver_allocated_mb": 279.658496,
+  "peak_process_rss_mb": 3215.11424,
+  "avg_wall_s_per_scenario": 421.3671578466892
+}

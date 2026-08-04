@@ -1,0 +1,52 @@
+{
+  "bbox_wsen": [
+    -81.66723438863198,
+    28.51258299099099,
+    -81.64672761136802,
+    28.530601009009008
+  ],
+  "service": "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer",
+  "layer_queried": {
+    "flood_hazard_zones": 28
+  },
+  "count": 5,
+  "zones": [
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 99.7,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 99.7,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    }
+  ],
+  "has_floodway": false,
+  "has_sfha": true
+}

@@ -1,0 +1,188 @@
+{
+  "bbox_wsen": [
+    -81.44322840092217,
+    28.35786099099099,
+    -81.42275159907784,
+    28.375879009009008
+  ],
+  "layers_queried": [
+    "flowline_hr",
+    "waterbody_hr"
+  ],
+  "flowlines": {
+    "count": 6,
+    "total_length_km": 2.432,
+    "named": []
+  },
+  "waterbodies": {
+    "count": 33,
+    "total_area_sqkm": 9.90277086,
+    "features": [
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.0026793700000000004
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00557321
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.015472020000000001
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.01711954
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00603697
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.11495363
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.02134015
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.02637857
+      },
+      {
+        "name": "",
+        "ftype": 466,
+        "area_sqkm": 0.31189664
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.0031374000000000003
+      },
+      {
+        "name": "",
+        "ftype": 466,
+        "area_sqkm": 0.00772531
+      },
+      {
+        "name": "",
+        "ftype": 466,
+        "area_sqkm": 0.06737255
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.007942290000000001
+      },
+      {
+        "name": "",
+        "ftype": 466,
+        "area_sqkm": 9.15232342
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00563728
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.004
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.0029175700000000004
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00784099
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.007957470000000001
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.018706590000000002
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.0008055100000000001
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.022718930000000002
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00758065
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.01373651
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00637066
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.015034810000000001
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.01207924
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00676438
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00198825
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00371631
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.0012742900000000002
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.00074627
+      },
+      {
+        "name": "",
+        "ftype": 436,
+        "area_sqkm": 0.0029440800000000004
+      }
+    ]
+  }
+}

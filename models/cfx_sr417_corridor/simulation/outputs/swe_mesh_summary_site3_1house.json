@@ -1,0 +1,46 @@
+{
+  "site": "site3_1house",
+  "site_label": "Site3 single-house demo crop \u2014 falling rain + physics-driven flow, same convention as site1/site2's demo layers",
+  "n_triangles": 47601,
+  "n_ground_triangles": 37650,
+  "n_roof_triangles": 9951,
+  "n_buildings": 1,
+  "n_edges": 71335,
+  "n_frames": 160,
+  "n_steps": 13926,
+  "wall_s": 33.80667304992676,
+  "peak_rain_mm_hr": 100.0,
+  "rain_duration_min": 4.0,
+  "total_min": 8.0,
+  "ground_h_max_m": 0.1359171402636051,
+  "roof_h_max_m": 0.02,
+  "mass_balance_m3": {
+    "rain_vol_m3": 84.00926224419655,
+    "infil_vol_m3": 57.60461247740712,
+    "outflow_vol_m3": 5.9172152682538455,
+    "pond_outlet_vol_m3": 0.0,
+    "stored_vol_m3": 20.48744704277564
+  },
+  "mass_balance_residual_pct": -1.4931972644757592e-05,
+  "n_impervious_road_triangles": 5353,
+  "lake": null,
+  "single_house_check": {
+    "building_index": 0,
+    "roof_area_m2": 411.33277709740037,
+    "n_roof_triangles": 9951,
+    "volume_final_cm3": 270572.0488280802,
+    "volume_peak_cm3": 762327.3183910775,
+    "volume_peak_liters": 762.3273183910775
+  },
+  "flow_tracers": {
+    "n_seeded": 10,
+    "n_local_min": 2,
+    "n_left_mesh": 0,
+    "n_max_steps": 8
+  },
+  "test_area": {
+    "lat": 28.701821422947734,
+    "lon": -81.26177949874166,
+    "radius_km": 0.06
+  }
+}

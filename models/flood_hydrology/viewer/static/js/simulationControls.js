@@ -39,9 +39,13 @@ function fmtVol(m3) {
   return `${Math.round(m3).toLocaleString()} m³`;
 }
 
-export async function setupSimulationControls({ floodLayer, infiltrationLayer, rainParticles, waterPlane, geoMeta }) {
+export async function setupSimulationControls({ floodLayer, infiltrationLayer, rainParticles, waterPlane, geoMeta, getExag }) {
   const initialWSE = geoMeta.water_surface ?? WATER_SURFACE;
-  const VERT_EXAG  = 8;
+  // getExag() reads the LIVE vertical-exaggeration value (added 2026-07-28, main.js's
+  // currentExag) instead of a hardcoded local constant — without this, moving the
+  // exaggeration slider while a simulation is playing would snap the water plane back to a
+  // stale 8x on the next simulated frame update, fighting the slider's own live rescale.
+  const exagFn     = getExag ?? (() => 8);
   const zMin       = geoMeta.z_min;
 
   const panel = document.getElementById('simulation-panel');
@@ -251,7 +255,7 @@ export async function setupSimulationControls({ floodLayer, infiltrationLayer, r
 
     // Update lake surface elevation (raise/lower the water plane)
     if (waterPlane) {
-      waterPlane.position.y = (wse - zMin) * VERT_EXAG;
+      waterPlane.position.y = (wse - zMin) * exagFn();
     }
   }
 
@@ -276,7 +280,7 @@ export async function setupSimulationControls({ floodLayer, infiltrationLayer, r
     goToFrame(0);
     floodLayer.reset();
     if (infiltrationLayer) infiltrationLayer.reset();
-    if (waterPlane) waterPlane.position.y = (initialWSE - zMin) * VERT_EXAG;
+    if (waterPlane) waterPlane.position.y = (initialWSE - zMin) * exagFn();
   }
 
   // ── Rain preview — standalone, independent of scenario playback ─────────

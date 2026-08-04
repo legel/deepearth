@@ -1,0 +1,14 @@
+{
+  "simulated_flood_ha": 25.827,
+  "fema_sfha_ha": 207.492,
+  "fema_floodway_ha": 136.904,
+  "simulated_and_sfha_overlap_ha": 2.847,
+  "simulated_and_floodway_overlap_ha": 0.657,
+  "simulated_outside_fema_sfha_ha": 22.981,
+  "pct_simulated_area_inside_sfha": 11.02,
+  "pct_sfha_area_captured_by_simulation": 1.37,
+  "pct_simulated_area_inside_floodway": 2.54,
+  "pct_floodway_area_captured_by_simulation": 0.48,
+  "aoi_box_area_ha": 523.75,
+  "caveat": "FEMA NFHL zones represent a regulatory 1%-annual-chance design-storm floodplain, a different standard than one specific real storm's simulated extent -- agreement/disagreement is suggestive plausibility evidence, not proof either is correct. This comparison sidesteps the watershed-area-mismatch problem that makes the Shingle Creek gauge comparison invalid, since both are spatial extents at the SAME AOI, not discharge magnitudes integrated over different watershed areas. FEMA zone geometries were clipped to the AOI/DEM box before any area math -- the raw fetched features are unclipped and some run the full length of Shingle Creek (~7km) or, for Zone X, cover 53,715 ha nationally; using their raw areas would have made every percentage below meaningless."
+}

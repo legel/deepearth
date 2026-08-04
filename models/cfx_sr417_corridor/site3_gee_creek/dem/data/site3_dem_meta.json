@@ -1,0 +1,23 @@
+{
+  "source": "USGS 3DEP via py3dep",
+  "property": "CFX SR417 corridor test-landscape AOI, near Lake Nona / south Orlando, FL",
+  "center_lat": 28.690514,
+  "center_lon": -81.287539,
+  "radius_km": 2.99,
+  "bbox_wsen": [
+    -81.31824596425551,
+    28.663577063063062,
+    -81.25683203574448,
+    28.717450936936938
+  ],
+  "resolution_m": 1,
+  "crs": "EPSG:5070",
+  "shape_yx": [
+    7810,
+    7819
+  ],
+  "nodata": NaN,
+  "z_min_m": 0.14403338730335236,
+  "z_max_m": 28.046857833862305,
+  "vertical_datum": "NAVD88 (hydro-flattened)"
+}

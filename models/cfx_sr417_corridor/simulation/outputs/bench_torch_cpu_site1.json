@@ -1,0 +1,11 @@
+{
+  "device": "cpu",
+  "site": "site1",
+  "n_triangles": 236657,
+  "n_edges": 355174,
+  "n_steps": 19629,
+  "wall_s": 88.74278903007507,
+  "mass_balance_residual_pct": -8.388796489297611e-07,
+  "ground_h_max_m": 0.2381228357553482,
+  "roof_h_max_m": 0.11111750453710556
+}

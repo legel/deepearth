@@ -1,0 +1,14 @@
+{
+  "n_points": 107096123,
+  "n_total_query_area": 107489071,
+  "decimation_step": 1,
+  "color_by": "naip",
+  "full": true,
+  "classification_histogram": {
+    "unclassified": 53152094,
+    "ground": 40061065,
+    "building": 630637,
+    "water": 13135328,
+    "class_20": 116999
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "site": "site3",
+  "site_label": "Gauge-matched validation site \u2014 Gee Creek near Longwood (USGS 02234400)",
+  "rows": 256,
+  "cols": 256,
+  "cell_x": 26.80245553246823,
+  "cell_y": 26.629894301470358,
+  "z_min": 0.14403338730335236,
+  "z_max": 28.046857833862305,
+  "width_m": 6861.428616311867,
+  "height_m": 6817.252941176412,
+  "origin_x": 1431312.985691844,
+  "origin_y": 732154.7435294117,
+  "crs": "EPSG:5070",
+  "gauge": {
+    "site_no": "02234400",
+    "documented_drainage_area_km2": 33.15,
+    "delineated_drainage_area_km2": 11.65
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "site": "site3",
+  "site_label": "Gauge-matched validation site \u2014 Gee Creek near Longwood (USGS 02234400)",
+  "n_droplets_seeded": 500,
+  "n_paths_written": 460,
+  "n_ground_triangles": 1461971,
+  "n_roof_triangles": 4267846,
+  "n_buildings_meshed": 10739
+}

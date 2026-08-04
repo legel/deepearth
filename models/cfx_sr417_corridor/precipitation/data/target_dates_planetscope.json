@@ -1,0 +1,292 @@
+{
+  "aoi": {
+    "lat": 28.36687,
+    "lon": -81.43299
+  },
+  "planetscope_window": "2021-01-01 to present",
+  "ghcnd_station": "USC00084625 (Kissimmee 2, FL, 10.1 km)",
+  "asos_station": "MCO (Orlando Intl, 14.0 km)",
+  "categories": {
+    "MAX": {
+      "single_day_events": [
+        {
+          "date": "2022-09-28",
+          "ghcnd_mm": 14.0,
+          "mco_mm": 73.0,
+          "note": "Hurricane Ian"
+        },
+        {
+          "date": "2022-09-29",
+          "ghcnd_mm": 345.4,
+          "mco_mm": 262.5,
+          "note": "Hurricane Ian peak"
+        },
+        {
+          "date": "2022-11-10",
+          "ghcnd_mm": 81.3,
+          "mco_mm": 66.5,
+          "note": ""
+        },
+        {
+          "date": "2022-04-03",
+          "ghcnd_mm": 78.0,
+          "mco_mm": 0.8,
+          "note": ""
+        },
+        {
+          "date": "2023-11-17",
+          "ghcnd_mm": 68.6,
+          "mco_mm": 58.9,
+          "note": ""
+        },
+        {
+          "date": "2021-09-12",
+          "ghcnd_mm": 60.5,
+          "mco_mm": 3.4,
+          "note": ""
+        },
+        {
+          "date": "2026-03-16",
+          "ghcnd_mm": 58.4,
+          "mco_mm": 10.2,
+          "note": ""
+        },
+        {
+          "date": "2022-05-16",
+          "ghcnd_mm": 55.9,
+          "mco_mm": 7.6,
+          "note": ""
+        },
+        {
+          "date": "2023-08-30",
+          "ghcnd_mm": 55.9,
+          "mco_mm": 64.7,
+          "note": ""
+        },
+        {
+          "date": "2022-09-21",
+          "ghcnd_mm": 53.8,
+          "mco_mm": 10.3,
+          "note": ""
+        },
+        {
+          "date": "2023-05-24",
+          "ghcnd_mm": 53.3,
+          "mco_mm": 8.7,
+          "note": ""
+        }
+      ],
+      "5day_sequences": [
+        {
+          "start_date": "2022-09-26",
+          "end_date": "2022-09-30",
+          "5day_total_mm": 381.5
+        },
+        {
+          "start_date": "2025-05-26",
+          "end_date": "2025-05-30",
+          "5day_total_mm": 133.3
+        },
+        {
+          "start_date": "2024-06-27",
+          "end_date": "2024-07-01",
+          "5day_total_mm": 130.8
+        },
+        {
+          "start_date": "2022-03-30",
+          "end_date": "2022-04-03",
+          "5day_total_mm": 123.7
+        },
+        {
+          "start_date": "2021-07-03",
+          "end_date": "2021-07-07",
+          "5day_total_mm": 119.7
+        }
+      ]
+    },
+    "AVG": [
+      {
+        "month": "2024-02",
+        "season": "dry",
+        "monthly_total_mm": 58.9,
+        "deviation_pct": 1.0,
+        "representative_window": {
+          "start": "2024-02-20",
+          "end": "2024-02-26",
+          "7day_total_mm": 3.5
+        }
+      },
+      {
+        "month": "2024-01",
+        "season": "dry",
+        "monthly_total_mm": 58.1,
+        "deviation_pct": 2.4,
+        "representative_window": {
+          "start": "2024-01-08",
+          "end": "2024-01-14",
+          "7day_total_mm": 13.1
+        }
+      },
+      {
+        "month": "2025-10",
+        "season": "wet",
+        "monthly_total_mm": 141.6,
+        "deviation_pct": 5.3,
+        "representative_window": {
+          "start": "2025-10-22",
+          "end": "2025-10-28",
+          "7day_total_mm": 32.5
+        }
+      },
+      {
+        "month": "2023-06",
+        "season": "wet",
+        "monthly_total_mm": 141.5,
+        "deviation_pct": 5.4,
+        "representative_window": {
+          "start": "2023-06-12",
+          "end": "2023-06-18",
+          "7day_total_mm": 35.6
+        }
+      },
+      {
+        "month": "2025-12",
+        "season": "dry",
+        "monthly_total_mm": 64.8,
+        "deviation_pct": 8.9,
+        "representative_window": {
+          "start": "2025-12-01",
+          "end": "2025-12-07",
+          "7day_total_mm": 12.2
+        }
+      },
+      {
+        "month": "2024-06",
+        "season": "wet",
+        "monthly_total_mm": 166.3,
+        "deviation_pct": 11.2,
+        "representative_window": {
+          "start": "2024-06-14",
+          "end": "2024-06-20",
+          "7day_total_mm": 33.5
+        }
+      },
+      {
+        "month": "2025-07",
+        "season": "wet",
+        "monthly_total_mm": 168.6,
+        "deviation_pct": 12.8,
+        "representative_window": {
+          "start": "2025-07-17",
+          "end": "2025-07-23",
+          "7day_total_mm": 33.1
+        }
+      },
+      {
+        "month": "2024-09",
+        "season": "wet",
+        "monthly_total_mm": 170.3,
+        "deviation_pct": 13.9,
+        "representative_window": {
+          "start": "2024-09-23",
+          "end": "2024-09-29",
+          "7day_total_mm": 27.2
+        }
+      },
+      {
+        "month": "2021-01",
+        "season": "dry",
+        "monthly_total_mm": 50.8,
+        "deviation_pct": 14.6,
+        "representative_window": {
+          "start": "2021-01-01",
+          "end": "2021-01-07",
+          "7day_total_mm": 0.0
+        }
+      },
+      {
+        "month": "2022-07",
+        "season": "wet",
+        "monthly_total_mm": 127.6,
+        "deviation_pct": 14.6,
+        "representative_window": {
+          "start": "2022-07-19",
+          "end": "2022-07-25",
+          "7day_total_mm": 32.5
+        }
+      },
+      {
+        "month": "2023-07",
+        "season": "wet",
+        "monthly_total_mm": 127.5,
+        "deviation_pct": 14.7,
+        "representative_window": {
+          "start": "2023-07-10",
+          "end": "2023-07-16",
+          "7day_total_mm": 37.1
+        }
+      }
+    ],
+    "MIN": {
+      "driest_30day_windows": [
+        {
+          "start_date": "2021-02-17",
+          "end_date": "2021-03-18",
+          "30day_total_mm": 0.0
+        },
+        {
+          "start_date": "2021-05-03",
+          "end_date": "2021-06-01",
+          "30day_total_mm": 0.0
+        },
+        {
+          "start_date": "2022-04-12",
+          "end_date": "2022-05-11",
+          "30day_total_mm": 0.0
+        },
+        {
+          "start_date": "2024-04-13",
+          "end_date": "2024-05-12",
+          "30day_total_mm": 0.0
+        },
+        {
+          "start_date": "2024-11-08",
+          "end_date": "2024-12-07",
+          "30day_total_mm": 0.0
+        },
+        {
+          "start_date": "2025-10-30",
+          "end_date": "2025-11-28",
+          "30day_total_mm": 1.3
+        }
+      ],
+      "longest_dry_streaks": [
+        {
+          "start_date": "2021-02-17",
+          "end_date": "2021-03-31",
+          "dry_days": 43
+        },
+        {
+          "start_date": "2024-11-08",
+          "end_date": "2024-12-11",
+          "dry_days": 34
+        },
+        {
+          "start_date": "2022-04-09",
+          "end_date": "2022-05-15",
+          "dry_days": 33
+        },
+        {
+          "start_date": "2021-04-22",
+          "end_date": "2021-06-04",
+          "dry_days": 32
+        },
+        {
+          "start_date": "2024-04-13",
+          "end_date": "2024-05-13",
+          "dry_days": 31
+        }
+      ]
+    }
+  }
+}

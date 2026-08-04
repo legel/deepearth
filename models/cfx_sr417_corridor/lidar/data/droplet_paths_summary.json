@@ -1,0 +1,22 @@
+{
+  "site": "site1",
+  "site_label": "5-house residential cluster (slope + roofs, no water body)",
+  "n_droplets_seeded": 3000,
+  "n_paths_written": 2981,
+  "n_ground_triangles": 66767,
+  "n_roof_triangles": 169890,
+  "n_buildings_meshed": 43,
+  "max_steps": 400,
+  "step_m": 0.4,
+  "settle_counts": {
+    "local_min": 157,
+    "left_mesh": 141,
+    "max_steps": 2702
+  },
+  "test_area": {
+    "lat": 28.363316587590315,
+    "lon": -81.4315738078251,
+    "radius_km": 0.08
+  },
+  "architecture": "v2: DEM ground surface + per-building LiDAR roof meshes, droplets shed off roofs (edge or local min) to the ground, never settle on a raised surface"
+}

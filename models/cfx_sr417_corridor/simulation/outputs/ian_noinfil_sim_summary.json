@@ -1,0 +1,11 @@
+{
+  "id": "ian_noinfil",
+  "label": "Hurricane Ian \u00b7 Sep 28\u201330 2022",
+  "data_source": "ASOS MCO \u00b7 336 mm total",
+  "use_infiltration": false,
+  "total_rain_mm": 335.5,
+  "peak_flooded_ha": 41.27,
+  "peak_lake_rise_m": 0.0,
+  "n_frames": 145,
+  "frame_interval_min": 30.0
+}

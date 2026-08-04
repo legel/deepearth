@@ -1,0 +1,11 @@
+{
+  "device": "mps",
+  "site": "site2",
+  "n_triangles": 682768,
+  "n_edges": 1023859,
+  "n_steps": 40948,
+  "wall_s": 333.42022824287415,
+  "mass_balance_residual_pct": -0.004261817511784972,
+  "ground_h_max_m": 1.1248892545700073,
+  "roof_h_max_m": 0.019999999552965164
+}

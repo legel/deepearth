@@ -1,0 +1,61 @@
+{
+  "site": {
+    "lat": 28.5217321,
+    "lon": -81.6570725,
+    "domain_m": 25.0
+  },
+  "rain_mm_hr": 77.2,
+  "sim_seconds": 0.3,
+  "device": "mps",
+  "results": [
+    {
+      "dx_m": 0.003,
+      "n": 8333,
+      "cells": 69438889,
+      "filled_frac": 0.00012200656032961587,
+      "z_min": 31.32740665481331,
+      "z_max": 42.8244856489713,
+      "relief_m": 11.497078994157988,
+      "pts_used": 17751,
+      "steps": 15,
+      "sim_t": 0.3,
+      "h_max": 1.3765474250249099e-05,
+      "rain_m3": 0.004020511673099999,
+      "stored_m3": 0.004019994140625,
+      "out_m3": 5.185964374322793e-07,
+      "mass_resid_pct": -2.646335888497243e-05,
+      "wall_s": 6.368724082999999,
+      "wall_per_sim_s": 21.229080276666664,
+      "device": "mps",
+      "status": "ok"
+    },
+    {
+      "dx_m": 0.002,
+      "n": 12500,
+      "cells": 156250000,
+      "filled_frac": 5.42464e-05,
+      "z_min": 31.32740665481331,
+      "z_max": 42.8244856489713,
+      "relief_m": 11.497078994157988,
+      "pts_used": 17751,
+      "steps": 22,
+      "sim_t": 0.3,
+      "h_max": 1.6157771824509837e-05,
+      "rain_m3": 0.004020833333333335,
+      "stored_m3": 0.00402038232421875,
+      "out_m3": 4.5045906701125207e-07,
+      "mass_resid_pct": 1.3679939642015476e-05,
+      "wall_s": 25.249912375000005,
+      "wall_per_sim_s": 84.16637458333335,
+      "device": "mps",
+      "status": "ok"
+    },
+    {
+      "dx_m": 0.0015,
+      "cells": 277788889,
+      "status": "oom",
+      "error": "MPS backend out of memory (MPS allocated: 19.46 GiB, other allocations: 2.78 MiB, max allowed: 20.13 GiB). Tried to allocate 1.03 GiB on private pool. Use PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 to disab",
+      "device": "mps"
+    }
+  ]
+}

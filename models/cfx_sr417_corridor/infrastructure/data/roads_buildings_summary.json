@@ -1,0 +1,19 @@
+{
+  "aoi": {
+    "lat": 28.36687,
+    "lon": -81.43299,
+    "radius_km": 1.0
+  },
+  "roads": {
+    "count": 646,
+    "total_length_m": 100997.7,
+    "total_length_km": 100.998
+  },
+  "buildings": {
+    "count": 786,
+    "total_footprint_area_m2": 441385.7,
+    "total_footprint_area_ha": 44.139
+  },
+  "source": "OpenStreetMap via Overpass API",
+  "note": "Buildings from multipolygon relations use outer rings only (no holes extracted)."
+}

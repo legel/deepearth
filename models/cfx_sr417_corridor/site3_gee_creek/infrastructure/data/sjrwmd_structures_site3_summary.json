@@ -1,0 +1,12 @@
+{
+  "site": "site3",
+  "lat": 28.690514,
+  "lon": -81.287539,
+  "sfwmd_wide_search_radius_km": 30.0,
+  "sfwmd_wide_search_count": 0,
+  "sjrwmd_wide_search_radius_km": 30.0,
+  "sjrwmd_wide_search_count": 21,
+  "sjrwmd_site_box_radius_km": 2.99,
+  "sjrwmd_site_box_count": 0,
+  "note": "SFWMD returns 0 \u2014 site3 is outside SFWMD's jurisdiction (unlike the main AOI, which is inside it). SJRWMD (St. Johns River WMD) is the correct agency for this location and returns real regional structures, though 0 fall inside site3's own small test box \u2014 same regional-vs-local-box pattern the main AOI's SFWMD check already found."
+}

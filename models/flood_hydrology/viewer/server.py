@@ -20,6 +20,9 @@ REQUIRED = [
     "ssurgo.png",
     "ssurgo_legend.json",
     "lake_mask.png",
+    "hydrography.png",
+    "floodplain.png",
+    "roads_buildings.png",
     "simulation_index.json",
 ]
 

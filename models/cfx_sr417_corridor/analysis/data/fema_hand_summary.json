@@ -1,0 +1,97 @@
+{
+  "hand_stats": {
+    "mean_m": 1.221,
+    "p95_m": 3.184,
+    "pct_lt1m": 19.75,
+    "pct_lt3m": 36.5
+  },
+  "fema_cells": {
+    "floodway_ha": 137.62,
+    "sfha_ha": 70.89
+  },
+  "risk_classes": {
+    "1": {
+      "label": "Floodway + HAND<1m (highest risk)",
+      "cells": 410428,
+      "area_ha": 31.74,
+      "pct_aoi": 6.03
+    },
+    "2": {
+      "label": "Floodway + HAND 1-3m",
+      "cells": 11798,
+      "area_ha": 0.91,
+      "pct_aoi": 0.17
+    },
+    "3": {
+      "label": "AE/SFHA + HAND<1m",
+      "cells": 405145,
+      "area_ha": 31.33,
+      "pct_aoi": 5.95
+    },
+    "4": {
+      "label": "AE/SFHA + HAND 1-3m",
+      "cells": 29755,
+      "area_ha": 2.3,
+      "pct_aoi": 0.44
+    },
+    "5": {
+      "label": "HAND<1m only (outside FEMA zones)",
+      "cells": 528097,
+      "area_ha": 40.84,
+      "pct_aoi": 7.76
+    },
+    "bfe_check": {
+      "bfe_ft_mean": -9999.0,
+      "bfe_m_mean": -3047.7,
+      "dem_m_at_floodway": 22.74,
+      "bfe_minus_dem_m": -3070.44
+    }
+  },
+  "color_legend": {
+    "1": {
+      "color": [
+        220,
+        40,
+        40,
+        210
+      ],
+      "label": "Floodway + HAND<1m (highest risk)"
+    },
+    "2": {
+      "color": [
+        230,
+        110,
+        30,
+        180
+      ],
+      "label": "Floodway + HAND 1-3m"
+    },
+    "3": {
+      "color": [
+        220,
+        200,
+        30,
+        160
+      ],
+      "label": "AE/SFHA + HAND<1m"
+    },
+    "4": {
+      "color": [
+        180,
+        160,
+        100,
+        130
+      ],
+      "label": "AE/SFHA + HAND 1-3m"
+    },
+    "5": {
+      "color": [
+        100,
+        180,
+        255,
+        110
+      ],
+      "label": "HAND<1m only (outside FEMA zones)"
+    }
+  }
+}
