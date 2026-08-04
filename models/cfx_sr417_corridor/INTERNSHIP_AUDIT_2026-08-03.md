@@ -304,11 +304,20 @@ half of item 5 were deliberately **not** done unattended — see notes below.
   in §6) — now removed after the final mosaic is written.
   **Verified, not just written**: ran `fetch_precip_site3.py` for real against a live backup —
   reproduced `asos_hourly_SFB.csv` **byte-for-byte identical** to the file already on disk
-  (409.0mm total, 57.1mm/hr peak — matches CLAUDE.md's own figures exactly). DEM/soil
-  verification was still running in the background as this update was written — a fresh 1m DEM
-  download over a ~6x6km box legitimately takes several minutes; if it hasn't been confirmed
-  in a later note in this file, check `site3_gee_creek/dem/data/site3_dem_meta.json`'s
-  timestamp directly.
+  (409.0mm total, 57.1mm/hr peak — matches CLAUDE.md's own figures exactly).
+  **`fetch_dem_site3.py` verification surfaced a real operational risk, handled safely**: ran it
+  against a pre-made backup of the real DEM; USGS 3DEP's 1m elevation service was down at the
+  moment of the call (`Service is currently not available` on both the 1m and 3m attempts), so
+  `dem_download.py`'s own pre-existing resolution fallback ladder (not new code — inherited,
+  intentional behavior) silently produced a much coarser 10m/712x716 DEM and overwrote the real
+  7810x7819 1m production file. Caught immediately (checked the output shape against the known-
+  good meta.json) and restored from the backup — confirmed byte-identical via MD5 afterward.
+  **`fetch_soil_site3.py` was deliberately NOT run** as a result: it rasterizes soil polygons
+  directly onto whatever DEM is currently on disk, so running it during the same live 3DEP
+  outage risked compounding the problem rather than verifying anything. Re-attempt DEM/soil
+  verification once 3DEP's 1m service is confirmed back up — this is a live-service reliability
+  finding, not a defect in the new script's logic (its structure was independently confirmed
+  correct beforehand via the import-chain check in the prior commit).
 - **§7.4 (risk-free cleanup)**: done. Deleted `flood_hydrology/lidar/data/lidar_pointcloud.bin`
   after confirming via MD5 it was byte-identical to `viewer/data/lidar_pointcloud.bin` (the copy
   `server.py` actually serves) — reclaimed 1.5GB. Deleted the 1.9GB orphaned
