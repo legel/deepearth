@@ -3,8 +3,9 @@
 **Date:** 2026-08-03
 **Scope:** `models/flood_hydrology` (Johns Lake) + `models/cfx_sr417_corridor` (CFX SR417,
 including the `site1`/`site2`/`site3`/`site3_crop`/`site3_crop_coarse`/`site3_1house` registry).
-**Nature of this document:** read-only audit + recommendations. No files were moved, deleted, or
-committed to produce it.
+**Nature of this document:** started as a read-only audit; §7's action items below were then
+executed the same day (see "Status update" at the very end of this file for exactly what
+changed on disk and in git as a result).
 
 ---
 
@@ -282,3 +283,50 @@ duplicate binary + orphaned temp tiles + unused zip), **plus ~18.6 GB of re-deri
 5. Branch off `origin/models`'s current tip (not the stale local `15ed9d1` base) once you're
    ready to bring this work back into the shared repo, and push only when it's in a
    review-ready state.
+
+---
+
+## Status update (2026-08-03, same day) — what actually got done
+
+Items 1, 3, and 4 above were executed the same session. Item 2 (reorg scope) and the "push"
+half of item 5 were deliberately **not** done unattended — see notes below.
+
+- **§7.1 (local commit)**: done. Two commits on `feature/sr417-corridor-ecosystem`: `c1802b9`
+  (full checkpoint of both projects) and `b5331bb` (the automation-gap fixes below). Still
+  100% local — nothing pushed.
+- **§7.3 (site3 automation gap)**: done. Wrote `fetch_dem_site3.py`, `fetch_soil_site3.py`
+  (SSURGO + NLCD), `fetch_precip_site3.py`, all reading coordinates from `test_sites.py`
+  instead of hardcoding them a second time. Found and fixed two real bugs while writing these
+  (not worked around): `ssurgo_download.py`'s `main()` was silently rasterizing every caller's
+  soil map against the hardcoded MAIN-AOI DEM regardless of which site called it — now takes an
+  optional `dem_path` param (default behavior unchanged for existing callers); `fetch_naip.py`
+  never cleaned up its own `_naip_tiles_tmp/` scratch directory (root cause of the 1.9GB orphan
+  in §6) — now removed after the final mosaic is written.
+  **Verified, not just written**: ran `fetch_precip_site3.py` for real against a live backup —
+  reproduced `asos_hourly_SFB.csv` **byte-for-byte identical** to the file already on disk
+  (409.0mm total, 57.1mm/hr peak — matches CLAUDE.md's own figures exactly). DEM/soil
+  verification was still running in the background as this update was written — a fresh 1m DEM
+  download over a ~6x6km box legitimately takes several minutes; if it hasn't been confirmed
+  in a later note in this file, check `site3_gee_creek/dem/data/site3_dem_meta.json`'s
+  timestamp directly.
+- **§7.4 (risk-free cleanup)**: done. Deleted `flood_hydrology/lidar/data/lidar_pointcloud.bin`
+  after confirming via MD5 it was byte-identical to `viewer/data/lidar_pointcloud.bin` (the copy
+  `server.py` actually serves) — reclaimed 1.5GB. Deleted the 1.9GB orphaned
+  `site3_gee_creek/imagery/data/_naip_tiles_tmp/`. **Total reclaimed: 3.4GB.**
+- **§7.5 (branch off `origin/models`)**: half done, deliberately. Created a new local branch
+  `cfx-models-base` directly off `origin/models`'s real current tip (confirmed via `git fetch`:
+  `ab417e6 Add models/ projects on top of the merged DeepEarth core`), then cherry-picked both
+  local commits onto it — both applied cleanly with zero conflicts (confirmed
+  `models/cfx_sr417_corridor` doesn't exist anywhere upstream, so there was nothing to
+  conflict with). This branch is ready to push whenever you decide it's PR-ready — **not pushed
+  yet**, since pushing publishes to the same shared repo Lance works in, and that's a
+  publish/visibility decision that should be a deliberate choice, not something done as a side
+  effect of an audit follow-up.
+- **§7.2 (reorg scope decision)**: intentionally not resolved unattended. Both repos are now
+  committed locally, which lowers the risk of a full restructure somewhat, but actually moving
+  ~54GB of production data across two live, actively-referenced folder trees (with hundreds of
+  hardcoded relative-path references throughout the scripts) is still a large, multi-hour,
+  failure-prone undertaking that deserves an explicit go/no-go rather than a default. The
+  lighter option from §5 (factor out a shared fetch-library package both projects import,
+  without moving any existing data folders) remains the lower-risk path if/when you want to
+  proceed with either version of this.
