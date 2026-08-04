@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createTerrain, VERT_EXAG } from './terrain.js';
+import { createTerrain, createFixedExagGeometry } from './terrain.js';
 import { createVoxelLayer } from './voxelLayer.js';
 import { createOverlays, createDrapedOverlay } from './overlays.js';
-import { setupLayerControls } from './layerControls.js';
+import { setupLayerPanel } from './layerControls.js';
 import { createRainSystem } from './rainParticles.js';
 import { createFloodLayer } from './floodLayer.js';
 import { setupSimulationControls } from './simulationControls.js';
+import { createLidarPointCloud } from './lidarPointCloud.js';
 
 const loadingEl  = document.getElementById('loading-overlay');
 const loadingTxt = document.getElementById('loading-text');
@@ -71,20 +72,27 @@ async function init() {
   const overlays = await createOverlays(geoMeta);
   overlays.forEach(o => scene.add(o.mesh));
 
-  // Draped variants — same textures painted directly onto the terrain's
-  // displaced surface (terrain.geometry) instead of floating as flat planes.
-  const drapedNaip = createDrapedOverlay(terrain.geometry, '/data/naip_rgb.png', 0.90);
+  // Draped variants — painted onto a FIXED 2x-exaggeration geometry (not the live
+  // terrain.geometry) so they stay legible regardless of the wireframe/voxel exaggeration
+  // slider below — same pattern as cfx_sr417_corridor's terrain.js (draping imagery onto a
+  // tall exaggerated surface reads as more visually distorted than the wireframe alone).
+  const drapedGeo2x = await createFixedExagGeometry(geoMeta, 2);
+  const drapedNaip = createDrapedOverlay(drapedGeo2x, '/data/naip_rgb.png', 0.90);
   drapedNaip.name = 'NAIP Aerial (Draped)';
   drapedNaip.visible = false;
   scene.add(drapedNaip);
 
-  const drapedSsurgo = createDrapedOverlay(terrain.geometry, '/data/ssurgo.png', 0.75);
+  const drapedSsurgo = createDrapedOverlay(drapedGeo2x, '/data/ssurgo.png', 0.75);
   drapedSsurgo.name = 'SSURGO Soils (Draped)';
   drapedSsurgo.visible = false;
   scene.add(drapedSsurgo);
 
   // ── Water surface plane (at lake level) ─────────────────────
-  const waterY = (water_surface - z_min) * VERT_EXAG;
+  // Live vertical-exaggeration support (2026-07-28): waterY depends on the current
+  // exaggeration, so it's tracked as `currentExag`/`waterY` (mutable) instead of the old
+  // fixed VERT_EXAG constant, and recomputed by onExagChange() below on every slider move.
+  let currentExag = terrain.exag;
+  let waterY = (water_surface - z_min) * currentExag;
   // Water surface: full-extent plane textured with lake_mask.png so only the real lake
   // shape is visible (transparent pixels = land, blue pixels = lake).
   const waterSurfaceGeo = new THREE.PlaneGeometry(width_m, height_m);
@@ -137,25 +145,125 @@ async function init() {
     scene.add(s2Plane);
   } catch { /* S2 overlay optional */ }
 
-  // ── Layer controls ───────────────────────────────────────────
-  // Grouped so each layer sits next to its draped variant (NAIP next to NAIP
-  // Draped, SSURGO next to SSURGO Draped) instead of all flats then all draped.
-  const naipOverlay   = overlays.find(o => o.name === 'NAIP Aerial');
-  const ssurgoOverlay = overlays.find(o => o.name === 'SSURGO Soils');
+  // ── Live vertical-exaggeration handler ────────────────────────
+  // terrain.updateExag() rebuilds the wireframe/solid geometry; voxelResult.rescale() rescales
+  // every InstancedMesh voxel's baked Y position/scale by the ratio (no live-updating geometry
+  // to reuse there, unlike the terrain plane); the water/S2 planes get their Y position
+  // recomputed directly since they're simple flat planes, not displaced geometry.
+  function onExagChange(newExag, oldExag) {
+    terrain.updateExag(newExag);
+    if (voxelResult) voxelResult.rescale(newExag / oldExag);
+    waterY = (water_surface - z_min) * newExag;
+    waterPlane.position.y = waterY;
+    if (s2Plane) s2Plane.position.y = waterY + 2;
+    // rescalableMeshes is populated lazily (currently just the raw LiDAR point cloud, if
+    // loaded) — defined further below, but only ever called here after user interaction, by
+    // which point it's already initialized (closure over the same outer scope).
+    rescalableMeshes.forEach(m => rescaleY(m, newExag / oldExag));
+    currentExag = newExag;
+  }
 
-  setupLayerControls([
-    { name: 'Terrain Surface',        mesh: terrain.solidMesh, defaultOn: true,  swatch: '#1e5a3a' },
-    { name: 'Terrain Wireframe',      mesh: terrain.wireMesh,  defaultOn: true,  swatch: '#3aaa60' },
-    { name: 'Lake Voxels',            mesh: voxelResult?.mesh, defaultOn: true,  swatch: '#3a6abf' },
-    { name: 'Water Surface',          mesh: waterPlane,        defaultOn: true,  swatch: '#1a5aaf' },
-    ...(naipOverlay ? [{ name: naipOverlay.name, mesh: naipOverlay.mesh, defaultOn: naipOverlay.defaultOn }] : []),
-    { name: 'NAIP Aerial (Draped)',   mesh: drapedNaip,        defaultOn: false, swatch: '#8a6a3a' },
-    ...(ssurgoOverlay ? [{ name: ssurgoOverlay.name, mesh: ssurgoOverlay.mesh, defaultOn: ssurgoOverlay.defaultOn }] : []),
-    { name: 'SSURGO Soils (Draped)',  mesh: drapedSsurgo,      defaultOn: false, swatch: '#7a9a5a' },
-    { name: 'Flood Depth',            mesh: flood.mesh,        defaultOn: false, swatch: '#2a60c0' },
-    { name: 'Infiltration',           mesh: infiltration.mesh, defaultOn: false, swatch: '#5a8a3a' },
-    ...(s2Plane ? [{ name: s2Plane.name, mesh: s2Plane, defaultOn: false, swatch: '#c04040' }] : []),
-  ]);
+  // ── Layer controls ───────────────────────────────────────────
+  const naipOverlay          = overlays.find(o => o.name === 'NAIP Aerial');
+  const ssurgoOverlay        = overlays.find(o => o.name === 'SSURGO Soils');
+  const hydrographyOverlay   = overlays.find(o => o.name === 'Hydrography (3DHP)');
+  const femaOverlay          = overlays.find(o => o.name === 'FEMA Flood Zones');
+  const roadsBuildingsOverlay = overlays.find(o => o.name === 'Roads & Buildings');
+
+  setupLayerPanel({
+    terrain: {
+      solidMesh: terrain.solidMesh,
+      wireMesh:  terrain.wireMesh,
+      voxelMesh: voxelResult?.mesh,
+      waterMesh: waterPlane,
+      onExagChange,
+    },
+    hydrology: [
+      ...(hydrographyOverlay ? [{ name: hydrographyOverlay.name, mesh: hydrographyOverlay.mesh,
+                                   on: false, swatch: '#00aaff' }] : []),
+    ],
+    base: [
+      ...(naipOverlay ? [{ name: naipOverlay.name, mesh: naipOverlay.mesh, on: false,
+                            swatch: '#8a6a3a', drape: true, drapedMesh: drapedNaip,
+                            drapedOn: false }] : []),
+      ...(ssurgoOverlay ? [{ name: ssurgoOverlay.name, mesh: ssurgoOverlay.mesh, on: false,
+                              swatch: '#7a9a5a', drape: true, drapedMesh: drapedSsurgo,
+                              drapedOn: false, legendUrl: '/data/ssurgo_legend.json' }] : []),
+      ...(femaOverlay ? [{ name: femaOverlay.name, mesh: femaOverlay.mesh, on: false,
+                            swatch: '#e02020' }] : []),
+      ...(roadsBuildingsOverlay ? [{ name: roadsBuildingsOverlay.name,
+                                      mesh: roadsBuildingsOverlay.mesh, on: false,
+                                      swatch: '#cd9b5f' }] : []),
+    ],
+    risk: [
+      { name: 'Flood Depth',   mesh: flood.mesh,        on: false, swatch: '#2a60c0' },
+      { name: 'Infiltration',  mesh: infiltration.mesh, on: false, swatch: '#5a8a3a' },
+      ...(s2Plane ? [{ name: s2Plane.name, mesh: s2Plane, on: false, swatch: '#c04040' }] : []),
+    ],
+  });
+
+  // ── Raw LiDAR point cloud (heavy, lazy-loaded on toggle) ──────────────────
+  // Ported from cfx_sr417_corridor's wireLazyPointCloud pattern 2026-07-28 — the point cloud
+  // isn't fetched until the checkbox is actually checked (multi-hundred-MB file), and rescales
+  // in place to match whatever exaggeration is currently active (it's exported with
+  // VERT_EXAG=8 baked into its positions, same convention as export_full_pointcloud.py /
+  // terrain.js's own default). Not part of setupLayerPanel's declarative config since that
+  // helper assumes the mesh already exists synchronously — this row is built manually and
+  // inserted right after TOPOGRAPHY's last row (before the HYDROLOGY header) to match CFX's
+  // own placement of the equivalent layer.
+  function rescaleY(object3D, ratio) {
+    object3D.traverse(child => {
+      const geo = child.geometry;
+      if (geo && geo.attributes && geo.attributes.position) {
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) pos.setY(i, pos.getY(i) * ratio);
+        pos.needsUpdate = true;
+        if (geo.computeVertexNormals) geo.computeVertexNormals();
+      }
+    });
+  }
+  const rescalableMeshes = [];
+
+  const layerList = document.getElementById('layer-list');
+  const hydroHeader = Array.from(layerList.querySelectorAll('.section-header'))
+    .find(h => h.textContent === 'HYDROLOGY');
+
+  const lidarRow = document.createElement('label');
+  lidarRow.className = 'layer-row';
+  const lidarCb = document.createElement('input');
+  lidarCb.type = 'checkbox';
+  lidarCb.id = 'lidar-full-cb';
+  const lidarSw = document.createElement('div');
+  lidarSw.className = 'layer-swatch';
+  lidarSw.style.background = '#909090';
+  const lidarLabel = document.createElement('span');
+  lidarLabel.className = 'layer-label';
+  lidarLabel.textContent = 'Raw LiDAR Point Cloud (full AOI, heavy)';
+  lidarRow.append(lidarCb, lidarSw, lidarLabel);
+  if (hydroHeader) layerList.insertBefore(lidarRow, hydroHeader);
+  else layerList.appendChild(lidarRow);
+
+  let loadedPointCloud = null;
+  lidarCb.addEventListener('change', async () => {
+    if (!lidarCb.checked) {
+      if (loadedPointCloud) loadedPointCloud.mesh.visible = false;
+      return;
+    }
+    if (loadedPointCloud) { loadedPointCloud.mesh.visible = true; return; }
+    lidarCb.disabled = true;
+    const prevText = lidarLabel.textContent;
+    lidarLabel.textContent = prevText + ' — loading…';
+    try {
+      loadedPointCloud = await createLidarPointCloud('/data/lidar_pointcloud.bin',
+        { name: 'LiDAR Point Cloud', size: 1.4 });
+      rescaleY(loadedPointCloud.mesh, currentExag / 8);   // match whatever exag is active now
+      scene.add(loadedPointCloud.mesh);
+      rescalableMeshes.push(loadedPointCloud.mesh);
+    } finally {
+      lidarLabel.textContent = prevText;
+      lidarCb.disabled = false;
+    }
+  });
 
   // ── Simulation controls (async; non-blocking — panel renders after scene is ready) ──
   setStatus('Loading simulation data…');
@@ -166,12 +274,15 @@ async function init() {
     rainParticles: rain,
     waterPlane,
     geoMeta,
+    getExag: () => currentExag,
   }).then(ctrl => { simController = ctrl; }).catch(err => {
     console.warn('Simulation controls failed to load:', err);
   });
 
   // ── Camera: side-oblique view centred on lake so voxel bowl depth is visible ──
-  // Low elevation angle (~25°) so the 3D depth of the voxel stack reads clearly.
+  // Low elevation angle (~25°) so the 3D depth of the voxel stack reads clearly. Uses the
+  // initial waterY (not live-updated on exag change) — same as this project's existing
+  // behavior; the camera doesn't re-center when the slider moves, only the geometry rescales.
   const dist = Math.max(width_m, height_m) * 0.55;
   camera.position.set(
     lake_x_center + dist * 0.25,
@@ -217,7 +328,7 @@ async function init() {
 
     // Terrain hit
     const pt   = hit.point;
-    const elev = pt.y / VERT_EXAG + z_min;
+    const elev = pt.y / currentExag + z_min;
     let info   = `Elev: ${elev.toFixed(1)} m NAVD88`;
 
     // Look up FWC lake depth at this XZ position

@@ -28,6 +28,7 @@ import os
 import sys
 import json
 import argparse
+import datetime
 import numpy as np
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -55,9 +56,12 @@ def search_naip(bbox, years=None):
     catalog = pystac_client.Client.open(
         PC_STAC_URL, modifier=planetary_computer.sign_inplace)
 
-    # Build date range for each year
+    # Build date range for each year. Upper bound was a hardcoded 2022 (real bug found
+    # 2026-07-28 while auditing the sibling CFX project's own copy of this script) -- now
+    # derived from the real current date so it can't go stale the same way again.
     all_items = []
-    search_years = years if years else list(range(2022, 2017, -1))
+    current_year = datetime.date.today().year
+    search_years = years if years else list(range(current_year + 1, 2017, -1))
 
     for year in search_years:
         try:
@@ -79,11 +83,71 @@ def search_naip(bbox, years=None):
     return all_items
 
 
+def _download_asset_to_local(url, dest_path, retries=5, chunk_size=1 << 20):
+    """Stream a NAIP asset to a local file with retry+backoff.
+
+    Real bug found/fixed 2026-07-28: this function didn't exist here at all --
+    download_naip_mosaic() below used to open each tile's REMOTE signed URL directly via
+    rasterio (GDAL vsicurl streaming) and read from it during rio_merge(). On this network
+    that produced a real crash mid-run (confirmed via traceback): "TIFFFillTile: Read error
+    ... got 0 bytes" -> "TIFFReadEncodedTile() failed" -> RasterioIOError. The sibling CFX
+    SR417 project's own copy of this script (imagery/fetch_naip.py, ported FROM this file)
+    had already been rewritten to avoid exactly this failure mode -- this backports that same
+    fix here rather than just retrying the fragile approach. A plain sequential download to a
+    local file lets the OS TCP stack handle retransmission/reordering instead of GDAL's
+    scattered range-request layer, and resuming after a failure means restarting a single
+    tile's download rather than the whole multi-tile mosaic.
+    """
+    import requests
+
+    if os.path.exists(dest_path):
+        print(f"    {os.path.basename(dest_path)} already downloaded — skipping")
+        return dest_path
+
+    tmp_path = dest_path + ".part"
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            with requests.get(url, stream=True, timeout=(15, 120)) as resp:
+                resp.raise_for_status()
+                total = int(resp.headers.get("content-length", 0))
+                written = 0
+                with open(tmp_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            f.write(chunk)
+                            written += len(chunk)
+                if total and written != total:
+                    raise IOError(f"incomplete download: {written}/{total} bytes")
+            os.replace(tmp_path, dest_path)
+            print(f"    Downloaded {os.path.basename(dest_path)} "
+                  f"({written / 1e6:.1f} MB, attempt {attempt}/{retries})")
+            return dest_path
+        except Exception as e:
+            last_err = e
+            print(f"    Download attempt {attempt}/{retries} failed for "
+                  f"{os.path.basename(dest_path)}: {e}")
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            if attempt < retries:
+                wait = 5 * attempt
+                print(f"    Retrying in {wait}s...")
+                import time as _time
+                _time.sleep(wait)
+    raise RuntimeError(f"Failed to download {url} after {retries} attempts: {last_err}")
+
+
 def download_naip_mosaic(items, bbox, data_dir):
     """Download ALL NAIP tiles intersecting bbox, mosaic them, clip to AOI, save GeoTIFFs.
 
-    Replaces the single-tile download_naip() to avoid black edges when the AOI
-    spans multiple quarter-quad tiles.
+    Downloads every tile intersecting the bbox (not just the first) to avoid
+    black edges when the AOI spans multiple quarter-quad tiles. Each tile is first
+    streamed to a local temp file (see _download_asset_to_local) — mosaicking then
+    happens entirely from local disk, so it never depends on the network again once
+    all tiles have landed.
     """
     import rasterio
     from rasterio.merge import merge as rio_merge
@@ -105,22 +169,37 @@ def download_naip_mosaic(items, bbox, data_dir):
                 return item.assets[k].href
         return next(iter(item.assets.values())).href
 
+    tmp_dir = os.path.join(data_dir, "_naip_tiles_tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    local_paths = []
+    for item in items:
+        dest = os.path.join(tmp_dir, f"{item.id}.tif")
+        try:
+            local_paths.append(_download_asset_to_local(_asset_href(item), dest))
+        except Exception as e:
+            print(f"    Warning: giving up on {item.id}: {e}")
+
+    if not local_paths:
+        print("  No tiles could be downloaded")
+        return None
+
     open_datasets = []
     mosaic_crs = None
-    for item in items:
+    for p in local_paths:
         try:
-            ds = rasterio.open(_asset_href(item))
+            ds = rasterio.open(p)
             open_datasets.append(ds)
             if mosaic_crs is None:
                 mosaic_crs = ds.crs
         except Exception as e:
-            print(f"    Warning: {item.id}: {e}")
+            print(f"    Warning: could not open local tile {p}: {e}")
 
     if not open_datasets:
-        print("  ✗ No tiles could be opened")
+        print("  No local tiles could be opened")
         return None
 
-    print(f"  Mosaicking {len(open_datasets)} tile(s)…")
+    print(f"  Mosaicking {len(open_datasets)} local tile(s)...")
     mosaic, mosaic_transform = rio_merge(open_datasets)
     meta = open_datasets[0].meta.copy()
     for ds in open_datasets:

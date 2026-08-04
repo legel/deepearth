@@ -1,0 +1,815 @@
+{
+  "bbox_wsen": [
+    -81.31824596425551,
+    28.663577063063062,
+    -81.25683203574448,
+    28.717450936936938
+  ],
+  "service": "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer",
+  "layer_queried": {
+    "flood_hazard_zones": 28
+  },
+  "count": 114,
+  "zones": [
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AH",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 53,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 56,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 55,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 63.9,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 51,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 64.4,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 64,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 58,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 56,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 52,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AH",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 69,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 57,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 65,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 50,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 59,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 61,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 61,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AH",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 54,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AH",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 21,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 41,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AH",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 51,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AH",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 55,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 50,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 64.4,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "FLOODWAY",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": true
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 63.9,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 58,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AH",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 20,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 55,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AH",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 19,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 58,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "FLOODWAY",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": true
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 64,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AH",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 63,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 59,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 63.9,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "FLOODWAY",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": true
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 9,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "A",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "0.2 PCT ANNUAL CHANCE FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    }
+  ],
+  "has_floodway": true,
+  "has_sfha": true
+}

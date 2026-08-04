@@ -1,0 +1,26 @@
+{
+  "bbox_wsen": [
+    -81.44322840092217,
+    28.35786099099099,
+    -81.42275159907784,
+    28.375879009009008
+  ],
+  "service": "https://3dhp.nationalmap.gov/arcgis/rest/services/usgs_3dhp_all/FeatureServer",
+  "layers_queried": {
+    "flowline": 50,
+    "waterbody": 60
+  },
+  "flowlines": {
+    "count": 6,
+    "total_length_km": 2.429,
+    "named": [
+      "Shingle Creek"
+    ]
+  },
+  "waterbodies": {
+    "count": 29,
+    "feature_types": [
+      "Lake"
+    ]
+  }
+}

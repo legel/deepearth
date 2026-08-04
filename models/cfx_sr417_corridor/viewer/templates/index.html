@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CFX SR417 Corridor — Digital Twin Viewer</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div id="left-stack">
+    <div id="controls-panel">
+      <div class="panel-title">CFX SR417 Corridor · Digital Twin</div>
+      <div class="panel-subtitle">Lake Nona / south Orlando, FL — 28.367°N 81.433°W</div>
+      <div id="layer-list"></div>
+      <div class="panel-divider"></div>
+      <div id="heavy-lidar-control">
+        <div class="panel-hint" style="margin-bottom:4px;">Heavy LiDAR (loaded on demand):</div>
+        <label class="layer-row"><input type="checkbox" id="lidar-full-cb">
+          <span class="layer-label">Full-res cloud (70.9M pts, ~1GB)</span></label>
+
+        <div class="section-header">Test Site 1 — 5-House Cluster</div>
+        <label class="layer-row"><input type="checkbox" id="dense-cloud-site1-cb">
+          <span class="layer-label">Dense point cloud, NAIP colors</span></label>
+        <label class="layer-row"><input type="checkbox" id="hydro-site1-cb">
+          <span class="layer-label">Hydrography (3DHP) — same AOI-wide layer, shortcut toggle</span></label>
+        <label class="layer-row"><input type="checkbox" id="mesh-swe-site1-cb">
+          <span class="layer-label">3D shallow-water sim: falling rain + physics-driven flow</span></label>
+        <div id="mesh-swe-controls-site1" class="sub-controls" style="margin-top:6px;">
+          <label for="mesh-swe-speed-site1-slider">Playback speed: <span id="mesh-swe-speed-site1-value">1.0×</span></label>
+          <input type="range" id="mesh-swe-speed-site1-slider" min="0.1" max="8" step="0.1" value="1">
+          <label style="margin-top:8px;">Rain intensity</label>
+          <div class="exag-preset-row" data-site="site1">
+            <button class="exag-preset-btn rain-preset-btn" data-level="low">Low<br>40mm/hr</button>
+            <button class="exag-preset-btn rain-preset-btn active" data-level="medium">Medium<br>100mm/hr</button>
+            <button class="exag-preset-btn rain-preset-btn" data-level="high">High<br>180mm/hr</button>
+          </div>
+        </div>
+
+        <div class="section-header">Test Site 2 — Pond + 3 Houses</div>
+        <label class="layer-row"><input type="checkbox" id="dense-cloud-site2-cb">
+          <span class="layer-label">Dense point cloud, NAIP colors</span></label>
+        <label class="layer-row"><input type="checkbox" id="hydro-site2-cb">
+          <span class="layer-label">Hydrography (3DHP) — same AOI-wide layer, shortcut toggle (shows the pond itself)</span></label>
+        <label class="layer-row"><input type="checkbox" id="mesh-swe-site2-cb">
+          <span class="layer-label">3D shallow-water sim: falling rain + physics-driven flow + lake</span></label>
+        <div id="mesh-swe-controls-site2" class="sub-controls" style="margin-top:6px;">
+          <label for="mesh-swe-speed-site2-slider">Playback speed: <span id="mesh-swe-speed-site2-value">1.0×</span></label>
+          <input type="range" id="mesh-swe-speed-site2-slider" min="0.1" max="8" step="0.1" value="1">
+          <label style="margin-top:8px;">Rain intensity</label>
+          <div class="exag-preset-row" data-site="site2">
+            <button class="exag-preset-btn rain-preset-btn" data-level="low">Low<br>40mm/hr</button>
+            <button class="exag-preset-btn rain-preset-btn active" data-level="medium">Medium<br>100mm/hr</button>
+            <button class="exag-preset-btn rain-preset-btn" data-level="high">High<br>180mm/hr</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel-divider"></div>
+      <div class="panel-hint">Drag to orbit · Scroll to zoom · Shift+drag to pan</div>
+    </div>
+    <div id="simulation-panel"></div>
+  </div>
+
+  <div id="info-panel">
+    <span id="hover-info">Hover for elevation</span>
+  </div>
+
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div id="loading-text">Loading terrain data…</div>
+  </div>
+
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

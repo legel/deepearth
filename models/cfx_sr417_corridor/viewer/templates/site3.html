@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Site3 — Gee Creek Gauge Validation — CFX Digital Twin</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/"
+    }
+  }
+  </script>
+  <style>
+    /* Compacted 2026-07-28: the panel had grown tall enough to need scrolling with all the
+       new layers this week (SSURGO/FEMA/roads/point-cloud crops/shallow-water demo). Narrower
+       column + tighter row spacing/font, but the gauge-comparison chart below is made LARGER
+       (not shrunk along with everything else) since it's the actual analytical deliverable. */
+    #left-stack { width: 340px; }
+    #controls-panel { padding: 10px 12px; }
+    #layer-list { gap: 3px; }
+    .layer-row { padding: 2px 0; }
+    .layer-label { font-size: 10.5px; line-height: 1.3; }
+    .panel-hint { font-size: 8.5px; }
+    .panel-divider { margin: 7px 0 6px; }
+    #chart-wrap { background: rgba(10,14,20,0.92); border-radius: 6px; padding: 10px 12px; margin-top: 8px; }
+    #chart-wrap canvas { display:block; width:100%; height:260px; }
+    .chart-legend { display:flex; flex-wrap:wrap; gap:10px; font-size:11px; margin-top:6px; color:#cfd8e3; }
+    .chart-legend span { display:flex; align-items:center; gap:5px; }
+    .swatch { width:10px; height:3px; display:inline-block; }
+    #site3-stats { font-size:11.5px; line-height:1.6; color:#e8eef5; margin-top:8px; }
+    #site3-stats b { color:#fff; }
+    .caveat { font-size:10.5px; color:#e0a020; margin-top:8px; line-height:1.4; }
+    #back-link { display:inline-block; margin-bottom:8px; font-size:11px; color:#7ab8ff; text-decoration:none; }
+    #back-link:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div id="left-stack">
+    <div id="controls-panel" style="width:340px;">
+      <a id="back-link" href="/">&larr; Main AOI viewer</a>
+      <div class="panel-title">Site3 — Gee Creek Gauge Validation</div>
+      <div class="panel-subtitle">28.6905°N 81.2875°W — 37km from the main AOI, near Longwood, FL</div>
+      <div class="panel-hint" style="margin:6px 0;">
+        USGS gauge 02234400 · documented drainage 33.15 km² · this mesh delineates 11.65 km²
+        (35.1% capture) — see CLAUDE.md for the full site-selection writeup.
+      </div>
+
+      <div class="panel-divider"></div>
+      <div class="section-header">Layers</div>
+      <label class="layer-row"><input type="checkbox" id="site3-wireframe-cb" checked>
+        <span class="layer-label">Terrain wireframe</span></label>
+
+      <div id="vert-exag-control">
+        <label for="site3-vert-exag-slider">Vertical Exaggeration: <span id="site3-vert-exag-value">2.0×</span></label>
+        <input type="range" id="site3-vert-exag-slider" min="1" max="8" step="0.5" value="2" style="width:100%;">
+        <div class="exag-preset-row" id="site3-exag-preset-row">
+          <button type="button" class="exag-preset-btn" data-val="1">1×</button>
+          <button type="button" class="exag-preset-btn active" data-val="2">2×</button>
+          <button type="button" class="exag-preset-btn" data-val="4">4×</button>
+          <button type="button" class="exag-preset-btn" data-val="8">8×</button>
+        </div>
+      </div>
+
+      <label class="layer-row"><input type="checkbox" id="site3-naip-cb">
+        <span class="layer-label">NAIP aerial (draped)</span></label>
+      <label class="layer-row"><input type="checkbox" id="site3-hydro-cb">
+        <span class="layer-label">Hydrography (3DHP) — Gee/Howell/Soldier Creek + 167 waterbodies</span></label>
+      <label class="layer-row"><input type="checkbox" id="site3-ssurgo-cb">
+        <span class="layer-label">SSURGO soils (draped)</span></label>
+      <label class="layer-row"><input type="checkbox" id="site3-fema-cb">
+        <span class="layer-label">FEMA flood zones — SFHA + regulatory floodway</span></label>
+      <label class="layer-row"><input type="checkbox" id="site3-roads-cb">
+        <span class="layer-label">Roads &amp; buildings (OSM) — 3,193 segments / 11,241 footprints</span></label>
+      <label class="layer-row"><input type="checkbox" id="site3-flood-cb">
+        <span class="layer-label">Hurricane Ian flood animation (real event, real rain)</span></label>
+      <label class="layer-row"><input type="checkbox" id="site3-rain-cb">
+        <span class="layer-label">Rain particles</span></label>
+      <label class="layer-row"><input type="checkbox" id="site3-pointcloud-cb">
+        <span class="layer-label">Dense point cloud, raw LiDAR (NAIP colors, ~30.5M pts, heavy, ~436MB)</span></label>
+      <div id="site3-pointcloud-status" style="font-size:10.5px; color:#7ab8ff; margin-top:2px; display:none;">Loading…</div>
+      <label class="layer-row"><input type="checkbox" id="site3-1house-swe-cb">
+        <span class="layer-label">3D shallow-water sim: falling rain + physics-driven flow (1-house demo)</span></label>
+      <div id="site3-1house-swe-status" style="font-size:10.5px; color:#7ab8ff; margin-top:2px; display:none;">Loading…</div>
+      <div class="sub-controls" style="margin:2px 0 6px 0;">
+        <label for="site3-1house-swe-speed-slider">Playback speed: <span id="site3-1house-swe-speed-value">1.0×</span></label>
+        <input type="range" id="site3-1house-swe-speed-slider" min="0.1" max="8" step="0.1" value="1" style="width:100%;">
+      </div>
+      <label class="layer-row"><input type="checkbox" id="site3-1house-cloud-cb">
+        <span class="layer-label">Dense point cloud, raw LiDAR, NAIP colors (1-house crop, ~261K pts, no decimation)</span></label>
+      <div id="site3-1house-cloud-status" style="font-size:10.5px; color:#7ab8ff; margin-top:2px; display:none;">Loading…</div>
+
+      <div id="site3-anim-controls" class="sub-controls" style="margin-top:8px; display:none;">
+        <button id="site3-play-btn" class="exag-preset-btn active" style="width:100%;">Play</button>
+        <input type="range" id="site3-scrub" min="0" max="1" step="1" value="0" style="width:100%; margin-top:6px;">
+        <div id="site3-time-label" style="font-size:11px; color:#cfd8e3; margin-top:4px;">t = 0.0h</div>
+      </div>
+
+      <div class="panel-divider"></div>
+      <div class="section-header">Real gauge vs. simulated outflow — Hurricane Ian</div>
+      <div id="chart-wrap">
+        <canvas id="hydro-chart" width="640" height="260"></canvas>
+        <div class="chart-legend">
+          <span><i class="swatch" style="background:#e07020;"></i>Real gauge discharge (cfs)</span>
+          <span><i class="swatch" style="background:#20a060;"></i>Simulated total-boundary outflow (cfs)</span>
+          <span><i class="swatch" style="background:#2060c0;"></i>KSFB rain (mm/hr, inverted)</span>
+        </div>
+        <div id="site3-stats"></div>
+        <div class="caveat">
+          Shape/timing comparison, not magnitude — the simulated signal sums outflow across
+          all 4 mesh boundary edges (no single edge faces the real gauge), and this mesh only
+          captures 35% of the gauge's documented drainage area. See CLAUDE.md's 2026-07-27
+          entry for the full honest writeup, including a corrected real-gauge figure (the
+          original site-selection estimate of "~35 cfs peak" was wrong; the real NWIS record
+          shows a 1,190 cfs peak).
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="info-panel">
+    <span id="hover-info">Hover for elevation</span>
+  </div>
+
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div id="loading-text">Loading site3 terrain…</div>
+  </div>
+
+  <script type="module" src="/static/js/site3_main.js"></script>
+</body>
+</html>

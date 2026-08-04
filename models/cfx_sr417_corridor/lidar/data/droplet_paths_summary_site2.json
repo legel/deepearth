@@ -1,0 +1,22 @@
+{
+  "site": "site2",
+  "site_label": "Retention pond + 3 houses near SR417",
+  "n_droplets_seeded": 3000,
+  "n_paths_written": 2655,
+  "n_ground_triangles": 401055,
+  "n_roof_triangles": 281713,
+  "n_buildings_meshed": 5,
+  "max_steps": 400,
+  "step_m": 0.4,
+  "settle_counts": {
+    "local_min": 834,
+    "left_mesh": 102,
+    "max_steps": 2064
+  },
+  "test_area": {
+    "lat": 28.36633,
+    "lon": -81.434606,
+    "radius_km": 0.196
+  },
+  "architecture": "v2: DEM ground surface + per-building LiDAR roof meshes, droplets shed off roofs (edge or local min) to the ground, never settle on a raised surface"
+}

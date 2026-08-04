@@ -1,0 +1,66 @@
+{
+  "bbox_wsen": [
+    -81.44322840092217,
+    28.35786099099099,
+    -81.42275159907784,
+    28.375879009009008
+  ],
+  "service": "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer",
+  "layer_queried": {
+    "flood_hazard_zones": 28
+  },
+  "count": 7,
+  "zones": [
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 78,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 79,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 78,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "",
+      "sfha_tf": "T",
+      "static_bfe_ft": 78,
+      "is_floodway": false
+    },
+    {
+      "fld_zone": "AE",
+      "zone_subty": "FLOODWAY",
+      "sfha_tf": "T",
+      "static_bfe_ft": null,
+      "is_floodway": true
+    },
+    {
+      "fld_zone": "X",
+      "zone_subty": "AREA OF MINIMAL FLOOD HAZARD",
+      "sfha_tf": "F",
+      "static_bfe_ft": null,
+      "is_floodway": false
+    }
+  ],
+  "has_floodway": true,
+  "has_sfha": true
+}

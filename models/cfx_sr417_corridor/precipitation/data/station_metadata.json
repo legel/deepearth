@@ -1,0 +1,48 @@
+{
+  "chosen": {
+    "id": "GHCND:USC00084625",
+    "name": "KISSIMMEE 2, FL US",
+    "latitude": 28.2763,
+    "longitude": -81.424,
+    "mindate": "1948-09-02",
+    "maxdate": "2026-06-22",
+    "record_years": 77.8,
+    "datacoverage": 0.87,
+    "distance_km": 10.11
+  },
+  "candidates": [
+    {
+      "id": "GHCND:USC00084625",
+      "name": "KISSIMMEE 2, FL US",
+      "latitude": 28.2763,
+      "longitude": -81.424,
+      "mindate": "1948-09-02",
+      "maxdate": "2026-06-22",
+      "record_years": 77.8,
+      "datacoverage": 0.87,
+      "distance_km": 10.11
+    },
+    {
+      "id": "GHCND:USW00012815",
+      "name": "ORLANDO INTERNATIONAL AIRPORT, FL US",
+      "latitude": 28.41822,
+      "longitude": -81.32413,
+      "mindate": "1952-05-16",
+      "maxdate": "2026-06-21",
+      "record_years": 74.1,
+      "datacoverage": 0.9647,
+      "distance_km": 12.08
+    },
+    {
+      "id": "GHCND:USW00012841",
+      "name": "ORLANDO EXECUTIVE AIRPORT, FL US",
+      "latitude": 28.54653,
+      "longitude": -81.33544,
+      "mindate": "1892-01-01",
+      "maxdate": "2026-06-21",
+      "record_years": 134.5,
+      "datacoverage": 0.7993,
+      "distance_km": 22.14
+    }
+  ]
+}

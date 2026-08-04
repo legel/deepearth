@@ -1,0 +1,24 @@
+{
+  "bbox_wsen": [
+    -81.66723438863198,
+    28.51258299099099,
+    -81.64672761136802,
+    28.530601009009008
+  ],
+  "service": "https://3dhp.nationalmap.gov/arcgis/rest/services/usgs_3dhp_all/FeatureServer",
+  "layers_queried": {
+    "flowline": 50,
+    "waterbody": 60
+  },
+  "flowlines": {
+    "count": 1,
+    "total_length_km": 4.826,
+    "named": []
+  },
+  "waterbodies": {
+    "count": 2,
+    "feature_types": [
+      "Lake"
+    ]
+  }
+}

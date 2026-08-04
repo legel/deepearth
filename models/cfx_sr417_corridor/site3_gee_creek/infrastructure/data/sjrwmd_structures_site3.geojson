@@ -1,0 +1,683 @@
+{
+  "type": "FeatureCollection",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": 29,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5834040032168,
+          28.669236589886
+        ]
+      },
+      "properties": {
+        "OBJECTID": 29,
+        "HYDROID": 5675,
+        "HYDROCODE": 182,
+        "JUNCTIONID": 252906,
+        "NAME": "pfa13496",
+        "TYPE": 1,
+        "DESCRIPTION": "electric, 24\" pipe, pumps from FB 5 to Lust Road Canal",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 3,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "142051f9-730c-4fb0-913d-86b58cf3809d"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 175,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5751224200246,
+          28.6688568142615
+        ]
+      },
+      "properties": {
+        "OBJECTID": 175,
+        "HYDROID": 5663,
+        "HYDROCODE": 170,
+        "JUNCTIONID": 252894,
+        "NAME": "ep14",
+        "TYPE": 1,
+        "DESCRIPTION": "electric, 24\" pipe",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 3,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "2a5403f5-24ba-42a8-ac43-7df4f06e4d8a"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 212,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5753203663913,
+          28.6545043563073
+        ]
+      },
+      "properties": {
+        "OBJECTID": 212,
+        "HYDROID": 5660,
+        "HYDROCODE": 167,
+        "JUNCTIONID": 252891,
+        "NAME": "ep12",
+        "TYPE": 1,
+        "DESCRIPTION": "electric, 18\" pipe, Pumps from Airport Canal to FB 6 toward the south",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": null,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "fe556735-c3f3-4ab1-833a-de66bb9adc09"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 218,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.4263040365318,
+          28.6944694045412
+        ]
+      },
+      "properties": {
+        "OBJECTID": 218,
+        "HYDROID": 5550,
+        "HYDROCODE": 57,
+        "JUNCTIONID": 250333,
+        "NAME": "Lake Brantley",
+        "TYPE": 2,
+        "DESCRIPTION": "Outfall Weir - Fixed Crest",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": 0,
+        "PURPOSE_DESC": null,
+        "STATUS": null,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 7,
+        "ANGLE": 180,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "34c763e5-672d-4741-863a-6279eb084ad3"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 32,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.593886723968,
+          28.6681144265325
+        ]
+      },
+      "properties": {
+        "OBJECTID": 32,
+        "HYDROID": 5693,
+        "HYDROCODE": 200,
+        "JUNCTIONID": 316975,
+        "NAME": "dp7",
+        "TYPE": 1,
+        "DESCRIPTION": "diesel, 42\" pipe, Unit 2 main discharge, Lake Apopka outflow",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 1,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "0870d164-b097-4454-acab-a2bde2c7b5bd"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 26,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.3260428813887,
+          28.841741131021
+        ]
+      },
+      "properties": {
+        "OBJECTID": 26,
+        "HYDROID": 5597,
+        "HYDROCODE": 104,
+        "JUNCTIONID": 252828,
+        "NAME": "FP&LSanfrd",
+        "TYPE": 3,
+        "DESCRIPTION": "FP&L Sanford Plant Outfall",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": 0,
+        "PURPOSE_DESC": null,
+        "STATUS": null,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 7,
+        "ANGLE": 110,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "1545ff5b-c25e-4de9-8ff7-2f01e167344e"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 178,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5916690625822,
+          28.6976240151309
+        ]
+      },
+      "properties": {
+        "OBJECTID": 178,
+        "HYDROID": 5676,
+        "HYDROCODE": 183,
+        "JUNCTIONID": 252907,
+        "NAME": "ep23",
+        "TYPE": 1,
+        "DESCRIPTION": "electric, 30\" pipe, Pumps in FB 5",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 3,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "73c7484a-bcce-4b18-ae83-d4b45b2f6d63"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 173,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.558934153868,
+          28.6480650724621
+        ]
+      },
+      "properties": {
+        "OBJECTID": 173,
+        "HYDROID": 5662,
+        "HYDROCODE": 169,
+        "JUNCTIONID": 252893,
+        "NAME": "dp10",
+        "TYPE": 1,
+        "DESCRIPTION": null,
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 3,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "29953dbc-1a8b-46da-9197-4333ed912d0c"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 30,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.593886723968,
+          28.6681144265325
+        ]
+      },
+      "properties": {
+        "OBJECTID": 30,
+        "HYDROID": 5657,
+        "HYDROCODE": 164,
+        "JUNCTIONID": 316976,
+        "NAME": "dp5",
+        "TYPE": 1,
+        "DESCRIPTION": "diesel, 42\" pipe, Unit 2 main discharge, Lake Apopka outflow",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 1,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "b83a316f-b0f2-4cee-927a-819cba02a81f"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 176,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5670212938612,
+          28.6544581158527
+        ]
+      },
+      "properties": {
+        "OBJECTID": 176,
+        "HYDROID": 5661,
+        "HYDROCODE": 168,
+        "JUNCTIONID": 252892,
+        "NAME": "ep11",
+        "TYPE": 1,
+        "DESCRIPTION": "electric, 36\" pipe, Pumps from FB 6 to Hooper Farm Canal",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 1,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "e662d459-8129-4890-be90-b2d627826675"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 219,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.2921457373637,
+          28.6407262695317
+        ]
+      },
+      "properties": {
+        "OBJECTID": 219,
+        "HYDROID": 5551,
+        "HYDROCODE": 58,
+        "JUNCTIONID": 250334,
+        "NAME": "Lake Howell",
+        "TYPE": 2,
+        "DESCRIPTION": "Dam Outfall Weir -Seminole County",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": 0,
+        "PURPOSE_DESC": null,
+        "STATUS": null,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 7,
+        "ANGLE": -40,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "d727eb0c-6b70-4616-b94f-5db808a80cb6"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 179,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5753926843961,
+          28.6546304156945
+        ]
+      },
+      "properties": {
+        "OBJECTID": 179,
+        "HYDROID": 5659,
+        "HYDROCODE": 166,
+        "JUNCTIONID": 252890,
+        "NAME": "ep13",
+        "TYPE": 1,
+        "DESCRIPTION": "electric, 48\" pipe, Pumps from Airport Canal to FB 6 toward the west",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 3,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "5b1c94f5-5252-44c1-99b6-746ff884a257"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 39,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.4301093835442,
+          28.6969068076524
+        ]
+      },
+      "properties": {
+        "OBJECTID": 39,
+        "HYDROID": 5554,
+        "HYDROCODE": 61,
+        "JUNCTIONID": 250337,
+        "NAME": "L Brantley",
+        "TYPE": 3,
+        "DESCRIPTION": "Control culvert - 15\"; Seminole County",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": 0,
+        "PURPOSE_DESC": null,
+        "STATUS": null,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 7,
+        "ANGLE": 180,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "0f6d02a7-2579-4701-abac-97db1c941900"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 33,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.593886723968,
+          28.6681144265325
+        ]
+      },
+      "properties": {
+        "OBJECTID": 33,
+        "HYDROID": 5694,
+        "HYDROCODE": 201,
+        "JUNCTIONID": 316973,
+        "NAME": "ep8",
+        "TYPE": 1,
+        "DESCRIPTION": "diesel and electric, operational, Unit 2 pumps, d-42\" pipe, e-54\" pipe, Lake Apopka outflow",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 1,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "5d6807d1-575e-4e48-961e-99e4e69adeea"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 31,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.593886723968,
+          28.6681144265325
+        ]
+      },
+      "properties": {
+        "OBJECTID": 31,
+        "HYDROID": 5692,
+        "HYDROCODE": 199,
+        "JUNCTIONID": 316974,
+        "NAME": "dp6",
+        "TYPE": 1,
+        "DESCRIPTION": "diesel, 42\" pipe, Unit 2 main discharge, Lake Apopka outflow",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 1,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "2a46f435-ce81-4eef-9bd7-4d5980be5ca5"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 34,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5919571416616,
+          28.6760412866863
+        ]
+      },
+      "properties": {
+        "OBJECTID": 34,
+        "HYDROID": 5656,
+        "HYDROCODE": 163,
+        "JUNCTIONID": 252887,
+        "NAME": "ep17",
+        "TYPE": 1,
+        "DESCRIPTION": "electric, 24\" pipe, FB 1 East pump",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 2,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "2f95361f-ec26-429c-b15b-c0b1624b2d03"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 237,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.3585201307551,
+          28.73489323577
+        ]
+      },
+      "properties": {
+        "OBJECTID": 237,
+        "HYDROID": 5553,
+        "HYDROCODE": 60,
+        "JUNCTIONID": 250336,
+        "NAME": "L Myrtle",
+        "TYPE": 2,
+        "DESCRIPTION": "Outfall Structure",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": 0,
+        "PURPOSE_DESC": null,
+        "STATUS": null,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 7,
+        "ANGLE": -40,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "3ec0b0f9-1948-436c-b892-03b6ccf1a02f"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 220,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.3482595750741,
+          28.6398761668967
+        ]
+      },
+      "properties": {
+        "OBJECTID": 220,
+        "HYDROID": 5552,
+        "HYDROCODE": 59,
+        "JUNCTIONID": 250335,
+        "NAME": "Lake of the Woods",
+        "TYPE": 2,
+        "DESCRIPTION": "Outfall Weir; Seminole County",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": 0,
+        "PURPOSE_DESC": null,
+        "STATUS": null,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 7,
+        "ANGLE": 90,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "c91978f1-1351-484d-b6b6-2c0c75b7a3df"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 28,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5772827789741,
+          28.6690281445946
+        ]
+      },
+      "properties": {
+        "OBJECTID": 28,
+        "HYDROID": 5665,
+        "HYDROCODE": 172,
+        "JUNCTIONID": 252896,
+        "NAME": "ep16",
+        "TYPE": 1,
+        "DESCRIPTION": "electric, 24\" pipe, Pumps from Lust Road Canal West to Lust Road Canal East",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 2,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "ee13b7bb-bed7-407a-a183-2a88c1cf039d"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 174,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5887864815654,
+          28.6544555170787
+        ]
+      },
+      "properties": {
+        "OBJECTID": 174,
+        "HYDROID": 5658,
+        "HYDROCODE": 165,
+        "JUNCTIONID": 252889,
+        "NAME": "dp9",
+        "TYPE": 1,
+        "DESCRIPTION": "diesel, 30\" pipe, Hooper Farm Road Pump, Lake Apopka outflow",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 1,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "f5ce056c-f10e-4877-9709-8b21e3fd892d"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 180,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -81.5750625930785,
+          28.6691459056254
+        ]
+      },
+      "properties": {
+        "OBJECTID": 180,
+        "HYDROID": 5664,
+        "HYDROCODE": 171,
+        "JUNCTIONID": 252895,
+        "NAME": "ep15",
+        "TYPE": 1,
+        "DESCRIPTION": "electric, 24\" pipe, Pumps from Lust Road Canal to FB 7",
+        "STRUCTURECOUNT": 0,
+        "PURPOSE": null,
+        "PURPOSE_DESC": null,
+        "STATUS": 3,
+        "CONTROL": null,
+        "CONTROL_DESC": null,
+        "MANAGER": 1,
+        "ANGLE": 0,
+        "POWER_PRIMARY": null,
+        "POWER_BACKUP": null,
+        "COMMENTS": null,
+        "GlobalID": "e483cfa6-1545-48ea-9b51-f37ad6b148c7"
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "n_points": 285765,
+  "n_total_query_area": 286635,
+  "decimation_step": 1,
+  "color_by": "classification",
+  "full": true,
+  "classification_histogram": {
+    "unclassified": 84481,
+    "ground": 139535,
+    "building": 61749
+  }
+}

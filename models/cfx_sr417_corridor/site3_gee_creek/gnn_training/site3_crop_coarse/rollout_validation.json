@@ -1,0 +1,24 @@
+{
+  "medium_long": {
+    "n_frames": 299,
+    "rmse_first": 5.3726239457319025e-06,
+    "rmse_last": 0.021743901073932648,
+    "rmse_mean": 0.012969660938197439,
+    "final_max_abs_error_m": 0.318335622549057,
+    "final_real_max_depth_m": 0.31971874833106995,
+    "final_real_vol_m3": 1213.768310546875,
+    "final_pred_vol_m3": 134.5742950439453,
+    "vol_drift_pct": -88.91268672327493
+  },
+  "mediumhigh_short": {
+    "n_frames": 200,
+    "rmse_first": 6.5777649069787e-06,
+    "rmse_last": 0.015880320221185684,
+    "rmse_mean": 0.009969773579298201,
+    "final_max_abs_error_m": 0.23837029933929443,
+    "final_real_max_depth_m": 0.23965522646903992,
+    "final_real_vol_m3": 922.5708618164062,
+    "final_pred_vol_m3": 115.94696044921875,
+    "vol_drift_pct": -87.43218919564225
+  }
+}

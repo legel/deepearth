@@ -1,0 +1,531 @@
+[
+  {
+    "scene_name": "Florida_Hydrology_Avg_Precipitation_1",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Avg_Precipitation_1",
+    "item_id": "20250617_162644_46_2521",
+    "acquired_utc": "2025-06-17T16:26:44.468907Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "2521",
+    "gsd_m": 3.7,
+    "cloud_pct": 0,
+    "clear_pct": 100,
+    "udm2_clear_pct": 100.0,
+    "view_angle_deg": 4.6,
+    "sun_elevation": 75.3,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 7.3,
+    "water_bodies": 225,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ]
+        ]
+      ]
+    },
+    "category": "AVG",
+    "rank": 1,
+    "ghcnd_date": "2025-06-17",
+    "season": "wet",
+    "note": "Representative wet-season week",
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Avg_Precipitation_1_water_wgs84.geojson"
+  },
+  {
+    "scene_name": "Florida_Hydrology_Avg_Precipitation_2",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Avg_Precipitation_2",
+    "item_id": "20230917_151646_54_24a9",
+    "acquired_utc": "2023-09-17T15:16:46.549011Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "24a9",
+    "gsd_m": 3.9,
+    "cloud_pct": 11,
+    "clear_pct": 76,
+    "udm2_clear_pct": 76.2,
+    "view_angle_deg": 5.1,
+    "sun_elevation": 50.2,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 25.8,
+    "water_bodies": 199,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ]
+        ]
+      ]
+    },
+    "category": "AVG",
+    "rank": 2,
+    "ghcnd_date": "2023-09-17",
+    "season": "wet",
+    "note": "Representative wet-season week",
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Avg_Precipitation_2_water_wgs84.geojson"
+  },
+  {
+    "scene_name": "Florida_Hydrology_Avg_Precipitation_3",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Avg_Precipitation_3",
+    "item_id": "20251204_164906_45_24f6",
+    "acquired_utc": "2025-12-04T16:49:06.455007Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "24f6",
+    "gsd_m": 3.3,
+    "cloud_pct": 0,
+    "clear_pct": 100,
+    "udm2_clear_pct": 99.5,
+    "view_angle_deg": 3.6,
+    "sun_elevation": 38.8,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 24.4,
+    "water_bodies": 233,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42405430041819,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.363311830732734
+          ],
+          [
+            -81.42405430041819,
+            28.35798
+          ]
+        ]
+      ]
+    },
+    "category": "AVG",
+    "rank": 3,
+    "ghcnd_date": "2025-12-04",
+    "season": "dry",
+    "note": "Representative dry-season week",
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Avg_Precipitation_3_water_wgs84.geojson"
+  },
+  {
+    "scene_name": "Florida_Hydrology_Avg_Precipitation_4",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Avg_Precipitation_4",
+    "item_id": "20231223_151608_73_24ab",
+    "acquired_utc": "2023-12-23T15:16:08.730097Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "24ab",
+    "gsd_m": 3.8,
+    "cloud_pct": 0,
+    "clear_pct": 100,
+    "udm2_clear_pct": 100.0,
+    "view_angle_deg": 1.1,
+    "sun_elevation": 29.8,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 20.0,
+    "water_bodies": 165,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ]
+        ]
+      ]
+    },
+    "category": "AVG",
+    "rank": 4,
+    "ghcnd_date": "2023-12-23",
+    "season": "dry",
+    "note": "Representative dry-season week",
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Avg_Precipitation_4_water_wgs84.geojson"
+  },
+  {
+    "scene_name": "Florida_Hydrology_Max_Precipitation_1",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Max_Precipitation_1",
+    "item_id": "20220930_152620_13_2276",
+    "acquired_utc": "2022-09-30T15:26:20.134759Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "2276",
+    "gsd_m": 3.9,
+    "cloud_pct": 0,
+    "clear_pct": 100,
+    "udm2_clear_pct": 100.0,
+    "view_angle_deg": 3,
+    "sun_elevation": 49.4,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 25.9,
+    "water_bodies": 106,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ]
+        ]
+      ]
+    },
+    "category": "MAX",
+    "rank": 1,
+    "ghcnd_date": "2022-09-29",
+    "ghcnd_mm": 345.4,
+    "5day_total_mm": 381.5,
+    "note": "Hurricane Ian peak day",
+    "nwis_02263800_cfs": 3500,
+    "nwis_02263800_ft": 11.43,
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Max_Precipitation_1_water_wgs84.geojson"
+  },
+  {
+    "scene_name": "Florida_Hydrology_Max_Precipitation_2",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Max_Precipitation_2",
+    "item_id": "20250529_163323_20_2531",
+    "acquired_utc": "2025-05-29T16:33:23.200527Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "2531",
+    "gsd_m": 3.9,
+    "cloud_pct": 7,
+    "clear_pct": 0,
+    "udm2_clear_pct": 0.1,
+    "view_angle_deg": 2.7,
+    "sun_elevation": 76.8,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 3.8,
+    "water_bodies": 43,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ]
+        ]
+      ]
+    },
+    "category": "MAX",
+    "rank": 2,
+    "ghcnd_date": "2025-05-29",
+    "ghcnd_mm": null,
+    "5day_total_mm": 133.3,
+    "note": "Strong late wet-season event",
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Max_Precipitation_2_water_wgs84.geojson"
+  },
+  {
+    "scene_name": "Florida_Hydrology_Max_Precipitation_3",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Max_Precipitation_3",
+    "item_id": "20240630_162008_62_2475",
+    "acquired_utc": "2024-06-30T16:20:08.626752Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "2475",
+    "gsd_m": 3.2,
+    "cloud_pct": 3,
+    "clear_pct": 23,
+    "udm2_clear_pct": 23.0,
+    "view_angle_deg": 5,
+    "sun_elevation": 73.7,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 11.6,
+    "water_bodies": 91,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ]
+        ]
+      ]
+    },
+    "category": "MAX",
+    "rank": 3,
+    "ghcnd_date": "2024-06-30",
+    "ghcnd_mm": null,
+    "5day_total_mm": 130.8,
+    "note": "Early wet-season rainfall pulse",
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Max_Precipitation_3_water_wgs84.geojson"
+  },
+  {
+    "scene_name": "Florida_Hydrology_Min_Precipitation_1",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Min_Precipitation_1",
+    "item_id": "20210317_152511_08_2264",
+    "acquired_utc": "2021-03-17T15:25:11.088842Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "2264",
+    "gsd_m": 3.9,
+    "cloud_pct": 0,
+    "clear_pct": 100,
+    "udm2_clear_pct": 100.0,
+    "view_angle_deg": 3,
+    "sun_elevation": 47.5,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 17.0,
+    "water_bodies": 79,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ]
+        ]
+      ]
+    },
+    "category": "MIN",
+    "rank": 1,
+    "ghcnd_date": "2021-02-17",
+    "dry_streak_days": 43,
+    "note": "43 consecutive dry days \u2014 baseline vegetation/soil state",
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Min_Precipitation_1_water_wgs84.geojson"
+  },
+  {
+    "scene_name": "Florida_Hydrology_Min_Precipitation_2",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Min_Precipitation_2",
+    "item_id": "20241209_162245_09_24dc",
+    "acquired_utc": "2024-12-09T16:22:45.099764Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "24dc",
+    "gsd_m": 3.9,
+    "cloud_pct": 0,
+    "clear_pct": 100,
+    "udm2_clear_pct": 100.0,
+    "view_angle_deg": 8.3,
+    "sun_elevation": 36.5,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 20.5,
+    "water_bodies": 223,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ]
+        ]
+      ]
+    },
+    "category": "MIN",
+    "rank": 2,
+    "ghcnd_date": "2024-11-08",
+    "dry_streak_days": 34,
+    "note": "34 consecutive dry days",
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Min_Precipitation_2_water_wgs84.geojson"
+  },
+  {
+    "scene_name": "Florida_Hydrology_Min_Precipitation_3",
+    "source_dir": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/Florida_Hydrology_PlanetScope/Florida_Hydrology_Min_Precipitation_3",
+    "item_id": "20220419_154347_41_2480",
+    "acquired_utc": "2022-04-19T15:43:47.417883Z",
+    "instrument": "PSB.SD",
+    "satellite_id": "2480",
+    "gsd_m": 4.1,
+    "cloud_pct": 0,
+    "clear_pct": 100,
+    "udm2_clear_pct": 100.0,
+    "view_angle_deg": 4,
+    "sun_elevation": 60.5,
+    "bands": 8,
+    "crs": "EPSG:32617",
+    "pixel_res_m": 3.0,
+    "water_ha": 15.5,
+    "water_bodies": 40,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -81.42279,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.35798
+          ],
+          [
+            -81.44321,
+            28.37602
+          ],
+          [
+            -81.42279,
+            28.37602
+          ]
+        ]
+      ]
+    },
+    "category": "MIN",
+    "rank": 3,
+    "ghcnd_date": "2022-04-09",
+    "dry_streak_days": 33,
+    "note": "33 consecutive dry days",
+    "water_boundary_wgs84": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/planetscope/data/water_boundaries/Florida_Hydrology_Min_Precipitation_3_water_wgs84.geojson"
+  }
+]

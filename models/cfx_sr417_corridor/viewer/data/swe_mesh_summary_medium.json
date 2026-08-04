@@ -1,0 +1,46 @@
+{
+  "site": "site1",
+  "site_label": "5-house residential cluster (slope + roofs, no water body)",
+  "n_triangles": 236657,
+  "n_ground_triangles": 66767,
+  "n_roof_triangles": 169890,
+  "n_buildings": 43,
+  "n_edges": 355174,
+  "n_frames": 161,
+  "n_steps": 20104,
+  "wall_s": 214.23253679275513,
+  "peak_rain_mm_hr": 100.0,
+  "rain_duration_min": 4.0,
+  "total_min": 8.0,
+  "ground_h_max_m": 0.24928724995321375,
+  "roof_h_max_m": 0.11111767660769492,
+  "mass_balance_m3": {
+    "rain_vol_m3": 223.25627388837668,
+    "infil_vol_m3": 31.227739963818845,
+    "outflow_vol_m3": 100.49379451352468,
+    "pond_outlet_vol_m3": 0.0,
+    "stored_vol_m3": 91.53473941103302
+  },
+  "mass_balance_residual_pct": 7.001792117402191e-14,
+  "n_impervious_road_triangles": 15026,
+  "lake": null,
+  "single_house_check": {
+    "building_index": 6,
+    "roof_area_m2": 7.4547805904262745,
+    "n_roof_triangles": 148,
+    "volume_final_cm3": 763.8208732887806,
+    "volume_peak_cm3": 3144.627998813831,
+    "volume_peak_liters": 3.1446279988138306
+  },
+  "flow_tracers": {
+    "n_seeded": 2500,
+    "n_local_min": 148,
+    "n_left_mesh": 17,
+    "n_max_steps": 2335
+  },
+  "test_area": {
+    "lat": 28.363316587590315,
+    "lon": -81.4315738078251,
+    "radius_km": 0.08
+  }
+}

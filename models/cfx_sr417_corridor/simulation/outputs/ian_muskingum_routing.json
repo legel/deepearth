@@ -1,0 +1,47 @@
+{
+  "reach_length_m": 7200.0,
+  "muskingum_x": 0.2,
+  "route_dt_s": 10800.0,
+  "velocity_sensitivity": {
+    "0.3": {
+      "K_hours": 6.666666666666667,
+      "muskingum_coeffs": [
+        0.024390243902439025,
+        0.4146341463414634,
+        0.5609756097560976
+      ],
+      "unrouted_peak_time_h": 31.502777777777776,
+      "routed_peak_time_h": 34.50277777777778,
+      "lag_added_by_routing_h": 3.0000000000000036,
+      "unrouted_peak_cfs": 24.266991833473508,
+      "routed_peak_cfs": 14.56950634926451
+    },
+    "0.5": {
+      "K_hours": 4.0,
+      "muskingum_coeffs": [
+        0.14893617021276595,
+        0.48936170212765956,
+        0.3617021276595745
+      ],
+      "unrouted_peak_time_h": 31.502777777777776,
+      "routed_peak_time_h": 34.50277777777778,
+      "lag_added_by_routing_h": 3.0000000000000036,
+      "unrouted_peak_cfs": 24.266991833473508,
+      "routed_peak_cfs": 17.882082841076862
+    },
+    "0.8": {
+      "K_hours": 2.5,
+      "muskingum_coeffs": [
+        0.2857142857142857,
+        0.5714285714285714,
+        0.14285714285714285
+      ],
+      "unrouted_peak_time_h": 31.502777777777776,
+      "routed_peak_time_h": 34.50277777777778,
+      "lag_added_by_routing_h": 3.0000000000000036,
+      "unrouted_peak_cfs": 24.266991833473508,
+      "routed_peak_cfs": 19.483922487870803
+    }
+  },
+  "interpretation": "Channel routing adds real but modest additional lag (a few hours, depending on the unc alibrated velocity assumed) on top of this AOI's own ~1.3h self-response. It does not close the gap to the real gauge's ~24h lag, and was never expected to -- most of that gap is runoff-concentration time across the ~226 km^2 of the watershed this AOI-only simulation does not represent, not pure channel travel time for this one 7.2km reach. This routing result is a real, defensible partial explanation of the timing gap, not a claim that the gap is now closed."
+}

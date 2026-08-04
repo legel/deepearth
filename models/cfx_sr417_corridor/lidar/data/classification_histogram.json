@@ -1,0 +1,13 @@
+{
+  "total_points": 70903812,
+  "histogram": {
+    "unclassified": 44077001,
+    "ground": 22605396,
+    "building": 3774751,
+    "low_point_noise": 219531,
+    "water": 129241,
+    "bridge_deck": 53855,
+    "high_noise": 44,
+    "class_20": 43993
+  }
+}

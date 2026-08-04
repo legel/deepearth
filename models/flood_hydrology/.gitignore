@@ -5,6 +5,15 @@
 **/*.tif
 sentinel2/data/s2_*.tif
 
+# Raw LiDAR point cloud tiles — reproducible via lidar/download_laz_tiles.py
+lidar/data/raw/*.laz
+
+# Exported mesh/point-cloud viewer assets — reproducible via their export scripts
+# (duplicated between lidar/data/ and viewer/data/; large, regenerable, not source data)
+**/dense_test_area_mesh*.obj
+**/bridge_mesh_*.obj
+**/lidar_pointcloud*.bin
+
 # WatNet ML model directory — 148 MB of test imagery and model weights
 WatNet/
 

@@ -1,0 +1,34 @@
+# cfx_sr417_corridor — Python environment
+# Generated 2026-07-23 by scanning actual imports across the project (not a guess).
+# torch/torch_geometric/torch_scatter: install AFTER checking Sol's CUDA module version —
+# see MIGRATION.md for the correct --index-url. Everything else is plain pip.
+
+numpy
+scipy
+pandas
+matplotlib
+Pillow
+rasterio
+geopandas
+shapely
+pyproj
+laspy[lazrs]
+requests
+flask
+py3dep
+pynhd
+pysheds
+
+# richdem intentionally NOT here: fails to compile in the local .venv (Python 3.11 via
+# uv, C++ toolchain mismatch on this Mac — 20 compiler errors in its pybind11 wrapper).
+# Only needed for the already-completed DEM-conditioning stage (dem_hydro.py/
+# dem_terrain.py), not by the GPU solver or HydroGraphNet work. If you need to re-run
+# those specific scripts, install it separately (works fine under the original system
+# Python 3.9 --user environment, or should build cleanly on Sol's Linux toolchain).
+# richdem  # pip install richdem  — separately, only if re-running dem_hydro.py/dem_terrain.py
+
+# GNN / GPU stack (added 2026-07-23 for the HydroGraphNet comparison work)
+torch
+torch_geometric
+torch_scatter
+nvidia-physicsnemo

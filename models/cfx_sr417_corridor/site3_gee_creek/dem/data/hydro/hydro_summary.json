@@ -1,0 +1,14 @@
+{
+  "dem_path": "site3_gee_creek/dem/data/site3_dem.tif",
+  "dem_res_m": 0.8752102280849836,
+  "crs": "EPSG:5070",
+  "burn_depth_m": 1.5,
+  "acc_threshold": 1000,
+  "stream_cells": 1719908,
+  "hand_mean_m": 0.536484956741333,
+  "hand_p95_m": 1.8403135538101187,
+  "hand_max_m": 15.602246284484863,
+  "cells_hand_lt1m": 47157776,
+  "cells_hand_lt3m": 55328035,
+  "calibration_note": "Ian peak at NWIS 02263800 = 3500 cfs / 11.43 ft (2022-09-30). HAND contour matching this stage (~3.5m above thalweg) should reproduce the observed inundation visible in PlanetScope Max_1 scene."
+}

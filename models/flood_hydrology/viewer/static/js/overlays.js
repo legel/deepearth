@@ -33,6 +33,8 @@ export async function createOverlays(geoMeta) {
 
   // Lake Mask removed — water surface in main.js now uses lake_mask.png texture
   // at the correct waterY elevation, which is the canonical lake-shape layer.
+  // Hydrography/FEMA/roads_buildings added 2026-07-28, ported from cfx_sr417_corridor —
+  // same single-toggle flatPlane pattern (no Flat/Draped radio, unlike NAIP/SSURGO).
   const overlays = [
     {
       name: 'NAIP Aerial',
@@ -42,6 +44,21 @@ export async function createOverlays(geoMeta) {
     {
       name: 'SSURGO Soils',
       mesh: flatPlane('/data/ssurgo.png', 2, 0.75, true),
+      defaultOn: false,
+    },
+    {
+      name: 'Hydrography (3DHP)',
+      mesh: flatPlane('/data/hydrography.png', 3.5, 0.85, true),
+      defaultOn: false,
+    },
+    {
+      name: 'FEMA Flood Zones',
+      mesh: flatPlane('/data/floodplain.png', 4, 0.70, true),
+      defaultOn: false,
+    },
+    {
+      name: 'Roads & Buildings',
+      mesh: flatPlane('/data/roads_buildings.png', 3.2, 0.85, true),
       defaultOn: false,
     },
   ];
