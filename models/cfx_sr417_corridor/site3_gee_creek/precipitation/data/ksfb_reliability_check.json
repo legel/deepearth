@@ -1,0 +1,26 @@
+{
+  "generated": "2026-08-04",
+  "purpose": "Closes the site3 precipitation-reliability gap flagged in CLAUDE.md's 2026-07-27 dataset-selection-logic audit",
+  "ksfb_station": "SFB",
+  "ksfb_dist_km": 10.8,
+  "reference_station": "GHCND:USC00087982",
+  "reference_name": "SANFORD, FL US",
+  "reference_dist_km": 13.84,
+  "reference_record_years": 70.2,
+  "overlap_days": 1956,
+  "overlap_start": "2021-01-01",
+  "overlap_end": "2026-06-21",
+  "correlation_r": 0.6344,
+  "bias_mm_day": -0.219,
+  "rmse_mm_day": 11.21,
+  "ian_window": [
+    "2022-09-27",
+    "2022-09-30"
+  ],
+  "ian_ksfb_total_mm": 409.0,
+  "ian_reference_total_mm": 293.4,
+  "ian_ratio": 1.394,
+  "main_aoi_reference_mco_r": 0.578,
+  "main_aoi_reference_ism_r": 0.166,
+  "verdict": "RELIABLE"
+}

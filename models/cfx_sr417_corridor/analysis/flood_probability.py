@@ -370,7 +370,14 @@ def main():
                     help="Query an existing probability surface instead of rebuilding it")
     ap.add_argument("--horizon-years", type=float, default=1.0,
                     help="Δt in the proposal's P(flood | ..., Δt). 1 = plain annual probability")
-    args = site_registry.resolve(ap.parse_args())
+    # site_registry.resolve() prints its own diagnostic lines (which --site resolved to, the
+    # coordinates/data_root it picked) -- real, useful output for a human running the ensemble
+    # build, but it runs on real stdout and corrupts --query mode's JSON the exact same way the
+    # solver import banner did (see the redirect_stdout import above). Same fix, same reason:
+    # redirect it here too, found by actually testing `--site site3 --query ...` end to end
+    # rather than assuming the import-time fix covered every print path.
+    with contextlib.redirect_stdout(sys.stderr):
+        args = site_registry.resolve(ap.parse_args())
 
     if args.query:
         qa, _, _ = site_paths(getattr(args, "site", None))
