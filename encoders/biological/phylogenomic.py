@@ -288,12 +288,14 @@ class _TreeRound(nn.Module):
             msg = up_gate[lo:hi] * self.mup(H[tree.up_child[lo:hi]]).to(H.dtype)
             acc = torch.zeros_like(H).index_add(0, tree.up_parent[lo:hi], msg)
             par = tree.up_par[plo:phi]
-            H = H.index_copy(0, par, self.agg(acc[par]).to(H.dtype))
+            state = F.layer_norm(self.agg(acc[par]).to(H.dtype), (d,))      # bound every ancestral update by depth
+            H = H.index_copy(0, par, state)
         # downward: parents -> children, one scatter per depth level (parents already finalized above)
         for lo, hi in tree.down_slices:
             ci = tree.down_child[lo:hi]
             dm = down_gate[lo:hi] * self.mdn(H[tree.down_parent[lo:hi]]).to(H.dtype)
-            H = H.index_copy(0, ci, self.comb(torch.cat([H[ci], dm], dim=-1)).to(H.dtype))
+            state = F.layer_norm(self.comb(torch.cat([H[ci], dm], dim=-1)).to(H.dtype), (d,))
+            H = H.index_copy(0, ci, state)
         tips = self.norm(x + self.out(H[:n_sp]))                            # residual keeps congeners separable
         return (tips, H) if return_nodes else tips                          # H[n_sp:] = refined internal-clade states
 
