@@ -198,6 +198,7 @@ class DeepEarth(nn.Module):
         d_model: int = 256,
         n_latents: int = 24,
         n_layers: int = 4,
+        active_layers: Optional[int] = None,
         n_heads: int = 8,
         relative_window: Sequence[float] = (2500.0, 2500.0, 300.0, 180.0),
         relative_finest: Sequence[float] = (0.1, 0.1, 1.0, 0.042),
@@ -404,6 +405,7 @@ class DeepEarth(nn.Module):
                 return nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True)
             return LatentBlock(d_model, n_heads, ffn=block_ffn, norm=block_norm)
         self.blocks = nn.ModuleList([_block() for _ in range(n_layers)])
+        self.active_layers = n_layers if active_layers is None else active_layers
         # Fusion depth (architecture lever): re-read the fixed context between latent blocks instead of once up front,
         # so the latents keep pulling from the neighbor/position context as they process. read_depth=1 (default) -> no
         # extra reads -> champion-identical (empty ModuleList consumes no init RNG).
@@ -677,7 +679,8 @@ class DeepEarth(nn.Module):
             r = torch.utils.checkpoint.checkpoint(self._read_fn, q, kv, V, use_reentrant=False) \
                 if self.grad_checkpoint else self._read_fn(q, kv, V)
             z = z + gate * r
-            for i, blk in enumerate(self.blocks):
+            for i in range(self.active_layers):
+                blk = self.blocks[i]
                 z = torch.utils.checkpoint.checkpoint(blk, z, use_reentrant=False) if self.grad_checkpoint else blk(z)
                 if i < len(self.extra_reads):     # deeper fusion: re-read the context between blocks (read_depth>1)
                     z = z + gate * self.extra_reads[i](self.q_norm(z), kv, kv)[0]
