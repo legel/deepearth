@@ -29,7 +29,7 @@ Real, honest caveats carried from this project's own established convention (not
 Usage:
     python3 simulation/run_site3_ian.py --cell-size 5 --dt 20
 """
-import os, sys, json, time, argparse
+import os, sys, json, time, shutil, argparse
 import numpy as np
 import pandas as pd
 import rasterio
@@ -206,6 +206,22 @@ def main():
         with open(os.path.join(OUT_DIR, "simulation_ian_site3_hydrograph.json"), "w") as fh:
             json.dump(hydro_json, fh)
         print(f"  simulation_ian_site3_hydrograph.json")
+
+        # Copy into viewer/data/ (added 2026-08-04). Previously this never happened
+        # automatically -- confirmed via MD5 during the post-friction-fix regeneration that
+        # depth_frames_ian_site3.bin had regenerated correctly here in simulation/outputs/
+        # while viewer/data/simulation_ian_site3_frames.bin silently stayed 8 days stale,
+        # because nothing ever copied it there except a one-off manual `cp`. Every other
+        # AOI-scale Ian export (export_ian_simulation.py) already does this step; this script
+        # never had the equivalent.
+        viewer_data_dir = os.path.join(PROJ_DIR, "viewer", "data")
+        for src_name, dst_name in [
+            ("depth_frames_ian_site3.bin", "simulation_ian_site3_frames.bin"),
+            ("simulation_ian_site3_hydrograph.json", "simulation_ian_site3_hydrograph.json"),
+        ]:
+            shutil.copy2(os.path.join(OUT_DIR, src_name), os.path.join(viewer_data_dir, dst_name))
+        print(f"  -> copied to viewer/data/ "
+              f"(simulation_ian_site3_frames.bin, simulation_ian_site3_hydrograph.json)")
 
     print("\nDONE.")
 

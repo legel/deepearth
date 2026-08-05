@@ -1,0 +1,308 @@
+<title>Rainfall Digital Twin — Technical Report</title>
+<style>
+  :root{
+    --paper:#eef1f0; --panel:#f8f9f9; --ink:#121a1e; --ink-soft:#54636a;
+    --line:#cdd6d6; --water:#1c6c8c; --water-soft:#4a91ab; --earth:#8a7f52;
+    --good:#2f7d5c; --warn:#b3752a; --crit:#a5382a; --shade:#e2e7e6;
+    --serif:Georgia,"Iowan Old Style","Times New Roman",serif;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#0d1417; --panel:#131b1f; --ink:#e7edee; --ink-soft:#96a5ab;
+      --line:#26343a; --water:#4fa9c9; --water-soft:#2f7d99; --earth:#c2b06f;
+      --good:#4bab84; --warn:#d99450; --crit:#dd6656; --shade:#171f23;
+    }
+  }
+  :root[data-theme="light"]{
+    --paper:#eef1f0; --panel:#f8f9f9; --ink:#121a1e; --ink-soft:#54636a;
+    --line:#cdd6d6; --water:#1c6c8c; --water-soft:#4a91ab; --earth:#8a7f52;
+    --good:#2f7d5c; --warn:#b3752a; --crit:#a5382a; --shade:#e2e7e6;
+  }
+  :root[data-theme="dark"]{
+    --paper:#0d1417; --panel:#131b1f; --ink:#e7edee; --ink-soft:#96a5ab;
+    --line:#26343a; --water:#4fa9c9; --water-soft:#2f7d99; --earth:#c2b06f;
+    --good:#4bab84; --warn:#d99450; --crit:#dd6656; --shade:#171f23;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+    line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:780px;margin:0 auto;padding:clamp(24px,5vw,60px) clamp(18px,4vw,36px)}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--water);margin:0 0 12px}
+  h1{font-family:var(--serif);font-weight:700;font-size:clamp(26px,4.4vw,38px);line-height:1.12;
+    letter-spacing:-.005em;text-wrap:balance;margin:0 0 14px}
+  .dek{font-size:15.5px;color:var(--ink-soft);max-width:62ch;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:2px 22px;margin:22px 0 0;padding-top:14px;
+    border-top:1px solid var(--line)}
+  .meta span{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)}
+  .meta b{color:var(--ink);font-weight:600}
+  section{margin-top:clamp(36px,6vw,52px)}
+  h2{font-family:var(--serif);font-weight:700;font-size:clamp(19px,2.6vw,23px);letter-spacing:-.005em;
+    margin:0 0 6px;text-wrap:balance}
+  .sec-num{font-family:var(--mono);font-size:11px;color:var(--water-soft);letter-spacing:.08em}
+  .lede{color:var(--ink-soft);margin:10px 0 20px;max-width:64ch;font-size:14.5px}
+  p{margin:0 0 13px;font-size:14.5px}
+  p:last-child{margin-bottom:0}
+  strong{color:var(--ink)}
+  .band{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:22px 0 0}
+  .band .cell{background:var(--panel);padding:16px 16px}
+  .band .num{font-family:var(--mono);font-weight:600;font-size:clamp(19px,3vw,25px);
+    letter-spacing:-.01em;line-height:1}
+  .band .num.water{color:var(--water)} .band .num.earth{color:var(--earth)} .band .num.good{color:var(--good)}
+  .band .lab{font-size:11.5px;color:var(--ink-soft);margin-top:7px;line-height:1.4}
+  @media (max-width:580px){.band{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin:14px 0}
+  .card h3{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--water);margin:0 0 8px}
+  .formula{font-family:var(--mono);font-size:13px;background:var(--shade);border-radius:6px;
+    padding:12px 14px;line-height:1.8;overflow-x:auto;white-space:pre}
+  .formula .step{color:var(--ink-soft)}
+  .formula .res{color:var(--water);font-weight:600}
+  .src-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+  .src-list li{padding-left:16px;border-left:2px solid var(--line);font-size:13.5px}
+  .src-list b{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--earth);margin-bottom:3px}
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin:14px 0}
+  table{border-collapse:collapse;width:100%;min-width:460px;font-family:var(--mono);font-size:12.5px}
+  th,td{padding:8px 12px;text-align:right;font-variant-numeric:tabular-nums;
+    border-bottom:1px solid var(--line);white-space:nowrap}
+  th{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);
+    font-weight:600;background:var(--panel)}
+  td:first-child,th:first-child{text-align:left;font-family:var(--sans);font-size:13px}
+  tbody tr:last-child td{border-bottom:none}
+  tr.total td{font-weight:600;color:var(--ink)}
+  code{font-family:var(--mono);font-size:12.5px;background:var(--shade);padding:1px 5px;border-radius:4px}
+  .callout{border-left:3px solid var(--warn);background:var(--panel);border-radius:0 8px 8px 0;
+    padding:14px 18px;margin:16px 0}
+  .callout h4{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--warn);margin:0 0 6px}
+  .callout p{font-size:13.5px;margin:0}
+  .limits{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+  .limits li{display:flex;gap:12px;font-size:13.5px}
+  .limits .tag{flex:0 0 auto;font-family:var(--mono);font-size:10px;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--warn);border:1px solid var(--warn);border-radius:4px;
+    padding:2px 6px;height:fit-content;white-space:nowrap}
+  footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);
+    font-family:var(--mono);font-size:11px;color:var(--ink-soft);line-height:1.9}
+  footer .path{color:var(--ink)}
+  a{color:var(--water)}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">DeepEarth · CFX / Dix.Hite · Technical Report · 2026-08-04</p>
+  <h1>Rainfall Digital Twin — how every number in it was computed, and where the data came from</h1>
+  <p class="dek">An interactive 3D visualization of real rainfall physics over a real property,
+  built end to end from sourced, verifiable data — not synthetic assumptions.</p>
+
+  <dl class="meta">
+    <span>Site <b>17801 Champagne Dr, Winter Garden FL</b></span>
+    <span>Coords <b>28.521732, −81.657073</b></span>
+    <span>Live at <b>localhost:8080/twin_viewer.html</b></span>
+  </dl>
+
+  <section>
+    <div class="sec-num">01</div>
+    <h2>Purpose</h2>
+    <p class="lede">Why this exists, and what question it answers.</p>
+    <p>This started as a direct question from a CFX team meeting: given that this project's own
+    earlier attempt at a learned GPU surrogate (a graph neural network) turned out to run
+    <strong>~56× slower</strong> than the real physics it was meant to accelerate, and hit its
+    own memory ceiling at full scale — <strong>can the real physics itself just run fast enough
+    on a GPU to be interactively useful</strong>, without needing a trained approximation at all?</p>
+    <p>This demo answers that at parcel scale: yes. The real shallow-water equations, run as
+    tensor operations on a GPU, solve a full rainfall event in seconds and can be scrubbed
+    through interactively, frame by frame, in a browser.</p>
+    <p>The second, equally important goal was end-to-end honesty: every input — the terrain,
+    the rainfall intensity, the physics method — is a real, sourced, independently-checkable
+    number, not a placeholder chosen for a nice-looking demo. Section 3 documents exactly where
+    each one came from, including one number that <em>was</em> originally just picked by hand and
+    was corrected once that was caught.</p>
+    <p>The longer-term purpose is a reusable pattern: the same pipeline (real LiDAR in, real
+    observed rainfall in, real solved physics out) can run on any other CFX corridor parcel or
+    Dix.Hite landscape-design site to visualize where water pools versus sheds, ahead of erosion
+    or stormwater design decisions.</p>
+  </section>
+
+  <section>
+    <div class="sec-num">02</div>
+    <h2>Site and domain</h2>
+    <p class="lede">What area is actually being simulated, and how big the house is within it.</p>
+    <div class="band">
+      <div class="cell"><div class="num water">625 m²</div>
+        <div class="lab">simulated domain — a 25×25m box centered on the property</div></div>
+      <div class="cell"><div class="num earth">~66 m²</div>
+        <div class="lab">the house's own roof footprint — about 10.5% of the domain, the rest is yard/ground</div></div>
+      <div class="cell"><div class="num good">0.10 m</div>
+        <div class="lab">grid cell size the physics is solved at (250×250 cells)</div></div>
+    </div>
+    <p style="margin-top:14px">The domain is <strong>not</strong> the size of the roof — it's a
+    25×25m box around the whole property, so the yard's slope and low points are included, not
+    just the structure. The roof itself was measured directly from real LiDAR building-return
+    points inside this exact box (1,170 classified building points out of 23,725 total, at a
+    measured local density of 38 points/m²) and separately cross-checked against the elevation
+    mask used to color the 3D model — both land in the same range, a real single-story house
+    footprint, not an artifact of the simulation box size.</p>
+
+    <div class="card">
+      <h3>What "rasterized to 0.1m cells" means</h3>
+      <p>The real LiDAR point cloud isn't a grid — it's a scattered cloud of individually
+      surveyed 3D points (roughly 40 of them per square meter here). To run a grid-based physics
+      solver, that cloud is <strong>rasterized</strong>: the domain is divided into a
+      250×250 grid of 10cm × 10cm cells, and each cell's elevation is set to the average height
+      of the real LiDAR points that fall inside it. This is a resampling step, not synthetic
+      terrain generation — every value in the grid still traces back to real, surveyed points;
+      rasterizing just puts them on a regular grid a numerical solver can operate on.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-num">03</div>
+    <h2>Data sources</h2>
+    <p class="lede">Every input, and exactly where it's from.</p>
+    <ul class="src-list">
+      <li><b>Terrain</b>2018 USGS 3DEP LiDAR (QL2 acquisition), tile
+        <code>USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_258656_E.laz</code> — public
+        federal survey data, ~40 points/m² measured density at this site. No synthetic or
+        interpolated terrain anywhere in the model.</li>
+      <li><b>Rainfall intensity</b><strong>143.5 mm in one hour</strong> — a real observed
+        extreme, not an assumed value. Source: GSDR (Global Sub-Daily Rainfall) station
+        <code>US_086638</code>, 31.77 km from this site (the nearest station with usable
+        long-record data — none exist closer), all-time 1-hour maximum, observed during a real
+        storm in <strong>1960</strong>. Independently cross-checked against NOAA Atlas 14's
+        statistical rainfall-frequency curve for this exact coordinate: 143.5 mm/hr falls
+        between the curve's 200-year (133 mm/hr) and 500-year (152 mm/hr) 1-hour events — a
+        genuine, severe extreme, consistent with an independent statistical model, not an
+        outlier or a typo.</li>
+      <li><b>Physics method</b>Local-inertial shallow-water equations (Bates et al. 2010 — the
+        same numerical family used by the industry-standard LISFLOOD-FP), reimplemented as
+        vectorized PyTorch tensor operations and run on Apple Silicon GPU (MPS). Manning
+        roughness coefficient 0.030 (mixed suburban), CFL-adaptive timestep, Froude-limited flux
+        for stability on steep roof edges.</li>
+    </ul>
+    <div class="callout">
+      <h4>A correction made along the way</h4>
+      <p>An earlier version of this rainfall figure was <strong>90 mm/hr, hand-picked with no
+      citation</strong> ("near real peak Ian" was the only note attached). When asked directly to
+      justify it, the real GSDR/Atlas 14 data above — already on disk in this project — was
+      checked instead, and the number was corrected to the real observed 143.5 mm/hr figure. A
+      separate, unrelated constant elsewhere in the codebase was also found mislabeled "peak
+      Hurricane Ian" at 77.2 mm/hr when it was actually an unrelated 2023 storm; the real Ian
+      peak (66.8 mm/hr, 2022-09-29 06:00 UTC) was substituted. Both corrections are logged in
+      this project's own change history for a full audit trail.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-num">04</div>
+    <h2>How the water volume was computed</h2>
+    <p class="lede">The actual formula, with the real numbers plugged in.</p>
+    <div class="formula"><span class="step">rain rate     = 143.5 mm/hr ÷ 3,600,000  (mm/hr → m/s)
+              = 3.986 × 10⁻⁵ m/s
+
+volume in     = rate × domain area × duration
+              = 3.986×10⁻⁵ m/s × 625 m² × 180 s</span>
+              = <span class="res">4.484 m³  (4,484 liters) total rain over the event</span></div>
+    <p style="margin-top:14px">That figure is a plain closed-form calculation — but the solver
+    itself independently tracks the same quantity as it runs, step by step, and reports where
+    every liter actually went. The two agree to within rounding, which is itself a check that
+    the physics isn't silently creating or losing water:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Where the water went</th><th>m³</th><th>litres</th><th>% of rain</th></tr></thead>
+        <tbody>
+          <tr><td>Rain in</td><td>4.4844</td><td>4,484.4</td><td>100%</td></tr>
+          <tr><td>Stored on the terrain (peak local depth 68.6 cm)</td><td>2.8230</td><td>2,823.0</td><td>63.0%</td></tr>
+          <tr><td>Drained off the 4 domain edges</td><td>1.6613</td><td>1,661.3</td><td>37.0%</td></tr>
+          <tr class="total"><td>Mass-balance residual</td><td colspan="3">+0.0003% — closes to essentially exact</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-num">05</div>
+    <h2>Compute and memory used</h2>
+    <p class="lede">Measured directly, not estimated.</p>
+    <div class="band">
+      <div class="cell"><div class="num water">4.5 s</div>
+        <div class="lab">wall-clock time to solve the full 180-second event (3,037 solver steps) on GPU</div></div>
+      <div class="cell"><div class="num earth">~4.5 GB</div>
+        <div class="lab">peak RAM — dominated by loading the raw 293.8 MB LiDAR tile, not the solve itself</div></div>
+      <div class="cell"><div class="num good">156M</div>
+        <div class="lab">cells this same GPU solver scales to before hitting a hardware memory ceiling</div></div>
+    </div>
+    <p style="margin-top:14px">The 250×250-cell (62,500 cell) grid used for this demo is tiny by
+    the solver's own tested ceiling — a separate resolution-sweep benchmark on this same
+    hardware scaled the identical solver up to <strong>156 million cells</strong> before
+    exhausting GPU memory (out-of-memory at 278 million cells, requesting 19.46 GiB). The actual
+    solve for this one-house demo needs only a few megabytes of GPU memory; the ~4.5 GB measured
+    peak is almost entirely the cost of loading and decompressing the raw LiDAR point-cloud tile
+    into memory before cropping it down to this 25×25m box.</p>
+  </section>
+
+  <section>
+    <div class="sec-num">06</div>
+    <h2>From solved physics to the visualization</h2>
+    <p class="lede">What's actually driving what you see on screen.</p>
+    <p>The solver runs the full 180-second event once, saving <strong>41 snapshots</strong> of
+    the complete depth and velocity fields (a synthetic all-dry t=0 frame, plus 40 real solved
+    frames from t=4.5s through t=180s). Each snapshot is downsampled to a compact grid — 112×112
+    for depth, a coarser 36×36 for velocity — and packed into a single ~841 KB data file the
+    browser loads once.</p>
+    <p>Two things in the viewer come directly from that real solved data, not from any separate
+    animation logic:</p>
+    <ul class="src-list">
+      <li><b>Terrain color</b>A shader reads the real depth value at each point on the terrain
+        for whichever timestep is selected and colors it from dry through to deep blue —
+        exactly the values the solver computed, nothing smoothed or faked in between.</li>
+      <li><b>The falling/flowing particles</b>600 particles each run through one real physical
+        journey: fall from the sky, land on the terrain at its real local height, then get
+        pushed by the <strong>actual solved velocity field</strong> for as long as their cell
+        stays wet, before drying out or leaving the domain and re-entering the sky. A seeded
+        random-number generator makes this deterministic, so dragging the timeline to any
+        moment always reconstructs the same, correct particle state for that exact time — not
+        whatever was left over from wherever the view happened to be before.</li>
+    </ul>
+    <div class="callout">
+      <h4>The "particle density" slider is cosmetic</h4>
+      <p>It controls how many of the 600 particles are drawn — a visual density control only.
+      It does <strong>not</strong> change the rainfall rate, the domain size, or the water
+      volume — those are fixed by the real data above and baked into the solved physics before
+      the viewer ever loads.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-num">07</div>
+    <h2>Known limitations</h2>
+    <p class="lede">Stated plainly, not glossed over.</p>
+    <ul class="limits">
+      <li><span class="tag">Physics</span>No soil infiltration or absorption is modeled — every
+        drop of rain either pools on the surface or drains off an edge. This is a real,
+        deliberate simplification for this GPU-physics demo (confirmed by direct code search),
+        and it's conservative: it shows <em>more</em> standing water than a real storm with
+        absorbing soil would produce, not less.</li>
+      <li><span class="tag">Rainfall pattern</span>The rain is held at a constant, flat
+        143.5 mm/hr for the full 180 seconds. A real storm ramps up and recedes over time — this
+        project already has a real historical hyetograph for a comparable event on disk that a
+        future version could use instead of a flat rate.</li>
+      <li><span class="tag">Data distance</span>The nearest usable rain-gauge record is 31.77 km
+        from the site — a real, disclosed distance, not hidden. No closer station has a usable
+        long-enough record.</li>
+      <li><span class="tag">Visualization</span>The roof/ground color split on the 3D terrain
+        uses a simple elevation-threshold heuristic, not a surveyed building footprint — it's
+        for legible visualization, not a precise cadastral boundary.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Live viewer &nbsp;<span class="path">http://localhost:8080/twin_viewer.html</span><br>
+    Source &nbsp;<span class="path">flood_hydrology/simulation/twin_viewer.html</span>,
+    <span class="path">torch_swe_benchmark.py</span>, <span class="path">export_viewer_data.py</span><br>
+    Full change log &nbsp;<span class="path">flood_hydrology/CLAUDE.md</span> — "GPU
+    rainfall-physics benchmark & interactive digital twin"
+  </footer>
+</div>

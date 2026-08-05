@@ -28,6 +28,7 @@ Usage:
 import os
 import sys
 import json
+import re
 import argparse
 import warnings
 import requests
@@ -41,11 +42,50 @@ os.makedirs(DATA_DIR, exist_ok=True)
 DEFAULT_LAT = 28.521592   # 17801 Champagne Dr (28°31'17.73"N 81°39'25.13"W)
 DEFAULT_LON = -81.656981
 
-PFDS_URL = "https://hdsc.nws.noaa.gov/cgi-bin/hdsc/new/pf_gridded_data.py"
+# Corrected 2026-08-04: /cgi-bin/hdsc/new/ now 301-redirects to /cgi-bin/new/. The old URL
+# made every fetch fail, which silently routed all results through _central_florida_defaults().
+PFDS_URL = "https://hdsc.nws.noaa.gov/cgi-bin/new/cgi_readH5.py"
 
 DURATIONS_HR = [1, 2, 3, 6, 12, 24, 48, 72, 96, 120, 168, 240, 360, 720]
 
 RETURN_PERIODS_YR = [1, 2, 5, 10, 25, 50, 100, 200, 500, 1000]
+
+# The 19 duration rows PFDS actually returns, in order. Confirmed 2026-08-04 against a real
+# live response (19 rows x 10 return-period columns).
+PFDS_ROW_DURATIONS_HR = [
+    5 / 60, 10 / 60, 15 / 60, 30 / 60,      # 5, 10, 15, 30 minutes
+    1, 2, 3, 6, 12, 24,                      # 1, 2, 3, 6, 12, 24 hours
+    48, 72, 96, 168, 240,                    # 2, 3, 4, 7, 10 days
+    480, 720, 1080, 1440,                    # 20, 30, 45, 60 days
+]
+
+# Set by fetch_atlas14() so downstream outputs can RECORD which path produced the numbers.
+# The root problem this fixes was not the fallback itself (it warns loudly and uses real
+# published Atlas 14 Vol 9 regional values) -- it was that the warning died at the terminal
+# and the docs then presented fallback numbers as site-specific Atlas 14. Provenance now
+# travels WITH the data.
+LAST_FETCH_SOURCE = None
+
+
+def _fetch_via_curl(lat, lon, params):
+    """Fetch PFDS with system curl; returns body text or None.
+
+    Needed because this environment's Python 3.9 links LibreSSL 2.8.3 and cannot complete a
+    TLS handshake with hdsc.nws.noaa.gov (SSLV3_ALERT_HANDSHAKE_FAILURE). verify=False skips
+    certificate VALIDATION, not the handshake, so it does not help. System curl negotiates
+    fine against the identical URL. -L is required for the 301 above.
+    """
+    import subprocess
+    from urllib.parse import urlencode
+    try:
+        out = subprocess.run(["curl", "-sL", "--max-time", "45",
+                              f"{PFDS_URL}?{urlencode(params)}"],
+                             capture_output=True, text=True, timeout=60)
+        if out.returncode == 0 and "quantiles" in out.stdout:
+            return out.stdout
+    except Exception:
+        pass
+    return None
 
 
 def fetch_atlas14(lat, lon):
@@ -58,13 +98,55 @@ def fetch_atlas14(lat, lon):
         "units": "english",   # inches; we convert to mm
         "series": "pds",      # partial-duration series
     }
+    global LAST_FETCH_SOURCE
     print(f"Querying NOAA Atlas 14 PFDS for ({lat}, {lon}) …")
+    body = None
     try:
         resp = requests.get(PFDS_URL, params=params, timeout=30, verify=False)
         resp.raise_for_status()
+        body = resp.text
     except Exception as exc:
-        print(f"  PFDS request failed ({exc}); using Central Florida hard-coded defaults.")
-        return _central_florida_defaults(lat, lon)
+        print(f"  requests failed ({type(exc).__name__}); retrying via system curl …")
+        body = _fetch_via_curl(lat, lon, params)
+        if body is None:
+            print("  curl fallback also failed; using Central Florida hard-coded defaults.")
+            return _central_florida_defaults(lat, lon)
+        print("  ✓ curl fallback succeeded")
+
+    class _R:
+        text = body
+    resp = _R()
+
+    # ── Real-response parser (added 2026-08-04) ──────────────────────────────────────────
+    # PFDS returns a JS array-of-arrays, NOT the dict-of-dicts _parse_json_payload expects, so
+    # even a SUCCESSFUL request used to fall through to the hard-coded defaults. Two independent
+    # faults (stale URL + wrong parser shape) both landing on the same silent fallback is why
+    # this went unnoticed: the fallback prints a plausible table that reads as success.
+    m = re.search(r"quantiles\s*=\s*(\[\[.*?\]\])\s*;", resp.text, re.S)
+    if m:
+        try:
+            grid = json.loads(m.group(1).replace("'", '"'))
+            if len(grid) == len(PFDS_ROW_DURATIONS_HR) and len(grid[0]) == len(RETURN_PERIODS_YR):
+                rows = []
+                for dur_hr, rp_vals in zip(PFDS_ROW_DURATIONS_HR, grid):
+                    for rp_yr, depth_in in zip(RETURN_PERIODS_YR, rp_vals):
+                        depth_in = float(depth_in)
+                        rows.append({
+                            "duration_hr": dur_hr,
+                            "return_period_yr": rp_yr,
+                            "depth_in": depth_in,
+                            "depth_mm": depth_in * 25.4,
+                            "intensity_mm_hr": depth_in * 25.4 / dur_hr,
+                        })
+                df = pd.DataFrame(rows).sort_values(["duration_hr", "return_period_yr"])
+                LAST_FETCH_SOURCE = "NOAA PFDS live (site-specific)"
+                print(f"  ✓ Parsed REAL site-specific PFDS grid: "
+                      f"{len(PFDS_ROW_DURATIONS_HR)} durations × {len(RETURN_PERIODS_YR)} "
+                      f"return periods = {len(df)} values")
+                return df
+            print(f"  PFDS grid shape {len(grid)}×{len(grid[0])} unexpected — not trusting it.")
+        except Exception as exc:
+            print(f"  PFDS array parse failed ({exc}).")
 
     # PFDS returns JavaScript-embedded JSON; parse the key array
     text = resp.text
@@ -122,6 +204,7 @@ def _parse_json_payload(payload, lat, lon):
         return _central_florida_defaults(lat, lon)
 
     df = pd.DataFrame(rows).sort_values(["duration_hr", "return_period_yr"])
+    LAST_FETCH_SOURCE = "NOAA PFDS live (site-specific, dict payload)"
     print(f"  ✓ Parsed {len(df)} duration × return-period combinations")
     return df
 
@@ -139,6 +222,9 @@ def _central_florida_defaults(lat, lon):
         "Verify connectivity to https://hdsc.nws.noaa.gov/cgi-bin/hdsc/new/cgi_readH5.py",
         UserWarning, stacklevel=3
     )
+    global LAST_FETCH_SOURCE
+    LAST_FETCH_SOURCE = ("HARD-CODED Atlas 14 Vol 9 Orange County regional defaults "
+                         "(NOT site-specific — PFDS unreachable)")
     print("  Using hard-coded Atlas 14 values for Central Florida (Orange County).")
     # depth_mm[duration_hr][return_period_yr]
     # Approximate values from Atlas 14 Vol 9 for Orlando area
@@ -206,6 +292,30 @@ def main(lat=DEFAULT_LAT, lon=DEFAULT_LON):
     idf_path = os.path.join(DATA_DIR, f"atlas14_idf_{lat:.4f}_{abs(lon):.4f}W.csv")
     df.to_csv(idf_path, index=False)
     print(f"Saved IDF table : {idf_path}")
+
+    # Provenance sidecar (added 2026-08-04). The whole point: a downstream reader must be able
+    # to tell live site-specific PFDS data from the regional hard-coded fallback WITHOUT having
+    # seen the terminal output. Previously the only signal was a UserWarning at run time, so
+    # fallback numbers were written to this exact CSV and then cited in CLAUDE.md/README.md as
+    # site-specific Atlas 14 for months.
+    prov = {
+        "generated": __import__("datetime").date.today().isoformat(),
+        "lat": lat, "lon": lon,
+        "source": LAST_FETCH_SOURCE or "unknown",
+        "is_site_specific": bool(LAST_FETCH_SOURCE and LAST_FETCH_SOURCE.startswith("NOAA PFDS live")),
+        "pfds_url": PFDS_URL,
+        "n_rows": int(len(df)),
+        "durations_hr": sorted(set(float(v) for v in df.duration_hr.unique())),
+        "return_periods_yr": sorted(set(int(v) for v in df.return_period_yr.unique())),
+    }
+    prov_path = idf_path.replace(".csv", "_provenance.json")
+    with open(prov_path, "w") as f:
+        json.dump(prov, f, indent=2)
+    print(f"Provenance      : {prov_path}")
+    print(f"  SOURCE: {prov['source']}")
+    if not prov["is_site_specific"]:
+        print("  *** WARNING: these are REGIONAL fallback values, NOT site-specific. Do not "
+              "cite them as fetched Atlas 14 without this caveat. ***")
 
     # Print summary table for key durations and return periods
     key_durs = [1, 6, 12, 24]

@@ -1,0 +1,97 @@
+{
+  "generated": "2026-08-04",
+  "method": "NOAA Atlas 14 design-storm ensemble -> per-cell annual exceedance probability",
+  "lat": 28.36687,
+  "lon": -81.43299,
+  "duration_hr": 24.0,
+  "threshold_m": 0.15,
+  "cell_size_m": 5.0,
+  "dt_s": 20.0,
+  "depth_vs_logT_r2": 0.9715,
+  "return_periods": [
+    {
+      "return_period_yr": 1,
+      "aep": 1.0,
+      "rain_mm": 98.298,
+      "peak_depth_m": 0.37332552671432495,
+      "peak_flooded_ha": 6.6925,
+      "wall_s": 29.0
+    },
+    {
+      "return_period_yr": 2,
+      "aep": 0.5,
+      "rain_mm": 111.76,
+      "peak_depth_m": 0.38346579670906067,
+      "peak_flooded_ha": 7.9,
+      "wall_s": 28.9
+    },
+    {
+      "return_period_yr": 5,
+      "aep": 0.2,
+      "rain_mm": 137.414,
+      "peak_depth_m": 0.3958470821380615,
+      "peak_flooded_ha": 10.025,
+      "wall_s": 29.2
+    },
+    {
+      "return_period_yr": 10,
+      "aep": 0.1,
+      "rain_mm": 162.30599999999998,
+      "peak_depth_m": 0.40401867032051086,
+      "peak_flooded_ha": 12.137500000000001,
+      "wall_s": 29.5
+    },
+    {
+      "return_period_yr": 25,
+      "aep": 0.04,
+      "rain_mm": 201.676,
+      "peak_depth_m": 0.4460959732532501,
+      "peak_flooded_ha": 14.845,
+      "wall_s": 29.6
+    },
+    {
+      "return_period_yr": 50,
+      "aep": 0.02,
+      "rain_mm": 235.96599999999995,
+      "peak_depth_m": 0.4905966520309448,
+      "peak_flooded_ha": 17.11,
+      "wall_s": 29.8
+    },
+    {
+      "return_period_yr": 100,
+      "aep": 0.01,
+      "rain_mm": 274.32,
+      "peak_depth_m": 0.5289467573165894,
+      "peak_flooded_ha": 19.4975,
+      "wall_s": 29.4
+    },
+    {
+      "return_period_yr": 200,
+      "aep": 0.005,
+      "rain_mm": 314.96,
+      "peak_depth_m": 0.571022093296051,
+      "peak_flooded_ha": 22.7375,
+      "wall_s": 29.1
+    },
+    {
+      "return_period_yr": 500,
+      "aep": 0.002,
+      "rain_mm": 378.46,
+      "peak_depth_m": 0.6174883842468262,
+      "peak_flooded_ha": 26.302500000000002,
+      "wall_s": 29.0
+    }
+  ],
+  "cells_total": 208390,
+  "cells_with_nonzero_risk": 2740,
+  "area_nonzero_risk_ha": 6.85,
+  "area_gt_1pct_annual_ha": 3.98,
+  "area_gt_10pct_annual_ha": 1.3,
+  "max_aep": 1.0,
+  "caveats": [
+    "Pluvial (direct rainfall-runoff) flooding only. The solver has no inflow boundary condition, so channel/riverine overtopping driven by the 231 km^2 upstream Shingle Creek watershed is NOT represented \u2014 see the FEMA extent cross-reference (11% overlap) and CLAUDE.md's 2026-07-23/24 entry.",
+    "Stationary: Atlas 14 is a historical frequency analysis with no climate trend, so a future-dated query carries no climate-change signal.",
+    "AEP is clamped at 1/1 (the most frequent return period simulated); cells flooding more often than that cannot be resolved.",
+    "Inherits every solver caveat, including the sub-grid pit-trapping noted in simulation/outputs/RESOLUTION_ANALYSIS.md at fine cell sizes."
+  ]
+}

@@ -29,6 +29,16 @@ import numpy as np
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR  = os.path.join(BASE_DIR, "data")
+
+# ── Shared site registry (added 2026-08-04) ──────────────────────────────────
+# Makes `--site <name>` resolve lat/lon/radius AND the output directory from the ONE registry
+# (site_registry.py -> lidar/test_sites.py) instead of hand-typed coordinates. Purely additive:
+# with no --site flag this script behaves exactly as it always has. See site_registry.py's
+# docstring for why (INTERNSHIP_AUDIT_2026-08-03.md §4: site3's data existed on disk with no
+# script that could reproduce it, because coordinates were typed by hand per-invocation).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import site_registry  # noqa: E402
+
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # AOI center — candidate SR417 corridor test-landscape site (Lake Nona / south Orlando, FL)
@@ -110,6 +120,12 @@ if __name__ == "__main__":
     parser.add_argument("--radius_km",  type=float, default=DEFAULT_RADIUS, help="Half-width of study box in km")
     parser.add_argument("--resolution", type=int,   default=DEFAULT_RES,    help="Target resolution in meters (1, 3, or 10)")
     parser.add_argument("--out",        type=str,   default=None,           help="Output GeoTIFF path")
-    args = parser.parse_args()
+    site_registry.add_site_arg(parser)
+    args = site_registry.resolve(parser.parse_args(), category="dem")
+    if args.site_data_root:
+        # Rebind the module-level DATA_DIR so every function writing output lands in the
+        # selected site's own tree instead of the main AOI's (the exact clobbering
+        # fetch_naip_site3.py's docstring warns about — both share e.g. naip_2021_RGB.tif).
+        globals()["DATA_DIR"] = args.site_data_dir
 
     download_dem(args.lat, args.lon, args.radius_km, args.resolution, args.out)

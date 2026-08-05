@@ -2,16 +2,16 @@
   "site": "site3_1house",
   "site_label": "Site3 single-house demo crop \u2014 falling rain + physics-driven flow, same convention as site1/site2's demo layers",
   "n_droplets_seeded": 3000,
-  "n_paths_written": 2957,
+  "n_paths_written": 2959,
   "n_ground_triangles": 37650,
-  "n_roof_triangles": 9951,
+  "n_roof_triangles": 9911,
   "n_buildings_meshed": 1,
   "max_steps": 400,
   "step_m": 0.4,
   "settle_counts": {
-    "local_min": 577,
-    "left_mesh": 388,
-    "max_steps": 2035
+    "local_min": 462,
+    "left_mesh": 441,
+    "max_steps": 2097
   },
   "test_area": {
     "lat": 28.701821422947734,

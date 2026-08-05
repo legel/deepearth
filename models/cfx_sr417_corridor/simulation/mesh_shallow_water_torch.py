@@ -145,7 +145,9 @@ def run_sim_torch(mesh, dt_target, total_s, rain_duration_s, peak_mm_hr, frame_i
         eta = z + h
         hf = torch.clamp(torch.maximum(eta[i_all], eta[j_all]) - torch.maximum(z[i_all], z[j_all]), min=0.0)
         num = q - G * hf * dt * (eta[j_all] - eta[i_all]) / L_all
-        denom = 1.0 + G * dt * n_edge ** 2 * torch.abs(q) / (hf ** (4.0 / 3.0) + 1e-10)
+        # 7/3, not 4/3 — see MANNING_EXP in flood_sim_ian.py for the derivation and the
+        # numerical Manning steady-state check. Corrected 2026-08-04.
+        denom = 1.0 + G * dt * n_edge ** 2 * torch.abs(q) / (hf ** (7.0 / 3.0) + 1e-10)
         q = torch.where(hf > MIN_DEPTH, num / denom, torch.zeros_like(num))
         q_cap = 0.9 * hf * torch.sqrt(G * torch.clamp(hf, min=MIN_DEPTH))
         q = torch.clamp(q, -q_cap, q_cap)
