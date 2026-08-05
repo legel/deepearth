@@ -4,9 +4,9 @@
     "label": "Flash: 1-hr / 100-yr return",
     "duration_hr": 1,
     "data_source": "NOAA Atlas 14",
-    "total_rain_mm": 119.0,
-    "peak_flooded_ha": 181.72,
-    "peak_lake_rise_m": 0.077,
+    "total_rain_mm": 98.0,
+    "peak_flooded_ha": 152.5,
+    "peak_lake_rise_m": 0.057,
     "n_frames": 13
   },
   {
@@ -14,9 +14,9 @@
     "label": "Flash: 1-hr / 10-yr return",
     "duration_hr": 1,
     "data_source": "NOAA Atlas 14",
-    "total_rain_mm": 75.0,
-    "peak_flooded_ha": 80.08,
-    "peak_lake_rise_m": 0.037,
+    "total_rain_mm": 72.1,
+    "peak_flooded_ha": 74.58,
+    "peak_lake_rise_m": 0.034,
     "n_frames": 13
   },
   {
@@ -24,9 +24,9 @@
     "label": "Sustained: 12-hr / 100-yr return",
     "duration_hr": 12,
     "data_source": "NOAA Atlas 14",
-    "total_rain_mm": 240.0,
-    "peak_flooded_ha": 110.79,
-    "peak_lake_rise_m": 0.049,
+    "total_rain_mm": 210.0,
+    "peak_flooded_ha": 72.32,
+    "peak_lake_rise_m": 0.032,
     "n_frames": 25
   },
   {
@@ -34,9 +34,9 @@
     "label": "Sustained: 12-hr / 10-yr return",
     "duration_hr": 12,
     "data_source": "NOAA Atlas 14",
-    "total_rain_mm": 151.0,
-    "peak_flooded_ha": 11.27,
-    "peak_lake_rise_m": 0.011,
+    "total_rain_mm": 130.8,
+    "peak_flooded_ha": 7.08,
+    "peak_lake_rise_m": 0.006,
     "n_frames": 25
   },
   {

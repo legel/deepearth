@@ -1,0 +1,42 @@
+{
+  "generated": "2026-08-04",
+  "lat": 28.521592,
+  "lon": -81.656981,
+  "source": "NOAA PFDS live (site-specific)",
+  "is_site_specific": true,
+  "pfds_url": "https://hdsc.nws.noaa.gov/cgi-bin/new/cgi_readH5.py",
+  "n_rows": 190,
+  "durations_hr": [
+    0.08333333333333333,
+    0.16666666666666666,
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    3.0,
+    6.0,
+    12.0,
+    24.0,
+    48.0,
+    72.0,
+    96.0,
+    168.0,
+    240.0,
+    480.0,
+    720.0,
+    1080.0,
+    1440.0
+  ],
+  "return_periods_yr": [
+    1,
+    2,
+    5,
+    10,
+    25,
+    50,
+    100,
+    200,
+    500,
+    1000
+  ]
+}

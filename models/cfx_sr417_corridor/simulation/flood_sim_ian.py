@@ -74,6 +74,30 @@ MIN_DEPTH  = 1e-4     # m wet/dry threshold
 DEPTH_THR  = 0.05     # m "flooded" for outputs
 MANNING_N  = 0.040    # flatwoods grassland / mixed cover
 
+# Exponent on the flow depth in the Bates et al. (2010) semi-implicit friction denominator:
+#     q^(n+1) = [q - g*hf*dt*d(eta)/dx] / [1 + g*dt*n^2*|q| / hf^MANNING_EXP]
+# MUST be 7/3 when q is UNIT DISCHARGE (m^2/s), which it is here — the depth update divides
+# the flux difference by dx, so q carries m^2/s, not velocity.
+#
+# Corrected 2026-08-04 from a long-standing 4/3. Two independent confirmations, neither guessed:
+#  1. Dimensional analysis — the friction term must be dimensionless:
+#       [g][dt][n^2][q] / [hf^p] = (m/s^2)(s)(s^2*m^-2/3)(m^2/s) * m^-p = m^(7/3 - p) * s^0
+#     which is dimensionless only at p = 7/3.
+#  2. Steady state — setting q^(n+1) = q^n and solving gives q = hf^((p+1)/2) * sqrt(-S)/n.
+#     Manning's equation is q = hf^(5/3) * sqrt(-S)/n, so (p+1)/2 = 5/3 -> p = 7/3.
+#     Verified numerically by iterating the update to a fixed point on a uniform slope:
+#     p=7/3 reproduces Manning to -0.00% at every depth tested (0.02-1.0 m); p=4/3
+#     OVER-predicts discharge by +216% at h=0.10 m and +607% at h=0.02 m (the two agree only
+#     at h=1 m, where hf^0 = 1 makes the exponent irrelevant).
+# The error was therefore worst in exactly this project's normal operating regime — the
+# documented median wet depth here is 7-8 cm, p90 ~14 cm (see RESOLUTION_ANALYSIS.md) — and
+# under-stated friction, making water route to the domain boundary faster than the specified
+# Manning's n implies. That directly affects peak TIMING, which is the metric the Gee Creek
+# gauge comparison rests on.
+# Both flood_hydrology solvers (flood_sim.py, torch_swe_benchmark.py) already used 7/3
+# correctly; the 4/3 was introduced only in this project's own solvers.
+MANNING_EXP = 7.0 / 3.0
+
 # AMC-III reduction factor for antecedent-wet B/D spodosol soils.
 # Most AOI soils (Immokalee, Ona, Basinger) are HSG B/D — dual-rated because
 # their sandy A-horizon Ksat (~9–92 μm/s → 32–331 mm/hr) is fast, but the
@@ -448,7 +472,7 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
         hf_x    = np.maximum(eta[:, 1:], eta[:, :-1]) - np.maximum(z_work[:, 1:], z_work[:, :-1])
         hf_x    = np.maximum(hf_x, 0.0)
         num_x   = qx[:, 1:-1] - G * hf_x * dt * (eta[:, 1:] - eta[:, :-1]) / dx
-        denom_x = 1.0 + G * dt * n**2 * np.abs(qx[:, 1:-1]) / (hf_x ** (4.0/3.0) + 1e-10)
+        denom_x = 1.0 + G * dt * n**2 * np.abs(qx[:, 1:-1]) / (hf_x ** MANNING_EXP + 1e-10)
         qx[:, 1:-1] = np.where(hf_x > MIN_DEPTH, num_x / denom_x, 0.0)
         # Froude limiter: cap unit discharge to subcritical (Fr ≤ 0.9) at each face.
         # Prevents supercritical flow instability at steep road-embankment cells.
@@ -459,7 +483,7 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
         hf_y    = np.maximum(eta[1:, :], eta[:-1, :]) - np.maximum(z_work[1:, :], z_work[:-1, :])
         hf_y    = np.maximum(hf_y, 0.0)
         num_y   = qy[1:-1, :] - G * hf_y * dt * (eta[1:, :] - eta[:-1, :]) / dx
-        denom_y = 1.0 + G * dt * n**2 * np.abs(qy[1:-1, :]) / (hf_y ** (4.0/3.0) + 1e-10)
+        denom_y = 1.0 + G * dt * n**2 * np.abs(qy[1:-1, :]) / (hf_y ** MANNING_EXP + 1e-10)
         qy[1:-1, :] = np.where(hf_y > MIN_DEPTH, num_y / denom_y, 0.0)
         q_cap_y = 0.9 * hf_y * np.sqrt(G * np.maximum(hf_y, MIN_DEPTH))
         qy[1:-1, :] = np.clip(qy[1:-1, :], -q_cap_y, q_cap_y)

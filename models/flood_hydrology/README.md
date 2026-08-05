@@ -72,7 +72,7 @@ See **References** for the WatNet/Prithvi-EO-2.0/OmniWaterMask model sources.
 | Source | Coverage | Use | Status |
 |---|---|---|---|
 | **NOAA Atlas 14** | Contiguous US, frequency analysis (static) | Design storms: 10-yr / 100-yr return periods, 1-hr / 12-hr durations | 4 scenarios in viewer |
-| **GSDR** (US_086638, Clermont-area) | 1942–1985 (station ends 1985, not 2014) | Validation: nearest-station 1-hr max = 143.5 mm > Atlas 14 100-yr 119 mm → Atlas 14 is conservative at this location | Surfaced as viewer attribution |
+| **GSDR** (US_086638, Clermont-area) | 1942–1985 (station ends 1985, not 2014) | Validation: nearest-station 1-hr max = 143.5 mm > **real** Atlas 14 1000-yr 119.6 mm (100-yr = 98.0 mm) → Atlas 14 is conservative at this location. **Corrected 2026-08-04** — the old comparison used 119 mm believing it was the 100-yr value; it was actually the hard-coded regional fallback, and coincidentally ≈ the real 1000-yr depth | Surfaced as viewer attribution |
 | **GSDR** (US_086628) | 1974–2011 | Secondary station (~30 km), 1-hr max = 93.7 mm | Checked full record — not the all-time extreme by either criterion; not used as a scenario |
 | **NOAA CDO** (Clermont-area station) | 1948–present | Historical 2024-02-12 event gauge data | Works, but the gauge only captured 1.3 mm for that window — a real data-coverage gap, not a bug |
 | **GSDR historical scenario (1-hr peak)** | Pre-1985 extreme | `historical_gsdr`: 1960-07-25, 143.5 mm 1-hr peak, 208 mm/24hr | Built via `precipitation/fetch_gsdr_gauge.py` |
@@ -82,7 +82,11 @@ See **References** for the WatNet/Prithvi-EO-2.0/OmniWaterMask model sources.
 return-period frequencies (GEV/LP3 regression over all stations) — the engineering standard for
 design storms. GSDR gives raw observations only, with no return-period assignment, so it serves
 as a validation check instead: the 143.5 mm observed 1-hr extreme at US_086638 confirms that
-Atlas 14's 100-yr estimate (119 mm) is conservative at this location. GSDR ends in 1985 for the
+Atlas 14's 100-yr estimate is conservative at this location — and by more than previously
+stated: the real site-specific 1-hr 100-yr depth is **98.0 mm**, so the observed 143.5 mm exceeds
+even the real **1000-yr** estimate (119.6 mm). The figure formerly quoted here as "the 100-yr
+estimate (119 mm)" was in fact the hard-coded regional fallback (see the Atlas 14 provenance note
+below), which happens to sit almost exactly on the real 1000-yr depth. GSDR ends in 1985 for the
 nearest station, so it can't cover the 2024 target event (that needs NOAA CDO).
 
 ### Key derived data files
@@ -158,12 +162,14 @@ Raw SSURGO f0 values (e.g., 1656 mm/hr for Florahome sand) absorb all design sto
 
 | Scenario | Rain | Peak flood | Max depth | Max vel | Lake rise | Wall time |
 |---|---|---|---|---|---|---|
-| Flash 1hr 100yr | 119 mm | 199.8 ha | 3.43 m | 3.46 m/s | +0.076 m | 62 s |
-| Flash 1hr 10yr | 75 mm | 102.6 ha | 2.56 m | 3.00 m/s | +0.036 m | 56 s |
-| Sustained 12hr 100yr | 240 mm | 118.1 ha | 2.82 m | 2.01 m/s | +0.048 m | 606 s |
-| Sustained 12hr 10yr | 151 mm | 13.0 ha | 2.20 m | 1.46 m/s | +0.011 m | 452 s |
+| Flash 1hr 100yr | 98.0 mm | 176.4 ha | 2.87 m | 3.69 m/s | +0.057 m | 62 s |
+| Flash 1hr 10yr | 72.1 mm | 94.8 ha | 2.54 m | 3.23 m/s | +0.034 m | 56 s |
+| Sustained 12hr 100yr | 210.1 mm | 79.6 ha | 2.50 m | 1.93 m/s | +0.032 m | 606 s |
+| Sustained 12hr 10yr | 130.8 mm | 8.1 ha | 1.92 m | 1.07 m/s | +0.006 m | 452 s |
 | Historical GSDR 1960-07-25 | 208 mm / 24 hr | 194.8 ha | 6.55 m | 2.93 m/s | +0.153 m | 1540 s |
 | Historical GSDR extreme 1945-09-16 | 245.6 mm / 24 hr | 108.8 ha | 2.55 m | 2.27 m/s | +0.041 m | 214 s |
+
+**Corrected 2026-08-04**: the 4 Atlas 14 design-storm rows above were re-run against real site-specific PFDS data (previously the hard-coded Orange County fallback — see the Atlas 14 provenance note earlier in this file). Rain totals dropped 4-21%; flooded area and depth dropped correspondingly since all four are genuinely less severe storms than what was actually simulated before. The 2 GSDR rows are unaffected (not Atlas14-derived) and re-ran to bit-identical results, confirming the solver itself is unchanged and deterministic.
 
 All 7 scenarios (including `historical_20240212`) are exported to the viewer
 (`simulation_index.json`). `historical_20240212` runs but the NOAA gauge only captured 1.3 mm

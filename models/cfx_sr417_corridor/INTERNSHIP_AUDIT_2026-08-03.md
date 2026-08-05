@@ -1,5 +1,15 @@
 # Internship Flood Digital Twin — Project Audit
 
+> **Follow-up status (2026-08-04):** §4's automation gap — "the registry exists but isn't the
+> enforced entry point" — is now **CLOSED**. `site_registry.py` gives all 7 fetch scripts a
+> `--site` flag resolving coordinates *and* output directory from the one registry, and refuses
+> a `--site` combined with a contradicting `--lat/--lon`. Verified by re-fetching site3's FEMA
+> data through it and getting a byte-identical (MD5) reproduction of the existing file.
+> §5's reorganization proposal and §6's re-derivable cache cleanup remain open decisions.
+> Separately, a real solver physics bug (Manning friction exponent 4/3 → 7/3) was found and
+> fixed the same day — see CLAUDE.md's 2026-08-04 entry. The gauge/watershed figures cited in
+> this document are observational and unaffected by it.
+
 **Date:** 2026-08-03
 **Scope:** `models/flood_hydrology` (Johns Lake) + `models/cfx_sr417_corridor` (CFX SR417,
 including the `site1`/`site2`/`site3`/`site3_crop`/`site3_crop_coarse`/`site3_1house` registry).

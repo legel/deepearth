@@ -1,5 +1,23 @@
 # Ian flood simulation — grid resolution sensitivity (Task 6)
 
+> ## ⚠️ STALE — numbers below predate the 2026-08-04 friction correction
+>
+> Every depth / flooded-area / outflow figure in this document was produced by the solver
+> BEFORE a real physics bug was found and fixed on 2026-08-04: the Bates (2010) semi-implicit
+> friction denominator used `hf**(4/3)` where it must be `hf**(7/3)` for unit discharge.
+> The wrong exponent **under-stated friction**, over-predicting discharge by ~+216% at h=0.10 m
+> and ~+607% at h=0.02 m (verified against Manning's equation; the two agree only at h=1 m).
+>
+> Re-run with the correction, the main-AOI Ian event moved to: peak depth 0.583 m (was 0.537 m),
+> peak flooded 24.1 ha (was 23.4 ha), south-edge peak outflow 12.65 cfs (was 26.45 cfs),
+> rain→outflow lag 3.18 h (was 1.26 h). Site3 peak outflow 91.4 cfs (was 145.2 cfs) at t=36.28 h
+> (was 35.25 h) — which *improved* the peak-timing error against the real Gee Creek gauge from
+> 2.27 h to 1.24 h.
+>
+> See CLAUDE.md's 2026-08-04 entry and `~/Desktop/FLOOD_DIGITAL_TWIN_AUDIT_2026-08-04.md` §9.
+> Qualitative conclusions in this document are generally unaffected; the absolute numbers are not.
+
+
 _2026-07-06. Answers Lance's meeting-note question: is the 5m grid sufficient for
 house/road-scale water depth reporting?_
 

@@ -88,6 +88,19 @@ for _level in RAIN_LEVELS:
         (SIM_DIR, f"flow_tracer_paths_site2_{_level}.bin"),
     ]
 
+# site3_1house was never wired into this file's copy list at all (found 2026-08-04, during the
+# post-friction-fix mesh regeneration): its 4 output files were regenerating correctly on disk
+# every time `run_site3_1house_demo.py` ran, but this script had no entry for them, so
+# viewer/data/ silently kept whatever copy happened to be there from the file's first-ever
+# manual `cp` -- on this occasion 8 days stale relative to the corrected solver. Added here so a
+# future regeneration can't repeat that silent miss.
+OPTIONAL_FILES += [
+    (LIDAR_DIR, "swe_surface_heightmap_site3_1house.bin"),
+    (SIM_DIR, "swe_mesh_frames_site3_1house.bin"),
+    (SIM_DIR, "swe_mesh_summary_site3_1house.json"),
+    (SIM_DIR, "flow_tracer_paths_site3_1house.bin"),
+]
+
 
 def main():
     print("Exporting LiDAR + mesh shallow-water viewer assets → viewer/data/ …")

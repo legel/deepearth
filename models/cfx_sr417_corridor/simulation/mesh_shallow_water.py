@@ -92,6 +92,13 @@ from flood_sim_ian import (  # noqa: E402  (reuse validated constants)
 
 GROUND_MANNING_N = 0.040   # same flatwoods/mixed-cover value as flood_sim_ian.py
 ROOF_MANNING_N   = 0.015   # smooth roofing material (shingle/metal) — sheds much faster
+
+# Depth exponent in the Bates et al. (2010) semi-implicit friction denominator. MUST be 7/3
+# for unit discharge (m^2/s). Corrected 2026-08-04 from 4/3 — see the full derivation and the
+# numerical Manning steady-state check in flood_sim_ian.py's own MANNING_EXP comment. Same
+# value used by both code paths below (NumPy run_sim and torch run_sim_gpu) so they cannot
+# drift apart.
+MANNING_EXP      = 7.0 / 3.0
 CFL_ALPHA        = 0.3     # same conservative factor as flood_sim_ian.py
 L_FLOOR_M        = 0.10    # min edge centroid-distance / width used in flux calc
 DEPTH_THR        = 0.01    # m — "wet" threshold for reporting
@@ -597,7 +604,7 @@ def run_sim(mesh, dt_target, total_s, rain_duration_s, peak_mm_hr, frame_interva
         eta = z + h
         hf = np.maximum(np.maximum(eta[i_all], eta[j_all]) - np.maximum(z[i_all], z[j_all]), 0.0)
         num = q - G * hf * dt * (eta[j_all] - eta[i_all]) / L_all
-        denom = 1.0 + G * dt * n_edge ** 2 * np.abs(q) / (hf ** (4.0 / 3.0) + 1e-10)
+        denom = 1.0 + G * dt * n_edge ** 2 * np.abs(q) / (hf ** MANNING_EXP + 1e-10)
         q = np.where(hf > MIN_DEPTH, num / denom, 0.0)
         q_cap = 0.9 * hf * np.sqrt(G * np.maximum(hf, MIN_DEPTH))
         q = np.clip(q, -q_cap, q_cap)
@@ -883,7 +890,7 @@ def run_sim_gpu(mesh, dt_target, total_s, rain_duration_s, peak_mm_hr, frame_int
         eta = z + h
         hf = torch.clamp(torch.maximum(eta[i_all], eta[j_all]) - torch.maximum(z[i_all], z[j_all]), min=0.0)
         num = q - G * hf * dt * (eta[j_all] - eta[i_all]) / L_all
-        denom = 1.0 + G * dt * n_edge ** 2 * torch.abs(q) / (hf ** (4.0 / 3.0) + 1e-10)
+        denom = 1.0 + G * dt * n_edge ** 2 * torch.abs(q) / (hf ** MANNING_EXP + 1e-10)
         q = torch.where(hf > MIN_DEPTH, num / denom, torch.zeros_like(q))
         q_cap = 0.9 * hf * torch.clamp(G * torch.clamp(hf, min=MIN_DEPTH), min=0.0) ** 0.5
         q = torch.clamp(q, -q_cap, q_cap)
@@ -1030,7 +1037,7 @@ def run_sim_gpu(mesh, dt_target, total_s, rain_duration_s, peak_mm_hr, frame_int
 
 def run_flow_tracers(ground, buildings, building_polys, mesh, frames_vel, frame_times,
                       rain_duration_s, peak_mm_hr, total_s, n_tracers=2500, seed=1,
-                      force_roof_seed=False):
+                      force_roof_seed=False, return_start_time=False):
     """Physics-driven tracer particles — the direct real-physics replacement for
     droplet_flow_test.py's fixed-step kinematic walk. Motion comes from frames_vel (this
     solver's own reconstructed per-triangle velocity — see run_sim), not an arbitrary constant
@@ -1220,7 +1227,16 @@ def run_flow_tracers(ground, buildings, building_polys, mesh, frames_vel, frame_
     order = np.argsort(start_time)
     final_paths = [final_paths[i] for i in order]
     settle_reason = settle_reason[order]
+    start_time = start_time[order]
 
+    # return_start_time: additive, default False preserves the exact original 2-tuple return
+    # for every existing caller (site1/site2/site3 all destructure `paths, settle_reason =`) —
+    # added so a viewer can index each tracer's real path by ACTUAL simulated time (this
+    # tracer's own real start_time + step*TRACER_SUB_DT) instead of assuming every tracer
+    # starts moving the moment playback begins, which desyncs animation from the real,
+    # deliberately-staggered-across-the-storm arrival times this function computes above.
+    if return_start_time:
+        return final_paths, settle_reason, start_time
     return final_paths, settle_reason
 
 

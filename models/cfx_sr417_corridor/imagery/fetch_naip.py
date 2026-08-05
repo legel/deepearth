@@ -40,6 +40,16 @@ import numpy as np
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+
+# ── Shared site registry (added 2026-08-04) ──────────────────────────────────
+# Makes `--site <name>` resolve lat/lon/radius AND the output directory from the ONE registry
+# (site_registry.py -> lidar/test_sites.py) instead of hand-typed coordinates. Purely additive:
+# with no --site flag this script behaves exactly as it always has. See site_registry.py's
+# docstring for why (INTERNSHIP_AUDIT_2026-08-03.md §4: site3's data existed on disk with no
+# script that could reproduce it, because coordinates were typed by hand per-invocation).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import site_registry  # noqa: E402
+
 os.makedirs(DATA_DIR, exist_ok=True)
 
 DEFAULT_LAT = 28.36687
@@ -335,7 +345,13 @@ if __name__ == "__main__":
                              "this internally to avoid tile-boundary clipping — see RADIUS_KM.")
     parser.add_argument("--years", type=int, nargs="+", default=None,
                         help="Preferred years (e.g. 2022 2021). Downloads most recent available.")
-    args = parser.parse_args()
+    site_registry.add_site_arg(parser)
+    args = site_registry.resolve(parser.parse_args(), category="imagery")
+    if args.site_data_root:
+        # Rebind the module-level DATA_DIR so every function writing output lands in the
+        # selected site's own tree instead of the main AOI's (the exact clobbering
+        # fetch_naip_site3.py's docstring warns about — both share e.g. naip_2021_RGB.tif).
+        globals()["DATA_DIR"] = args.site_data_dir
 
     # Widen the AOI radius for the tile search/clip step (avoids tile-boundary
     # clipping) unless the caller explicitly asked for a different radius via

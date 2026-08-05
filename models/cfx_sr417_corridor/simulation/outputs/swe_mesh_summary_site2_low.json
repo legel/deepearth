@@ -6,42 +6,43 @@
   "n_roof_triangles": 281713,
   "n_buildings": 5,
   "n_edges": 1023859,
-  "n_frames": 55,
-  "n_steps": 32689,
-  "wall_s": 1159.9821691513062,
+  "n_frames": 161,
+  "n_steps": 29374,
+  "wall_s": 2216.5292971134186,
   "peak_rain_mm_hr": 40.0,
   "rain_duration_min": 4.0,
   "total_min": 8.0,
-  "ground_h_max_m": 1.0577010385659729,
+  "ground_h_max_m": 1.0061344611558778,
   "roof_h_max_m": 0.02,
   "mass_balance_m3": {
-    "rain_vol_m3": 393.2418353712322,
-    "infil_vol_m3": 264.65144573914546,
-    "outflow_vol_m3": 0.4970755701234305,
-    "stored_vol_m3": 128.09332826621787
+    "rain_vol_m3": 393.2433531103654,
+    "infil_vol_m3": 70.08177926102529,
+    "outflow_vol_m3": 1.1917591655915378,
+    "pond_outlet_vol_m3": 0.4774054960679137,
+    "stored_vol_m3": 321.96982888800295
   },
-  "mass_balance_residual_pct": -3.6120914133119662e-06,
+  "mass_balance_residual_pct": -3.612077428929337e-06,
   "n_impervious_road_triangles": 82158,
   "lake": {
     "area_m2": 5628.438472448277,
-    "level_rise_final_m": 0.0025649547499860407,
-    "level_rise_peak_m": 0.0025649547499860407,
-    "level_rise_peak_cm": 0.2564954749986041,
-    "volume_added_peak_m3": 14.436689994910383
+    "level_rise_final_m": 0.0037672048394086642,
+    "level_rise_peak_m": 0.0037672048394086642,
+    "level_rise_peak_cm": 0.37672048394086644,
+    "volume_added_peak_m3": 21.20348065172106
   },
   "single_house_check": {
     "building_index": 4,
     "roof_area_m2": 68.27175290303683,
     "n_roof_triangles": 969,
-    "volume_final_cm3": 12276.112835761249,
-    "volume_peak_cm3": 34654.311445196756,
-    "volume_peak_liters": 34.654311445196754
+    "volume_final_cm3": 12297.851022855913,
+    "volume_peak_cm3": 34832.84263977795,
+    "volume_peak_liters": 34.83284263977795
   },
   "flow_tracers": {
     "n_seeded": 2500,
-    "n_local_min": 1605,
-    "n_left_mesh": 1,
-    "n_max_steps": 894
+    "n_local_min": 637,
+    "n_left_mesh": 0,
+    "n_max_steps": 1863
   },
   "test_area": {
     "lat": 28.36633,

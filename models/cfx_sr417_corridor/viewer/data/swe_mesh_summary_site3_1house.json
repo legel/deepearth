@@ -1,42 +1,42 @@
 {
   "site": "site3_1house",
   "site_label": "Site3 single-house demo crop \u2014 falling rain + physics-driven flow, same convention as site1/site2's demo layers",
-  "n_triangles": 47601,
+  "n_triangles": 47561,
   "n_ground_triangles": 37650,
-  "n_roof_triangles": 9951,
+  "n_roof_triangles": 9911,
   "n_buildings": 1,
-  "n_edges": 71335,
+  "n_edges": 71269,
   "n_frames": 160,
-  "n_steps": 13926,
-  "wall_s": 29.465806007385254,
+  "n_steps": 12014,
+  "wall_s": 23.849400997161865,
   "peak_rain_mm_hr": 100.0,
   "rain_duration_min": 4.0,
   "total_min": 8.0,
-  "ground_h_max_m": 0.1359171402636051,
+  "ground_h_max_m": 0.11747395756228407,
   "roof_h_max_m": 0.02,
   "mass_balance_m3": {
-    "rain_vol_m3": 84.00926224419655,
-    "infil_vol_m3": 57.60461247740712,
-    "outflow_vol_m3": 5.9172152682538455,
+    "rain_vol_m3": 84.01307361026079,
+    "infil_vol_m3": 57.599282295483164,
+    "outflow_vol_m3": 1.7810811917989542,
     "pond_outlet_vol_m3": 0.0,
-    "stored_vol_m3": 20.48744704277564
+    "stored_vol_m3": 24.63271629679782
   },
-  "mass_balance_residual_pct": -1.4931972644757592e-05,
-  "n_impervious_road_triangles": 5353,
+  "mass_balance_residual_pct": -7.348640971045764e-06,
+  "n_impervious_road_triangles": 5358,
   "lake": null,
   "single_house_check": {
     "building_index": 0,
-    "roof_area_m2": 411.33277709740037,
-    "n_roof_triangles": 9951,
-    "volume_final_cm3": 270572.0488280802,
-    "volume_peak_cm3": 762327.3183910775,
-    "volume_peak_liters": 762.3273183910775
+    "roof_area_m2": 411.33271446151593,
+    "n_roof_triangles": 9911,
+    "volume_final_cm3": 296286.92314408236,
+    "volume_peak_cm3": 856375.6793337947,
+    "volume_peak_liters": 856.3756793337948
   },
   "flow_tracers": {
     "n_seeded": 2500,
-    "n_local_min": 1060,
-    "n_left_mesh": 5,
-    "n_max_steps": 1435
+    "n_local_min": 1090,
+    "n_left_mesh": 2,
+    "n_max_steps": 1408
   },
   "test_area": {
     "lat": 28.701821422947734,
