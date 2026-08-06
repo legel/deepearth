@@ -272,9 +272,11 @@ class DeepEarth(nn.Module):
                 raise ValueError(f"unknown variable kind {v.kind!r} for {v.name!r}")
         # Calibration of the continuous heads. The continuous reconstruction loss is a mean-centered cosine,
         # which is invariant to per-dimension scale and offset, so a head is never asked to predict in the
-        # target's units -- it only has to point the right way. val_bpb scores a Gaussian likelihood and pays
-        # for that in full. These per-dimension affines are fitted by that likelihood on a DETACHED prediction,
-        # so they turn a direction into a calibrated value without touching the representation.
+        # target's units -- it only has to point the right way. For the z-scored variables that is a real
+        # deficit and the Gaussian charges for it: topo, hydro and phenology are scored WORSE than the constant
+        # that predicts each channel's mean. These per-dimension affines are fitted by that same Gaussian on a
+        # DETACHED prediction, so they turn a direction into a calibrated value without touching the
+        # representation. Directional variables are scored by retrieval and are left alone (see _decode_loss).
         #
         # ones/zeros draw no RNG, so with the flag on the rest of the model still initializes bit-identically
         # to the default path: a gain that lands here cannot be an initialization re-roll.
@@ -866,7 +868,7 @@ class DeepEarth(nn.Module):
         # Score them as retrieval instead: -log softmax over cosine against the batch's targets. That is a genuine
         # log-likelihood in nats, scale-free, and directly comparable to categorical cross-entropy -- chance is
         # log(batch) here and log(num_classes) there.
-        if ref.numel() and bool(((ref.norm(dim=-1) - 1.0).abs() < 1e-3).all()):
+        if self._directional(ref):
             pn = F.normalize(pred.float(), dim=-1)
             logits = pn @ F.normalize(t, dim=-1).t()
             return F.cross_entropy(logits, torch.arange(logits.shape[0], device=logits.device),
@@ -874,6 +876,12 @@ class DeepEarth(nn.Module):
         var = ref.var(0, unbiased=False).clamp_min(1e-6)                       # per-dimension target variance
         nll = 0.5 * (((pred.float() - t) ** 2) / var + torch.log(2.0 * math.pi * var)).sum(-1)
         return nll, int(t.shape[-1])
+
+    @staticmethod
+    def _directional(ref: torch.Tensor) -> bool:
+        """Are these targets L2-normalized, i.e. points on a sphere whose magnitude carries nothing? Decides which
+        likelihood scores the variable, and therefore whether a magnitude calibration has anything to calibrate."""
+        return bool(ref.numel()) and bool(((ref.norm(dim=-1) - 1.0).abs() < 1e-3).all())
 
     def _reconstruction_error(self, name: str, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         v = self.variables[self.names.index(name)]
@@ -983,10 +991,15 @@ class DeepEarth(nn.Module):
                 if v.name in self.cal_gain:
                     tgt = values[v.name].float()
                     seen = tgt.norm(dim=-1) > 1e-6
-                    var = (tgt[seen] if seen.any() else tgt).var(0, unbiased=False).clamp_min(1e-6).detach()
-                    cal = self._calibrated(v.name, pred.detach().float())
-                    z2 = (((cal - tgt) ** 2) / var).mean(-1)      # per-dimension; 1.0 = predicting the target mean
-                    loss = loss + (z2 * w).sum() / w.sum().clamp_min(1.0)
+                    ref = tgt[seen] if seen.any() else tgt
+                    # Only the Gaussian-scored variables. A directional target's magnitude is fixed at 1 and carries
+                    # no information, so there is nothing to calibrate; its affine is never given a gradient, stays
+                    # at exactly ones/zeros, and leaves that head's output bit-identical.
+                    if not self._directional(ref):
+                        var = ref.var(0, unbiased=False).clamp_min(1e-6).detach()
+                        cal = self._calibrated(v.name, pred.detach().float())
+                        z2 = (((cal - tgt) ** 2) / var).mean(-1)  # per-dimension; 1.0 = predicting the target mean
+                        loss = loss + (z2 * w).sum() / w.sum().clamp_min(1.0)
                 # Cross-modal contrastive (JEPA / rule 16): the predicted continuous embedding must retrieve its own
                 # target against the batch (InfoNCE) -- a global signal point-wise cosine cannot give.
                 if self.contrastive_weight > 0.0 and v.name in self.contrastive_vars and v.kind == "continuous":
