@@ -1,3 +1,7 @@
+> **Current numbers:** [`benchmarks/README.md`](../benchmarks/README.md) is the public benchmark suite,
+> regenerated from a real run whenever the champion changes. This file documents what each benchmark
+> measures; that one carries the scores.
+
 # DeepCal — committed baseline benchmark
 
 Reference scores for the /autoresearch pipeline. Reproduce, then push against these.
