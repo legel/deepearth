@@ -840,6 +840,76 @@ class DeepEarth(nn.Module):
         return out
 
     # ---------------------------------------------------------------- training / inference
+    def _directional(ref: torch.Tensor) -> bool:
+        """Are these targets L2-normalized, i.e. points on a sphere whose magnitude carries nothing? Decides which
+        likelihood scores the variable, and therefore whether a magnitude calibration has anything to calibrate."""
+        return bool(ref.numel()) and bool(((ref.norm(dim=-1) - 1.0).abs() < 1e-3).all())
+
+    def _reconstruction_error(self, name: str, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        v = self.variables[self.names.index(name)]
+        if v.kind == "categorical":
+            # Normalize by log(num_classes) so every categorical term shares the ~[0,1] scale of the continuous cosine terms (a wide identity head otherwise dominates the shared gradient).
+            return F.cross_entropy(pred, target, reduction="none") / math.log(max(int(v.num_classes), 2))
+        # ANOMALY (mean-centered) cosine — matches the eval metric. Raw cosine has a gameable floor for shared-mean
+        # embeddings: the decoder can satisfy it by predicting the MEAN direction and never learn the obs-specific
+        # signal. Centering removes that floor, forcing the obs-specific reconstruction. Mean is over OBSERVED rows
+        # (unobserved targets are 0 vectors).
+        obs = target.norm(dim=-1) > 1e-6
+        mu = (target[obs].mean(0, keepdim=True) if obs.any() else target.mean(0, keepdim=True)).detach()
+        return 1.0 - F.cosine_similarity(pred - mu, target - mu, dim=-1)
+
+    def reconstruction_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
+                            context: dict, hide_prob: float = 0.35) -> torch.Tensor:
+        """One training step: reveal each variable with prob ``1 - hide_prob`` and reconstruct every hidden-but-observed variable, at one fixed shape."""
+        B = len(next(iter(observed.values()))); dev = self.type_emb.device
+        present = {n: (torch.rand(B, device=dev) > hide_prob) & observed[n] for n in self.names}
+        # Fully blank a fraction of queries so the model must reconstruct from bare space-time + neighbors, training the position->variable pathway (else the absolute channel stays inert at inference).
+        blank = torch.rand(B, device=dev) < 0.15
+        for n in self.names:
+            present[n] = present[n] & ~blank
+        return self.masked_loss(values, observed, present, context)
+
+    def masked_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
+                    present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
+        """Reconstruction loss for a fixed reveal mask (no randomness), so it can be compiled/CUDA-graphed with the random masking left outside."""
+        z = self.encode(values, present, context)
+        if self.round_loss == "all" and self._round_stack is not None:
+            zs = self._round_stack                           # [K,B,n_lat,d]: deep-supervise every round, same targets
+            loss = sum(self._decode_loss(zs[k], values, observed, present) for k in range(zs.shape[0])) / zs.shape[0]
+        else:
+            loss = self._decode_loss(z, values, observed, present)
+        if self.inductive is not None:                       # auxiliary: name embedding -> evolutionary position
+            loss = loss + 0.1 * self.inductive.loss(self._species_text, self._species_e1)
+        # Rule 25: mask a fraction of species' seeds and reconstruct their refined embedding from phylogenetic relatives
+        # (self-distillation toward the full-info refinement) -> the model can place a species of uncertain tree position.
+        if self.training and getattr(self, "_phylo_mask_weight", 0.0) > 0 and self._refined_species is not None:
+            m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
+            if m.any():
+                loss = loss + self._phylo_mask_weight * self.species_graph.masked_reconstruction_loss(
+                    m, self._refined_species.detach(), metric="mse")
+        # LCA fine-tuning: predict each masked species' mycorrhizal type from its RELATIVE-reconstructed embedding, so the
+        # tree learns trait phylogenetic structure and imputes it for held-out clades (must beat BioCLIP nearest-neighbor).
+        if self.training and getattr(self, "species_trait_recon", False) and getattr(self, "_species_myco", None) is not None:
+            v = self._species_myco_valid & self._train_species                  # train species with myco labels (no held-out leak)
+            if v.any():                                                          # DETACHED default (rule 31) reads the tree's phylo locality without reshaping it toward myco; trait_recon_detach=False + small weight tests gentle backprop (rule-31 tradeoff study).
+                emb = self._refined_species[v] if not getattr(self, "_trait_recon_detach", True) else self._refined_species[v].detach()
+                loss = loss + getattr(self, "_trait_recon_weight", 1.0) * F.cross_entropy(self.species_myco_head(emb), self._species_myco[v].clamp_min(0))
+        # Pollinator phylo self-distillation (mirrors rule 25 for INTERACTIONS): a species' pollinator distribution
+        # predicted from its PHYLO-RELATIVES (masked seed) must match its full-info prediction -> trains the model to
+        # transfer interactions across the phylogeny. Diagnostic (2026-07-15): plant-phylo oracle reaches recall 0.216
+        # but the model only 0.037 (B55) -> the signal is present and unexploited. Default weight 0 = champion-identical.
+        if self.training and getattr(self, "_poll_phylo_weight", 0.0) > 0 and self._refined_species is not None \
+                and getattr(self, "poll_head", None) is not None:
+            m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
+            if m.any():
+                basis = self._pollinator_basis().detach().t()                                        # [d, n_poll]
+                full = F.softmax((self.poll_head(self._refined_species[m].detach()) @ basis).float(), dim=-1)   # target
+                rel = F.log_softmax((self.poll_head(self.species_graph(mask=m)[m]) @ basis).float(), dim=-1)    # from relatives
+                loss = loss + self._poll_phylo_weight * F.kl_div(rel, full, reduction="batchmean")
+        return loss
+
+    @torch.no_grad()
+
     def calibrate_nats(self, targets: Dict[str, torch.Tensor]) -> None:
         """Freeze the reference statistics val_bpb scores against, once, from a fixed reference draw.
 
