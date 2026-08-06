@@ -1,4 +1,4 @@
-# DeepCalReference — the 172.6M confirmation scale (main/program/proxy-scaling.md). Identical to screen.yaml
+# DeepCalReference — the 172.6M confirmation scale. Identical to screen.yaml
 # but for absolute_log2_hashmap_size, which is the only parameter lever on this curve.
 #
 # Fixed STEPS, not fixed wall clock: equal-time made model sizes incomparable, since a smaller model

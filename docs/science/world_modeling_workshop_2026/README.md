@@ -9,7 +9,7 @@ We present **DeepEarth**, a self-supervised multi-modal world model with **Earth
 **Historical exploratory result (not confirmatory evidence):**
 - The workshop submission reported MAE 12.1pp and R² 0.755 on Globe-LFMC 2.0
 - That experiment used test-set feedback during development and did not test causal future rollout, so it does not establish state of the art or prove Earth4D forecasting skill
-- The current preregistered evidence gate is documented in `autoresearch/probes/spacetime/program/program.md`
+- The current evidence gate is defined by the `/research` command and the autoresearch scorecard
 
 ## Directory Structure
 
@@ -191,7 +191,7 @@ pdflatex deepearth.tex
 ## Related Links
 
 - **DeepEarth Repository:** [github.com/legel/deepearth](https://github.com/legel/deepearth)
-- **Earth4D Encoder:** [github.com/legel/deepearth/tree/main/autoresearch/probes/spacetime/editable_files](https://github.com/legel/deepearth/tree/main/autoresearch/probes/spacetime/editable_files)
+- **Earth4D Encoder:** [github.com/legel/deepearth/tree/main/autoresearch/main/editable_files/encoders](https://github.com/legel/deepearth/tree/main/autoresearch/main/editable_files/encoders)
 - **World Modeling Workshop:** [world-model-mila.github.io](https://world-model-mila.github.io/)
 
 ## License

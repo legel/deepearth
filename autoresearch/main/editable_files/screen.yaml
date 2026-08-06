@@ -1,4 +1,4 @@
-# DeepCalScreen — the ~24M screening scale (main/program/proxy-scaling.md).
+# DeepCalScreen — the ~24M screening scale.
 #
 # Fixed STEPS, not fixed wall clock: equal-time made model sizes incomparable, since a smaller model
 # takes more steps in the same seconds. 1000 steps is the step count the old 120s budget actually

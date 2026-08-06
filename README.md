@@ -5,14 +5,13 @@ DeepEarth is a [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_l
 
 ![DeepEarth v.0.01 preview of architecture](docs/deepearth.png)
 
-DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen above). It uses a novel space-time positional encoder, [Earth4D](autoresearch/probes/spacetime/editable_files/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
+DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen above). It uses a novel space-time positional encoder, [Earth4D](autoresearch/main/editable_files/encoders/earth4d.py), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
 
 ![Earth4D space-time encoder](docs/earth4d.png) 
 
 > **Science status (2026-07-29):** historical Earth4D LFMC numbers below are exploratory, not confirmed
-> state of the art. The old search reused the test set and its benchmark harness is absent. New Earth4D claims
-> must pass the pinned temporal + held-site protocol in
-> [`autoresearch/probes/spacetime/program/program.md`](autoresearch/probes/spacetime/program/program.md).
+> state of the art. The current evidence gate is defined by the `/research` command and the autoresearch
+> scorecard.
 
 ## How research runs here: granular probe loops first, fusion last
 
@@ -28,7 +27,7 @@ those signals are established do they get plugged into the fusion layer — the 
                                           │  depends on — the one legitimate edge,
                                           │  taken once the science is filled out
             ┌─────────────────────────────┴─────────────────────────────┐
-   PROBE    │  autoresearch/probes/spacetime/    autoresearch/probes/biological/
+   SCIENCE  │  autoresearch/main/editable_files/encoders/earth4d.py + phylogenomic.py
    LOOPS    │  one probe · own data · own metric · own evals · own tests
             │  independent code · NEVER import a sibling
             └─────────────────────────────▲─────────────────────────────┘
@@ -102,10 +101,10 @@ bar.
   **Poster at World Modeling Workshop.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) will present DeepEarth at the [2026 World Modeling Workshop](https://world-model-mila.github.io/). See [_poster_](docs/science/world_modeling_workshop_2026/poster/DeepEarth_2026_World_Modeling_Workshop_Poster.pdf).
 
 - _January 14, 2026_  
-  **Historical geospatial experiment.** A refined (_x_, _y_, _z_, _t_) = (_latitude_, _longitude_, _elevation_, _time_) coordinate system in [Earth4D](autoresearch/probes/spacetime/editable_files) showed a 4% exploratory benchmark gain; it still requires clean confirmation. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
+  **Historical geospatial experiment.** A refined (_x_, _y_, _z_, _t_) = (_latitude_, _longitude_, _elevation_, _time_) coordinate system in [Earth4D](autoresearch/main/editable_files/encoders/earth4d.py) showed a 4% exploratory benchmark gain; it still requires clean confirmation. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
 
 - _December 22, 2025_  
-  **10x faster.** Following historical [Earth4D](autoresearch/probes/spacetime/editable_files/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [_commit_](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3).
+  **10x faster.** Following historical [Earth4D](autoresearch/main/editable_files/encoders/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [_commit_](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3).
 
 - _December 19, 2025_  
   **Supercomputing award.** US DOE [National Energy Research Scientific Computing Center](https://www.nersc.gov) has awarded a DeepEarth team with supercomputing access in 2026 through [BER](https://science.osti.gov/ber).
@@ -114,10 +113,10 @@ bar.
   **Peer-reviewed presentation in top venue.** Accepted to the [2026 World Modeling Workshop](https://world-model-mila.github.io/) at the [Mila Quebec AI Institute](https://mila.quebec/en), alongside keynote talks by [Yoshua Bengio](https://yoshuabengio.org/) and [Yann LeCun](http://yann.lecun.com/). See [_paper_](docs/deepearth.pdf). 
   
 - _November 17, 2025_  
-  **Historical 99% parameter reduction, 4× speedup experiment.** [Earth4D](autoresearch/probes/spacetime/editable_files) with [learned hash probing](https://arxiv.org/abs/2312.17241) was explored on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6); exactness and accuracy must be revalidated under the current gate.
+  **Historical 99% parameter reduction, 4× speedup experiment.** [Earth4D](autoresearch/main/editable_files/encoders/earth4d.py) with [learned hash probing](https://arxiv.org/abs/2312.17241) was explored on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6); exactness and accuracy must be revalidated under the current gate.
 
 - _November 16, 2025_  
-  **Historical 23% error-reduction result.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](autoresearch/probes/spacetime/editable_files). The reported benchmark R² was selected on test and is now treated as exploratory. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
+  **Historical 23% error-reduction result.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](autoresearch/main/editable_files/encoders/earth4d.py). The reported benchmark R² was selected on test and is now treated as exploratory. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
 
 - _October 29, 2025_  
   **Predicting risk of fires.**  [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather), [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based), and [Lance Legel](https://www.linkedin.com/in/legel/) presented on simulating [live fuel moisture content](https://www.nature.com/articles/s41597-024-03159-6) through NSF's [Institute for Geospatial Understanding](http://i-guide.io/). See [_event_](https://i-guide.io/i-guide-vco/geospatial-simulation-of-fire-ecology-with-deepearth/).
