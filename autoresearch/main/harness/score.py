@@ -42,7 +42,7 @@ from typing import Dict, List, Optional, Tuple
 # fails as a silent ImportError that used to be caught and papered over by a hand-copied fallback.
 sys.path.insert(0, str(next(p for p in Path(__file__).resolve().parents
                             if p.name == "deepearth").parent))
-from deepearth.autoresearch.scoring.definitions import is_diagnostic, net_value as _net_value  # noqa: E402
+from deepearth.autoresearch.scoring.objective import is_diagnostic, net_value as _net_value  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------------------
 # Benchmark -> encoder partition (see autoresearch/main/README.md). Each program scores ONLY its set.

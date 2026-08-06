@@ -48,7 +48,7 @@ def _arg(argv: list[str], name: str, default=None):
 
 def _receipt(argv: list[str]) -> dict:
     from deepearth.autoresearch.main.harness import evaluate
-    from deepearth.autoresearch.scoring import definitions
+    from deepearth.autoresearch.scoring import objective as definitions
 
     here = Path(__file__).resolve()
     root = next(parent for parent in here.parents if parent.name == "deepearth")

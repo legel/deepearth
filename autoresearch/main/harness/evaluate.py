@@ -588,13 +588,13 @@ def observed_any(observed: Dict[str, torch.Tensor], name: str) -> bool:
 # hand-copy of two of them under a comment reading "keep byte-identical". One definition now, imported
 # by all three loops. Bodies moved verbatim -- net_score on the champion record is unchanged to full
 # float precision (0.32413703851749265).
-from deepearth.autoresearch.scoring.definitions import (        # noqa: E402  (must follow BENCHMARKS)
+from deepearth.autoresearch.scoring.objective import (          # noqa: E402  (must follow BENCHMARKS)
     SCORE_FLOOR as _SCORE_FLOOR,                    # noqa: F401  (re-exported for existing callers)
     is_diagnostic,
-    net_score as _shared_net_score,
+    harmonic as _shared_net_score,
     net_value as _net_value,
     normalized,
-    arithmetic_net,
+    arithmetic as arithmetic_net,
     suite_mismatch,                                 # noqa: F401  (re-exported: before/after guard)
 )
 

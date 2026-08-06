@@ -89,7 +89,7 @@ from deepearth.autoresearch.probes.spacetime.harness import (
     declare as _declare_raw,
 )
 # Measurement definitions live in the non-editable scoring module, not here.
-from deepearth.autoresearch.scoring.definitions import (
+from deepearth.autoresearch.probes.spacetime.harness.diagnostics import (
     autoregressive_rollout, enforce_determinism, field_interpolation, relative_transfer, science_axes,
     signal_capture)
 
