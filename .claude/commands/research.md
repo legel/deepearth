@@ -38,10 +38,13 @@ With no argument, target the weakest variable in the current `val_bpb` decomposi
 7. **Judge.** Keep only if `val_bpb` drops by more than that floor, the drop lands in the variables the
    hypothesis named, and an ablation of the subsystem accounts for it. A gain that lands elsewhere is an
    initialization re-roll: adding parameters shifts the RNG stream and re-initializes the model.
-8. **Confirm at a second scale** before promoting. A result that holds only at one size is an artifact.
 9. **Record it** — `val_bpb` and its decomposition, with both benchmark means alongside. Publish dead
    ends with their reason; an unrecorded negative gets re-run by the next agent.
-10. **Repeat.** Never stop on a single negative.
+10. **Repeat, at the screen scale.** Never stop on a single negative.
+
+**Do not run a second scale inside the loop.** Confirmation at 172.6M is a merge gate taken once when
+promoting a result -- not per hypothesis. Two scales per experiment doubles every iteration and defeats
+the fast feedback this loop exists for.
 
 ## Operational
 

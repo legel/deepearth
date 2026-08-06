@@ -47,7 +47,6 @@ cannot resolve a 4.6x model-size difference (24.0M and 796M tie).
 5. **Read the decomposition.** Did the bits drop in the variables the hypothesis named? Does an ablation
    of the subsystem account for it? If the gain landed elsewhere, it is an initialization re-roll —
    adding parameters shifts the RNG stream and re-initializes the whole model.
-6. **Confirm at a second scale.** A result that only holds at one size is a size-specific artifact.
 7. **Record it**, in `val_bpb` and its decomposition, with both benchmark means alongside.
 
 ## Rules that survive from the old program
@@ -59,10 +58,16 @@ cannot resolve a 4.6x model-size difference (24.0M and 796M tie).
   byte-identical and a flag can be flipped off without a rebuild.
 - **Publish dead ends with their reason.** A negative result that is not written down gets re-run.
 
+**Stay at the screen scale for the whole loop.** Second-scale confirmation is a *merge* gate, not a loop
+step: running two scales per hypothesis doubles the cost of every experiment and destroys the fast
+feedback the single loop exists to provide. Accumulate at ~24M; confirm at 172.6M only when promoting a
+result into the champion, and at full scale only for delivery.
+
 ## Rules that changed
 
 - **Fixed steps, not fixed wall clock.** Equal-time made sizes incomparable: a smaller model takes more
   steps in the same seconds. Step counts measured flat (~1,030) across 21.7M–172.6M at 120s.
+- **Second-scale confirmation is a merge gate, not a per-experiment step.**
 - **The gate is a measured floor, not a constant.** `MIN_REL_IMPROVEMENT` (1.5%) and
   `MIN_ABS_IMPROVEMENT` (0.002) admitted champion steps of +0.0013 to +0.0034 against two-seed spreads
   of 0.0033 / 0.0167 / 0.027 depending on scale.
@@ -73,7 +78,7 @@ cannot resolve a 4.6x model-size difference (24.0M and 796M tie).
 | scale | params | use |
 |---|---:|---|
 | screen | ~24M | hypothesis testing, ~2 min warm |
-| reference | 172.6M | second scale for confirmation |
+| reference | 172.6M | merge gate only — confirm before promoting, never inside the loop |
 | full | ~796M | the product |
 
 Never compare a mirror run to a public-main run: the evaluators differ by ~158 lines, and the same
