@@ -45,10 +45,20 @@ cannot resolve a 4.6x model-size difference (24.0M and 796M tie).
 
 ## The loop
 
-0. **THINK.** `Coordinator.state()` — the global best, live claims, and the swarm's insights and
-   hypotheses. Your baseline is the swarm's best, not your local one: if someone has beaten it, adopt
-   theirs with `pull_best()` and push from there. Do not re-run something already published as a dead
-   end.
+0. **THINK.** Three inputs, in this order.
+   - **The decomposition.** Target the weakest variable — the one costing the most bits. That is where
+     the headroom is, and the aggregate cannot improve much while it dominates.
+   - **`customer_feedback/`.** Read the original files, not a summary of them. They say which
+     capabilities the customer actually wants and where the science is heading; a technically valid
+     result on a capability nobody asked for is a wasted iteration. Use them with the weakest variable
+     to choose the **surface area** — which subsystem to change.
+   - **The swarm.** `Coordinator.state()` for the global best, live claims, insights and open
+     hypotheses. Your baseline is the swarm's best, not your local one: if someone has beaten it, adopt
+     theirs with `pull_best()` and push from there. Never re-run a published dead end.
+
+   The target is `science.md` realized **while staying well-rounded**: no capability may be traded away
+   to lift another. The weakest variable says where to push; the decomposition says whether you pushed
+   it without paying for it elsewhere.
 1. **CLAIM.** `coord.claim("description")`. If it returns `None` someone holds it — pick another. Claims
    expire, so a dead agent never blocks the swarm.
 2. **State one causal hypothesis.** Which variables should lose bits, and through which subsystem.
