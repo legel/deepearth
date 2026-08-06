@@ -861,7 +861,8 @@ class DeepEarth(nn.Module):
         if self.training and getattr(self, "_phylo_mask_weight", 0.0) > 0 and self._refined_species is not None:
             m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
             if m.any():
-                loss = loss + self._phylo_mask_weight * F.mse_loss(self.species_graph(mask=m)[m], self._refined_species[m].detach())
+                loss = loss + self._phylo_mask_weight * self.species_graph.masked_reconstruction_loss(
+                    m, self._refined_species.detach(), metric="mse")
         # LCA fine-tuning: predict each masked species' mycorrhizal type from its RELATIVE-reconstructed embedding, so the
         # tree learns trait phylogenetic structure and imputes it for held-out clades (must beat BioCLIP nearest-neighbor).
         if self.training and getattr(self, "species_trait_recon", False) and getattr(self, "_species_myco", None) is not None:

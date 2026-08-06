@@ -478,6 +478,26 @@ class SpeciesGraph(nn.Module):
         # Do not cache a Parameter directly in fusion.
         return self.free + 0.0 if self.probe is None else self.probe(self.species_text)
 
+    def masked_reconstruction_loss(self, mask: torch.Tensor, target: torch.Tensor,
+                                   metric: str = "cosine",
+                                   reconstructed: torch.Tensor = None) -> torch.Tensor:
+        """Reconstruct the masked species' embeddings from context and score them against ``target``.
+
+        The caller owns which species are hidden and what they are scored against; the graph owns how a
+        hidden species is recovered. An empty mask returns a zero that still carries the graph, so the
+        caller can add it to a loss unconditionally.
+        """
+        if not mask.any():
+            return self._seed().sum() * 0.0
+        reconstructed = self(mask=mask) if reconstructed is None else reconstructed
+        reconstructed = reconstructed[mask]
+        expected = target[mask]
+        if metric == "cosine":
+            return (1.0 - F.cosine_similarity(reconstructed, expected, dim=-1)).mean()
+        if metric == "mse":
+            return F.mse_loss(reconstructed, expected)
+        raise ValueError(f"unknown masked reconstruction metric {metric!r}")
+
     def forward(self, mask: torch.Tensor = None) -> torch.Tensor:
         """Refine and return the species representations ``[n_species, d_model]``.
 
