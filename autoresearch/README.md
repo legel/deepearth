@@ -2,7 +2,7 @@
 
 Autonomous research on DeepEarth. One model, one objective, one loop.
 
-**Start here:** [`main/program/program.md`](main/program/program.md) — how an experiment runs.
+**Start here:** the `/research` command — it is the program: how an experiment runs, and the contract it runs under.
 **How science is measured:** [`scorecard.md`](../autoresearch/scorecard.md).
 **What the model must be:** [`science.md`](science.md).
 
@@ -19,10 +19,10 @@ main/
   harness/             the instruments — do not change to make a result pass
     evaluate.py          the 63 benchmarks
     hooks.py             ablation primitives (earth4d, species graph)
-  program/             the program, the scorecard, recorded results
   records/             champion scores
 
 scoring/objective.py   val_bpb, its per-variable decomposition, the measured noise floor
+BENCHMARKS.md          the suite
 tests/                 what must not break
 ```
 

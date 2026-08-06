@@ -5,7 +5,7 @@ It shares the model's data, split, masking and decoder path but NOT its loss fun
 centered cosine and log-C-normalized cross-entropy, which are not log-likelihoods. A change can therefore
 improve one and worsen the other. What it does guarantee is one number at every scale.
 It is additive over variables, so the aggregate aligns the loops and the per-variable decomposition
-gives each loop its granular target. See main/program/unified-objective.md.
+gives each loop its granular target.
 
 Benchmarks are kept as diagnostics. They are not a promotion gate: the harmonic mean cannot resolve
 model size (24.0M and 796M tie at 0.332 vs 0.319-0.325) because it is dominated by the near-zero

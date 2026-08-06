@@ -1,7 +1,6 @@
 # Scorecard — how science is measured
 
-One objective, reported at every scale. See [`main/program/unified-objective.md`](main/program/unified-objective.md)
-for why the previous three-loop scheme could not work.
+One objective, reported at every scale. The `/research` command carries the program and the loop.
 
 ## The number
 
