@@ -44,6 +44,10 @@ def train_and_evaluate(config, device):
     seed = config.get("training", {}).get("seed", 0)   # fixed seed -> matched-init A/B: backbone benchmarks bit-identical across runs, so a detached head's causal effect is isolated (no run-to-run noise masquerading as regression).
     torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
     print(f"training_seed:     {seed}", flush=True)
+
+    def finite_grads(parameters):
+        """Guard optimizer updates when a finite loss has produced a non-finite gradient."""
+        return all(p.grad is None or torch.isfinite(p.grad).all() for p in parameters)
     d = config["data"]
     # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reused across runs; keyed by the data settings that change the assembled set.
     import hashlib, json
@@ -265,6 +269,11 @@ def train_and_evaluate(config, device):
             if torch.isfinite(loss):
                 nonfinite_streak = 0
                 opt.zero_grad(); loss.backward()
+                if flat.grad is None or not torch.isfinite(flat.grad).all() or not finite_grads(clip_params + freq_params + poll_clip_params):
+                    opt.zero_grad(set_to_none=True)
+                    model._abs_dydx = None; model._abs_inputs = None
+                    model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
+                    continue
                 model.sparse_hash_step(flat, idx)                        # sparse Adam on the absolute hash table
                 torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
                 if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
@@ -301,6 +310,8 @@ def train_and_evaluate(config, device):
             continue
         nonfinite_streak = 0
         opt.zero_grad(); loss.backward()
+        if not finite_grads(clip_params + freq_params + poll_clip_params):
+            opt.zero_grad(set_to_none=True); sched.step(); continue
         torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
         if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
         if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
