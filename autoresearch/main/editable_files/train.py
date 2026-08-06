@@ -98,6 +98,8 @@ def train_and_evaluate(config, device):
         poll_kw = dict(pollinator_text=source.pollinator_text, pollinator_top_k=m.get("pollinator_top_k", 64),
                        pollinator_distance=pdist)
     model = DeepEarth(variables, d_model=m.get("d_model", 256), n_latents=m.get("n_latents", 24),
+                      absolute_log2_hashmap_size=m.get("absolute_log2_hashmap_size", 20),
+                      absolute_levels=m.get("absolute_levels", 18),
                       n_layers=m.get("n_layers", 4), capacity=m.get("capacity", 16),
                       relative_window=tuple(m.get("relative_window", (8000., 8000., 300., 130.))), **rel_extra,
                       manifolds=manifolds, compile_processor=m.get("compile") == "processor",

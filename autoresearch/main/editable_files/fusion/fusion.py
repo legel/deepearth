@@ -182,6 +182,8 @@ class DeepEarth(nn.Module):
         manifolds: Optional[Dict[str, int]] = None,
         capacity: int = 16,
         reference_latitude_deg: float = 0.0,
+        absolute_log2_hashmap_size: int = 20,   # dominates total params: 4 hash tables x levels x 2^size x 2 feats
+        absolute_levels: int = 18,
         species_variable: Optional[str] = None,
         species_embedding: Optional[torch.Tensor] = None,
         species_layers: int = 2,
@@ -276,8 +278,9 @@ class DeepEarth(nn.Module):
         self.decode_query = nn.Parameter(torch.randn(len(self.variables), d_model) * 0.02)
 
         # Absolute location memory: coarse regional/long-period memorization (~200M, 20% of Earth4D); fine structure lives in the relative encoder.
-        self.absolute_encoder = Earth4D(verbose=False, spatial_levels=18, temporal_levels=18,
-                                        spatial_log2_hashmap_size=20, temporal_log2_hashmap_size=20,
+        self.absolute_encoder = Earth4D(verbose=False, spatial_levels=absolute_levels, temporal_levels=absolute_levels,
+                                        spatial_log2_hashmap_size=absolute_log2_hashmap_size,
+                                        temporal_log2_hashmap_size=absolute_log2_hashmap_size,
                                         freq_log_scale_init=-2.5)   # start coarse (~1 km finest); learned from there
         # Project Earth4D's [xyz | xyt|yzt|xzt] as separate spatial/spatiotemporal channels; each variable learns a
         # softmax prior over which it reads, so time-invariant modalities can shut time out while vision keeps it.
