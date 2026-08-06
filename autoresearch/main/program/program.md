@@ -58,16 +58,15 @@ cannot resolve a 4.6x model-size difference (24.0M and 796M tie).
   byte-identical and a flag can be flipped off without a rebuild.
 - **Publish dead ends with their reason.** A negative result that is not written down gets re-run.
 
-**Stay at the screen scale for the whole loop.** Second-scale confirmation is a *merge* gate, not a loop
-step: running two scales per hypothesis doubles the cost of every experiment and destroys the fast
-feedback the single loop exists to provide. Accumulate at ~24M; confirm at 172.6M only when promoting a
-result into the champion, and at full scale only for delivery.
+**Stay at the screen scale for the whole loop.** Confirmation happens once, at the merge decision,
+against the full model -- the state a result actually has to hold in. An intermediate scale answers
+neither question: it does not iterate fast and it is not what you ship.
 
 ## Rules that changed
 
 - **Fixed steps, not fixed wall clock.** Equal-time made sizes incomparable: a smaller model takes more
   steps in the same seconds. Step counts measured flat (~1,030) across 21.7M–172.6M at 120s.
-- **Second-scale confirmation is a merge gate, not a per-experiment step.**
+- **Confirmation is a merge gate against the full model, not a per-experiment step.**
 - **The gate is a measured floor, not a constant.** `MIN_REL_IMPROVEMENT` (1.5%) and
   `MIN_ABS_IMPROVEMENT` (0.002) admitted champion steps of +0.0013 to +0.0034 against two-seed spreads
   of 0.0033 / 0.0167 / 0.027 depending on scale.
@@ -77,9 +76,8 @@ result into the champion, and at full scale only for delivery.
 
 | scale | params | use |
 |---|---:|---|
-| screen | ~24M | hypothesis testing, ~2 min warm |
-| reference | 172.6M | merge gate only — confirm before promoting, never inside the loop |
-| full | ~796M | the product |
+| screen | ~24M | the loop — every hypothesis, ~2 min warm |
+| full | ~796M | the merge gate and the product |
 
 Never compare a mirror run to a public-main run: the evaluators differ by ~158 lines, and the same
 config scores ~0.279 on the mirror against 0.332464 on public main.

@@ -42,9 +42,8 @@ With no argument, target the weakest variable in the current `val_bpb` decomposi
    ends with their reason; an unrecorded negative gets re-run by the next agent.
 10. **Repeat, at the screen scale.** Never stop on a single negative.
 
-**Do not run a second scale inside the loop.** Confirmation at 172.6M is a merge gate taken once when
-promoting a result -- not per hypothesis. Two scales per experiment doubles every iteration and defeats
-the fast feedback this loop exists for.
+**Never leave the screen scale inside the loop.** Confirmation happens once, at the merge decision,
+against the full model. There is no intermediate scale: it neither iterates fast nor is what ships.
 
 ## Operational
 
