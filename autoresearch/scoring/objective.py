@@ -80,7 +80,10 @@ def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mappi
 
     Three conditions, all required:
 
-    1. **Reconstruction gate** -- the dimension-weighted aggregate improves by more than its floor.
+    1. **Reconstruction gate** -- the MACRO mean improves by more than its floor. Macro, not the
+       dimension-weighted aggregate, because training macro-averages: `_decode_loss` adds
+       (err*w).sum()/w.sum() per variable, so each variable already contributes equally to the gradient.
+       Gating on dimension weight would optimize one thing and judge another.
     2. **No owned regression** -- no variable this experiment claims may get worse by more than its own
        measured floor. An aggregate win paid for by a regression elsewhere is a trade, and rule 32
        forbids trades.
@@ -105,7 +108,10 @@ def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mappi
     agg_floor = floors.get("__aggregate__")
     if agg_floor is None:
         return {"keep": False, "reason": "no measured floor for the aggregate; measure before judging"}
-    agg_gain = aggregate(before) - aggregate(after)                  # a loss: positive means improved
+    # Training macro-averages: `_decode_loss` adds (err*w).sum()/w.sum() per variable, so each variable
+    # contributes equally regardless of width. Gate on the same view, or optimization pressure and the
+    # gate disagree -- the dimension-weighted aggregate is reported alongside as efficiency.
+    agg_gain = macro(before) - macro(after)                          # a loss: positive means improved
 
     regressions = []
     for k in (owned or shared):
@@ -123,13 +129,14 @@ def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mappi
     keep = agg_gain > agg_floor and not regressions and bool(improved_weak)
     return {
         "keep": keep,
-        "aggregate_gain": agg_gain,
+        "macro_gain": agg_gain,
+        "aggregate_before": aggregate(before), "aggregate_after": aggregate(after),
         "macro_before": macro(before), "macro_after": macro(after),
         "regressions": regressions,
         "improved_weak": improved_weak,
         "reason": ("regressed: " + ", ".join(f"{k} +{d:.4f} > {f:.4f}" for k, d, f in regressions)) if regressions
                   else ("no weak capability improved -- the model got narrower" if not improved_weak
-                        else ("aggregate gain inside noise" if agg_gain <= agg_floor else "keep")),
+                        else ("macro gain inside noise" if agg_gain <= agg_floor else "keep")),
     }
 
 

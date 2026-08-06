@@ -146,13 +146,27 @@ datatools/               one-time data ETL; not part of the loop
 ```
 
 
+## Workspace and git
+
+- **Work in an isolated worktree/branch per experiment.** `git worktree add -b exp/<slug> <path> HEAD`.
+  The branch is the experiment: one hypothesis, one branch, one diff to read.
+- **Commit the candidate before running it.** A dirty tree makes a run unreproducible and it cannot set
+  a record — the diff IS the experiment, and a number measured against uncommitted code is unrecoverable
+  by anyone else, including you tomorrow.
+- **Discard by abandoning the branch, not by reverting in place.** If the screen misses the floor, drop
+  the branch and pick a materially different hypothesis. Do not iterate a losing idea by patching it.
+- **One worktree per config, reused.** The inductor cache keys on source, so a fresh worktree per run
+  pays ~200s of recompilation; a reused one starts in ~1s.
+- **Never delete `/tmp/torchinductor_root`.** That cache is the difference between a 2-minute loop and a
+  6-minute one.
+- **Keep the prepared cache shared.** Point `--cache_dir` at the shared prepared cache; a worktree that
+  builds its own writes ~15.7 GB and will fill the disk. Symlink, never copy.
+- **Run over SSH in the foreground.** Backgrounding detaches the process and it dies with the channel.
+
 ## Operational
 
 - Ensue needs `ENSUE_API_KEY` or `ENSUE_API_TOKEN` (env, `.autoresearch-key`, or `/workspace/.env`).
   `coord.assert_connected()` raises rather than degrading to silence. Pick a short memorable codename as
   `agent_id`.
-- Warm inductor cache makes startup ~1s. Never delete `/tmp/torchinductor_root`; reuse one worktree per
-  config since the cache keys on source.
-- Run over SSH in the foreground — backgrounding detaches and kills the run.
 - Never compare a mirror run to a public-main run; the evaluators differ.
 - Delivery to the public repository is separate and explicitly authorized: `ship-deepearth-improvement`.
