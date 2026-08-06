@@ -440,6 +440,19 @@ class Earth4D(nn.Module):
             self.spatial_front_gate = nn.Linear(self.spatial_dim * 2, self.spatial_dim)
             nn.init.zeros_(self.spatial_front_gate.weight)
             nn.init.zeros_(self.spatial_front_gate.bias)
+            self.focus_origins = nn.Parameter(ridgelet_normals.clone())
+            self.focus_time_center = nn.Parameter(torch.linspace(0.0, 0.5, 12))
+            self.focus_spatial_extent = nn.Parameter(torch.zeros(12))
+            self.focus_temporal_extent = nn.Parameter(torch.zeros(12))
+            self.focus_frequency = nn.Parameter(torch.zeros(12))
+            self.register_buffer('focus_type', torch.arange(12) // 4)
+            self.focus_mix_logit = nn.Parameter(
+                torch.full((self.spatial_dim,), math.log(0.2 / 0.8)))
+            with torch.random.fork_rng(devices=[]):
+                self.focus_film = nn.Linear(self.spatial_dim, 2 * self.spatial_dim)
+            nn.init.zeros_(self.focus_film.weight)
+            nn.init.zeros_(self.focus_film.bias)
+            self.focus_bind_gate = nn.Parameter(torch.zeros(self.spatial_dim))
         # AUTONOMOUS LATENT DYNAMICS.  Pair the 108 coefficient-field channels into complex modes whose
         # learned rotation and bounded growth/decay form an exact continuous-time semigroup.  Unlike three
         # unrelated polynomial multipliers, advancing a mode by dt twice is identical to advancing by 2dt.
@@ -449,6 +462,12 @@ class Earth4D(nn.Module):
         self.koopman_pairs = latent_dim // 2
         self.koopman_growth = nn.Parameter(torch.zeros(self.koopman_pairs))
         self.koopman_frequency = nn.Parameter(torch.zeros(self.koopman_pairs))
+        self.relative_residual_gate = nn.Parameter(torch.zeros(latent_dim))
+        self.register_buffer('_causal_center', torch.zeros(3))
+        self.register_buffer('_causal_frame', torch.eye(3))
+        self.register_buffer('_causal_scale', torch.ones(3))
+        self.register_buffer('_causal_present', torch.tensor(0.5))
+        self.register_buffer('_causal_span', torch.tensor(0.5))
         # a relative-only field never reads the four absolute projections, so it can opt out of carrying them
         if not enable_absolute:
             self.xyz_encoder = self.xyt_encoder = self.yzt_encoder = self.xzt_encoder = None
@@ -570,6 +589,152 @@ class Earth4D(nn.Module):
         gate = torch.tanh(self.spatial_front_gate(torch.cat([local_atlas, fronts], dim=-1)))
         return local_atlas + gate * fronts
 
+    @torch.no_grad()
+    def fit_perceptive_origins(self, coords: torch.Tensor) -> 'Earth4D':
+        """Focus fields on train-only joint space-time support."""
+        if self.coordinate_system != 'ecef' or not self.enable_absolute:
+            return self
+        normalized = self._normalize_coords(coords)
+        unit = normalized[:, :3]
+        unit = unit / torch.linalg.vector_norm(unit, dim=-1, keepdim=True).clamp_min(1e-8)
+        time = normalized[:, 3:]
+        causal_center = torch.nn.functional.normalize(unit.mean(dim=0), dim=-1)
+        north = causal_center.new_tensor((0.0, 0.0, 1.0))
+        east = causal_center.new_tensor((0.0, 1.0, 0.0))
+        reference = torch.where(causal_center[2].abs() > 0.9, east, north)
+        tangent_u = torch.nn.functional.normalize(
+            torch.cross(reference, causal_center, dim=-1), dim=-1)
+        tangent_v = torch.cross(causal_center, tangent_u, dim=-1)
+        causal_frame = torch.stack((tangent_u, tangent_v, causal_center))
+        local = (unit - causal_center) @ causal_frame.t()
+        self._causal_center.copy_(causal_center)
+        self._causal_frame.copy_(causal_frame)
+        self._causal_scale.copy_(torch.quantile(local.abs(), 0.99, dim=0).clamp_min(1e-3))
+        self._causal_present.copy_(time.max())
+        self._causal_span.copy_((time.max() - time.min()).clamp_min(1e-3))
+        joint = torch.cat((unit, 2.0 * time), dim=-1)
+
+        mean = joint.mean(dim=0)
+        first = ((joint - mean).square().sum(dim=-1)).argmax()
+        centers = [joint[first]]
+        nearest = (joint - centers[0]).square().sum(dim=-1)
+        for _ in range(1, self.focus_origins.shape[0]):
+            centers.append(joint[nearest.argmax()])
+            nearest = torch.minimum(nearest, (joint - centers[-1]).square().sum(dim=-1))
+        centers = torch.stack(centers)
+        for _ in range(8):
+            distance = torch.cdist(joint, centers).square()
+            assignment = distance.argmin(dim=1)
+            totals = torch.zeros_like(centers).index_add_(0, assignment, joint)
+            counts = torch.bincount(assignment, minlength=len(centers))
+            updated = totals / counts.clamp_min(1).to(totals.dtype).unsqueeze(1)
+            centers = torch.where((counts > 0).unsqueeze(1), updated, centers)
+
+        origins = centers[:, :3]
+        origins = origins / torch.linalg.vector_norm(origins, dim=-1, keepdim=True).clamp_min(1e-8)
+        time_center = 0.5 * centers[:, 3]
+        assignment = torch.cdist(joint, centers).square().argmin(dim=1)
+        chord_sq = (2.0 - 2.0 * (unit * origins[assignment]).sum(dim=-1)).clamp_min(1e-6)
+        tau_sq = (time.squeeze(-1) - time_center[assignment]).square().clamp_min(1e-6)
+        spatial_var = torch.zeros(len(centers), device=coords.device).index_add_(0, assignment, chord_sq)
+        temporal_var = torch.zeros(len(centers), device=coords.device).index_add_(0, assignment, tau_sq)
+        counts = torch.bincount(assignment, minlength=len(centers)).clamp_min(1).to(coords.dtype)
+        spatial_extent = (0.0625 / (spatial_var / counts)).clamp(0.1, 8.0)
+        temporal_extent = (0.015625 / (temporal_var / counts)).clamp(0.1, 8.0)
+
+        north = origins.new_tensor((0.0, 0.0, 1.0)).expand_as(origins)
+        east = origins.new_tensor((0.0, 1.0, 0.0)).expand_as(origins)
+        reference = torch.where((origins[:, 2:].abs() > 0.9), east, north)
+        tangent_u = torch.nn.functional.normalize(
+            torch.cross(reference, origins, dim=-1), dim=-1)
+        tangent_v = torch.cross(origins, tangent_u, dim=-1)
+        delta = unit - origins[assignment]
+        anisotropy = []
+        for field in range(len(origins)):
+            rows = assignment == field
+            local = torch.stack((delta[rows] @ tangent_u[field],
+                                 delta[rows] @ tangent_v[field]), dim=-1)
+            covariance = local.t() @ local / max(local.shape[0] - 1, 1)
+            eigenvalues = torch.linalg.eigvalsh(covariance).clamp_min(1e-8)
+            anisotropy.append((eigenvalues[1] - eigenvalues[0]) / eigenvalues.sum())
+        anisotropy = torch.stack(anisotropy)
+        spatial_energy = (spatial_var / counts) / 0.0625
+        temporal_energy = (temporal_var / counts) / 0.015625
+        temporal_share = temporal_energy / (spatial_energy + temporal_energy).clamp_min(1e-6)
+        routing_score = torch.stack((anisotropy, 1.0 - anisotropy, temporal_share), dim=-1)
+        score_rows = routing_score.detach().cpu().tolist()
+        confidence = [sorted(row, reverse=True)[0] - sorted(row, reverse=True)[1]
+                      for row in score_rows]
+        remaining, routed = [4, 4, 4], [-1] * len(origins)
+        for field in sorted(range(len(origins)), key=lambda i: confidence[i], reverse=True):
+            for field_type in sorted(range(3), key=lambda i: score_rows[field][i], reverse=True):
+                if remaining[field_type]:
+                    routed[field] = field_type
+                    remaining[field_type] -= 1
+                    break
+
+        def inverse_softplus(value: torch.Tensor) -> torch.Tensor:
+            return value + torch.log(-torch.expm1(-value))
+
+        self.focus_origins.copy_(origins)
+        self.focus_time_center.copy_(time_center)
+        self.focus_spatial_extent.copy_(inverse_softplus(spatial_extent))
+        self.focus_temporal_extent.copy_(inverse_softplus(temporal_extent))
+        self.focus_type.copy_(torch.tensor(routed, device=coords.device))
+        return self
+
+    def _fuse_perceptive_population(self, spatial: torch.Tensor, xyz: torch.Tensor,
+                                    time: torch.Tensor) -> torch.Tensor:
+        if self.coordinate_system != 'ecef' or not self.enable_absolute:
+            return spatial
+        unit = xyz / torch.linalg.vector_norm(xyz, dim=-1, keepdim=True).clamp_min(1e-8)
+        origins = self.focus_origins / torch.linalg.vector_norm(
+            self.focus_origins, dim=-1, keepdim=True).clamp_min(1e-8)
+        chord_sq = (2.0 - 2.0 * (unit @ origins.t())).clamp_min(0.0)
+        tau = time - self.focus_time_center
+        spatial_extent = torch.nn.functional.softplus(self.focus_spatial_extent)
+        energy = (spatial_extent * chord_sq / 0.0625
+                  + torch.nn.functional.softplus(self.focus_temporal_extent)
+                  * tau.square() / 0.015625)
+        occupancy = torch.exp(-energy)
+        north = origins.new_tensor((0.0, 0.0, 1.0)).expand_as(origins)
+        east = origins.new_tensor((0.0, 1.0, 0.0)).expand_as(origins)
+        reference = torch.where((origins[:, 2:].abs() > 0.9), east, north)
+        tangent_u = torch.nn.functional.normalize(
+            torch.cross(reference, origins, dim=-1), dim=-1)
+        tangent_v = torch.cross(origins, tangent_u, dim=-1)
+        delta = unit.unsqueeze(-2) - origins
+        local_u = (delta * tangent_u).sum(dim=-1)
+        local_v = (delta * tangent_v).sum(dim=-1)
+        spatial_scale = torch.sqrt(spatial_extent / 0.0625)
+        linear = torch.stack((occupancy,
+                              occupancy * torch.tanh(spatial_scale * local_u),
+                              occupancy * torch.tanh(spatial_scale * local_v)), dim=-1)
+        radius = torch.sqrt(local_u.square() + local_v.square()).clamp_min(1e-6)
+        circular = torch.stack((occupancy, occupancy * local_u / radius,
+                                occupancy * local_v / radius), dim=-1)
+        phase = (2.0 * math.pi * torch.nn.functional.softplus(self.focus_frequency)
+                 * tau / 0.125)
+        radial = torch.stack((occupancy, occupancy * torch.sin(phase),
+                              occupancy * torch.cos(phase)), dim=-1)
+        views = torch.stack((linear, circular, radial), dim=-2)
+        type_mask = torch.nn.functional.one_hot(self.focus_type, num_classes=3).to(views.dtype)
+        fields = (views * type_mask[..., None]).sum(dim=-2).flatten(-2)
+        target_rms = spatial.square().mean(dim=-1, keepdim=True).add(1e-8).sqrt()
+        field_rms = fields.square().mean(dim=-1, keepdim=True).add(1e-8).sqrt()
+        fields = fields * (target_rms / field_rms).detach()
+        scale = target_rms.detach()
+        film_scale, film_shift = self.focus_film(fields).chunk(2, dim=-1)
+        film = torch.tanh(film_scale) * spatial + torch.tanh(film_shift) * scale
+        binding = scale * torch.tanh(spatial / scale) * torch.tanh(fields / scale)
+        interaction = film + torch.tanh(self.focus_bind_gate) * binding
+        mix = torch.sigmoid(self.focus_mix_logit)
+        base = spatial + 0.25 * mix * fields
+        fused = base + mix * interaction
+        base_rms = base.square().mean(dim=-1, keepdim=True).add(1e-8).sqrt()
+        fused_rms = fused.square().mean(dim=-1, keepdim=True).add(1e-8).sqrt()
+        return fused * (base_rms / fused_rms).detach()
+
     def fit_anchors(self, coords: torch.Tensor, seed: int = 0) -> 'Earth4D':
         """Draw the Nystrom anchor set from TRAIN rows and whiten the space-time axes on them."""
         n = self._normalize_coords(coords)
@@ -597,17 +762,51 @@ class Earth4D(nn.Module):
         return u, 0.5 * (3.0 * u.square() - 1.0), 0.5 * (5.0 * u.pow(3) - 3.0 * u)
 
     def _deforming_field(self, xyz: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        if self.coordinate_system == 'ecef':
-            frames = self._coefficient_chart_frames.to(dtype=xyz.dtype)
-            rotated = torch.einsum('...d,ked->...ke', xyz, frames)
-            charts = self._surface_atlas(rotated)
-            xyz1, xyz2, xyz3 = charts.unbind(dim=-2)
-        else:
-            xyz1 = xyz2 = xyz3 = xyz
-        latent = torch.cat([self.xyt_encoder(xyz1.contiguous(), size=1.0),
-                            self.yzt_encoder(xyz2.contiguous(), size=1.0),
-                            self.xzt_encoder(xyz3.contiguous(), size=1.0)], dim=-1)
-        return self._evolve_latent(latent, t)
+        if self.coordinate_system != 'ecef':
+            latent = torch.cat([self.xyt_encoder(xyz.contiguous(), size=1.0),
+                                self.yzt_encoder(xyz.contiguous(), size=1.0),
+                                self.xzt_encoder(xyz.contiguous(), size=1.0)], dim=-1)
+            return self._evolve_latent(latent, t)
+        frames = self._coefficient_chart_frames.to(dtype=xyz.dtype)
+        rotated = torch.einsum('...d,ked->...ke', xyz, frames)
+        xyz1, xyz2, xyz3 = self._surface_atlas(rotated).unbind(dim=-2)
+        relative, lag = self._relative_coordinates(xyz, t)
+        rel1, rel2, rel3 = relative, relative[..., (1, 2, 0)], relative[..., (2, 0, 1)]
+
+        def paired_encode(encoder: nn.Module, absolute_coords: torch.Tensor,
+                          relative_coords: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+            shape = absolute_coords.shape[:-1]
+            absolute_flat = absolute_coords.reshape(-1, 3)
+            relative_flat = relative_coords.reshape(-1, 3)
+            pair = encoder(torch.cat((absolute_flat, relative_flat)).contiguous(), size=1.0)
+            absolute_features, relative_features = pair.split(len(absolute_flat))
+            return (absolute_features.reshape(*shape, -1),
+                    relative_features.reshape(*shape, -1))
+
+        pairs = [paired_encode(encoder, absolute_coords, relative_coords)
+                 for encoder, absolute_coords, relative_coords in
+                 ((self.xyt_encoder, xyz1, rel1),
+                  (self.yzt_encoder, xyz2, rel2),
+                  (self.xzt_encoder, xyz3, rel3))]
+        absolute = self._evolve_latent(torch.cat([pair[0] for pair in pairs], dim=-1), t)
+        relative_state = self._evolve_latent(
+            torch.cat([pair[1] for pair in pairs], dim=-1), lag + 0.25)
+        return absolute + 0.25 * torch.tanh(self.relative_residual_gate) * relative_state
+
+    def _relative_coordinates(self, xyz: torch.Tensor, t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        unit = xyz / torch.linalg.vector_norm(xyz, dim=-1, keepdim=True).clamp_min(1e-8)
+        local = torch.einsum('...d,ed->...e', unit - self._causal_center,
+                             self._causal_frame) / self._causal_scale
+        lag = (t - self._causal_present) / self._causal_span
+        return local.clamp(-1.0, 1.0), lag.clamp(-1.0, 2.0)
+
+    def _relative_state(self, xyz: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        relative, lag = self._relative_coordinates(xyz, t)
+        rel1, rel2, rel3 = relative, relative[..., (1, 2, 0)], relative[..., (2, 0, 1)]
+        latent = torch.cat([self.xyt_encoder(rel1.contiguous(), size=1.0),
+                            self.yzt_encoder(rel2.contiguous(), size=1.0),
+                            self.xzt_encoder(rel3.contiguous(), size=1.0)], dim=-1)
+        return self._evolve_latent(latent, lag + 0.25)
 
     def _evolve_latent(self, latent: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Evolve already-read coefficient-field features through the autonomous temporal flow."""
@@ -637,9 +836,16 @@ class Earth4D(nn.Module):
         if flat.shape[-1] != raw_dim:
             raise ValueError(f"precomputed Earth4D raw width {flat.shape[-1]} != expected {raw_dim}")
         spatial = self._fuse_spatial_fronts(flat[..., :self.spatial_dim], norm_coords[..., :3])
-        feats = (spatial if self.drop_spatiotemporal else
-                 torch.cat([spatial, self._evolve_latent(flat[..., self.spatial_dim:],
-                                                         norm_coords[..., 3:])], dim=-1))
+        spatial = self._fuse_perceptive_population(spatial, norm_coords[..., :3], norm_coords[..., 3:])
+        if self.drop_spatiotemporal:
+            feats = spatial
+        else:
+            temporal = self._evolve_latent(flat[..., self.spatial_dim:], norm_coords[..., 3:])
+            if self.coordinate_system == 'ecef':
+                temporal = temporal + 0.25 * torch.tanh(
+                    self.relative_residual_gate) * self._relative_state(
+                        norm_coords[..., :3], norm_coords[..., 3:])
+            feats = torch.cat([spatial, temporal], dim=-1)
         if self.tile > 0:
             feats = torch.cat([feats, self._tile(norm_coords)], dim=-1)
         if self.nystrom > 0:
@@ -775,6 +981,7 @@ class Earth4D(nn.Module):
     def _forward_tensor(self, coords: torch.Tensor) -> torch.Tensor:
         norm_coords = self._normalize_coords(coords)
         spatial = self._encode_spatial(norm_coords[..., :3])
+        spatial = self._fuse_perceptive_population(spatial, norm_coords[..., :3], norm_coords[..., 3:])
         feats = (spatial if self.drop_spatiotemporal
                  else torch.cat([spatial, self._encode_spatiotemporal(norm_coords)], dim=-1))
         if self.tile > 0:

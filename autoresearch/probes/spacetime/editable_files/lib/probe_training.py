@@ -195,6 +195,9 @@ def train_candidate(enc, coords, fam, test, n_fam, dev, steps, lr, tag, head_hid
     Str = Ste = None
     if side is not None:
         Str, Ste = side[train].to(dev), side[test].to(dev)
+    if hasattr(enc, "fit_perceptive_origins"):
+        enc.fit_perceptive_origins(Ctr)
+        print(f"  [joint-field-prior] 12 fields fit on {len(Ctr):,} train-only space-time coordinates", flush=True)
     with torch.no_grad():
         edim = enc(Ctr[:8]).shape[1]
         fdim = edim + (0 if side is None else Str.shape[1])
