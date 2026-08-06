@@ -41,3 +41,26 @@ rejected on deltas of 0.0002-0.0018, all below this 0.0033 floor.
 - Low LR (5e-5, 5e-6) underfits at a fixed wall-clock budget: harmonic 0.260 and
   0.118 respectively vs 0.322 at 5e-4. The tiny-LR proxy regime in the literature
   assumes training to convergence.
+
+## Refactor equivalence (2026-08-06)
+
+Removing ~11,000 lines -- `probes/` entirely, `scoring/contract.py`, `definitions.py`,
+`graduation.py`, `score.py`, `champion_report.py`, `run_experiment.py` -- and relocating both
+encoders into `main/editable_files/encoders/` is score-neutral.
+
+Same mirror codebase, same config (2^14, 24M, seed 1337, 120s, shared prepared cache):
+
+| tree | params | harmonic | arithmetic |
+|---|---:|---:|---:|
+| `5a75482` + knob (pre-refactor) | 24.3M | 0.278777 | 0.4461 |
+| `ecce317` (refactored) | 24.0M | 0.279769 | 0.4433 |
+| delta | −0.3M | +0.000992 | −0.0028 |
+
+Both deltas are inside the 0.0167 two-seed spread measured at this scale. The 0.3M parameter
+difference is a dead import in `earth4d.py` that allocated the probe readout heads
+(`LocalCrossEraHead`, `OrthogonalTemporalHead`, `build_probe_readout`) while referencing none of them.
+
+**Mirror and public-main scores are not comparable.** The 2^14 sweep above scored 0.332464 / 0.5229
+on public main `4d6cb44`; the same config on the mirror scores ~0.279 / ~0.445. The mirror's
+`evaluate.py` is 158 lines diverged from public, so the ~0.05 gap is the evaluator, not the model.
+Never compare a mirror run to a public-main run.
