@@ -39,7 +39,8 @@ Generated research state is the sole exception: the existing harness writes trac
 ## Setup — once per campaign
 
 1. Work on a dedicated experiment branch/worktree made from the current promoted base.
-2. Read this file, then run `harness.py --insights --metric <capability>`.
+2. Read this file and the original files in `customer_feedback/`, then run
+   `harness.py --insights --metric <capability>`. Do not replace the original feedback with a summary or code policy.
 3. Read the capability using the read-only routing query:
    `python -m deepearth.autoresearch.scoring.definitions --capability <capability>`.
 4. Verify the required data and one GPU are available. Box details live in `program/box-operations.md`.

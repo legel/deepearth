@@ -51,7 +51,8 @@ the DATA itself are all in scope. Never tune a scoring definition to inflate a r
 focus, opportunities the inspiration.
 
 ## The loop
-1. Read the current scorecards and graduation ledger. Pick one weakness and state one causal hypothesis.
+1. Read the current scorecards, graduation ledger, and the original files in `customer_feedback/`. Pick one weakness
+   and state one causal hypothesis; do not duplicate or reinterpret the customer feedback in harness code.
 2. Change only the scientific surface that can test it. Commit the candidate before running.
 3. Screen in the owning encoder loop. Only a clean, exact two-seed encoder record can cross to fusion.
 4. Open its crossing with `python -m deepearth.autoresearch.scoring.graduation --open LOOP:CAPABILITY`.
