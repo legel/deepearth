@@ -1,0 +1,38 @@
+{
+  "family_from_phylo": {
+    "code": {
+      "branch": "HEAD",
+      "commit": "4466ddcc1b54",
+      "dirty": false
+    },
+    "fair_baseline": "vs null-tree",
+    "fair_st_gain": 0.12132352590560913,
+    "ledger": {
+      "deadends": {},
+      "records": [
+        {
+          "gain": 0.12132352590560913,
+          "protocol": "v1-nulltree",
+          "rebaseline_from": null,
+          "score": 0.24617646634578705,
+          "tag": "bio_loop_baseline"
+        }
+      ],
+      "runs": 1
+    },
+    "mode": "MASK-RECON(latent-clade,mask=0.15)",
+    "n_seeds": 2,
+    "n_shards": null,
+    "primary": 0.24617646634578705,
+    "protocol": "v1-nulltree",
+    "provisional": false,
+    "score": 0.24617646634578705,
+    "seed_score": 0.8001960515975952,
+    "seed_std": 0.005407293149977916,
+    "seed_values": [
+      0.2423529326915741,
+      0.25
+    ],
+    "tag": "bio_loop_baseline"
+  }
+}

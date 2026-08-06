@@ -13,8 +13,8 @@ import torch.utils.checkpoint
 import torch.nn as nn
 import torch.nn.functional as F
 
-from deepearth.autoresearch.probes.spacetime.editable_files.earth4d import Earth4D, SmoothGeoField
-from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import SpeciesGraph
+from deepearth.autoresearch.main.editable_files.encoders.earth4d import Earth4D, SmoothGeoField
+from deepearth.autoresearch.main.editable_files.encoders.phylogenomic import SpeciesGraph
 
 
 @dataclass

@@ -778,7 +778,7 @@ def _patristic_cophenetic(cparent, cblen, nsp, n):
 def cmd_build_patristic_ref(argv):
     argparse.ArgumentParser(prog="build_plant build_patristic_ref").parse_args(argv)
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))       # parent of the `deepearth` package -> importable
-    from deepearth.autoresearch.probes.biological.editable_files.phylogenomic import build_tree_buffers
+    from deepearth.autoresearch.main.editable_files.encoders.phylogenomic import build_tree_buffers
     cache = Path(os.environ.get("DEEPCAL_DATA_DIR", Path(__file__).resolve().parent))
     rows = list(csv.DictReader(open(cache / "derived/species_index.csv")))
     tree_toks = set(re.findall(r"[^(),:;\s]+", open(cache / "ca_subtree.dated.nwk").read()))
