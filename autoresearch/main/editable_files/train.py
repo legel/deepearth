@@ -254,11 +254,10 @@ def train_and_evaluate(config, device):
                 for n in model.names:
                     present[n] = present[n] & ~blank
                 ctx = model.context(coords, nbr_coords, manifold_coords, nbr_values)
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
-                    z = model.encode(values, present, ctx)
-                    for name, (err, n) in model.variable_losses(z, values, observed, present).items():
-                        e0, n0 = totals.get(name, (0.0, 0))
-                        totals[name] = (e0 + err, n0 + n)
+                z = model.encode(values, present, ctx)          # fp32, as in the uncompiled training path
+                for name, (err, n) in model.variable_losses(z, values, observed, present).items():
+                    e0, n0 = totals.get(name, (0.0, 0))
+                    totals[name] = (e0 + err, n0 + n)
         model.train(was_training)
         return objective.aggregate(totals), objective.decompose(totals)
 
