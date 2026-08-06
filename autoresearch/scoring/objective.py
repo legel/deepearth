@@ -1,7 +1,9 @@
 """The single objective every loop reports.
 
-`val_bpb` is held-out masked-reconstruction loss in bits per revealed dimension -- the same objective
-the model trains on, so a probe result and a fusion result are the same quantity at different scale.
+`val_bpb` is held-out masked reconstruction scored as a proper likelihood, in bits per revealed dimension.
+It shares the model's data, split, masking and decoder path but NOT its loss functions: training uses
+centered cosine and log-C-normalized cross-entropy, which are not log-likelihoods. A change can therefore
+improve one and worsen the other. What it does guarantee is one number at every scale.
 It is additive over variables, so the aggregate aligns the loops and the per-variable decomposition
 gives each loop its granular target. See main/program/unified-objective.md.
 

@@ -18,8 +18,15 @@ situ, and a term in the fusion number rather than a separate measurement.
 
 ## The objective
 
-`val_bpb` — held-out masked-reconstruction loss in bits per revealed dimension, the same objective the
-model trains on, with a seeded reveal mask so it is deterministic across runs and model sizes.
+`val_bpb` — held-out masked reconstruction, scored as a proper likelihood in bits per revealed dimension. It shares the
+model's data, split, masking and decoder path, but NOT its loss functions: training uses centered cosine for
+continuous targets and cross-entropy divided by log(num_classes) for categorical, while val_bpb uses a
+Gaussian density, cosine retrieval against a frozen bank, and raw cross-entropy. That is deliberate -- the
+training rescalings keep the shared gradient balanced and are not log-likelihoods -- but it means a change
+can improve one and worsen the other, most plausibly on the z-scored continuous variables.
+
+The reveal mask is seeded, and the reference statistics are frozen, so it is deterministic
+across runs and model sizes.
 
 It is additive over variables, so one number and granular targets are the same measurement:
 

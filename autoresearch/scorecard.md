@@ -5,9 +5,18 @@ for why the previous three-loop scheme could not work.
 
 ## The number
 
-`val_bpb` — held-out masked-reconstruction loss in **bits per revealed dimension**. The same objective
-the model trains on, evaluated on held-out rows with a seeded reveal mask, so it is deterministic and
-comparable across runs and across model sizes.
+`val_bpb` — held-out masked reconstruction scored as a proper likelihood, in **bits per revealed
+dimension**. It shares the model's data, split, masking and decoder path, but **not its loss functions**:
+training uses centered cosine for continuous targets and cross-entropy divided by `log(num_classes)` for
+categorical, neither of which is a log-likelihood. `val_bpb` computes its own — Gaussian density, cosine
+retrieval against a frozen bank, raw cross-entropy — so a change can improve one and worsen the other,
+most plausibly on the z-scored continuous variables (soil, topo, climate, hydro).
+
+The reveal mask is seeded and the reference statistics are frozen, so it is deterministic and comparable
+across runs and model sizes.
+
+**Diffusion-scored variables have no likelihood.** `val_bpb` raises rather than omitting them, so a
+diffusion-enabled run cannot produce a valid score until that head exposes a log-density.
 
 Lower is better. It is additive over variables, which is what makes one number and granular targets the
 same measurement:

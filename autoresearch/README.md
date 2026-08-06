@@ -31,9 +31,14 @@ topography, Daymet and the phylogenies. It builds the prepared cache and is not 
 
 ## The objective in one paragraph
 
-`val_bpb` is held-out masked-reconstruction loss in bits per revealed dimension — the same objective the
-model trains on, so a result about one encoder is a term in the model's own number rather than a proxy
-for it. It is additive over variables: the aggregate gates promotion, the per-variable decomposition is
+`val_bpb` is held-out masked reconstruction, scored as a proper likelihood in bits per revealed dimension. It shares the
+model's data, split, masking and decoder path, but NOT its loss functions: training uses centered cosine for
+continuous targets and cross-entropy divided by log(num_classes) for categorical, while val_bpb uses a
+Gaussian density, cosine retrieval against a frozen bank, and raw cross-entropy. That is deliberate -- the
+training rescalings keep the shared gradient balanced and are not log-likelihoods -- but it means a change
+can improve one and worsen the other, most plausibly on the z-scored continuous variables. A result about one encoder is
+still a term in the model's own number rather than a proxy for it, because the data, split and masking
+are shared. It is additive over variables: the aggregate gates promotion, the per-variable decomposition is
 the lens a given piece of work steers by, and an ablation delta attributes a change to the subsystem
 that caused it. The harmonic and arithmetic benchmark means are still computed and reported — they are
 how the public repository is reviewed — but they are diagnostics, because they cannot resolve a 4.6x

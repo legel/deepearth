@@ -237,8 +237,10 @@ def train_and_evaluate(config, device):
     def val_bpb(n_batches: int = int(t.get("val_batches", 48))):
         """Held-out reconstruction loss in bits per revealed dimension, plus its per-variable decomposition.
 
-        Same objective the model trains on, evaluated on test rows with a FIXED reveal mask (generator seeded per
-        batch) so the number is comparable across runs and model sizes. Additive over variables: the aggregate is
+        Same data, split, masking and decoder path as training -- but NOT the same loss. Training uses centered
+        cosine and log-C-normalized cross-entropy; those are not log-likelihoods, so val_bpb computes its own
+        (Gaussian / retrieval / raw CE). Evaluated on test rows with a FIXED reveal mask and frozen reference
+        statistics, so the number is comparable across runs and model sizes. Additive over variables: the aggregate is
         the gate, the decomposition is the lens each piece of science steers by.
 
         `val_batches` defaults to 48, i.e. ~24k sampled rows against a 29,668-row held-out split. Eight batches
