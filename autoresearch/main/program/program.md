@@ -45,8 +45,14 @@ cannot resolve a 4.6x model-size difference (24.0M and 796M tie).
 
 ## The loop
 
-1. **State one causal hypothesis.** Which variables should lose bits, and through which subsystem.
-2. **Change only the surface that tests it.** Commit before running — a dirty tree makes the run
+0. **THINK.** `Coordinator.state()` — the global best, live claims, and the swarm's insights and
+   hypotheses. Your baseline is the swarm's best, not your local one: if someone has beaten it, adopt
+   theirs with `pull_best()` and push from there. Do not re-run something already published as a dead
+   end.
+1. **CLAIM.** `coord.claim("description")`. If it returns `None` someone holds it — pick another. Claims
+   expire, so a dead agent never blocks the swarm.
+2. **State one causal hypothesis.** Which variables should lose bits, and through which subsystem.
+3. **Change only the surface that tests it.** Commit before running — a dirty tree makes the run
    unreproducible and it cannot set a record.
 3. **Run the pair at fixed steps**, candidate and control, same seed, same cache, same prepared data.
 4. **Measure the noise floor at that scale** if you do not already have it: two matched seeds of the
