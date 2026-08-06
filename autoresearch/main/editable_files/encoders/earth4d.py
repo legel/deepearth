@@ -12,12 +12,6 @@ import torch
 import torch.nn as nn
 
 from hashencoder.hashgrid import HashEncoder
-from deepearth.autoresearch.probes.spacetime.editable_files.lib.recurrence import (
-    LocalCrossEraHead,
-    OrthogonalTemporalHead,
-    build_probe_readout,
-    nearest_dated_conspecific,
-)
 
 # WGS84 ellipsoid
 WGS84_A = 6378137.0
