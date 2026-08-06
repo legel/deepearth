@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 import torch
@@ -10,7 +11,8 @@ import torch
 from deepearth.autoresearch.main.harness import champion_report, hooks, score
 from deepearth.autoresearch.main.harness.evaluate import BENCHMARK_PROTOCOL
 from deepearth.autoresearch.scoring.definitions import capability_to_benchmark
-from deepearth.autoresearch.scoring.graduation import compare_fusion
+from deepearth.autoresearch.scoring import graduation
+from deepearth.autoresearch.scoring.graduation import _receipt_mismatch, compare_fusion
 
 
 class _Ones(torch.nn.Module):
@@ -74,6 +76,7 @@ class ScoringAlignmentTests(unittest.TestCase):
                 f"BENCHMARK PROTOCOL: {BENCHMARK_PROTOCOL}\n"
                 "  B64_family_phylo_masked_imputation 0.250\n"
                 "peak_vram_mb:     12345.6\n"
+                'RUN RECEIPT: {"schema":"fusion-run-v1","source":{"dirty":false}}\n'
             )
             parsed = champion_report.parse_run(str(path))
         self.assertEqual(parsed["benchmark_protocol"], BENCHMARK_PROTOCOL)
@@ -81,6 +84,58 @@ class ScoringAlignmentTests(unittest.TestCase):
         self.assertEqual(parsed["steps"], 5000)
         self.assertEqual(parsed["peak_vram_mb"], 12345.6)
         self.assertEqual(parsed["scores"]["B64_family_phylo_masked_imputation"], 0.25)
+        self.assertEqual(parsed["receipt"]["schema"], "fusion-run-v1")
+
+    def test_frozen_control_requires_exact_pairing_identity(self):
+        shared = {
+            "schema": "fusion-run-v1",
+            "judge": {"protocol": "p", "evaluate_sha256": "e", "definitions_sha256": "d"},
+            "data": {"identity": "i", "prepared_sha256": "a"},
+            "training": {"seed": 1337, "steps": 8000, "time_budget_s": 600, "batch": 512,
+                         "precision": "bf16"},
+            "runtime": {"torch": "2.7", "cuda": "12.6", "gpu": "RTX"},
+        }
+        control = {"receipt": {**shared, "source": {"tree": "base", "parent_tree": "old", "dirty": False}}}
+        candidate = {"receipt": {**shared, "source": {"tree": "candidate", "parent_tree": "base", "dirty": False}}}
+        self.assertEqual(_receipt_mismatch(control, candidate), [])
+        candidate["receipt"]["judge"] = {**shared["judge"], "evaluate_sha256": "changed"}
+        self.assertIn("judge.evaluate_sha256", _receipt_mismatch(control, candidate))
+
+    def test_two_seed_control_can_be_frozen_once(self):
+        receipt = {
+            "schema": "fusion-run-v1",
+            "source": {"tree": "base", "parent_tree": "old", "dirty": False},
+            "config": {"sha256": "config", "effective_sha256": "effective"},
+            "judge": {"protocol": BENCHMARK_PROTOCOL, "evaluate_sha256": "e",
+                      "definitions_sha256": "d"},
+            "data": {"identity": "i", "prepared_sha256": "a"},
+            "training": {"seed": 1337, "steps": 8000, "time_budget_s": 600, "batch": 512,
+                         "precision": "bf16"},
+            "runner": {"train_sha256": "t", "hooks_sha256": "h"},
+            "runtime": {"torch": "2.7", "cuda": "12.6", "gpu": "RTX"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = []
+            for seed in (1337, 1338):
+                current = json.loads(json.dumps(receipt))
+                current["training"]["seed"] = seed
+                current["config"]["effective_sha256"] = f"effective-{seed}"
+                path = root / f"control-{seed}.log"
+                path.write_text(
+                    f"training_seed:     {seed}\nBENCHMARK PROTOCOL: {BENCHMARK_PROTOCOL}\n"
+                    "  B64_family_phylo_masked_imputation 0.250\n"
+                    f"RUN RECEIPT: {json.dumps(current)}\n"
+                )
+                logs.append(str(path))
+            prior = graduation.CONTROLS
+            graduation.CONTROLS = root / "controls.json"
+            try:
+                graduation.register_control("base", logs)
+                stored = json.loads(graduation.CONTROLS.read_text())
+            finally:
+                graduation.CONTROLS = prior
+        self.assertEqual([run["training_seed"] for run in stored["base"]["runs"]], [1337, 1338])
 
     def test_propagation_uses_paired_fusion_runs(self):
         control = {"scores": {"B64_family_phylo_masked_imputation": 0.20, "B2_other": 0.60},

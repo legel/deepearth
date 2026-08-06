@@ -77,6 +77,7 @@ autoresearch/.env
 *.pt
 __pycache__/
 results.tsv
+autoresearch/main/records/fusion_controls.json
 
 # The corpus lives at autoresearch/data/ and is ~53GB on the box. Its GENERATED artifacts are ignored
 # (by the *.npz / *.pt / *.pkl rules above, plus the caches below), but the BUILD RECIPES in

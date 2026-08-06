@@ -121,9 +121,12 @@ def parse_run(log_path: str) -> dict:
     seed = int(seed_match.group(1)) if seed_match else None
     steps_match = re.search(r"^trained\s+(\d+)\s+steps\b", txt, re.M)
     vram_match = re.search(r"^peak_vram_mb:\s+([0-9.]+)", txt, re.M)
+    receipt_match = re.search(r"^RUN RECEIPT:\s*(\{.*\})$", txt, re.M)
+    receipt = json.loads(receipt_match.group(1)) if receipt_match else None
     meta = {"training_seed": seed,
             "steps": int(steps_match.group(1)) if steps_match else None,
-            "peak_vram_mb": float(vram_match.group(1)) if vram_match else None}
+            "peak_vram_mb": float(vram_match.group(1)) if vram_match else None,
+            "receipt": receipt}
     scores = {}
     # score may be followed by trailing text on the diagnostic lines, e.g. "B24_geo_information_gain 0.593 (net
     # contrib 0.997)" -- match the score after the name, not requiring end-of-line, so B24/B56-B62 are captured.

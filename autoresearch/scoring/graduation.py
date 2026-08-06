@@ -24,8 +24,11 @@ Lifecycle, because this tool cannot train (a fusion run needs a GPU and the rule
                                              snapshot bench_before + the probe record -> PENDING row
     < run paired CONTROL and CANDIDATE fusion jobs at time_budget_s=600 >
     graduation.py --close <id> \
-      --baseline-log control.seed0.log --baseline-log control.seed1.log \
+      --control promoted-base \
       --log candidate.seed0.log --log candidate.seed1.log
+
+Register ``promoted-base`` once from its two receipt-bearing control logs. A later crossing may reuse it
+only when the receipt proves the candidate is still paired to that exact base and judge.
 
 The close step compares the two live logs. It never compares a candidate against a stale champion
 JSON written under another seed, suite, or protocol.
@@ -55,6 +58,7 @@ from deepearth.autoresearch.probes.biological.harness.board import PROTOCOL as B
 from deepearth.autoresearch.probes.spacetime.harness import PROTOCOL as ST_PROTOCOL  # noqa: E402
 CHAMPION = AUTORESEARCH / "main" / "records" / "champion_scores.json"
 LEDGER = AUTORESEARCH / "main" / "records" / "graduation.jsonl"
+CONTROLS = AUTORESEARCH / "main" / "records" / "fusion_controls.json"
 CURRENT_PROBE_PROTOCOL = {"biological": BIO_PROTOCOL, "spacetime": ST_PROTOCOL}
 
 
@@ -315,7 +319,84 @@ def _mean_runs(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def do_close(cid: str, log_paths: List[str], baseline_log_paths: List[str]) -> None:
+def _receipt_mismatch(control: Dict[str, Any], candidate: Dict[str, Any]) -> List[str]:
+    """Return reasons a frozen control cannot be paired with this candidate."""
+    left, right = control.get("receipt"), candidate.get("receipt")
+    if not left or not right:
+        return ["missing fusion-run-v1 receipt"]
+    out = []
+    if left.get("schema") != "fusion-run-v1" or right.get("schema") != "fusion-run-v1":
+        out.append("receipt schema")
+    if left.get("source", {}).get("dirty") or right.get("source", {}).get("dirty"):
+        out.append("dirty source tree")
+    control_tree = left.get("source", {}).get("tree")
+    candidate_source = right.get("source", {})
+    if control_tree not in (candidate_source.get("tree"), candidate_source.get("parent_tree")):
+        out.append("candidate is not a one-commit child or config variant of the control")
+    for section, keys in {
+        "judge": ("protocol", "evaluate_sha256", "definitions_sha256"),
+        "data": ("identity", "prepared_sha256"),
+        "training": ("steps", "time_budget_s", "batch", "precision"),
+        "runner": ("hooks_sha256",),
+        "runtime": ("torch", "cuda", "gpu"),
+    }.items():
+        for key in keys:
+            if left.get(section, {}).get(key) != right.get(section, {}).get(key):
+                out.append(f"{section}.{key}")
+    if left.get("training", {}).get("seed") != right.get("training", {}).get("seed"):
+        out.append("training.seed")
+    for section, key in (("source", "tree"), ("judge", "evaluate_sha256"),
+                         ("judge", "definitions_sha256"), ("data", "prepared_sha256")):
+        if left.get(section, {}).get(key) is None or right.get(section, {}).get(key) is None:
+            out.append(f"missing {section}.{key}")
+    return out
+
+
+def _validate_pairs(controls: List[Dict[str, Any]], candidates: List[Dict[str, Any]]) -> None:
+    for control, candidate in zip(controls, candidates):
+        mismatch = _receipt_mismatch(control, candidate)
+        if mismatch:
+            raise SystemExit("[graduate] frozen control is not provenance-matched: " + ", ".join(mismatch))
+
+
+def _read_controls() -> Dict[str, Any]:
+    if not CONTROLS.exists():
+        return {}
+    return json.loads(CONTROLS.read_text())
+
+
+def register_control(label: str, paths: List[str]) -> None:
+    from deepearth.autoresearch.main.harness.champion_report import parse_run
+
+    if len(paths) != 2:
+        raise SystemExit("[graduate] a frozen control requires exactly two logs")
+    runs = [parse_run(path) for path in paths]
+    seeds = [run.get("training_seed") for run in runs]
+    if None in seeds or len(set(seeds)) != 2:
+        raise SystemExit("[graduate] control logs need two distinct declared seeds")
+    for run, path in zip(runs, paths):
+        if not run.get("scores") or not run.get("receipt"):
+            raise SystemExit(f"[graduate] {path} lacks scores or a fusion-run-v1 receipt")
+        if run.get("benchmark_protocol") != BENCHMARK_PROTOCOL:
+            raise SystemExit(f"[graduate] {path} uses a superseded benchmark protocol")
+    # The two arms differ only by seed; compare each receipt with seed zeroed.
+    first = json.loads(json.dumps(runs[0]["receipt"]))
+    second = json.loads(json.dumps(runs[1]["receipt"]))
+    first["training"]["seed"] = second["training"]["seed"] = None
+    first["config"].pop("effective_sha256", None)
+    second["config"].pop("effective_sha256", None)
+    if first != second:
+        raise SystemExit("[graduate] control receipts differ beyond seed")
+    board = _read_controls()
+    board[label] = {
+        "logs": [str(Path(path).resolve()) for path in paths],
+        "runs": runs,
+    }
+    CONTROLS.write_text(json.dumps(board, indent=2, sort_keys=True))
+    print(f"[graduate] FROZE control {label!r}: seeds {seeds}, tree {runs[0]['receipt']['source']['tree'][:12]}")
+
+
+def do_close(cid: str, log_paths: List[str], baseline_log_paths: List[str], control_label: str = "") -> None:
     from deepearth.autoresearch.main.harness.champion_report import parse_run
 
     rows = read_ledger()
@@ -325,9 +406,18 @@ def do_close(cid: str, log_paths: List[str], baseline_log_paths: List[str]) -> N
                          + "\n  ".join(r["id"] for r in rows if r["state"] == "pending"))
     row = match[-1]
 
-    if len(log_paths) != 2 or len(baseline_log_paths) != 2:
-        raise SystemExit("[graduate] fusion confirmation requires exactly two control and two candidate logs")
-    controls = [parse_run(path) for path in baseline_log_paths]
+    if len(log_paths) != 2:
+        raise SystemExit("[graduate] fusion confirmation requires exactly two candidate logs")
+    if control_label:
+        frozen = _read_controls().get(control_label)
+        if not frozen:
+            raise SystemExit(f"[graduate] no frozen control {control_label!r}")
+        controls = frozen["runs"]
+        baseline_log_paths = frozen["logs"]
+    elif len(baseline_log_paths) == 2:
+        controls = [parse_run(path) for path in baseline_log_paths]
+    else:
+        raise SystemExit("[graduate] provide two --baseline-log values or one --control label")
     candidates = [parse_run(path) for path in log_paths]
     for label, parsed_runs, paths in (("control", controls, baseline_log_paths),
                                       ("candidate", candidates, log_paths)):
@@ -341,6 +431,8 @@ def do_close(cid: str, log_paths: List[str], baseline_log_paths: List[str]) -> N
     candidate_seeds = [run.get("training_seed") for run in candidates]
     if None in control_seeds + candidate_seeds or control_seeds != candidate_seeds or len(set(control_seeds)) != 2:
         raise SystemExit("[graduate] logs must declare the same two distinct training_seed values in paired order")
+    if control_label:
+        _validate_pairs(controls, candidates)
     try:
         control, after = _mean_runs(controls), _mean_runs(candidates)
     except ValueError as exc:
@@ -470,16 +562,21 @@ def main(argv=None) -> None:
                     help="fill in the 'after' from a champion run log and score the crossing")
     ap.add_argument("--log", action="append", default=[], help="candidate fusion run log (repeat twice)")
     ap.add_argument("--baseline-log", action="append", default=[], help="paired control fusion run log (repeat twice)")
+    ap.add_argument("--control", default="", help="reuse a frozen, provenance-matched two-seed control")
+    ap.add_argument("--register-control", default="", metavar="LABEL",
+                    help="freeze the two --baseline-log runs for later crossings")
     ap.add_argument("--force", action="store_true",
                     help="open a crossing despite blockers; the row is marked forced with its reasons")
     a = ap.parse_args(argv)
 
-    if a.open_target:
+    if a.register_control:
+        register_control(a.register_control, a.baseline_log)
+    elif a.open_target:
         do_open(a.open_target, a.force)
     elif a.close_id:
-        if not a.log or not a.baseline_log:
-            raise SystemExit("[graduate] --close needs --baseline-log <control> --log <candidate>")
-        do_close(a.close_id, a.log, a.baseline_log)
+        if not a.log or (not a.baseline_log and not a.control):
+            raise SystemExit("[graduate] --close needs two --log values and --control or two --baseline-log values")
+        do_close(a.close_id, a.log, a.baseline_log, a.control)
     else:
         do_status()
 

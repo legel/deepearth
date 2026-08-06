@@ -55,11 +55,23 @@ focus, opportunities the inspiration.
 2. Change only the scientific surface that can test it. Commit the candidate before running.
 3. Screen in the owning encoder loop. Only a clean, exact two-seed encoder record can cross to fusion.
 4. Open its crossing with `python -m deepearth.autoresearch.scoring.graduation --open LOOP:CAPABILITY`.
-5. Run the unchanged fusion control and candidate at the same two seeds and the fixed 600-second budget.
-6. Close the crossing with both paired logs. Report probe delta, mapped-benchmark delta, propagation ratio,
+5. Screen the candidate at one seed against the frozen provenance-matched control. Only a directional win earns seed two.
+6. Confirm with exactly two candidate seeds at the fixed 600-second budget. Reuse the frozen two-seed control when its
+   receipt matches code ancestry, judge, data artifact, runtime, seeds, and budget; otherwise refresh it once and freeze it.
+7. Close the crossing with both paired logs. Report probe delta, mapped-benchmark delta, propagation ratio,
    harmonic delta, arithmetic delta, worst regression, steps, and peak VRAM.
-7. Keep an encoder record when its own gate passes. Call it a fusion breakthrough only when the mapped
+8. Keep an encoder record when its own gate passes. Call it a fusion breakthrough only when the mapped
    benchmark, harmonic mean, and arithmetic mean all rise with no material regression.
+
+Full runs launched through `main.harness.run_experiment` emit a `fusion-run-v1` receipt. Freeze a control once:
+
+```bash
+python -m deepearth.autoresearch.scoring.graduation --register-control BASE \
+  --baseline-log control.seed1337.log --baseline-log control.seed1338.log
+```
+
+Then close compatible crossings with `--control BASE`. A stale or dirty receipt is rejected. Control reuse changes
+compute, not evidence: the final claim still contains two matched seeds for both arms.
 
 The probe score discovers signal; the paired fusion result measures uptake. Never infer one from the other,
 never compare against a stale champion JSON, and never change a metric to make a candidate pass.
