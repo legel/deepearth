@@ -6,7 +6,7 @@ to held-out regions when conditioned on the config's widely-available variables.
 Usage:  python train.py configs/deepcal.yaml [--device cuda] [--steps N]
 """
 from __future__ import annotations
-import argparse, os, time
+import argparse, math, os, time
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")   # reduce fragmentation for large models
 from pathlib import Path
 import numpy as np
@@ -229,6 +229,38 @@ def train_and_evaluate(config, device):
         model.load_state_dict(sd)
         print(f"loaded checkpoint {eval_ckpt} for eval-only scoring", flush=True)
         steps = 0
+    def val_bpb(n_batches: int = 8) -> float:
+        """Held-out reconstruction loss in bits per revealed dimension.
+
+        Same objective the model trains on, evaluated on test rows with a FIXED reveal mask (generator seeded per
+        batch) so the number is comparable across runs and model sizes. Continuous, so it does not quantize the way
+        top-k benchmark accuracy does -- this is the scaling-law target, not a capability score.
+        """
+        if not len(source.test):
+            return float("nan")
+        was_training = model.training
+        model.eval()
+        test_index = torch.tensor(source.test, device=device)
+        total, dims = 0.0, 0
+        with torch.no_grad():
+            for b in range(n_batches):
+                g = torch.Generator(device=device).manual_seed(20260806 + b)   # fixed mask -> deterministic metric
+                sel = test_index[torch.randint(0, len(test_index), (batch,), device=device, generator=g)]
+                values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(sel)
+                present = {n: (torch.rand(batch, device=device, generator=g) > hide_prob) & observed[n]
+                           for n in model.names}
+                blank = torch.rand(batch, device=device, generator=g) < 0.15
+                for n in model.names:
+                    present[n] = present[n] & ~blank
+                ctx = model.context(coords, nbr_coords, manifold_coords, nbr_values)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
+                    l = model.masked_loss(values, observed, present, ctx)
+                revealed = sum(int((observed[n] & ~present[n]).sum()) for n in model.names)
+                total += float(l) * max(revealed, 1)
+                dims += max(revealed, 1)
+        model.train(was_training)
+        return total / max(dims, 1) / math.log(2)          # nats per revealed dim -> bits
+
     model.train(); t0 = time.time()
     # Optional wall-clock training budget (s), measured from step 10 (excludes startup/compile), so architectures compare at equal time. Absent -> train the full ``steps``.
     time_budget = t.get("time_budget_s")
@@ -365,6 +397,9 @@ def train_and_evaluate(config, device):
     if config.get("_tag"):
         print(f"tag:              {config['_tag']}", flush=True)   # parseable run label (matches --tag), so run.log self-identifies
     print(f"net_score:        {ns:.6f}", flush=True)          # parseable north star
+    _vb = val_bpb()
+    print(f"val_bpb:          {_vb:.6f}", flush=True)   # held-out bits/dim: the scaling-law target
+    scores["val_bpb"] = _vb
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}", flush=True)
     scores["net_score"] = ns
     return model, scores
