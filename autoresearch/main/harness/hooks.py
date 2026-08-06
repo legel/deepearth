@@ -109,7 +109,7 @@ def instrument(spacetime_gain: bool = True) -> None:
 
     ``spacetime_gain`` remains in the signature for old launchers but is ignored.  A CLI flag must not
     be able to change which scientific quantities a champion run measures.
-    Launch experiments through ``main/harness/run_experiment.py`` so this is installed before training."""
+    Install before training so the ablation deltas are available to the evaluator."""
     from deepearth.autoresearch.main.harness import evaluate as ev
     if getattr(ev, "_programs_instrumented", False):
         return
