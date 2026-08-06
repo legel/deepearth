@@ -32,21 +32,35 @@ from pathlib import Path
 from typing import Any, Optional
 
 API_URL = "https://api.ensue-network.ai/"
-ORG = "deepearth-autoresearch"
 CLAIM_TTL_S = 30 * 60          # a screen run is ~2 min warm; 30 min covers a slow one without stranding work
 KEY_FILE = Path(".autoresearch-key")
 
+# The org already holds 2,640 memories, 568 under LOOP-. Keys are flat (no org arg): a per-variable
+# board at LOOP-deepearth-<variable>, and one record per experiment under LOOP-deepearth-runs/<variable>/.
+BOARD = "LOOP-deepearth-{variable}"
+RUN = "LOOP-deepearth-runs/{variable}/{slug}-{stamp}-{hash}"
+CLAIM = "LOOP-deepearth-claims/{slug}-{hash}"
+INSIGHT = "LOOP-deepearth-insights/{slug}-{hash}"
+HYPOTHESIS = "LOOP-deepearth-hypotheses/{slug}-{hash}"
+
+
+_KEY_NAMES = ("ENSUE_API_KEY", "ENSUE_API_TOKEN")   # the old harness used _TOKEN; accept both
+
 
 def _api_key() -> Optional[str]:
-    key = os.environ.get("ENSUE_API_KEY")
-    if key:
-        return key.strip()
-    for p in (KEY_FILE, Path("/workspace/.autoresearch-key"), Path("/workspace/.env")):
-        if p.exists():
-            txt = p.read_text()
-            m = re.search(r"ENSUE_API_KEY\s*=\s*(\S+)", txt) or re.search(r"^(\S+)$", txt.strip())
+    for name in _KEY_NAMES:
+        v = os.environ.get(name)
+        if v:
+            return v.strip()
+    for p in (KEY_FILE, Path("/workspace/.autoresearch-key"), Path("/workspace/.env"),
+              Path("autoresearch/.env"), Path("/workspace/deepearth/autoresearch/.env")):
+        if not p.exists():
+            continue
+        txt = p.read_text()
+        for name in _KEY_NAMES:
+            m = re.search(rf"{name}\s*=\s*(\S+)", txt)
             if m:
-                return m.group(1).strip()
+                return m.group(1).strip().strip('"\'')
     return None
 
 
@@ -84,6 +98,14 @@ def _git(*args: str) -> Optional[str]:
         return None
 
 
+def _hash(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:6]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class Coordinator:
     """Ensue client. Every method degrades to a no-op when Ensue is unreachable."""
 
@@ -95,7 +117,7 @@ class Coordinator:
     def connected(self) -> bool:
         return bool(self.api_key)
 
-    def _call(self, tool: str, args: dict) -> Optional[dict]:
+    def _call(self, tool: str, args: dict) -> Optional[Any]:
         if not self.connected:
             return None
         try:
@@ -104,87 +126,121 @@ class Coordinator:
             print(f"[ensue] {tool} failed: {e}", flush=True)
             return None
 
-    def _key(self, ns: str, description: str) -> str:
-        h = hashlib.sha256(description.encode()).hexdigest()[:6]
-        return f"{ns}/{self.agent_id}--{_slug(description)}--{h}"
+    # ---------------------------------------------------------------- primitives
+
+    def get(self, *keys: str) -> dict:
+        """Values by key name. Returns {key: parsed_value}."""
+        r = self._call("get_memory", {"key_names": list(keys)}) or {}
+        out = {}
+        for rec in (r.get("results") or []):
+            v = rec.get("value")
+            try:
+                v = json.loads(v) if isinstance(v, str) else v
+            except (ValueError, TypeError):
+                pass
+            out[rec.get("key_name")] = v
+        return out
+
+    def put(self, key: str, value: Any, description: str = "", embed: bool = True) -> None:
+        """Upsert. create_memory first; update_memory if the key already exists."""
+        payload = value if isinstance(value, str) else json.dumps(value)
+        r = self._call("create_memory", {"items": [{"key_name": key, "value": payload,
+                                                    "description": description[:200], "embed": embed}]})
+        if r is None or (isinstance(r, dict) and r.get("failed")):
+            self._call("update_memory", {"key_name": key, "value": payload,
+                                         "description": description[:200]})
+
+    def keys(self, prefix: str, limit: int = 50) -> list:
+        r = self._call("list_keys", {"prefix": prefix, "limit": limit}) or {}
+        return r if isinstance(r, list) else (r.get("keys") or r.get("results") or [])
+
+    def search(self, query: str, prefix: str = "LOOP-", limit: int = 10) -> list:
+        """Semantic search over memories -- how you check whether an idea was already tried."""
+        r = self._call("discover_memories", {"query": query, "prefix": prefix, "limit": limit}) or {}
+        return r if isinstance(r, list) else (r.get("results") or r.get("keys") or [])
 
     # ---------------------------------------------------------------- THINK
 
-    def state(self) -> dict:
-        """Global best, live claims, and recent insights -- what to read before picking an experiment."""
+    def state(self, variable: str = "aggregate") -> dict:
+        """What to read before picking an experiment: the board, live claims, insights, open hypotheses.
+
+        The org already holds prior campaigns under `LOOP-earth4d-*`. Read them -- a dead end published
+        there is a dead end you do not have to pay for again.
+        """
+        board = self.get(BOARD.format(variable=variable))
         return {
-            "best": self._call("memory_get", {"org": ORG, "key": "best/metadata"}) or {},
-            "claims": (self._call("memory_list", {"org": ORG, "prefix": "claims/"}) or {}).get("items", []),
-            "insights": (self._call("memory_list", {"org": ORG, "prefix": "insights/", "limit": 30}) or {}).get("items", []),
-            "hypotheses": (self._call("memory_list", {"org": ORG, "prefix": "hypotheses/", "limit": 30}) or {}).get("items", []),
+            "board": board,
+            "claims": self.keys("LOOP-deepearth-claims/", 50),
+            "insights": self.keys("LOOP-deepearth-insights/", 30),
+            "hypotheses": self.keys("LOOP-deepearth-hypotheses/", 30),
+            "prior_campaigns": self.keys("LOOP-earth4d-", 30),
         }
 
-    def pull_best(self) -> Optional[dict]:
-        """The swarm's current best config. Your baseline is the global best, not your local one."""
-        meta = self._call("memory_get", {"org": ORG, "key": "best/metadata"})
-        cfg = self._call("memory_get", {"org": ORG, "key": "best/config"})
-        return {"metadata": meta, "config": cfg} if meta else None
+    def already_tried(self, description: str) -> list:
+        """Semantic check across every campaign, past and present, before spending a run."""
+        return self.search(description, prefix="LOOP-", limit=8)
 
     # ---------------------------------------------------------------- CLAIM
 
     def claim(self, description: str) -> Optional[str]:
-        """Reserve an experiment. Returns None if someone already holds a live claim on it."""
-        key = self._key("claims", description)
-        existing = self._call("memory_get", {"org": ORG, "key": key})
-        if existing and (time.time() - existing.get("claimed_at", 0)) < CLAIM_TTL_S:
-            print(f"[ensue] already claimed by {existing.get('agent')}: {description}", flush=True)
+        """Reserve an experiment. None if someone holds a live claim on it."""
+        key = CLAIM.format(slug=_slug(description), hash=_hash(description))
+        existing = self.get(key).get(key)
+        if isinstance(existing, dict) and (time.time() - existing.get("claimed_at", 0)) < CLAIM_TTL_S:
+            print(f"[ensue] claimed by {existing.get('agent')}: {description}", flush=True)
             return None
-        self._call("memory_upsert", {"org": ORG, "key": key, "value": {
-            "agent": self.agent_id, "description": description,
-            "claimed_at": time.time(), "at": datetime.now(timezone.utc).isoformat()}})
+        self.put(key, {"agent": self.agent_id, "description": description,
+                       "claimed_at": time.time(), "at": _now()},
+                 f"claim by {self.agent_id}: {description}")
         return key
 
     # ---------------------------------------------------------------- PUBLISH
 
-    def publish_result(self, description: str, val_bpb: float, decomposition: dict,
-                       status: str, config: str, extra: Optional[dict] = None) -> Optional[str]:
-        """Publish a completed experiment. `status` is `keep` or `discard` -- publish both."""
-        key = self._key("results", description)
-        record = {
-            "agent": self.agent_id, "description": description, "status": status,
-            "val_bpb": val_bpb, "decomposition": decomposition, "config": config,
-            "commit": _git("rev-parse", "--short", "HEAD"), "branch": _git("branch", "--show-current"),
-            "at": datetime.now(timezone.utc).isoformat(), **(extra or {}),
-        }
-        self._call("memory_upsert", {"org": ORG, "key": key, "value": record})
+    def publish_result(self, variable: str, description: str, val_bpb: float, decomposition: dict,
+                       status: str, config: str, extra: Optional[dict] = None) -> str:
+        """One experiment. `status` is `keep` or `discard` -- publish both."""
+        key = RUN.format(variable=variable, slug=_slug(description),
+                         stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+                         hash=_hash(description))
+        record = {"agent": self.agent_id, "variable": variable, "description": description,
+                  "status": status, "val_bpb": val_bpb, "decomposition": decomposition,
+                  "config": config, "commit": _git("rev-parse", "--short", "HEAD"),
+                  "branch": _git("branch", "--show-current"), "at": _now(), **(extra or {})}
+        self.put(key, record, f"deepearth {variable} {status}: val_bpb {val_bpb:.6f} -- {description}")
         if status == "keep":
-            self._maybe_update_best(val_bpb, record, config)
+            self._maybe_update_board(variable, val_bpb, record, config)
         return key
 
     def post_insight(self, insight: str, evidence: Optional[list] = None) -> None:
-        """A learning worth not rediscovering. Post one every run, especially on a dead end -- explain
-        WHY, not just what happened."""
-        self._call("memory_upsert", {"org": ORG, "key": self._key("insights", insight), "value": {
-            "agent": self.agent_id, "insight": insight, "evidence": evidence or [],
-            "at": datetime.now(timezone.utc).isoformat()}})
+        """What you learned and WHY. Mandatory on a dead end -- it is what stops the next agent paying
+        for the same negative."""
+        self.put(INSIGHT.format(slug=_slug(insight), hash=_hash(insight)),
+                 {"agent": self.agent_id, "insight": insight, "evidence": evidence or [], "at": _now()},
+                 f"insight from {self.agent_id}: {insight[:120]}")
 
     def publish_hypothesis(self, title: str, reasoning: str, suggested: Optional[dict] = None,
                            evidence: Optional[list] = None) -> None:
-        """The next experiment your result implies. You already did the thinking; hand it on."""
-        self._call("memory_upsert", {"org": ORG, "key": self._key("hypotheses", title), "value": {
-            "agent": self.agent_id, "title": title, "reasoning": reasoning,
-            "suggested": suggested or {}, "evidence": evidence or [],
-            "at": datetime.now(timezone.utc).isoformat()}})
+        """The next experiment your result implies, so someone can run it instead of re-deriving it."""
+        self.put(HYPOTHESIS.format(slug=_slug(title), hash=_hash(title)),
+                 {"agent": self.agent_id, "title": title, "reasoning": reasoning,
+                  "suggested": suggested or {}, "evidence": evidence or [], "at": _now()},
+                 f"hypothesis from {self.agent_id}: {title[:120]}")
 
-    # ---------------------------------------------------------------- best/
+    # ---------------------------------------------------------------- board
 
-    def _maybe_update_best(self, val_bpb: float, record: dict, config: str) -> bool:
+    def _maybe_update_board(self, variable: str, val_bpb: float, record: dict, config: str) -> bool:
         """Read-compare-write with sanity checks. val_bpb is a loss: lower wins."""
-        if not (val_bpb > 0) or val_bpb != val_bpb:                       # <=0 or NaN is a crash, not a record
+        if not (val_bpb > 0) or val_bpb != val_bpb:            # <=0 or NaN is a crash, not a record
             print(f"[ensue] refusing bogus val_bpb {val_bpb}", flush=True)
             return False
-        cur = self._call("memory_get", {"org": ORG, "key": "best/metadata"}) or {}
-        prev = cur.get("val_bpb")
+        key = BOARD.format(variable=variable)
+        cur = self.get(key).get(key) or {}
+        prev = cur.get("val_bpb") if isinstance(cur, dict) else None
         if prev is not None and val_bpb >= prev:
             return False
-        self._call("memory_upsert", {"org": ORG, "key": "best/config", "value": {"config": config}})
-        self._call("memory_upsert", {"org": ORG, "key": "best/metadata", "value": {
-            **record, "previous_best_val_bpb": prev, "previous_best_by": cur.get("agent"),
-            "previous_best_description": cur.get("description")}})
-        print(f"[ensue] new global best: {val_bpb:.6f} (was {prev})", flush=True)
+        self.put(key, {**record, "config": config, "previous_val_bpb": prev,
+                       "previous_by": cur.get("agent") if isinstance(cur, dict) else None,
+                       "previous_description": cur.get("description") if isinstance(cur, dict) else None},
+                 f"deepearth board {variable}: BEST {val_bpb:.6f} by {self.agent_id} -- {record['description'][:90]}")
+        print(f"[ensue] new best for {variable}: {val_bpb:.6f} (was {prev})", flush=True)
         return True
