@@ -869,6 +869,31 @@ class DeepEarth(nn.Module):
                 loss = loss + self._poll_phylo_weight * F.kl_div(rel, full, reduction="batchmean")
         return loss
 
+    @torch.no_grad()
+    def variable_losses(self, z: torch.Tensor, values: Dict[str, torch.Tensor],
+                        observed: Dict[str, torch.Tensor], present: Dict[str, torch.Tensor]) -> Dict[str, tuple]:
+        """Per-variable reconstruction error as ``{name: (summed_error, n_targets)}`` over the hidden-but-observed
+        targets. The decomposition of val_bpb.
+
+        Reconstruction terms only: the contrastive, sdist and pollinator auxiliaries are training regularizers on
+        detached or global signals, not per-variable held-out reconstruction, so they are excluded. Unweighted --
+        `loss_weights` steers training, it does not change how many bits a variable actually costs.
+        """
+        out = {}
+        for v in self.variables:
+            if not v.reconstruct:
+                continue
+            w = ((~present[v.name]) & observed[v.name]).to(z.dtype)
+            n = int(w.sum())
+            if not n:
+                continue
+            if v.name in self.diffusion_heads:
+                err = self.diffusion_heads[v.name].loss(values[v.name], self._pooled(z, v.name), reduce=False)
+            else:
+                err = self._reconstruction_error(v.name, self.decode(z, v.name), values[v.name])
+            out[v.name] = (float((err * w).sum()), n)
+        return out
+
     def _decode_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
                      present: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Per-variable reconstruction error over the hidden-but-observed targets, decoded from latents ``z``."""
