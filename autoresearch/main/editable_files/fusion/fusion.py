@@ -840,6 +840,7 @@ class DeepEarth(nn.Module):
         return out
 
     # ---------------------------------------------------------------- training / inference
+    @staticmethod
     def _directional(ref: torch.Tensor) -> bool:
         """Are these targets L2-normalized, i.e. points on a sphere whose magnitude carries nothing? Decides which
         likelihood scores the variable, and therefore whether a magnitude calibration has anything to calibrate."""
