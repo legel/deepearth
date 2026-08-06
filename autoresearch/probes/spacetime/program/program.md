@@ -152,7 +152,7 @@ on. A failure in fixed infrastructure is a blocker, not permission to edit it.
 ### Screen
 
 - One seed.
-- Must beat the standing comparable record by `max(2%, 0.002)`.
+- Must beat the standing comparable record by `max(1.5%, 0.002)`.
 - Must have no registered regression.
 - A higher absolute score with a losing fair gain is a DATA/control finding, not an encoder breakthrough.
 

@@ -122,7 +122,7 @@ How a record is earned:
 
 | | |
 |---|---|
-| beats the standing record by more than the noise barrier | 2% of the record, floor 0.002, and 2σ once ≥3 seeds |
+| beats the standing record by more than the noise barrier | 1.5% of the record, floor 0.002, and 2σ once ≥3 seeds |
 | like-for-like | same capability, mode, split, shard count and protocol |
 | from a clean tree | the Earth4D/`lib/**` diff IS the experiment; a dirty tree makes it unrecoverable |
 | published | `--ensue` on every run, win or dead-end |

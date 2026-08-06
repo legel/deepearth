@@ -10,7 +10,7 @@ import torch
 
 from deepearth.autoresearch.main.harness import champion_report, hooks, score
 from deepearth.autoresearch.main.harness.evaluate import BENCHMARK_PROTOCOL
-from deepearth.autoresearch.scoring.definitions import capability_to_benchmark
+from deepearth.autoresearch.scoring.definitions import capability_to_benchmark, noise_barrier
 from deepearth.autoresearch.scoring import graduation
 from deepearth.autoresearch.scoring.graduation import _receipt_mismatch, compare_fusion
 
@@ -39,6 +39,10 @@ class _Model:
 
 
 class ScoringAlignmentTests(unittest.TestCase):
+    def test_promotion_margin_is_one_and_half_percent_with_absolute_floor(self):
+        self.assertAlmostEqual(noise_barrier(0.2), 0.003)
+        self.assertAlmostEqual(noise_barrier(0.1), 0.002)
+
     def test_graduation_mapping_is_unique_and_mask_aligned(self):
         mapping = capability_to_benchmark()
         self.assertEqual(mapping["family_from_phylo"], "B64_family_phylo_masked_imputation")

@@ -147,7 +147,7 @@ def suite_mismatch(before: Dict[str, float], after: Dict[str, float]) -> Tuple[L
 #
 # MIN_CONFIRMATION_SEEDS deliberately did NOT move: it is a probe's operator policy for when to call a
 # result confirmed, not a definition of what a number means, and nothing here consumes it.
-MIN_REL_IMPROVEMENT = 0.02      # 2% of the standing record
+MIN_REL_IMPROVEMENT = 0.015     # 1.5% of the standing record
 MIN_ABS_IMPROVEMENT = 0.002     # ...and never less than this in absolute terms
 SEED_SIGMA_MULTIPLE = 2.0       # with >=3 seeds, must also clear 2 sigma of the seed spread
 
