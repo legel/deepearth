@@ -16,6 +16,7 @@ except ImportError:
     from torch.cuda.amp import custom_bwd, custom_fwd 
 
 from .backend import _backend
+from .resolution import resolution_grad
 
 _FIXED_POINT_BITS = 36
 
@@ -96,8 +97,7 @@ class _hash_encode(Function):
             gb = grad.permute(1, 0, 2)                                       # [B, L, C]
             dd = dy_dx.view(B, L, D, C)
             contrib = (torch.einsum('blc,bldc->bld', gb.float(), dd.float()) * inputs.float().unsqueeze(1)).sum(0)  # [L,D]
-            scale = torch.exp2(per_level_scale.view(L, D).float()) * base_resolution.view(1, D).float() - 1.0
-            grad_pls = (0.6931471805599453 * (scale + 1.0) / scale.clamp_min(1e-6) * contrib).to(per_level_scale.dtype)  # [L, D]
+            grad_pls = resolution_grad(per_level_scale, base_resolution, contrib)     # [L, D]
 
         if calc_grad_inputs:
             return grad_inputs, grad_embeddings, None, grad_pls, None, None, None, None, None, None, None, grad_index_logits_return, None, None, None

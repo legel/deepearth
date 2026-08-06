@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.encoders.spacetime.earth4d import Earth4D
+from deepearth.encoders.spacetime.hashencoder.resolution import resolution_grad
 from deepearth.encoders.biological.phylogenomic import SpeciesGraph
 
 
@@ -586,8 +587,7 @@ class DeepEarth(nn.Module):
                 dd = self._abs_dydx[i].view(B, L, D, C)
                 inp = self._abs_inputs[i]
                 contrib = (torch.einsum('blc,bldc->bld', gb.float(), dd.float()) * inp.float().unsqueeze(1)).sum(0)  # [L,D]
-                scale = torch.exp2(en.per_level_scale.view(L, D).float()) * en.base_resolution.view(1, D).float() - 1.0
-                grad_pls = (0.6931471805599453 * (scale + 1.0) / scale.clamp_min(1e-6) * contrib).to(en.per_level_scale.dtype)
+                grad_pls = resolution_grad(en.per_level_scale, en.base_resolution, contrib)
                 if en.per_level_scale.grad is None:
                     en.per_level_scale.grad = grad_pls
                 else:
