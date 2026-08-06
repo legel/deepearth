@@ -1,3 +1,7 @@
+> **Public suite:** [`benchmarks/README.md`](../benchmarks/README.md) is the GitHub-visible record,
+> regenerated from a real run whenever the champion changes (science.md rule 33). This file documents
+> what each benchmark measures; that one carries the current numbers.
+
 # DeepCal — committed baseline benchmark
 
 Reference scores for the /autoresearch pipeline. Reproduce, then push against these.

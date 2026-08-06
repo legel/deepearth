@@ -189,6 +189,14 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     (logistic, evaluate._net_value) so inclusion NEVER exceeds 1.0, NEVER forms a below-0 well, and is always
     monotonically beneficial to raise (repetitive signal is fine). A champion must carry the WHOLE suite, not a subset.
 
+33. **Keep a GitHub-visible benchmark suite current.** `benchmarks/README.md` at the repository root is
+    the public record of what DeepEarth can do, and it must be regenerated from a real run whenever the
+    champion changes — never edited by hand, never carried forward from an earlier commit. It states the
+    commit, both means, the active/inactive split, the exact command, and every benchmark worst-first.
+    A benchmark table that lags the model is worse than none: collaborators quote it as if it were
+    current. This is the outward-facing counterpart to rule 30's champion report — 30 records the
+    before→after for a commit, 33 keeps the standing picture true.
+
 ## References
 
 - **DINOv3** — Siméoni et al., "DINOv3," 2025. arXiv:2508.10104 — <https://arxiv.org/abs/2508.10104>
