@@ -840,118 +840,56 @@ class DeepEarth(nn.Module):
         return out
 
     # ---------------------------------------------------------------- training / inference
+    def calibrate_nats(self, targets: Dict[str, torch.Tensor]) -> None:
+        """Freeze the reference statistics val_bpb scores against, once, from a fixed reference draw.
+
+        Without this the likelihood is estimated from whatever batch is in hand: the Gaussian variance moves with
+        the sample and the retrieval negatives move with batch composition, so the absolute score depends on which
+        examples happened to be drawn. Call once before scoring; every batch then uses the same reference.
+        """
+        self._nats_ref = {}
+        for name, t in targets.items():
+            t = t.float()
+            obs = t.norm(dim=-1) > 1e-6
+            ref = t[obs] if obs.any() else t
+            if not ref.numel():
+                continue
+            if bool(((ref.norm(dim=-1) - 1.0).abs() < 1e-3).all()):
+                self._nats_ref[name] = ("directional", F.normalize(ref, dim=-1))    # fixed retrieval bank
+            else:
+                self._nats_ref[name] = ("gaussian", ref.var(0, unbiased=False).clamp_min(1e-6))
+
     def _reconstruction_nats(self, name: str, pred: torch.Tensor, target: torch.Tensor):
         """Held-out reconstruction in NATS, with the dimension count. Measurement only -- never the training loss.
 
         `_reconstruction_error` is deliberately rescaled (categorical CE divided by log C, continuous as a cosine
-        distance) so the shared gradient stays balanced. Those are not log-likelihoods: a cosine distance has no
-        information-theoretic meaning and the CE rescaling destroys the units. val_bpb needs real nats, so this
-        computes them separately and leaves the objective alone.
+        distance) so the shared gradient stays balanced. Those are not log-likelihoods, so val_bpb computes its own.
 
-        Categorical: cross-entropy in nats. Uniform predictions score ln(num_classes).
-        Continuous: diagonal Gaussian NLL with the per-dimension variance estimated from the batch's own targets.
-        This is a DIFFERENTIAL entropy, so the scale carries the Gaussian log-normalizer -- it is not zero-based and
-        can be negative for low-variance targets. The two reference points that matter:
+        Reference statistics come from `calibrate_nats`, frozen once, never from the batch in hand -- otherwise the
+        Gaussian variance and the retrieval negatives both move with whichever examples were sampled.
 
-          * predicting the target mean scores exactly the fitted Gaussian's entropy (the do-nothing baseline);
-          * a perfect predictor scores that minus 0.5 nats per dimension.
-
-        So only DIFFERENCES are meaningful, which is all the gate uses. Comparing the absolute bits/dim of two
-        variables says more about their target variance than about how well either is modelled.
+        Categorical: cross-entropy in nats; chance is log(num_classes).
+        Directional (L2-normalized targets): retrieval against the frozen bank; chance is log(bank size).
+        Continuous: diagonal Gaussian NLL against the frozen per-dimension variance. A differential entropy, so it
+        is not zero-based -- predicting the reference mean scores the fitted Gaussian's entropy, and a perfect
+        predictor scores that minus 0.5 nats per dimension. Only differences are meaningful.
         """
         v = self.variables[self.names.index(name)]
         if v.kind == "categorical":
             return F.cross_entropy(pred.float(), target, reduction="none"), 1
         t = target.float()
-        obs = t.norm(dim=-1) > 1e-6
-        ref = t[obs] if obs.any() else t
-        # Directional modalities (data.py `normalize=True`: clay, the vision embeddings) are L2-normalized, so they
-        # live on a sphere. A diagonal Gaussian is the wrong likelihood for them -- per-dimension variance is ~1/D,
-        # which amplifies any magnitude error by ~D and reports thousands of bits for a well-aimed prediction.
-        # Score them as retrieval instead: -log softmax over cosine against the batch's targets. That is a genuine
-        # log-likelihood in nats, scale-free, and directly comparable to categorical cross-entropy -- chance is
-        # log(batch) here and log(num_classes) there.
-        if self._directional(ref):
-            pn = F.normalize(pred.float(), dim=-1)
-            # Same temperature as the training InfoNCE. Raw cosines are bounded to +-1, so an untempered softmax is
-            # nearly flat: every prediction scores close to log(batch) and the metric has almost no dynamic range.
-            logits = (pn @ F.normalize(t, dim=-1).t()) / RETRIEVAL_TEMPERATURE
-            return F.cross_entropy(logits, torch.arange(logits.shape[0], device=logits.device),
-                                   reduction="none"), 1
-        var = ref.var(0, unbiased=False).clamp_min(1e-6)                       # per-dimension target variance
+        ref_kind, ref_stat = getattr(self, "_nats_ref", {}).get(name, (None, None))
+        if ref_kind is None:
+            raise RuntimeError(f"call calibrate_nats() before scoring {name}: reference statistics are not frozen")
+        if ref_kind == "directional":
+            bank = ref_stat.to(t.device)                       # FIXED negatives, not the batch's own rows
+            logits = (F.normalize(pred.float(), dim=-1) @ bank.t()) / RETRIEVAL_TEMPERATURE
+            gold = (F.normalize(t, dim=-1) @ bank.t()).argmax(-1)     # each target's own row in the frozen bank
+            return F.cross_entropy(logits, gold, reduction="none"), 1
+        var = ref_stat.to(t.device)                            # FROZEN per-dimension variance
         nll = 0.5 * (((pred.float() - t) ** 2) / var + torch.log(2.0 * math.pi * var)).sum(-1)
         return nll, int(t.shape[-1])
 
-    @staticmethod
-    def _directional(ref: torch.Tensor) -> bool:
-        """Are these targets L2-normalized, i.e. points on a sphere whose magnitude carries nothing? Decides which
-        likelihood scores the variable, and therefore whether a magnitude calibration has anything to calibrate."""
-        return bool(ref.numel()) and bool(((ref.norm(dim=-1) - 1.0).abs() < 1e-3).all())
-
-    def _reconstruction_error(self, name: str, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        v = self.variables[self.names.index(name)]
-        if v.kind == "categorical":
-            # Normalize by log(num_classes) so every categorical term shares the ~[0,1] scale of the continuous cosine terms (a wide identity head otherwise dominates the shared gradient).
-            return F.cross_entropy(pred, target, reduction="none") / math.log(max(int(v.num_classes), 2))
-        # ANOMALY (mean-centered) cosine — matches the eval metric. Raw cosine has a gameable floor for shared-mean
-        # embeddings: the decoder can satisfy it by predicting the MEAN direction and never learn the obs-specific
-        # signal. Centering removes that floor, forcing the obs-specific reconstruction. Mean is over OBSERVED rows
-        # (unobserved targets are 0 vectors).
-        obs = target.norm(dim=-1) > 1e-6
-        mu = (target[obs].mean(0, keepdim=True) if obs.any() else target.mean(0, keepdim=True)).detach()
-        return 1.0 - F.cosine_similarity(pred - mu, target - mu, dim=-1)
-
-    def reconstruction_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                            context: dict, hide_prob: float = 0.35) -> torch.Tensor:
-        """One training step: reveal each variable with prob ``1 - hide_prob`` and reconstruct every hidden-but-observed variable, at one fixed shape."""
-        B = len(next(iter(observed.values()))); dev = self.type_emb.device
-        present = {n: (torch.rand(B, device=dev) > hide_prob) & observed[n] for n in self.names}
-        # Fully blank a fraction of queries so the model must reconstruct from bare space-time + neighbors, training the position->variable pathway (else the absolute channel stays inert at inference).
-        blank = torch.rand(B, device=dev) < 0.15
-        for n in self.names:
-            present[n] = present[n] & ~blank
-        return self.masked_loss(values, observed, present, context)
-
-    def masked_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                    present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
-        """Reconstruction loss for a fixed reveal mask (no randomness), so it can be compiled/CUDA-graphed with the random masking left outside."""
-        z = self.encode(values, present, context)
-        if self.round_loss == "all" and self._round_stack is not None:
-            zs = self._round_stack                           # [K,B,n_lat,d]: deep-supervise every round, same targets
-            loss = sum(self._decode_loss(zs[k], values, observed, present) for k in range(zs.shape[0])) / zs.shape[0]
-        else:
-            loss = self._decode_loss(z, values, observed, present)
-        if self.inductive is not None:                       # auxiliary: name embedding -> evolutionary position
-            loss = loss + 0.1 * self.inductive.loss(self._species_text, self._species_e1)
-        # Rule 25: mask a fraction of species' seeds and reconstruct their refined embedding from phylogenetic relatives
-        # (self-distillation toward the full-info refinement) -> the model can place a species of uncertain tree position.
-        if self.training and getattr(self, "_phylo_mask_weight", 0.0) > 0 and self._refined_species is not None:
-            m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
-            if m.any():
-                loss = loss + self._phylo_mask_weight * self.species_graph.masked_reconstruction_loss(
-                    m, self._refined_species.detach(), metric="mse")
-        # LCA fine-tuning: predict each masked species' mycorrhizal type from its RELATIVE-reconstructed embedding, so the
-        # tree learns trait phylogenetic structure and imputes it for held-out clades (must beat BioCLIP nearest-neighbor).
-        if self.training and getattr(self, "species_trait_recon", False) and getattr(self, "_species_myco", None) is not None:
-            v = self._species_myco_valid & self._train_species                  # train species with myco labels (no held-out leak)
-            if v.any():                                                          # DETACHED default (rule 31) reads the tree's phylo locality without reshaping it toward myco; trait_recon_detach=False + small weight tests gentle backprop (rule-31 tradeoff study).
-                emb = self._refined_species[v] if not getattr(self, "_trait_recon_detach", True) else self._refined_species[v].detach()
-                loss = loss + getattr(self, "_trait_recon_weight", 1.0) * F.cross_entropy(self.species_myco_head(emb), self._species_myco[v].clamp_min(0))
-        # Pollinator phylo self-distillation (mirrors rule 25 for INTERACTIONS): a species' pollinator distribution
-        # predicted from its PHYLO-RELATIVES (masked seed) must match its full-info prediction -> trains the model to
-        # transfer interactions across the phylogeny. Diagnostic (2026-07-15): plant-phylo oracle reaches recall 0.216
-        # but the model only 0.037 (B55) -> the signal is present and unexploited. Default weight 0 = champion-identical.
-        if self.training and getattr(self, "_poll_phylo_weight", 0.0) > 0 and self._refined_species is not None \
-                and getattr(self, "poll_head", None) is not None:
-            m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
-            if m.any():
-                basis = self._pollinator_basis().detach().t()                                        # [d, n_poll]
-                full = F.softmax((self.poll_head(self._refined_species[m].detach()) @ basis).float(), dim=-1)   # target
-                rel = F.log_softmax((self.poll_head(self.species_graph(mask=m)[m]) @ basis).float(), dim=-1)    # from relatives
-                loss = loss + self._poll_phylo_weight * F.kl_div(rel, full, reduction="batchmean")
-        return loss
-
-    @torch.no_grad()
     def variable_losses(self, z: torch.Tensor, values: Dict[str, torch.Tensor],
                         observed: Dict[str, torch.Tensor], present: Dict[str, torch.Tensor]) -> Dict[str, tuple]:
         """Per-variable reconstruction error as ``{name: (summed_error, n_targets)}`` over the hidden-but-observed
@@ -971,7 +909,11 @@ class DeepEarth(nn.Module):
                 continue
             pred = (self._pooled(z, v.name) if v.name in self.diffusion_heads else self.decode(z, v.name))
             if v.name in self.diffusion_heads:
-                continue                       # diffusion heads sample rather than score a density; no nats to report
+                # A diffusion head samples rather than scoring a density. Silently omitting it would let val_bpb
+                # improve while that modality regressed -- fail instead of dropping it.
+                raise NotImplementedError(
+                    f"{v.name} is scored by a diffusion head; val_bpb has no likelihood for it. "
+                    "Give the head a log-density or exclude the variable from the objective explicitly.")
             nats, per_row = self._reconstruction_nats(v.name, pred, values[v.name])
             out[v.name] = (float((nats * w).sum()), n * per_row)
         return out

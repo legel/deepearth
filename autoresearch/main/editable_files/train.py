@@ -251,6 +251,12 @@ def train_and_evaluate(config, device):
         was_training = model.training
         model.eval()
         test_index = torch.tensor(source.test, device=device)
+        # Freeze the likelihood's reference statistics once, from a fixed reference draw, so the Gaussian variance
+        # and the retrieval negatives do not move with whichever batch is in hand.
+        _gc = torch.Generator(device=device).manual_seed(20260806)
+        _ref = test_index[torch.randint(0, len(test_index), (min(4096, len(test_index)),),
+                                        device=device, generator=_gc)]
+        model.calibrate_nats(source.batch(_ref)[0])
         totals = {}
         with torch.no_grad():
             for b in range(n_batches):
