@@ -49,13 +49,19 @@ against measured two-seed spreads of:
 Measure the floor for your configuration before believing any delta. `objective.noise_floor()` takes matched
 seeds and has no default.
 
-## Benchmarks
+## The benchmark suite (science.md rule 32)
 
-The 63 benchmarks remain, as **diagnostics**. They are not a gate.
+The harmonic and arithmetic means over the **whole** declared suite are the standing report. A champion
+carries the whole suite, not a subset, and **no individual metric may regress**. This is the language the
+public repository is reviewed in and the number that standardizes performance across runs — it is
+reported on every run and required for every champion commit via
+`main/harness/champion_report.py` (rule 30).
 
-The harmonic mean cannot resolve model size — 24.0M and 796M tie (0.332 vs 0.319–0.325) because it is
-dominated by the near-zero benchmarks neither model solves. Use them to see *where* a change landed, after
-`val_bpb` has already said *whether* it landed.
+`val_bpb` sits alongside it, not above it. It exists because the harmonic mean cannot resolve model size
+— 24.0M and 796M tie at 0.332 vs 0.319–0.325 — so it is what a *screen-scale* experiment steers by while
+the suite remains what a champion is judged on.
+
+Use the decomposition to see *where* a change landed and the suite to confirm nothing regressed.
 
 ## Relation to science.md
 

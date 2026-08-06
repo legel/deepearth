@@ -39,9 +39,13 @@ It is additive over variables, so one number and granular targets are the same m
 Lower is better. It is a differential entropy, so it is not zero-based and absolute per-variable values
 say more about target variance than about model quality. **Only differences are meaningful.**
 
-The harmonic and arithmetic benchmark means are still computed and still reported — they are the
-language the public repository is reviewed in. They are diagnostics, not the gate: the harmonic mean
-cannot resolve a 4.6x model-size difference (24.0M and 796M tie).
+The harmonic and arithmetic means over the whole suite are the standing report (rule 32) — the language
+the public repository is reviewed in, and what standardizes performance across runs. A champion carries
+the whole suite and no individual metric may regress; every champion commit goes through
+`champion_report.py` (rule 30).
+
+`val_bpb` sits alongside, not above. It is what a screen-scale experiment steers by, because the harmonic
+mean cannot resolve a 4.6x size difference (24.0M and 796M tie).
 
 ## The loop
 
