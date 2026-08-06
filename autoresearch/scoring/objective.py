@@ -62,6 +62,77 @@ def noise_floor(values: Sequence[float]) -> float:
     return max(vals) - min(vals)
 
 
+def macro(per_variable: Mapping[str, tuple]) -> float:
+    """Unweighted mean of per-variable bits/dim -- every scientific capability counts equally.
+
+    `aggregate` weights by revealed dimensions, so six large embeddings carry 97.8% of it (clay alone
+    30.1%) while `identity` -- species, the headline capability -- carries 0.029%. That measures
+    reconstruction efficiency, not scientific coverage. Report both: aggregate is the reconstruction
+    gate, macro is the balance number.
+    """
+    d = decompose(per_variable)
+    return sum(d.values()) / max(len(d), 1)
+
+
+def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mapping[str, float],
+          weak: Sequence[str], owned: Sequence[str] = ()) -> dict:
+    """Decide keep or discard on coverage, not just on the aggregate.
+
+    Three conditions, all required:
+
+    1. **Reconstruction gate** -- the dimension-weighted aggregate improves by more than its floor.
+    2. **No owned regression** -- no variable this experiment claims may get worse by more than its own
+       measured floor. An aggregate win paid for by a regression elsewhere is a trade, and rule 32
+       forbids trades.
+    3. **Coverage** -- at least one variable in `weak` must improve. Without it, moving one large
+       embedding satisfies the aggregate alone: six embeddings carry 97.8% of it and clay carries 30.1%,
+       so the model can get narrower while the number goes up.
+
+    `weak` must be supplied by the caller from the BENCHMARK scores, which are commensurable in [0,1].
+    It cannot be derived from bits/dim: that is a differential entropy whose scale reflects a variable's
+    target variance, so ranking variables by it says nothing about which capability is behind.
+
+    `floors` is per-variable and measured from matched seeds. There is no default -- a threshold you did
+    not measure is a threshold that admits noise.
+    """
+    b, a = decompose(before), decompose(after)
+    shared = [k for k in b if k in a]
+    if not shared:
+        return {"keep": False, "reason": "no shared variables between the two runs"}
+    if not weak:
+        return {"keep": False, "reason": "no weak set supplied; derive it from the benchmark scores"}
+
+    agg_floor = floors.get("__aggregate__")
+    if agg_floor is None:
+        return {"keep": False, "reason": "no measured floor for the aggregate; measure before judging"}
+    agg_gain = aggregate(before) - aggregate(after)                  # a loss: positive means improved
+
+    regressions = []
+    for k in (owned or shared):
+        if k not in shared:
+            continue
+        floor = floors.get(k)
+        if floor is None:
+            return {"keep": False, "reason": f"no measured floor for {k}; measure before judging"}
+        if (a[k] - b[k]) > floor:
+            regressions.append((k, a[k] - b[k], floor))
+
+    improved_weak = [k for k in weak
+                     if k in shared and (b[k] - a[k]) > floors.get(k, float("inf"))]
+
+    keep = agg_gain > agg_floor and not regressions and bool(improved_weak)
+    return {
+        "keep": keep,
+        "aggregate_gain": agg_gain,
+        "macro_before": macro(before), "macro_after": macro(after),
+        "regressions": regressions,
+        "improved_weak": improved_weak,
+        "reason": ("regressed: " + ", ".join(f"{k} +{d:.4f} > {f:.4f}" for k, d, f in regressions)) if regressions
+                  else ("no weak capability improved -- the model got narrower" if not improved_weak
+                        else ("aggregate gain inside noise" if agg_gain <= agg_floor else "keep")),
+    }
+
+
 # ---------------------------------------------------------------- diagnostics
 
 def is_diagnostic(k: str) -> bool:

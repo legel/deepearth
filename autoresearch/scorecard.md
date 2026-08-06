@@ -32,8 +32,26 @@ ablation. Both are terms in the fusion number, so a probe win *is* a fusion win 
 
 ## The gate
 
-A result is promoted when `val_bpb` drops, at fixed steps, by more than **the noise floor measured at that
-scale**, on at least two scales.
+`objective.judge()` decides keep or discard. Three conditions, all required:
+
+1. **Reconstruction** — the aggregate `val_bpb` improves by more than its measured floor.
+2. **No regression** — no owned variable worsens by more than its own floor. An aggregate win paid for
+   elsewhere is a trade, and rule 32 forbids trades.
+3. **Coverage** — at least one *weak* capability improves, where weak comes from the benchmark scores.
+
+Condition 3 exists because the aggregate is dimension-weighted and therefore badly unbalanced: six large
+embeddings carry **97.8%** of it, `clay` alone **30.1%**, and `identity` — species, the headline
+capability — **0.029%**. Without a coverage rule, improving one embedding satisfies the gate on its own
+and the model narrows while the number rises.
+
+Weakness cannot be read off `val_bpb`. Bits/dim is a differential entropy whose scale reflects a
+variable's target variance, so it is not comparable across variables — the benchmark scores are, and
+they are what ranks capabilities.
+
+Report `macro()` alongside the aggregate: the unweighted mean over variables, where every scientific
+capability counts equally. Aggregate measures reconstruction efficiency; macro measures coverage.
+
+
 
 Fixed thresholds are gone. `MIN_REL_IMPROVEMENT` (1.5%), `MIN_ABS_IMPROVEMENT` (0.002) and
 `SEED_SIGMA_MULTIPLE` let the campaign promote inside its own noise — champion steps of +0.0013 to +0.0034
