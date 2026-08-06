@@ -806,6 +806,35 @@ class DeepEarth(nn.Module):
         return out
 
     # ---------------------------------------------------------------- training / inference
+    def _reconstruction_nats(self, name: str, pred: torch.Tensor, target: torch.Tensor):
+        """Held-out reconstruction in NATS, with the dimension count. Measurement only -- never the training loss.
+
+        `_reconstruction_error` is deliberately rescaled (categorical CE divided by log C, continuous as a cosine
+        distance) so the shared gradient stays balanced. Those are not log-likelihoods: a cosine distance has no
+        information-theoretic meaning and the CE rescaling destroys the units. val_bpb needs real nats, so this
+        computes them separately and leaves the objective alone.
+
+        Categorical: cross-entropy in nats. Uniform predictions score ln(num_classes).
+        Continuous: diagonal Gaussian NLL with the per-dimension variance estimated from the batch's own targets.
+        This is a DIFFERENTIAL entropy, so the scale carries the Gaussian log-normalizer -- it is not zero-based and
+        can be negative for low-variance targets. The two reference points that matter:
+
+          * predicting the target mean scores exactly the fitted Gaussian's entropy (the do-nothing baseline);
+          * a perfect predictor scores that minus 0.5 nats per dimension.
+
+        So only DIFFERENCES are meaningful, which is all the gate uses. Comparing the absolute bits/dim of two
+        variables says more about their target variance than about how well either is modelled.
+        """
+        v = self.variables[self.names.index(name)]
+        if v.kind == "categorical":
+            return F.cross_entropy(pred.float(), target, reduction="none"), 1
+        t = target.float()
+        obs = t.norm(dim=-1) > 1e-6
+        ref = t[obs] if obs.any() else t
+        var = ref.var(0, unbiased=False).clamp_min(1e-6)                       # per-dimension target variance
+        nll = 0.5 * (((pred.float() - t) ** 2) / var + torch.log(2.0 * math.pi * var)).sum(-1)
+        return nll, int(t.shape[-1])
+
     def _reconstruction_error(self, name: str, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         v = self.variables[self.names.index(name)]
         if v.kind == "categorical":
@@ -887,11 +916,11 @@ class DeepEarth(nn.Module):
             n = int(w.sum())
             if not n:
                 continue
+            pred = (self._pooled(z, v.name) if v.name in self.diffusion_heads else self.decode(z, v.name))
             if v.name in self.diffusion_heads:
-                err = self.diffusion_heads[v.name].loss(values[v.name], self._pooled(z, v.name), reduce=False)
-            else:
-                err = self._reconstruction_error(v.name, self.decode(z, v.name), values[v.name])
-            out[v.name] = (float((err * w).sum()), n)
+                continue                       # diffusion heads sample rather than score a density; no nats to report
+            nats, per_row = self._reconstruction_nats(v.name, pred, values[v.name])
+            out[v.name] = (float((nats * w).sum()), n * per_row)
         return out
 
     def _decode_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
