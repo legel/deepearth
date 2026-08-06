@@ -158,6 +158,9 @@ class LatentBlock(nn.Module):
         return x + self.ffn(self.n2(x))
 
 
+RETRIEVAL_TEMPERATURE = 0.05    # matches the training InfoNCE; scoring must not use a different one
+
+
 class DeepEarth(nn.Module):
     """Config-driven model of spatio-temporally covarying variables (see module docstring).
 
@@ -870,7 +873,9 @@ class DeepEarth(nn.Module):
         # log(batch) here and log(num_classes) there.
         if self._directional(ref):
             pn = F.normalize(pred.float(), dim=-1)
-            logits = pn @ F.normalize(t, dim=-1).t()
+            # Same temperature as the training InfoNCE. Raw cosines are bounded to +-1, so an untempered softmax is
+            # nearly flat: every prediction scores close to log(batch) and the metric has almost no dynamic range.
+            logits = (pn @ F.normalize(t, dim=-1).t()) / RETRIEVAL_TEMPERATURE
             return F.cross_entropy(logits, torch.arange(logits.shape[0], device=logits.device),
                                    reduction="none"), 1
         var = ref.var(0, unbiased=False).clamp_min(1e-6)                       # per-dimension target variance
