@@ -9,10 +9,19 @@ import subprocess
 import sys
 
 
+# Both repositories have a directory called `autoresearch/` and they mean opposite things: privately it is the
+# research harness, publicly it is the shipped training/eval/config/data package. Block the private subtrees by
+# their real paths -- none of them exist on public main -- not the shared parent, which is the product itself.
 FORBIDDEN_PREFIXES = (
-    "autoresearch/",
+    "autoresearch/probes/",
+    "autoresearch/main/",
+    "autoresearch/scoring/",
+    "autoresearch/tests/",
+    "autoresearch/data/",
+    "autoresearch/scorecard.md",
     ".agents/",
     ".claude/",
+    "customer_feedback/",
 )
 FORBIDDEN_PARTS = {
     "__pycache__",

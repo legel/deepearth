@@ -29,13 +29,20 @@ The private repository is not a GitHub fork. Delivery branches that become PRs m
 
 Reject a delivery diff containing any of these:
 
-- `autoresearch/`
+- `autoresearch/probes/`, `autoresearch/main/`, `autoresearch/scoring/`, `autoresearch/tests/`,
+  `autoresearch/data/`, `autoresearch/scorecard.md` — the private research harness
 - `.agents/` or `.claude/`
+- `customer_feedback/`
 - `program.md`, scorecards, experiment ledgers, campaign notes, or agent prompts
 - model checkpoints, prepared caches, generated results, or run logs
 - private repository URLs, credentials, tokens, internal hostnames, or machine paths
 
 Ordinary focused production tests are allowed and encouraged.
+
+The rest of `autoresearch/` is public product, not research: `train.py`, `evaluate.py`, `data.py`, `prepare.py`,
+`deepcal.yaml`, `champion.yaml`, `recipes/` and `science.md` all ship in `legel/deepearth`. They are in scope for a
+delivery. Blocking the shared parent directory also blocked the config, so the rule requiring every change to be a
+default-off config toggle could not be satisfied.
 
 ## Baseline identity
 
