@@ -228,6 +228,7 @@ class DeepEarth(nn.Module):
         pollinator_top_k: Optional[int] = None,
         phylo_head_routing: bool = False,
         species_trait_recon: bool = False,
+        continuous_calibration: bool = False,
     ) -> None:
         super().__init__()
         self.phylo_head_routing = phylo_head_routing   # route the phylo-refined species embedding into the trait heads
@@ -269,6 +270,23 @@ class DeepEarth(nn.Module):
                     self.decoders[v.name] = _dec(v.num_classes)
             else:
                 raise ValueError(f"unknown variable kind {v.kind!r} for {v.name!r}")
+        # Calibration of the continuous heads. The continuous reconstruction loss is a mean-centered cosine,
+        # which is invariant to per-dimension scale and offset, so a head is never asked to predict in the
+        # target's units -- it only has to point the right way. val_bpb scores a Gaussian likelihood and pays
+        # for that in full. These per-dimension affines are fitted by that likelihood on a DETACHED prediction,
+        # so they turn a direction into a calibrated value without touching the representation.
+        #
+        # ones/zeros draw no RNG, so with the flag on the rest of the model still initializes bit-identically
+        # to the default path: a gain that lands here cannot be an initialization re-roll.
+        self.continuous_calibration = continuous_calibration
+        self.cal_gain = nn.ParameterDict()
+        self.cal_bias = nn.ParameterDict()
+        if continuous_calibration:
+            for v in self.variables:
+                if v.kind == "continuous" and v.reconstruct and v.name in self.decoders:
+                    self.cal_gain[v.name] = nn.Parameter(torch.ones(v.dim))
+                    self.cal_bias[v.name] = nn.Parameter(torch.zeros(v.dim))
+
         self.type_emb = nn.Parameter(torch.randn(len(self.variables), d_model) * 0.02)
         # A dedicated always-present space-time token, so a query revealing no variable keeps its position (variable tokens are zeroed by the present-mask).
         self.position_token = nn.Parameter(torch.randn(d_model) * 0.02)
@@ -734,8 +752,18 @@ class DeepEarth(nn.Module):
         sp = self._reencode(self.species_variable, pooled)      # expected phylo-refined species embedding
         return torch.cat([pooled.detach(), sp.detach()], -1) if detach else torch.cat([pooled, sp], -1)
 
-    def decode(self, latents: torch.Tensor, name: str) -> torch.Tensor:
-        """Read one variable back from the latents. The species variable reads against the refined species states; a diffusion variable is sampled from its head."""
+    def _calibrated(self, name: str, pred: torch.Tensor) -> torch.Tensor:
+        """Apply the continuous head's fitted per-dimension affine. Inert (and byte-identical) when the flag is off:
+        the ParameterDict is empty, so the membership test is the whole cost."""
+        if name in self.cal_gain:
+            return pred * self.cal_gain[name] + self.cal_bias[name]
+        return pred
+
+    def decode(self, latents: torch.Tensor, name: str, calibrated: bool = True) -> torch.Tensor:
+        """Read one variable back from the latents. The species variable reads against the refined species states; a diffusion variable is sampled from its head.
+
+        ``calibrated=False`` returns the bare head output, which is what the mean-centered cosine training loss
+        reads -- keeping the representation's gradient identical to the uncalibrated model."""
         if self.joint_decode:
             Pall = self._pooled_all(latents)                 # [B,V,d]
             Pall = Pall + self.joint_block(Pall)             # variables attend to each other (joint field)
@@ -747,7 +775,8 @@ class DeepEarth(nn.Module):
         pooled = self._pooled(latents, name)
         if name in self.diffusion_heads:
             return self.diffusion_heads[name].sample(pooled)
-        return self.decoders[name](pooled)
+        out = self.decoders[name](pooled)
+        return self._calibrated(name, out) if calibrated else out
 
     def decode_field(self, latents: torch.Tensor, query_pos: torch.Tensor,
                      names: Optional[Sequence[str]] = None) -> Dict[str, torch.Tensor]:
@@ -831,6 +860,17 @@ class DeepEarth(nn.Module):
         t = target.float()
         obs = t.norm(dim=-1) > 1e-6
         ref = t[obs] if obs.any() else t
+        # Directional modalities (data.py `normalize=True`: clay, the vision embeddings) are L2-normalized, so they
+        # live on a sphere. A diagonal Gaussian is the wrong likelihood for them -- per-dimension variance is ~1/D,
+        # which amplifies any magnitude error by ~D and reports thousands of bits for a well-aimed prediction.
+        # Score them as retrieval instead: -log softmax over cosine against the batch's targets. That is a genuine
+        # log-likelihood in nats, scale-free, and directly comparable to categorical cross-entropy -- chance is
+        # log(batch) here and log(num_classes) there.
+        if ref.numel() and bool(((ref.norm(dim=-1) - 1.0).abs() < 1e-3).all()):
+            pn = F.normalize(pred.float(), dim=-1)
+            logits = pn @ F.normalize(t, dim=-1).t()
+            return F.cross_entropy(logits, torch.arange(logits.shape[0], device=logits.device),
+                                   reduction="none"), 1
         var = ref.var(0, unbiased=False).clamp_min(1e-6)                       # per-dimension target variance
         nll = 0.5 * (((pred.float() - t) ** 2) / var + torch.log(2.0 * math.pi * var)).sum(-1)
         return nll, int(t.shape[-1])
@@ -934,8 +974,19 @@ class DeepEarth(nn.Module):
             if v.name in self.diffusion_heads:
                 err = self.diffusion_heads[v.name].loss(values[v.name], self._pooled(z, v.name), reduce=False)
             else:
-                pred = self.decode(z, v.name)
+                pred = self.decode(z, v.name, calibrated=False)
                 err = self._reconstruction_error(v.name, pred, values[v.name])
+                # Fit the head's calibration affine by the same standardized Gaussian the objective scores, on a
+                # DETACHED prediction: the gradient reaches cal_gain/cal_bias and nothing else, so the representation
+                # trains exactly as it does with the flag off. Isolates "the head has no scale" from "the
+                # representation is wrong" -- the two ways a continuous variable can be expensive in bits.
+                if v.name in self.cal_gain:
+                    tgt = values[v.name].float()
+                    seen = tgt.norm(dim=-1) > 1e-6
+                    var = (tgt[seen] if seen.any() else tgt).var(0, unbiased=False).clamp_min(1e-6).detach()
+                    cal = self._calibrated(v.name, pred.detach().float())
+                    z2 = (((cal - tgt) ** 2) / var).mean(-1)      # per-dimension; 1.0 = predicting the target mean
+                    loss = loss + (z2 * w).sum() / w.sum().clamp_min(1.0)
                 # Cross-modal contrastive (JEPA / rule 16): the predicted continuous embedding must retrieve its own
                 # target against the batch (InfoNCE) -- a global signal point-wise cosine cannot give.
                 if self.contrastive_weight > 0.0 and v.name in self.contrastive_vars and v.kind == "continuous":

@@ -117,6 +117,7 @@ def train_and_evaluate(config, device):
                       n_pollinators=getattr(source, "n_pollinators", 0) if m.get("poll_weight", 0.0) > 0 else 0, **poll_kw,
                       phylo_head_routing=m.get("phylo_head_routing", False),
                       species_trait_recon=m.get("species_trait_recon", False),
+                      continuous_calibration=m.get("continuous_calibration", False),
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
     model._sdist_weight = m.get("sdist_weight", 0.0)        # distribution-matching aux loss (U->species toward local community)
     model._comm_attached = m.get("comm_attached", False)    # [Ensue] if True, community loss flows into the backbone (not just comm_head)
@@ -191,7 +192,11 @@ def train_and_evaluate(config, device):
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
-                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head"))]
+                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head", "cal_gain", "cal_bias"))]
+    # The continuous-head calibration fits a standardized squared error whose gradient starts ~10^3x the cosine
+    # terms'. In the backbone's clip group that would inflate the global norm and shrink every backbone update --
+    # the same clip-coupling artifact the pollinator graph is separated for. Its own group keeps the flag inert.
+    cal_clip_params = [p for n, p in model.named_parameters() if "cal_gain" in n or "cal_bias" in n]
     # The pollinator graph trains from the (detached-plant) interaction loss; clip it in its OWN group so its gradient
     # magnitude does not inflate the global plant clip norm and shrink backbone updates (else enabling pollinators
     # spuriously regresses plant heads — a clip-coupling artifact, not real competition).
@@ -229,12 +234,16 @@ def train_and_evaluate(config, device):
         model.load_state_dict(sd)
         print(f"loaded checkpoint {eval_ckpt} for eval-only scoring", flush=True)
         steps = 0
-    def val_bpb(n_batches: int = 8):
+    def val_bpb(n_batches: int = int(t.get("val_batches", 48))):
         """Held-out reconstruction loss in bits per revealed dimension, plus its per-variable decomposition.
 
         Same objective the model trains on, evaluated on test rows with a FIXED reveal mask (generator seeded per
         batch) so the number is comparable across runs and model sizes. Additive over variables: the aggregate is
         the gate, the decomposition is the lens each piece of science steers by.
+
+        `val_batches` defaults to 48, i.e. ~24k sampled rows against a 29,668-row held-out split. Eight batches
+        (~4k rows) under-sampled the split badly enough that the metric's own noise could exceed the effects it is
+        meant to resolve. Raise it further if the measured seed spread is close to your expected effect size.
         """
         from deepearth.autoresearch.scoring import objective
         if not len(source.test):
@@ -312,6 +321,7 @@ def train_and_evaluate(config, device):
                 torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
                 if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
                 if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+                if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
                 opt.step(); clamp_res()   # AdamW on everything else
             else:
                 nonfinite_streak += 1; opt.zero_grad(set_to_none=True)
@@ -349,6 +359,7 @@ def train_and_evaluate(config, device):
         torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
         if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
         if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+        if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
         opt.step(); clamp_res(); sched.step()
         if step % 500 == 0:
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
