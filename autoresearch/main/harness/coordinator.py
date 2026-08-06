@@ -121,8 +121,10 @@ class Coordinator:
         if not self.connected:
             return None
         try:
+            self._last_error = None
             return _rpc(self.api_key, tool, args)
         except Exception as e:                      # additive: never take the loop down with us
+            self._last_error = e
             print(f"[ensue] {tool} failed: {e}", flush=True)
             return None
 
@@ -158,6 +160,42 @@ class Coordinator:
         """Semantic search over memories -- how you check whether an idea was already tried."""
         r = self._call("discover_memories", {"query": query, "prefix": prefix, "limit": limit}) or {}
         return r if isinstance(r, list) else (r.get("results") or r.get("keys") or [])
+
+    # ---------------------------------------------------------------- connectivity
+
+    def assert_connected(self, require: bool = True) -> dict:
+        """Fail loudly rather than degrading to silence. Call once at loop start.
+
+        Every way this client can break -- wrong key name, wrong tool name, wrong namespace -- returns
+        "no results", which is indistinguishable from "nothing to find". A loop reading an empty world
+        looks exactly like a loop with nothing to learn, so it has to be checked, not assumed.
+        """
+        if not self.api_key:
+            msg = ("no Ensue key: set ENSUE_API_KEY or ENSUE_API_TOKEN, or provide .autoresearch-key "
+                   "or /workspace/.env")
+            if require:
+                raise RuntimeError(msg)
+            print(f"[ensue] {msg} -- running solo", flush=True)
+            return {"connected": False, "total": 0}
+
+        total = self._call("count_keys", {})
+        if not isinstance(total, dict) or "count" not in total:
+            err = str(getattr(self, "_last_error", "") or "")
+            if "401" in err or "Unauthorized" in err:
+                raise RuntimeError(f"Ensue rejected the key (401). It is present but not valid for this "
+                                   f"org: {self.api_key[:6]}...")
+            if "tool not found" in err:
+                raise RuntimeError(f"Ensue has no `count_keys` tool: the API surface changed. Call "
+                                   f"tools/list and fix the client before trusting any read. ({err[:80]})")
+            raise RuntimeError(f"Ensue unreachable or count_keys returned {total!r}. Do not run a loop "
+                               f"against an unverified world. ({err[:120]})")
+        n = int(total["count"])
+        loop = (self._call("count_keys", {"prefix": "LOOP-"}) or {}).get("count", 0)
+        if n == 0:
+            raise RuntimeError("Ensue returned 0 keys for the whole org. Either the key has no access or "
+                               "the namespace is wrong -- do not run a loop against an empty world.")
+        print(f"[ensue] connected as {self.agent_id}: {n} memories, {loop} under LOOP-", flush=True)
+        return {"connected": True, "total": n, "loop": loop}
 
     # ---------------------------------------------------------------- THINK
 

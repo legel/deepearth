@@ -52,9 +52,13 @@ cannot resolve a 4.6x model-size difference (24.0M and 796M tie).
      capabilities the customer actually wants and where the science is heading; a technically valid
      result on a capability nobody asked for is a wasted iteration. Use them with the weakest variable
      to choose the **surface area** — which subsystem to change.
-   - **The swarm.** `Coordinator.state()` for the global best, live claims, insights and open
+   - **The swarm.** `coord.assert_connected()` first — it raises rather than degrading to silence,
+     because every way this client breaks returns "no results", which looks exactly like "nothing to
+     learn". Then `state()` for the board, live claims, insights and open
      hypotheses. Your baseline is the swarm's best, not your local one: if someone has beaten it, adopt
-     theirs with `pull_best()` and push from there. Never re-run a published dead end.
+     theirs and push from there. Run `already_tried(description)` before claiming: it searches every
+     campaign semantically, including the 568 `LOOP-` records from prior work, so you never pay for a
+     negative someone already published.
 
    The target is `science.md` realized **while staying well-rounded**: no capability may be traded away
    to lift another. The weakest variable says where to push; the decomposition says whether you pushed
