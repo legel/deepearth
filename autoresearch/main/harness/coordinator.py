@@ -51,6 +51,7 @@ BEST = "LOOP-deepearth-best"
 
 SCHEMA = "deepearth.scorecard/1"   # bump only on a breaking shape change; the front end pins on this
 _ROUND = 6                          # every float is rounded here, so the same run twice is byte-identical
+_UNSET = object()                   # "no CAS guard given", distinct from expected=None ("cold start")
 
 
 _KEY_NAMES = ("ENSUE_API_KEY", "ENSUE_API_TOKEN")   # the old harness used _TOKEN; accept both
@@ -317,14 +318,25 @@ class Coordinator:
             out[rec.get("key_name")] = v
         return out
 
-    def put(self, key: str, value: Any, description: str = "", embed: bool = True) -> None:
-        """Upsert. create_memory first; update_memory if the key already exists."""
+    def put(self, key: str, value: Any, description: str = "", embed: bool = True) -> bool:
+        """Upsert, returning whether the value actually landed.
+
+        `create_memory` on an existing key fails with a duplicate-key violation and leaves the old
+        value in place -- verified against the live API -- so the update fallback is required, not
+        defensive. Returns False rather than None when both legs fail, because a caller that reports
+        a published record which does not exist is worse than one that reports nothing.
+        """
         payload = value if isinstance(value, str) else json.dumps(value)
         r = self._call("create_memory", {"items": [{"key_name": key, "value": payload,
                                                     "description": description[:200], "embed": embed}]})
-        if r is None or (isinstance(r, dict) and r.get("failed")):
-            self._call("update_memory", {"key_name": key, "value": payload,
+        if r is not None and isinstance(r, dict) and not r.get("failed"):
+            return True
+        u = self._call("update_memory", {"key_name": key, "value": payload,
                                          "description": description[:200]})
+        if u is None:
+            print(f"[ensue] WRITE LOST for {key}: create and update both failed", flush=True)
+            return False
+        return True
 
     def keys(self, prefix: str, limit: int = 50) -> list:
         r = self._call("list_keys", {"prefix": prefix, "limit": limit}) or {}
@@ -456,30 +468,53 @@ class Coordinator:
             print(f"[ensue] scorecard schema is {doc.get('schema')}, this client speaks {SCHEMA}", flush=True)
         return doc if isinstance(doc, dict) else {}
 
-    def publish_best(self, card: dict, *, force: bool = False) -> bool:
-        """Publish a scorecard built by `scorecard()`. Refuses one that does not beat the current
-        `val_bpb`, so a concurrent agent cannot regress the record by publishing later.
+    def publish_best(self, card: dict, *, expected: Any = _UNSET, force: bool = False) -> bool:
+        """Promote a scorecard by compare-and-swap, mirroring Ensue's own `promote_best` contract.
 
-        `force` is for delivery stamps and schema migrations -- an edit to the standing record that is
-        not a new scientific claim.
+        `expected` is the incumbent `val_bpb` you OBSERVED when you decided to promote. The write
+        lands only if the live incumbent still equals it; `None` means "I observed no incumbent"
+        (cold start). Returns False when the incumbent moved -- a sibling won -- and the caller should
+        re-read `best()`, re-decide against the new champion, and retry. Passing nothing re-reads and
+        uses whatever is live, which is the single-agent case.
+
+        Ensue exposes `promote_best`, a genuinely atomic per-project CAS built for this. We cannot use
+        it: it is worker-only and requires an active claimed project (`pop_next_task`), and this org
+        has none -- the loop runs as an agent with an API token, not a warm-pool worker. Generic memory
+        keys have no conditional write, so this is OPTIMISTIC concurrency, not atomic. It closes the
+        common race (two agents promoting against a stale incumbent) but not the narrow one between
+        the check and the write. If the loop ever runs as a worker, swap the body for `promote_best`
+        and this signature already matches.
+
+        `force` skips the comparison entirely -- for delivery stamps and schema migrations, which edit
+        the standing record without making a new scientific claim.
         """
         if card.get("schema") != SCHEMA:
             raise ValueError(f"publish_best: build it with scorecard(); got schema {card.get('schema')!r}")
         new = card["headline"]["val_bpb"]
         cur = self.best()
-        prev = (cur.get("headline") or {}).get("val_bpb") if cur else None
-        if prev is not None and not force and new >= prev:
-            print(f"[ensue] scorecard unchanged: {new:.6f} does not beat {prev:.6f}", flush=True)
-            return False
-        if prev is not None and not force:
-            card = {**card, "previous": {"val_bpb": prev, "agent": cur.get("agent"),
-                                         "commit": (cur.get("evidence") or {}).get("commit"),
-                                         "at": cur.get("generated_at")}}
-        self.put(BEST, card,
-                 f"deepearth scorecard: val_bpb {new:.6f}, macro {card['headline']['macro']:.6f}, "
-                 f"harmonic {card['headline']['harmonic']:.4f} at {card['model']['params_m']}M params "
-                 f"({card['evidence']['seeds']} seeds) by {card.get('agent')}")
-        print(f"[ensue] scorecard published: val_bpb {new:.6f} (was {prev})", flush=True)
+        live = (cur.get("headline") or {}).get("val_bpb") if cur else None
+
+        if not force:
+            if expected is not _UNSET and live != expected:
+                print(f"[ensue] NOT promoted: incumbent moved to {live} (you decided against "
+                      f"{expected}). Re-read best(), re-decide, retry.", flush=True)
+                return False
+            if live is not None and new >= live:
+                print(f"[ensue] scorecard unchanged: {new:.6f} does not beat {live:.6f}", flush=True)
+                return False
+            if live is not None:
+                card = {**card, "previous": {"val_bpb": live, "agent": cur.get("agent"),
+                                             "commit": (cur.get("evidence") or {}).get("commit"),
+                                             "at": cur.get("generated_at")}}
+
+        ok = self.put(BEST, card,
+                      f"deepearth scorecard: val_bpb {new:.6f}, macro {card['headline']['macro']:.6f}, "
+                      f"harmonic {card['headline']['harmonic']:.4f} at {card['model']['params_m']}M params "
+                      f"({card['evidence']['seeds']} seeds) by {card.get('agent')}")
+        if not ok:
+            raise RuntimeError(f"publish_best: the write to {BEST} was lost -- the scorecard is NOT "
+                               f"published. Do not report this result as recorded.")
+        print(f"[ensue] scorecard promoted: val_bpb {new:.6f} (was {live})", flush=True)
         return True
 
     def stamp_delivery(self, *, pr: int, pr_url: str, base_commit: str, merged: bool = False) -> bool:
