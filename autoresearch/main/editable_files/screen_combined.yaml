@@ -1,0 +1,116 @@
+# DeepCalScreen + phylo contrastive + continuous_calibration — the combined candidate arm.
+# Config-only. Two flags, each already measured alone at this scale on seeds 1337/1338:
+#   phylo in contrastive_vars   -> phylo -4.68 bits/dim, macro +0.2557 (3.0x the 0.0842 macro floor)
+#   continuous_calibration      -> the six Gaussian-scored variables, macro +0.0890 (1.1x floor)
+# They move disjoint variable sets (retrieval-scored vs Gaussian-scored), so if the effects are
+# independent the combination lands near macro +0.3447, 4.1x the floor. That is the hypothesis.
+# Fixed STEPS, not fixed wall clock: equal-time made model sizes incomparable, since a smaller model
+# takes more steps in the same seconds. 1000 steps is the step count the old 120s budget actually
+# reached at this size (977), so this is a change of contract, not of regime.
+#
+# cache_dir is the shared prepared cache on the research box; the prepared tensor keys on it, so
+# changing it rebuilds the KD-tree assembly and makes runs non-comparable.
+condition_on:
+- vision_dino
+- vision_bio
+data:
+  adapter: california
+  cache_dir: /workspace/lance-main-shared-cache-c69ee8c
+  n_neighbors: 16
+  time_axis: true
+model:
+  capacity: 12
+  compile: false
+  contrastive_vars:
+  - vision_dino
+  - phylo
+  - naip_rgb
+  - naip_ir
+  - clay
+  contrastive_weight: 0.3
+  continuous_calibration: true
+  absolute_log2_hashmap_size: 14
+  d_model: 128
+  decoder_hidden: 512
+  densify_weight: 0.3
+  flower_weight: 0.1
+  lfmc_weight: 0.1
+  loss_weights:
+    phylo: 2.0
+    vision_dino: 2.0
+  manifolds:
+    biological: phylo
+  myco_weight: 0.1
+  n_latents: 16
+  n_layers: 2
+  phylo_mask_weight: 0.1
+  poll_weight: 0.1
+  pollinator_top_k: 64
+  relative_window:
+  - 8000
+  - 8000
+  - 300
+  - 130
+  relative_log2_hashmap_size: 16
+  rounds: 2
+  sdist_weight: 1.0
+  smooth_geo: true
+  smooth_geo_sigmas:
+  - 0.25
+  - 1.0
+  - 4.0
+  - 16.0
+  - 64.0
+  sparse_hash: true
+  species_graph:
+    bioclip_init: true
+    heads: 4
+    layers: 2
+    operator: latent-clade
+    top_k: 128
+    variable: identity
+  neighbor_op: bind
+  token_op: film
+  alphaearth_geo: true
+  diffusion: true
+  mod_encoder: prenorm
+name: DeepCalScreen
+training:
+  batch: 512
+  hide_prob: 0.5
+  lr: 0.0005
+  precision: bf16
+  seed: 1337
+  steps: 1000
+  weight_decay: 0.001
+variables:
+- kind: continuous
+  name: vision_dino
+  neighbor: true
+- kind: continuous
+  name: vision_bio
+- classes: identity
+  kind: categorical
+  name: identity
+  neighbor: true
+- kind: continuous
+  name: phylo
+- expand: trait_classes
+- kind: continuous
+  name: climate
+- kind: continuous
+  name: soil
+- kind: continuous
+  name: naip_rgb
+- kind: continuous
+  name: naip_ir
+- kind: continuous
+  name: clay
+- kind: continuous
+  name: topo
+- kind: continuous
+  name: chm
+- kind: continuous
+  name: hydro
+- kind: continuous
+  name: phenology
