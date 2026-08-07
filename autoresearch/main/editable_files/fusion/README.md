@@ -17,10 +17,10 @@ from deepearth.autoresearch.main.editable_files.fusion.fusion import DeepEarth
 
 `fusion.py` is the whole core. It composes two learnable encoders and fuses everything through latent attention:
 
-- **Space-time** — `deepearth.autoresearch.probes.spacetime.editable_files.earth4d.Earth4D`: a CUDA hash-grid over (lat, lon, elev, time) with
+- **Space-time** — `deepearth.autoresearch.main.editable_files.encoders.earth4d.Earth4D`: a CUDA hash-grid over (lat, lon, elev, time) with
   an *absolute* channel (coarse regional memory) and a *relative* channel (neighbor offsets, transferable across
   place and time).
-- **Phylogenomic** — `deepearth.autoresearch.probes.biological.editable_files.phylogenomic.SpeciesGraph`: a learnable per-species
+- **Phylogenomic** — `deepearth.autoresearch.main.editable_files.encoders.phylogenomic.SpeciesGraph`: a learnable per-species
   representation refined over the evolutionary tree, so an observation of one species informs its relatives.
 
 ## How it works

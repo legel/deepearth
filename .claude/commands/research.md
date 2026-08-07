@@ -120,50 +120,45 @@ mean cannot resolve a 4.6x size difference (24.0M and 796M tie).
    adding parameters shifts the RNG stream and re-initializes the whole model.
 7. **Record it**, in `val_bpb` and its decomposition, with both benchmark means alongside.
 
-## Do not grind
+## Standing rules
 
-- **Two matched seeds per arm is the standard.** Take a third only when the verdict turns on it — the
-  arms overlap, or a regression is the only thing blocking a keep.
-- **Never open an experiment whose purpose is to raise confidence in a result you already have.**
-  Uncertainty is recorded, not resolved: publish the number with its seed count and spread.
-- **Stop if you are measuring variance, re-tuning a weight you already tuned, or re-running a control
-  that exists.** Pick a different mechanism instead.
-- **Three consecutive experiments without a new mechanism means you are grinding.** Change subsystem.
-- A cycle spent re-confirming is a cycle not spent finding the next thing.
-
-## Broken records
-
-A run that fails for a reason that is **not your hypothesis** — a crash, a missing method, a config that
-cannot construct, a stale or non-reproducing baseline, an instrument that disagrees with itself — is a
-delivery problem, not a research problem.
-
-- **Do not fix it in the loop.** The repair lands untested because the loop is mid-flight.
-- **Publish an insight** naming the break with its evidence.
-- **Hand it to `ship-deepearth-improvement`**, which owns diagnosing and repairing what ships.
-- **Pick another legal hypothesis and keep going.** Loop throughput is the point.
-
-## Rules that survive from the old program
-
-- **No individual capability may regress** to raise an aggregate.
-- **Never tune a metric to make a candidate pass.** Improve the model.
-- **Commit the candidate before running.** The diff is the experiment.
+- **No individual capability may regress** to raise an aggregate. An aggregate win paid for elsewhere is
+  a trade, not a result.
 - **Every change is a config toggle defaulting to current behaviour**, so the default path stays
   byte-identical and a flag can be flipped off without a rebuild.
-- **Publish dead ends with their reason.** A negative result that is not written down gets re-run.
+- **Commit the candidate before running it.** The diff IS the experiment; a number measured against
+  uncommitted code is unrecoverable by anyone else, including you tomorrow.
+- **Publish dead ends with their reason.** A negative that is not written down gets re-run by someone.
+- **Fixed steps, never fixed wall clock.** Equal-time makes sizes incomparable — a smaller model takes
+  more steps in the same seconds.
+- **The gate is a measured floor, not a constant.** Two-seed spreads run 0.0033 / 0.0167 / 0.027
+  depending on scale; fixed thresholds admitted champion steps of +0.0013, which is inside the noise.
+- **Benchmarks diagnose; `val_bpb` gates.** Confirmation against the full model happens once, at the
+  merge decision — not per experiment.
+- **Stay at the screen scale for the whole loop.** An intermediate scale answers neither question: it
+  does not iterate fast and it is not what you ship.
 
-**Stay at the screen scale for the whole loop.** Confirmation happens once, at the merge decision,
-against the full model -- the state a result actually has to hold in. An intermediate scale answers
-neither question: it does not iterate fast and it is not what you ship.
+## Rule breaks
 
-## Rules that changed
+Six failure modes, how to recognize each, and the required response. This is the complete list of
+rituals — nothing elsewhere in this document adds another.
 
-- **Fixed steps, not fixed wall clock.** Equal-time made sizes incomparable: a smaller model takes more
-  steps in the same seconds. Step counts measured flat (~1,030) across 21.7M–172.6M at 120s.
-- **Confirmation is a merge gate against the full model, not a per-experiment step.**
-- **The gate is a measured floor, not a constant.** `MIN_REL_IMPROVEMENT` (1.5%) and
-  `MIN_ABS_IMPROVEMENT` (0.002) admitted champion steps of +0.0013 to +0.0034 against two-seed spreads
-  of 0.0033 / 0.0167 / 0.027 depending on scale.
-- **Benchmarks diagnose, they do not gate.**
+| break | you are doing it when | do this |
+|---|---|---|
+| **Grinding** | measuring variance, re-tuning a weight you already tuned, re-running a control that exists, or three experiments deep with no new mechanism | Stop and change subsystem. Publish what you have with its seed count and spread. |
+| **Broken record** | a run fails for a reason that is not your hypothesis — crash, missing method, unbuildable config, stale or non-reproducing baseline, an instrument disagreeing with itself | Do not fix it in the loop. Publish an insight with the evidence, hand it to `ship-deepearth-improvement`, pick another hypothesis. |
+| **Metric tampering** | changing a metric, split, floor or baseline so a candidate passes | Revert it. Improve the model instead. The instruments are read-only for a reason. |
+| **Trading** | an aggregate improves while an owned variable regresses past its floor | Not a result. Report it as a trade and keep looking. |
+| **Unreproducible run** | the tree was dirty, the cache differed, or the arms did not share seed and data | The number does not exist. Discard it — do not report it with a caveat. |
+| **Incomparable numbers** | comparing a mirror run to a public-main run | Void. The evaluators differ by ~158 lines; the same config scores ~0.279 on the mirror and 0.332464 on public main. |
+
+**Two matched seeds per arm is the standard.** Take a third only when the verdict actually turns on it —
+the arms overlap, or a regression is the only thing blocking a keep. Never open an experiment whose
+purpose is raising confidence in a result you already have: uncertainty is recorded, not resolved. A
+cycle spent re-confirming is a cycle not spent finding the next thing.
+
+**Discard by abandoning the branch, not by reverting in place.** If the screen misses the floor, drop the
+branch and pick a materially different hypothesis. Do not iterate a losing idea by patching it.
 
 ## Scales
 
@@ -172,29 +167,61 @@ neither question: it does not iterate fast and it is not what you ship.
 | screen | ~24M | the loop — every hypothesis, ~2 min warm |
 | full | ~796M | the merge gate and the product |
 
-Never compare a mirror run to a public-main run: the evaluators differ by ~158 lines, and the same
-config scores ~0.279 on the mirror against 0.332464 on public main.
-
 ## Where things live
 
 ```
 main/editable_files/     the science — fusion/, encoders/, train.py, lib/, configs
-main/harness/            the instruments — evaluate.py, hooks.py (ablations)
+main/harness/            the instruments — evaluate.py, hooks.py, coordinator.py, champion_report.py
 scoring/objective.py     val_bpb, the decomposition, the measured noise floor
-main/program/            this file, the scorecard, recorded results
+scorecard.md             how science is measured; science.md, what the model must be
 datatools/               one-time data ETL; not part of the loop
 ```
 
+## Ensue
+
+Shared memory across every agent in the swarm. `coord.assert_connected()` first — it raises rather than
+degrading to silence, because every way this client breaks returns "no results", which reads exactly
+like "nothing to learn". Needs `ENSUE_API_KEY` or `ENSUE_API_TOKEN` (env, `.autoresearch-key`, or
+`/workspace/.env`). Pick a short memorable codename as `agent_id`.
+
+| namespace | holds | written by |
+|---|---|---|
+| `LOOP-deepearth-best` | **the current scorecard** — the full state of what is best and how it was measured | `coord.publish_best()`, at promotion and at delivery |
+| `LOOP-deepearth-<variable>` | per-variable board: best `val_bpb` for that variable | `publish_result()`, when a run sets a record |
+| `LOOP-deepearth-runs/<variable>/…` | one record per experiment, win or loss | `publish_result()` |
+| `LOOP-deepearth-claims/…` | live claims, expiring | `claim()` |
+| `LOOP-deepearth-insights/…` | findings, corrections, blockers | `post_insight()` |
+| `LOOP-deepearth-hypotheses/…` | open leads for other agents | `publish_hypothesis()` |
+
+**`-best` is the single source of truth for "where the science stands"** and the record the front end
+renders. Its shape is defined by `coordinator.scorecard()`, not by this document — build it there and
+publish with `publish_best()`:
+
+```python
+card = scorecard(val_bpb=..., macro=..., decomposition=..., revealed_dims=...,
+                 benchmarks=..., harmonic=..., arithmetic=...,     # 100% of the suite, rule 32
+                 seeds=..., noise_floor=..., params=..., steps=..., config=..., agent=coord.agent_id)
+coord.publish_best(card)     # refuses a card that does not beat the standing val_bpb
+```
+
+Every field is required and validated: a card missing its benchmarks, its decomposition or its seed
+count **raises** rather than publishing a partial record the front end would render as fact. Single-seed
+numbers, NaN and non-finite metrics are rejected outright. Commit, branch and **hardware — GPU model,
+count, CUDA and torch versions — are detected, not declared**, because a hand-typed GPU name is the
+field most likely to be carried forward from the previous card and be quietly wrong. Floats are rounded
+and collections sorted, so the same run published twice is byte-identical.
+
+Read it in THINK: your baseline is the swarm's best, not your local one, and anything whose `delivery.pr`
+is set is already public and not a breakthrough left to find. `ship-deepearth-improvement` owns the
+delivery fields via `stamp_delivery()`.
+
+Run `already_tried(description)` before claiming. It searches every campaign semantically, including the
+568 `LOOP-` records from prior work, so you never pay for a negative someone already published.
 
 ## Workspace and git
 
 - **Work in an isolated worktree/branch per experiment.** `git worktree add -b exp/<slug> <path> HEAD`.
   The branch is the experiment: one hypothesis, one branch, one diff to read.
-- **Commit the candidate before running it.** A dirty tree makes a run unreproducible and it cannot set
-  a record — the diff IS the experiment, and a number measured against uncommitted code is unrecoverable
-  by anyone else, including you tomorrow.
-- **Discard by abandoning the branch, not by reverting in place.** If the screen misses the floor, drop
-  the branch and pick a materially different hypothesis. Do not iterate a losing idea by patching it.
 - **One worktree per config, reused.** The inductor cache keys on source, so a fresh worktree per run
   pays ~200s of recompilation; a reused one starts in ~1s.
 - **Never delete `/tmp/torchinductor_root`.** That cache is the difference between a 2-minute loop and a
@@ -202,11 +229,5 @@ datatools/               one-time data ETL; not part of the loop
 - **Keep the prepared cache shared.** Point `--cache_dir` at the shared prepared cache; a worktree that
   builds its own writes ~15.7 GB and will fill the disk. Symlink, never copy.
 - **Run over SSH in the foreground.** Backgrounding detaches the process and it dies with the channel.
-
-## Operational
-
-- Ensue needs `ENSUE_API_KEY` or `ENSUE_API_TOKEN` (env, `.autoresearch-key`, or `/workspace/.env`).
-  `coord.assert_connected()` raises rather than degrading to silence. Pick a short memorable codename as
-  `agent_id`.
-- Never compare a mirror run to a public-main run; the evaluators differ.
-- Delivery to the public repository is separate and explicitly authorized: `ship-deepearth-improvement`.
+- **Delivery to the public repository is separate and explicitly authorized:**
+  `ship-deepearth-improvement`.

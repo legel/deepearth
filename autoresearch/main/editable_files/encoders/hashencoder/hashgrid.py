@@ -37,7 +37,7 @@ from .backend import _backend
 # into one cell, while the quantum is finer than float32's own step at that magnitude.
 #
 # Default OFF: the champion path stays bit-identical until this is validated end-to-end
-# (probes/spacetime/determinism.py), per science.md rule 21 -- gate at graduation, not at conception.
+# per science.md rule 21 -- gate at graduation, not at conception.
 _FIXED_POINT_BITS = 36
 
 

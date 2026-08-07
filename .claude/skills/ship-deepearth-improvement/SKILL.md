@@ -28,6 +28,8 @@ Require all of the following:
 
 Stop without preparing a PR if any condition is missing. Do not turn promising, provisional, mechanical, or isolated records into customer claims.
 
+Read `coord.best()` first. It is the standing scorecard — the aggregate and macro `val_bpb`, the per-variable decomposition, both suite means, the seeds and measured floor behind the claim, and the delivery fields. If `delivery.pr` is already set for this result, it has shipped; there is nothing to select. Selecting against anything else risks preparing a PR for a result the swarm has already superseded.
+
 ## 2. Start from public main
 
 Fetch `legel/deepearth` immediately before beginning. Record the exact `origin/main` SHA and its registered private baseline.
@@ -114,7 +116,24 @@ scores ~0.279 on the mirror against 0.332464 on public main. Baselines must come
 
 Push only the delivery branch. Target `legel/deepearth:main`. Open the PR only when the user has authorized external publication or explicitly asked to create the PR.
 
-## 7. Hand off
+## 7. Stamp the delivery in Ensue
+
+The moment the PR exists, record it against the standing scorecard so the loop and the front end can
+tell what is public from what is still only ours:
+
+```python
+import sys; sys.path.insert(0, "autoresearch/main/harness")
+from coordinator import Coordinator
+Coordinator("ship").stamp_delivery(pr=36, pr_url="https://github.com/legel/deepearth/pull/36",
+                                   base_commit="4d6cb44")           # merged=True once it lands
+```
+
+If the shipped result is not yet the published best, build its scorecard with `coordinator.scorecard()`
+and `publish_best()` it before stamping. `scorecard()` validates and raises — a card missing its
+benchmarks, its seed count, or its decomposition is rejected rather than published as a partial record
+the front end would render as fact.
+
+## 8. Hand off
 
 Return:
 

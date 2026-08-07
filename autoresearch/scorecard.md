@@ -39,10 +39,14 @@ ablation. Both are terms in the fusion number, so a probe win *is* a fusion win 
    elsewhere is a trade, and rule 32 forbids trades.
 3. **Coverage** — at least one *weak* capability improves, where weak comes from the benchmark scores.
 
-Condition 3 exists because the aggregate is dimension-weighted and therefore badly unbalanced: six large
-embeddings carry **97.8%** of it, `clay` alone **30.1%**, and `identity` — species, the headline
-capability — **0.029%**. Without a coverage rule, improving one embedding satisfies the gate on its own
-and the model narrows while the number rises.
+Condition 3 exists because the aggregate is dimension-weighted and therefore badly unbalanced. Measured
+directly by replaying the masking loop: `climate` carries **95.3%** of it, then phenology 0.92%, topo
+0.91%, chm 0.84%, soil 0.64%, hydro 0.45%, and every remaining capability — `identity`, `clay`, `phylo`,
+the vision embeddings — about **0.076%** each. Directional variables are scored by retrieval against a
+frozen bank, so each contributes ONE revealed dimension regardless of native width; an earlier analysis
+using native widths reported "six embeddings 97.8%, clay 30.1%" and was wrong by ~400×. Without a
+coverage rule, improving one variable satisfies the gate on its own and the model narrows while the
+number rises.
 
 Weakness cannot be read off `val_bpb`. Bits/dim is a differential entropy whose scale reflects a
 variable's target variance, so it is not comparable across variables — the benchmark scores are, and

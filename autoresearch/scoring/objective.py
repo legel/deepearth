@@ -65,10 +65,12 @@ def noise_floor(values: Sequence[float]) -> float:
 def macro(per_variable: Mapping[str, tuple]) -> float:
     """Unweighted mean of per-variable bits/dim -- every scientific capability counts equally.
 
-    `aggregate` weights by revealed dimensions, so six large embeddings carry 97.8% of it (clay alone
-    30.1%) while `identity` -- species, the headline capability -- carries 0.029%. That measures
-    reconstruction efficiency, not scientific coverage. Report both: aggregate is the reconstruction
-    gate, macro is the balance number.
+    `aggregate` weights by revealed dimensions, and measurement shows that is degenerate: `climate`
+    carries 95.3% of it, every other capability about 0.07-0.9%, `identity` -- species, the headline
+    capability -- 0.076%. Directional variables are scored by retrieval against a frozen bank, so they
+    contribute ONE dimension each regardless of native width. That measures reconstruction efficiency,
+    not scientific coverage. Report both: aggregate is the reconstruction gate, macro is the balance
+    number.
     """
     d = decompose(per_variable)
     return sum(d.values()) / max(len(d), 1)
@@ -87,9 +89,9 @@ def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mappi
     2. **No owned regression** -- no variable this experiment claims may get worse by more than its own
        measured floor. An aggregate win paid for by a regression elsewhere is a trade, and rule 32
        forbids trades.
-    3. **Coverage** -- at least one variable in `weak` must improve. Without it, moving one large
-       embedding satisfies the aggregate alone: six embeddings carry 97.8% of it and clay carries 30.1%,
-       so the model can get narrower while the number goes up.
+    3. **Coverage** -- at least one variable in `weak` must improve. Without it, moving one variable
+       satisfies the aggregate alone: `climate` measures at 95.3% of it, so the model can get narrower
+       while the number goes up.
 
     `weak` must be supplied by the caller from the BENCHMARK scores, which are commensurable in [0,1].
     It cannot be derived from bits/dim: that is a differential entropy whose scale reflects a variable's

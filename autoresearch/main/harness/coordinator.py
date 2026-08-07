@@ -6,14 +6,19 @@ continues solo.
 
     THINK -> CLAIM -> RUN -> PUBLISH
 
-Keys live under the org, namespaced, as ``<agent>--<slug>--<hash>``:
+Keys are flat under the org:
 
-    results/<key>       a completed experiment: val_bpb, its decomposition, and the config that produced it
-    claims/<key>        who is working on what (expires, so a dead agent does not block the swarm)
-    hypotheses/<key>    a proposed next experiment with its reasoning
-    insights/<key>      a learning worth not rediscovering -- especially a dead end
-    best/config         the global best config
-    best/metadata       its val_bpb, decomposition, and what it replaced
+    LOOP-deepearth-best            THE SCORECARD -- where the science stands, in one validated document
+    LOOP-deepearth-<variable>      per-variable board: the best val_bpb for that variable
+    LOOP-deepearth-runs/...        one record per experiment, win or loss
+    LOOP-deepearth-claims/...      who is working on what (expires, so a dead agent does not block anyone)
+    LOOP-deepearth-insights/...    a learning worth not rediscovering -- especially a dead end
+    LOOP-deepearth-hypotheses/...  a proposed next experiment with its reasoning
+
+`-best` is the one key read by things that are not this loop -- the front end, and the delivery skill.
+Its shape is enforced by `scorecard()` below rather than described in prose, so a consumer can rely on
+it: same inputs produce a byte-identical document, and a malformed one raises here instead of being
+published as a silently wrong number.
 
 A dead end published as an insight is worth as much as a win: it stops every other agent paying for
 the same negative.
@@ -42,6 +47,10 @@ RUN = "LOOP-deepearth-runs/{variable}/{slug}-{stamp}-{hash}"
 CLAIM = "LOOP-deepearth-claims/{slug}-{hash}"
 INSIGHT = "LOOP-deepearth-insights/{slug}-{hash}"
 HYPOTHESIS = "LOOP-deepearth-hypotheses/{slug}-{hash}"
+BEST = "LOOP-deepearth-best"
+
+SCHEMA = "deepearth.scorecard/1"   # bump only on a breaking shape change; the front end pins on this
+_ROUND = 6                          # every float is rounded here, so the same run twice is byte-identical
 
 
 _KEY_NAMES = ("ENSUE_API_KEY", "ENSUE_API_TOKEN")   # the old harness used _TOKEN; accept both
@@ -84,6 +93,171 @@ def _rpc(api_key: str, tool: str, arguments: dict) -> dict:
     if content and isinstance(content[0], dict) and "text" in content[0]:
         return json.loads(content[0]["text"])
     return data.get("result", {})
+
+
+def _hardware() -> dict:
+    """What the number was measured on. Wall-clock claims and step budgets do not transfer across
+    GPU classes, so a scorecard without this cannot be compared to one from another box."""
+    info: dict = {"gpus": None, "gpu": None, "torch": None, "cuda": None, "host": os.uname().nodename}
+    try:
+        import torch
+        info["torch"] = torch.__version__
+        if torch.cuda.is_available():
+            info["gpus"] = torch.cuda.device_count()
+            info["gpu"] = torch.cuda.get_device_name(0)
+            info["cuda"] = torch.version.cuda
+    except Exception:
+        # No torch on the box that publishes (the delivery skill runs from a laptop). nvidia-smi is
+        # enough to name the hardware, and absence is recorded as null rather than guessed.
+        try:
+            out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                                 capture_output=True, text=True, timeout=10).stdout.strip().splitlines()
+            if out:
+                info["gpu"], info["gpus"] = out[0].strip(), len(out)
+        except Exception:
+            pass
+    return info
+
+
+def architecture_graph(model: Any, max_depth: int = 3) -> dict:
+    """The model as a graph the front end can draw: nodes are modules, edges are containment.
+
+    Walked from the live `nn.Module` rather than declared in a config, so it cannot drift from what
+    actually trained -- a declared architecture is another field that gets copied forward and is
+    quietly wrong. Depth-limited because the full tree of a 796M model is thousands of nodes and
+    nobody reads past the third level.
+
+    Containment only. True dataflow edges would need `torch.fx`, which cannot trace this model: the
+    hash-grid encoders are custom CUDA kernels and the forward signature takes dicts of variables.
+    Pass `dataflow` to `scorecard(model=...)` if you want those edges, and say where they came from.
+    """
+    def _params(m: Any) -> int:
+        return sum(p.numel() for p in m.parameters())
+
+    nodes: list = []
+    edges: list = []
+
+    def walk(module: Any, path: str, depth: int) -> None:
+        total = _params(module)
+        nodes.append({"id": path or "model", "type": type(module).__name__,
+                      "params": total, "params_pct": None, "depth": depth})
+        if depth >= max_depth:
+            return
+        for name, child in module.named_children():
+            child_path = f"{path}.{name}" if path else name
+            edges.append({"from": path or "model", "to": child_path})
+            walk(child, child_path, depth + 1)
+
+    walk(model, "", 0)
+    root = nodes[0]["params"] or 1
+    for n in nodes:
+        n["params_pct"] = round(100.0 * n["params"] / root, 2)   # where the capacity actually sits
+    nodes.sort(key=lambda n: (n["depth"], n["id"]))
+    edges.sort(key=lambda e: (e["from"], e["to"]))
+    return {"nodes": nodes, "edges": edges, "edge_kind": "containment", "max_depth": max_depth}
+
+
+def _num(value: Any, field: str, *, positive: bool = False) -> float:
+    """A metric that is None, NaN, inf or a string is a crash upstream, not a score. Refuse it here."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"scorecard.{field}: expected a number, got {value!r}")
+    if f != f or f in (float("inf"), float("-inf")):
+        raise ValueError(f"scorecard.{field}: not finite ({value!r})")
+    if positive and f <= 0:
+        raise ValueError(f"scorecard.{field}: must be > 0, got {f}")
+    return round(f, _ROUND)
+
+
+def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dims: dict,
+              benchmarks: dict, harmonic: float, arithmetic: float, seeds: int, noise_floor: float,
+              params: int, steps: int, config: str, agent: str = "unknown",
+              model: Optional[dict] = None, commit: Optional[str] = None, branch: Optional[str] = None,
+              hardware: Optional[dict] = None, wall_clock_s: Optional[float] = None,
+              delivery: Optional[dict] = None, previous: Optional[dict] = None) -> dict:
+    """Build THE scorecard: the whole state of the science in one document the front end can render.
+
+    Every field is required because a scorecard missing one is not a weaker scorecard, it is an
+    unreadable one -- a consumer cannot tell "no benchmarks were run" from "benchmarks were forgotten".
+    Raises rather than defaulting, so a broken run fails at publish time instead of overwriting a valid
+    record with a plausible-looking wrong one.
+
+    Determinism: floats are rounded to `_ROUND`, variables sort by share then name, benchmarks by name.
+    The same run published twice yields the same document apart from `generated_at`.
+    """
+    if not decomposition:
+        raise ValueError("scorecard.decomposition: empty -- val_bpb without its per-variable lens is a bare number")
+    if not benchmarks:
+        raise ValueError("scorecard.benchmarks: empty -- rule 32 requires 100% of the suite scored")
+    missing = sorted(set(decomposition) - set(revealed_dims))
+    if missing:
+        raise ValueError(f"scorecard.revealed_dims: missing {missing} -- shares cannot be computed")
+
+    total_dims = sum(int(revealed_dims[v]) for v in decomposition)
+    if total_dims <= 0:
+        raise ValueError("scorecard.revealed_dims: total is zero")
+
+    # Share of the AGGREGATE, which is dimension-weighted -- this is the field that tells a reader why
+    # one variable can move the gate on its own, and the reason `judge()` also requires coverage.
+    variables = [
+        {"name": name,
+         "bits_per_dim": _num(bits, f"decomposition.{name}"),
+         "revealed_dims": int(revealed_dims[name]),
+         "share_pct": round(100.0 * int(revealed_dims[name]) / total_dims, 3)}
+        for name, bits in decomposition.items()
+    ]
+    variables.sort(key=lambda v: (-v["share_pct"], v["name"]))
+
+    doc = {
+        "schema": SCHEMA,
+        "generated_at": _now(),
+        "agent": agent,
+        "headline": {
+            "val_bpb": _num(val_bpb, "val_bpb", positive=True),   # the gate
+            "macro": _num(macro, "macro", positive=True),          # coverage: every capability equal
+            "harmonic": _num(harmonic, "harmonic"),                # the public-facing suite means
+            "arithmetic": _num(arithmetic, "arithmetic"),
+        },
+        # What was trained. The count alone cannot be reproduced from -- two very different models hit
+        # 24M -- so the architecture knobs travel with it.
+        "model": {
+            "params": int(params),
+            "params_m": round(int(params) / 1e6, 1),
+            "steps": int(steps),
+            "config": config,
+            # Either the hyperparameters, or a graph from `architecture_graph(net)` -- which is derived
+            # from the live module tree, so it cannot disagree with what trained.
+            "architecture": dict(model) if model else {},
+        },
+        "variables": variables,
+        "benchmarks": sorted(
+            ({"name": k, "score": _num(v, f"benchmarks.{k}")} for k, v in benchmarks.items()),
+            key=lambda b: b["name"],
+        ),
+        "evidence": {
+            "seeds": int(seeds),
+            "noise_floor": _num(noise_floor, "noise_floor"),
+            "commit": commit if commit is not None else _git("rev-parse", "--short", "HEAD"),
+            "branch": branch if branch is not None else _git("branch", "--show-current"),
+            # Mirror and public evaluators differ by ~158 lines; the same config scores ~0.279 against
+            # 0.332464. Stamping the source makes the two impossible to compare by accident downstream.
+            "measured_on": "research-mirror",
+            "total_revealed_dims": total_dims,
+            # Detected, not declared -- a hand-typed GPU name is the field most likely to be copied
+            # forward from the previous card and quietly wrong.
+            "hardware": hardware if hardware is not None else _hardware(),
+            "wall_clock_s": None if wall_clock_s is None else _num(wall_clock_s, "wall_clock_s"),
+        },
+        # Filled by ship-deepearth-improvement when the result reaches the product. Present and null
+        # means "not shipped", which is a different statement from absent.
+        "delivery": delivery or {"pr": None, "pr_url": None, "base_commit": None, "merged": False,
+                                 "delivered_at": None},
+        "previous": previous,
+    }
+    if int(seeds) < 2:
+        raise ValueError(f"scorecard.seeds: {seeds} -- a single-seed number is not a result")
+    return doc
 
 
 def _slug(text: str, n: int = 40) -> str:
@@ -263,6 +437,52 @@ class Coordinator:
                  {"agent": self.agent_id, "title": title, "reasoning": reasoning,
                   "suggested": suggested or {}, "evidence": evidence or [], "at": _now()},
                  f"hypothesis from {self.agent_id}: {title[:120]}")
+
+    # ---------------------------------------------------------------- best / the scorecard
+
+    def best(self) -> dict:
+        """The current scorecard, or {} if none is published. Read this in THINK: your baseline is the
+        swarm's best, and anything already delivered is not a breakthrough left to find."""
+        doc = self.get(BEST).get(BEST) or {}
+        if doc and doc.get("schema") != SCHEMA:
+            print(f"[ensue] scorecard schema is {doc.get('schema')}, this client speaks {SCHEMA}", flush=True)
+        return doc if isinstance(doc, dict) else {}
+
+    def publish_best(self, card: dict, *, force: bool = False) -> bool:
+        """Publish a scorecard built by `scorecard()`. Refuses one that does not beat the current
+        `val_bpb`, so a concurrent agent cannot regress the record by publishing later.
+
+        `force` is for delivery stamps and schema migrations -- an edit to the standing record that is
+        not a new scientific claim.
+        """
+        if card.get("schema") != SCHEMA:
+            raise ValueError(f"publish_best: build it with scorecard(); got schema {card.get('schema')!r}")
+        new = card["headline"]["val_bpb"]
+        cur = self.best()
+        prev = (cur.get("headline") or {}).get("val_bpb") if cur else None
+        if prev is not None and not force and new >= prev:
+            print(f"[ensue] scorecard unchanged: {new:.6f} does not beat {prev:.6f}", flush=True)
+            return False
+        if prev is not None and not force:
+            card = {**card, "previous": {"val_bpb": prev, "agent": cur.get("agent"),
+                                         "commit": (cur.get("evidence") or {}).get("commit"),
+                                         "at": cur.get("generated_at")}}
+        self.put(BEST, card,
+                 f"deepearth scorecard: val_bpb {new:.6f}, macro {card['headline']['macro']:.6f}, "
+                 f"harmonic {card['headline']['harmonic']:.4f} at {card['model']['params_m']}M params "
+                 f"({card['evidence']['seeds']} seeds) by {card.get('agent')}")
+        print(f"[ensue] scorecard published: val_bpb {new:.6f} (was {prev})", flush=True)
+        return True
+
+    def stamp_delivery(self, *, pr: int, pr_url: str, base_commit: str, merged: bool = False) -> bool:
+        """Record that the current best reached the product. Called by ship-deepearth-improvement, so
+        the loop can tell what is already public from what is still only ours."""
+        cur = self.best()
+        if not cur:
+            raise RuntimeError("stamp_delivery: no scorecard published yet")
+        cur["delivery"] = {"pr": int(pr), "pr_url": pr_url, "base_commit": base_commit,
+                           "merged": bool(merged), "delivered_at": _now()}
+        return self.publish_best(cur, force=True)
 
     # ---------------------------------------------------------------- board
 
