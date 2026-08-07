@@ -93,6 +93,7 @@ def train_and_evaluate(config, device):
         poll_kw = dict(pollinator_text=source.pollinator_text, pollinator_top_k=m.get("pollinator_top_k", 64),
                        pollinator_distance=pdist)
     model = DeepEarth(variables, d_model=m.get("d_model", 256), n_latents=m.get("n_latents", 24),
+                      continuous_calibration=m.get("continuous_calibration", False),
                       n_layers=m.get("n_layers", 4), capacity=m.get("capacity", 16),
                       relative_window=tuple(m.get("relative_window", (8000., 8000., 300., 130.))), **rel_extra,
                       manifolds=manifolds, compile_processor=m.get("compile") == "processor",
@@ -177,7 +178,10 @@ def train_and_evaluate(config, device):
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
-                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head"))]
+                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head", "cal_gain", "cal_bias"))]
+    # The calibration affine fits a standardized squared error whose gradient starts ~1e3x the cosine terms'. In the
+    # backbone's clip group it would inflate the global norm and shrink every backbone update, so it gets its own.
+    cal_clip_params = [p for n, p in model.named_parameters() if "cal_gain" in n or "cal_bias" in n]
     # The pollinator graph trains from the (detached-plant) interaction loss; clip it in its OWN group so its gradient
     # magnitude does not inflate the global plant clip norm and shrink backbone updates (else enabling pollinators
     # spuriously regresses plant heads — a clip-coupling artifact, not real competition).
@@ -259,6 +263,7 @@ def train_and_evaluate(config, device):
                 torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
                 if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
                 if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+                if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
                 opt.step(); clamp_res()   # AdamW on everything else
             model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
             if step % 500 == 0:
@@ -284,6 +289,7 @@ def train_and_evaluate(config, device):
         torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
         if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
         if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+        if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
         opt.step(); clamp_res(); sched.step()
         if step % 500 == 0:
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)

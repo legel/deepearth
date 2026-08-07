@@ -205,6 +205,7 @@ class DeepEarth(nn.Module):
         manifolds: Optional[Dict[str, int]] = None,
         capacity: int = 16,
         reference_latitude_deg: float = 0.0,
+        continuous_calibration: bool = False,
         species_variable: Optional[str] = None,
         species_embedding: Optional[torch.Tensor] = None,
         species_layers: int = 2,
@@ -291,6 +292,19 @@ class DeepEarth(nn.Module):
                     self.decoders[v.name] = _dec(v.num_classes)
             else:
                 raise ValueError(f"unknown variable kind {v.kind!r} for {v.name!r}")
+        # Per-dimension affine on each continuous head's output. The mean-centered cosine training loss is
+        # scale-free, so a head is never rewarded for getting magnitude right; this gives it the two parameters
+        # needed to fix that without touching the representation. ones/zeros draw no RNG, so with the flag on the
+        # rest of the model still initializes bit-identically to the default path.
+        self.continuous_calibration = continuous_calibration
+        self.cal_gain = nn.ParameterDict()
+        self.cal_bias = nn.ParameterDict()
+        if continuous_calibration:
+            for v in self.variables:
+                if v.kind == "continuous" and v.reconstruct and v.name in self.decoders:
+                    self.cal_gain[v.name] = nn.Parameter(torch.ones(v.dim))
+                    self.cal_bias[v.name] = nn.Parameter(torch.zeros(v.dim))
+
         self.type_emb = nn.Parameter(torch.randn(len(self.variables), d_model) * 0.02)
         # A dedicated always-present space-time token, so a query revealing no variable keeps its position (variable tokens are zeroed by the present-mask).
         self.position_token = nn.Parameter(torch.randn(d_model) * 0.02)
@@ -749,7 +763,14 @@ class DeepEarth(nn.Module):
         sp = self._reencode(self.species_variable, pooled)      # expected phylo-refined species embedding
         return torch.cat([pooled.detach(), sp.detach()], -1) if detach else torch.cat([pooled, sp], -1)
 
-    def decode(self, latents: torch.Tensor, name: str) -> torch.Tensor:
+    def _calibrated(self, name: str, pred: torch.Tensor) -> torch.Tensor:
+        """Apply the continuous head's fitted per-dimension affine. Inert when the flag is off: the
+        ParameterDict is empty, so the membership test is the whole cost."""
+        if name in self.cal_gain:
+            return pred * self.cal_gain[name] + self.cal_bias[name]
+        return pred
+
+    def decode(self, latents: torch.Tensor, name: str, calibrated: bool = True) -> torch.Tensor:
         """Read one variable back from the latents. The species variable reads against the refined species states; a diffusion variable is sampled from its head."""
         if self.joint_decode:
             Pall = self._pooled_all(latents)                 # [B,V,d]
@@ -762,7 +783,8 @@ class DeepEarth(nn.Module):
         pooled = self._pooled(latents, name)
         if name in self.diffusion_heads:
             return self.diffusion_heads[name].sample(pooled)
-        return self.decoders[name](pooled)
+        out = self.decoders[name](pooled)
+        return self._calibrated(name, out) if calibrated else out
 
     def decode_field(self, latents: torch.Tensor, query_pos: torch.Tensor,
                      names: Optional[Sequence[str]] = None) -> Dict[str, torch.Tensor]:
@@ -894,8 +916,23 @@ class DeepEarth(nn.Module):
             if v.name in self.diffusion_heads:
                 err = self.diffusion_heads[v.name].loss(values[v.name], self._pooled(z, v.name), reduce=False)
             else:
-                pred = self.decode(z, v.name)
+                pred = self.decode(z, v.name, calibrated=False)
                 err = self._reconstruction_error(v.name, pred, values[v.name])
+                if v.name in self.cal_gain:
+                    # The cosine loss above is scale-free, so the head is never rewarded for getting magnitude
+                    # right. Fit the affine on a DETACHED prediction against a standardized target: the gradient
+                    # reaches cal_gain/cal_bias and nothing else, so the representation trains exactly as it does
+                    # with the flag off. Separates "the head has no scale" from "the representation is wrong".
+                    tgt = values[v.name].float()
+                    seen = tgt.norm(dim=-1) > 1e-6
+                    ref = tgt[seen] if seen.any() else tgt
+                    # L2-normalized targets have magnitude fixed at 1, so there is nothing to calibrate: their
+                    # affine never receives a gradient, stays at ones/zeros, and leaves that head bit-identical.
+                    if ref.numel() and not bool(((ref.norm(dim=-1) - 1.0).abs() < 1e-3).all()):
+                        var = ref.var(0, unbiased=False).clamp_min(1e-6).detach()
+                        cal = self._calibrated(v.name, pred.detach().float())
+                        z2 = (((cal - tgt) ** 2) / var).mean(-1)   # 1.0 = predicting the target mean
+                        loss = loss + (z2 * w).sum() / w.sum().clamp_min(1.0)
                 # Cross-modal contrastive (JEPA / rule 16): the predicted continuous embedding must retrieve its own
                 # target against the batch (InfoNCE) -- a global signal point-wise cosine cannot give.
                 if self.contrastive_weight > 0.0 and v.name in self.contrastive_vars and v.kind == "continuous":
