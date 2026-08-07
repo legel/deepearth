@@ -51,13 +51,17 @@ def train_and_evaluate(config, device):
     d = config["data"]
     # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reused across runs; keyed by the data settings that change the assembled set.
     import hashlib, json
-    keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km")}
+    # clay_v2 belongs in the key: the prepared blob stores `extra` (clay included) and its fast path skips
+    # _load_modalities, so without it here a clay-source change would be silently ignored.
+    keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis",
+                                      "time_km", "clay_v2")}
     tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
     prepared = str(Path(__file__).resolve().parents[1] / "data" / "deepcal" / f"prepared_{tag}.pt")
     source = data_module.build(d["adapter"], cache_dir=d["cache_dir"], n_neighbors=d.get("n_neighbors", 24),
                                device=device, holdout=d.get("holdout", "spatial"), subset=d.get("subset"),
                                time_axis=d.get("time_axis", False), meta_path=d.get("meta_path"),
-                               time_km=d.get("time_km", 50.0), prepared=prepared)
+                               time_km=d.get("time_km", 50.0), prepared=prepared,
+                               clay_v2=d.get("clay_v2", False))
     dims = source.variable_dims()
     variables = build_variables(config["variables"], dims)
     m = config["model"]
