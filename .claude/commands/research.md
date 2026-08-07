@@ -4,17 +4,35 @@ description: Run the autonomous DeepEarth research loop.
 
 # DeepEarth autoresearch
 
-This command IS the program — the binding contract, not a pointer to one.
-`autoresearch/scorecard.md` defines how science is measured; `autoresearch/science.md` defines what the
-model must be; `autoresearch/BENCHMARKS.md` documents the suite.
+## The goal
 
-## Fixed boundary
+DeepEarth is a self-supervised multi-modal architecture for **ecological simulation and optimization**,
+and specifically a **causal forecaster** — a predictor of plant growth and flowering. It rests on two
+innovations: the **Earth4D space-time encoder** and the **phylogenomic species GNN**. It learns by
+masked autoencoding, including of embeddings, so any variable can be queried at any point in space-time
+and return a posterior that sharpens as evidence is added.
 
-- Edit only `autoresearch/main/editable_files/**`.
-- Read-only: `main/harness/**`, `scoring/objective.py`, `tests/**`, prepared data.
-- Never tune a metric, split or baseline to make a candidate pass. Improve the model.
-- If fixed infrastructure looks wrong, report it as a blocker and pick another legal hypothesis. Do not
-  repair the instruments inside the loop.
+Your job is to find breakthroughs that make that true, in this phase, before scaling. `val_bpb` is the
+instrument, not the goal: a number that improves while the model gets no better at ecological
+simulation is a tuning result — report it, do not build on it. `autoresearch/science.md` says what the
+model must be. What to try next is yours to find; nothing here tells you where to look.
+
+## What you CAN do
+
+Everything in `autoresearch/main/editable_files/**`: architecture, the two encoders, fusion, optimizer,
+schedule, losses, masking, hyperparameters, model size, the configs, and which data channels are fed.
+Add a modality, delete a mechanism, change the shape of the objective. Simpler is better when results
+are equal.
+
+## What you CANNOT do
+
+- Edit `main/harness/**`, `scoring/objective.py`, `tests/**`, or the prepared data. Those are ground
+  truth; changing them changes what a number means.
+- Tune a metric, split, floor or baseline to make a candidate pass. Improve the model instead.
+- Repair fixed infrastructure inside the loop. Publish the blocker as an insight and pick another legal
+  hypothesis.
+- Spend the loop on confirmation — see **Do not grind**.
+- Hand-fix a broken record yourself — see **Broken records**.
 
 ## Scope
 
@@ -101,6 +119,28 @@ mean cannot resolve a 4.6x size difference (24.0M and 796M tie).
    of the subsystem account for it? If the gain landed elsewhere, it is an initialization re-roll —
    adding parameters shifts the RNG stream and re-initializes the whole model.
 7. **Record it**, in `val_bpb` and its decomposition, with both benchmark means alongside.
+
+## Do not grind
+
+- **Two matched seeds per arm is the standard.** Take a third only when the verdict turns on it — the
+  arms overlap, or a regression is the only thing blocking a keep.
+- **Never open an experiment whose purpose is to raise confidence in a result you already have.**
+  Uncertainty is recorded, not resolved: publish the number with its seed count and spread.
+- **Stop if you are measuring variance, re-tuning a weight you already tuned, or re-running a control
+  that exists.** Pick a different mechanism instead.
+- **Three consecutive experiments without a new mechanism means you are grinding.** Change subsystem.
+- A cycle spent re-confirming is a cycle not spent finding the next thing.
+
+## Broken records
+
+A run that fails for a reason that is **not your hypothesis** — a crash, a missing method, a config that
+cannot construct, a stale or non-reproducing baseline, an instrument that disagrees with itself — is a
+delivery problem, not a research problem.
+
+- **Do not fix it in the loop.** The repair lands untested because the loop is mid-flight.
+- **Publish an insight** naming the break with its evidence.
+- **Hand it to `ship-deepearth-improvement`**, which owns diagnosing and repairing what ships.
+- **Pick another legal hypothesis and keep going.** Loop throughput is the point.
 
 ## Rules that survive from the old program
 
