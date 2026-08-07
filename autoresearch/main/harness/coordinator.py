@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -173,6 +174,7 @@ def _num(value: Any, field: str, *, positive: bool = False) -> float:
 
 def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dims: dict,
               benchmarks: dict, harmonic: float, arithmetic: float, seeds: int, noise_floor: float,
+              retrieval_floors: Optional[dict] = None,
               params: int, steps: int, config: str, agent: str = "unknown",
               model: Optional[dict] = None, commit: Optional[str] = None, branch: Optional[str] = None,
               hardware: Optional[dict] = None, wall_clock_s: Optional[float] = None,
@@ -201,13 +203,23 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
 
     # Share of the AGGREGATE, which is dimension-weighted -- this is the field that tells a reader why
     # one variable can move the gate on its own, and the reason `judge()` also requires coverage.
-    variables = [
-        {"name": name,
-         "bits_per_dim": _num(bits, f"decomposition.{name}"),
-         "revealed_dims": int(revealed_dims[name]),
-         "share_pct": round(100.0 * int(revealed_dims[name]) / total_dims, 3)}
-        for name, bits in decomposition.items()
-    ]
+    # `floor` is what a PERFECT predictor scores, in bits. Retrieval banks are drawn with replacement
+    # and several variables are per-species, so identical rows split the softmax mass and the floor is
+    # not zero -- phylo's is 2.11 nats (3.05 bits) of an 8.32-nat range. `headroom` is what is actually
+    # left to win; reading `bits_per_dim` as headroom overstates phylo's by about a third.
+    _floors = {k: _num(v, f"retrieval_floors.{k}") for k, v in (retrieval_floors or {}).items()}
+    variables = []
+    for name, bits in decomposition.items():
+        b = _num(bits, f"decomposition.{name}")
+        floor_bits = round(_floors[name] / math.log(2), _ROUND) if name in _floors else None
+        variables.append({
+            "name": name,
+            "bits_per_dim": b,
+            "revealed_dims": int(revealed_dims[name]),
+            "share_pct": round(100.0 * int(revealed_dims[name]) / total_dims, 3),
+            "floor": floor_bits,
+            "headroom": None if floor_bits is None else round(b - floor_bits, _ROUND),
+        })
     variables.sort(key=lambda v: (-v["share_pct"], v["name"]))
 
     doc = {

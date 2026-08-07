@@ -196,6 +196,22 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     A benchmark table that lags the model is worse than none: collaborators quote it as if it were
     current. This is the outward-facing counterpart to rule 30's champion report — 30 records the
     before→after for a commit, 33 keeps the standing picture true.
+34. **A retrieval-scored variable's headroom is its bits MINUS its measured floor, never its bits.**
+    The `val_bpb` retrieval bank is 4096 rows drawn WITH REPLACEMENT from the test index, and several
+    directional variables are per-species rather than per-observation (`phylo` is `self.phylo[cls]`),
+    so identical rows recur. Identical rows split the softmax mass, so a predictor that reproduces the
+    target exactly still pays about `log(m)` nats for multiplicity `m`. Measured on the phylo bank:
+    925 unique species across 4096 rows, mean multiplicity 14.4, max 69, **floor 2.11 nats against a
+    chance of 8.32** — a quarter of the apparent range is unreachable. That is why `phylo` reads as the
+    worst variable in the decomposition at 9.64 bits when ~3.05 bits of it can never be removed.
+    `calibrate_nats()` now measures this exactly by scoring the bank against itself and exposes it as
+    `retrieval_floors()`; the scorecard carries `floor` and `headroom` per variable. The floor is fixed
+    by the reference seed, so it is CONSTANT across arms — every historical A/B difference on these
+    variables remains valid, and only absolute levels are affected. **Deduplicating the bank is
+    deferred, not rejected:** it would give every retrieval variable a true zero point but voids the
+    absolute `val_bpb` of every prior run, so it is batched with the rule-18 `clay_v2` change to pay
+    that cost once. Until then, steer by headroom and do not read a retrieval variable's bits as
+    reachable.
 
 ## References
 

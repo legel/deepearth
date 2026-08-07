@@ -929,6 +929,40 @@ class DeepEarth(nn.Module):
                 self._nats_ref[name] = ("directional", F.normalize(ref, dim=-1))    # fixed retrieval bank
             else:
                 self._nats_ref[name] = ("gaussian", ref.var(0, unbiased=False).clamp_min(1e-6))
+        self._nats_floor = self._retrieval_floors()
+
+    @torch.no_grad()
+    def _retrieval_floors(self) -> Dict[str, float]:
+        """The score a PERFECT predictor gets on each directional variable. Diagnostic only -- this
+        changes no loss and no reported val_bpb.
+
+        The bank is drawn with replacement from the test index, and several variables are per-species
+        rather than per-observation (`phylo` is `self.phylo[cls]`), so the same row appears many times.
+        Identical rows split the softmax mass, so predicting the target exactly still costs ~log(m)
+        nats for multiplicity m. Measured: the phylo bank holds 925 unique species across 4096 rows,
+        mean multiplicity 14.4, floor 2.11 nats against a chance of 8.32 -- a quarter of the apparent
+        range is unreachable, which is why phylo reads as the worst variable in the decomposition.
+
+        Computed by scoring the bank against itself: the perfect prediction for row i IS row i.
+        """
+        floors: Dict[str, float] = {}
+        for name, (kind, stat) in getattr(self, "_nats_ref", {}).items():
+            if kind != "directional":
+                continue
+            bank = stat
+            total, n = 0.0, bank.shape[0]
+            for i in range(0, n, 512):                       # chunked: the full n x n logit matrix is large
+                chunk = bank[i:i + 512]
+                sim = chunk @ bank.t()
+                gold = sim.argmax(-1)
+                total += float(F.cross_entropy(sim / RETRIEVAL_TEMPERATURE, gold, reduction="sum"))
+            floors[name] = total / max(n, 1)
+        return floors
+
+    def retrieval_floors(self) -> Dict[str, float]:
+        """Per-variable irreducible floor in nats, or {} before `calibrate_nats`. Report it beside the
+        decomposition: a variable's headroom is its bits MINUS this, not its bits."""
+        return dict(getattr(self, "_nats_floor", {}))
 
     def _reconstruction_nats(self, name: str, pred: torch.Tensor, target: torch.Tensor):
         """Held-out reconstruction in NATS, with the dimension count. Measurement only -- never the training loss.

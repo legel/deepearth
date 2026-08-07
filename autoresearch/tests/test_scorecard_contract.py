@@ -126,3 +126,16 @@ def test_the_scorecard_key_cannot_be_clobbered_by_a_board_write():
     with pytest.raises(ValueError, match="scorecard"):
         Coordinator.publish_result(Coordinator.__new__(Coordinator), variable="best", description="x",
                                    val_bpb=1.0, decomposition={}, status="keep", config="y")
+
+
+def test_retrieval_floors_separate_apparent_headroom_from_real():
+    """phylo's bank holds 925 unique species across 4096 rows drawn with replacement, so a perfect
+    predictor still pays ~2.11 nats. Reading its 9.64 bits as headroom overstates it by a third."""
+    c = _card(retrieval_floors={"clay": 2.1132})
+    clay = next(v for v in c["variables"] if v["name"] == "clay")
+    assert clay["floor"] == pytest.approx(2.1132 / 0.6931, abs=0.01), "reported in bits, measured in nats"
+    assert clay["headroom"] == pytest.approx(clay["bits_per_dim"] - clay["floor"], abs=1e-6)
+
+    gaussian = next(v for v in c["variables"] if v["name"] == "climate")
+    assert gaussian["floor"] is None, "no floor for a variable that is not retrieval-scored"
+    assert gaussian["headroom"] is None, "absent, not zero -- unknown is not the same as none"
