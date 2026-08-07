@@ -1,6 +1,6 @@
 ---
 name: ship-deepearth-improvement
-description: Convert a confirmed private DeepEarth research improvement into a minimal production pull request against legel/deepearth main. Use when Codex needs to select, port, validate, document, audit, push, or open a customer-facing DeepEarth PR from private Ensue research while enforcing fresh-main ancestry, production-only scope, baseline comparisons, DeepSeek-style delivery, and zero autoresearch leakage.
+description: Convert a confirmed private DeepEarth research improvement into a minimal production pull request against legel/deepearth main, and own the delivery-side repairs the research loop hands off. Use when selecting, porting, validating, documenting, auditing, pushing, or opening a customer-facing DeepEarth PR from private Ensue research, or when the /research loop defers a broken record -- a crash, missing method, unbuildable config, stale or non-reproducing baseline, or an instrument that disagrees with itself. Enforces fresh-main ancestry, production-only scope, baseline comparisons, and zero autoresearch leakage.
 ---
 
 # Ship a DeepEarth Improvement
@@ -80,7 +80,7 @@ Do not modify scoring, harness, data definitions, or the baseline to make a cand
 Commit the complete production change, then run:
 
 ```bash
-python .agents/skills/ship-deepearth-improvement/scripts/audit_delivery.py \
+python .claude/skills/ship-deepearth-improvement/scripts/audit_delivery.py \
   --repo /path/to/delivery/worktree \
   --base origin/main
 ```
