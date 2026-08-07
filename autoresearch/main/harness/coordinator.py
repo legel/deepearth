@@ -411,6 +411,14 @@ class Coordinator:
     def publish_result(self, variable: str, description: str, val_bpb: float, decomposition: dict,
                        status: str, config: str, extra: Optional[dict] = None) -> str:
         """One experiment. `status` is `keep` or `discard` -- publish both."""
+        if variable == "best":
+            # BOARD.format(variable="best") IS the scorecard key. A board record there is shaped
+            # nothing like scorecard() output, so it silently breaks every consumer that pins on the
+            # schema. Reserve the name rather than trusting callers to avoid it.
+            raise ValueError(
+                "publish_result(variable='best') would overwrite LOOP-deepearth-best, the scorecard. "
+                "Publish the champion with scorecard() + publish_best(); use variable='aggregate' for "
+                "the campaign board.")
         key = RUN.format(variable=variable, slug=_slug(description),
                          stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
                          hash=_hash(description))
@@ -487,7 +495,14 @@ class Coordinator:
     # ---------------------------------------------------------------- board
 
     def _maybe_update_board(self, variable: str, val_bpb: float, record: dict, config: str) -> bool:
-        """Read-compare-write with sanity checks. val_bpb is a loss: lower wins."""
+        """Read-compare-write with sanity checks. val_bpb is a loss: lower wins.
+
+        The board ranks on `val_bpb`, which for the aggregate board is DIMENSION-WEIGHTED, while
+        `judge()` gates on `macro`. Those are different quantities and they can disagree -- one
+        variable carries 95.3% of the aggregate, so an arm can win it while losing macro, or the
+        reverse. When a record carries both and they disagree, refuse the update and say so rather
+        than letting whichever one the board happens to compare decide the champion silently.
+        """
         if not (val_bpb > 0) or val_bpb != val_bpb:            # <=0 or NaN is a crash, not a record
             print(f"[ensue] refusing bogus val_bpb {val_bpb}", flush=True)
             return False
@@ -495,6 +510,13 @@ class Coordinator:
         cur = self.get(key).get(key) or {}
         prev = cur.get("val_bpb") if isinstance(cur, dict) else None
         if prev is not None and val_bpb >= prev:
+            return False
+        new_macro, old_macro = record.get("macro"), cur.get("macro") if isinstance(cur, dict) else None
+        if new_macro is not None and old_macro is not None and new_macro >= old_macro:
+            print(f"[ensue] REFUSING board update for {variable}: val_bpb improves "
+                  f"({prev:.6f} -> {val_bpb:.6f}) but macro does not ({old_macro:.6f} -> {new_macro:.6f}). "
+                  f"judge() gates on macro; the aggregate is 95.3% one variable. Resolve which this "
+                  f"board ranks before publishing.", flush=True)
             return False
         self.put(key, {**record, "config": config, "previous_val_bpb": prev,
                        "previous_by": cur.get("agent") if isinstance(cur, dict) else None,

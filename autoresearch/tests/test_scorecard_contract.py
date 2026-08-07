@@ -115,3 +115,14 @@ def test_the_architecture_is_walked_from_the_live_model_not_declared():
     assert sum(n["params_pct"] for n in children) == pytest.approx(100.0, abs=0.1), \
         "capacity must account for itself, so the graph shows where the parameters actually sit"
     assert architecture_graph(net, max_depth=2) == g, "must be deterministic"
+
+
+def test_the_scorecard_key_cannot_be_clobbered_by_a_board_write():
+    """BOARD.format(variable="best") IS the scorecard key, so publish_result(variable="best") wrote a
+    board record over the front end's contract. It happened; the name is reserved now."""
+    from coordinator import BEST, BOARD, Coordinator
+
+    assert BOARD.format(variable="best") == BEST, "the collision this guards against"
+    with pytest.raises(ValueError, match="scorecard"):
+        Coordinator.publish_result(Coordinator.__new__(Coordinator), variable="best", description="x",
+                                   val_bpb=1.0, decomposition={}, status="keep", config="y")
