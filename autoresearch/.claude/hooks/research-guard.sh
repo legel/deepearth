@@ -44,6 +44,13 @@ fi
 [ "$tool" = "Bash" ] || decide allow ""
 cmd="$(printf '%s' "$payload" | jq -r '.tool_input.command // ""')"
 
+# The instrument rule exists to stop the LOOP changing its own scoring on its own initiative. The repo
+# owner directing a change is the legitimate exception -- but it must never be silent, so it has to be
+# typed into the command itself, where it shows up in the transcript and in `history`.
+if printf '%s' "$cmd" | grep -q 'RESEARCH_GUARD_OVERRIDE=1'; then
+  decide allow "guard overridden explicitly (RESEARCH_GUARD_OVERRIDE=1) -- owner-directed instrument change"
+fi
+
 # A bash-side write to an instrument (redirect, sed -i, tee, cp) bypasses the Edit/Write check above.
 if printf '%s' "$cmd" | grep -Eq '(>|>>|sed -i|tee|cp |mv )[^|;]*(main/harness/|scoring/objective\.py|autoresearch/tests/)'; then
   decide deny "READ-ONLY INSTRUMENT: this command writes to main/harness/**, scoring/objective.py or tests/**. Those are ground truth under /research. Publish an insight and hand it to ship-deepearth-improvement instead."

@@ -82,12 +82,12 @@ def macro(per_variable: Mapping[str, tuple]) -> float:
     return sum(d.values()) / max(len(d), 1)
 
 
-def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mapping[str, float],
-          weak: Sequence[str], owned: Sequence[str] = ()) -> dict:
+def diagnose_likelihood(before: Mapping[str, tuple], after: Mapping[str, tuple],
+                        floors: Mapping[str, float], weak: Sequence[str],
+                        owned: Sequence[str] = ()) -> dict:
     """Diagnose whether a likelihood change landed as hypothesized.
 
-    This is not the champion gate. Human-capability harmonic and arithmetic decide promotion in
-    ``Coordinator.publish_best``; this decomposition-only helper cannot make that decision.
+    This is not the champion gate. It explains whether a likelihood change landed where expected.
 
     Three conditions, all required:
 
@@ -98,30 +98,20 @@ def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mappi
     2. **No owned regression** -- no variable this experiment claims may get worse by more than its own
        measured floor. This is causal evidence about where the likelihood change landed.
     3. **Coverage** -- at least one variable in `weak` must improve. Without it, moving one variable
-       satisfies the aggregate alone: `climate` measures at 95.3% of it, so the model can get narrower
-       while the number goes up.
-
-    `weak` must be supplied by the caller from the BENCHMARK scores, which are commensurable in [0,1].
-    It cannot be derived from bits/dim: that is a differential entropy whose scale reflects a variable's
-    target variance, so ranking variables by it says nothing about which capability is behind.
-
-    `floors` is per-variable and measured from matched seeds. There is no default -- a threshold you did
-    not measure is a threshold that admits noise.
+       satisfies the aggregate alone: `climate` measures at 95.3% of it, so the model can get narrower.
     """
     b, a = decompose(before), decompose(after)
     shared = [k for k in b if k in a]
     if not shared:
         return {"keep": False, "reason": "no shared variables between the two runs"}
+
     if not weak:
-        return {"keep": False, "reason": "no weak set supplied; derive it from the benchmark scores"}
+        return {"keep": False, "reason": "no weak set supplied; derive it from benchmark scores"}
 
     agg_floor = floors.get("__aggregate__")
     if agg_floor is None:
-        return {"keep": False, "reason": "no measured floor for the aggregate; measure before judging"}
-    # Training macro-averages: `_decode_loss` adds (err*w).sum()/w.sum() per variable, so each variable
-    # contributes equally regardless of width. Gate on the same view, or optimization pressure and the
-    # gate disagree -- the dimension-weighted aggregate is reported alongside as efficiency.
-    agg_gain = macro(before) - macro(after)                          # a loss: positive means improved
+        return {"keep": False, "reason": "no measured floor for macro; measure before judging"}
+    agg_gain = macro(before) - macro(after)
 
     regressions = []
     for k in (owned or shared):
@@ -135,7 +125,6 @@ def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mappi
 
     improved_weak = [k for k in weak
                      if k in shared and (b[k] - a[k]) > floors.get(k, float("inf"))]
-
     keep = agg_gain > agg_floor and not regressions and bool(improved_weak)
     return {
         "keep": keep,
@@ -144,9 +133,9 @@ def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mappi
         "macro_before": macro(before), "macro_after": macro(after),
         "regressions": regressions,
         "improved_weak": improved_weak,
-        "reason": ("regressed: " + ", ".join(f"{k} +{d:.4f} > {f:.4f}" for k, d, f in regressions)) if regressions
-                  else ("no weak capability improved -- the model got narrower" if not improved_weak
-                        else ("macro gain inside noise" if agg_gain <= agg_floor else "keep")),
+        "reason": ("regressed: " + ", ".join(f"{k} +{d:.4f} > {f:.4f}" for k, d, f in regressions))
+                  if regressions else ("no weak capability improved" if not improved_weak
+                                       else ("macro gain inside noise" if agg_gain <= agg_floor else "keep")),
     }
 
 
@@ -192,3 +181,63 @@ def arithmetic(raw: Mapping[str, float], suite: Optional[Iterable[str]] = None) 
     vals = [v for k, v in normed.items() if k in declared and not is_diagnostic(k)
             and k not in QUARANTINED_BENCHMARKS]
     return float(sum(vals) / len(vals)) if vals else 0.0
+
+
+def _run_summary(runs: Sequence[Mapping[str, float]], suite: Sequence[str]) -> dict:
+    if len(runs) < 2:
+        raise ValueError("a promotion decision needs at least two benchmark seeds")
+    declared = tuple(sorted(suite))
+    if not declared:
+        raise ValueError("the capability suite is empty")
+    for i, run in enumerate(runs):
+        observed = capability_suite(run)
+        if observed != declared:
+            raise ValueError(f"run {i} capability suite is {observed}, expected {declared}")
+    harmonics = [harmonic(run, declared) for run in runs]
+    arithmetics = [arithmetic(run, declared) for run in runs]
+    return {
+        "harmonic": sum(harmonics) / len(harmonics),
+        "arithmetic": sum(arithmetics) / len(arithmetics),
+        "harmonic_floor": noise_floor(harmonics),
+        "arithmetic_floor": noise_floor(arithmetics),
+    }
+
+
+def judge(before_runs: Sequence[Mapping[str, float]], after_runs: Sequence[Mapping[str, float]], *,
+          before_suite: Sequence[str], after_suite: Sequence[str],
+          before_protocol: str, after_protocol: str) -> dict:
+    """Judge promotion on human capabilities measured over matched two-seed runs.
+
+    Harmonic improvement must beat the incumbent seed spread. Arithmetic may not regress beyond its
+    incumbent spread. Likelihood metrics are deliberately absent: they are scorecard diagnostics.
+    """
+    if before_protocol != after_protocol:
+        return {"keep": False, "reason": "benchmark protocols differ"}
+    if tuple(sorted(before_suite)) != tuple(sorted(after_suite)):
+        return {"keep": False, "reason": "capability suites differ"}
+    try:
+        before = _run_summary(before_runs, before_suite)
+        after = _run_summary(after_runs, after_suite)
+    except ValueError as exc:
+        return {"keep": False, "reason": str(exc)}
+
+    harmonic_gain = after["harmonic"] - before["harmonic"]
+    arithmetic_regression = before["arithmetic"] - after["arithmetic"]
+    keep = (harmonic_gain > before["harmonic_floor"] and
+            arithmetic_regression <= before["arithmetic_floor"])
+    if harmonic_gain <= before["harmonic_floor"]:
+        reason = (f"harmonic gain {harmonic_gain:+.6f} does not beat "
+                  f"its {before['harmonic_floor']:.6f} two-seed floor")
+    elif arithmetic_regression > before["arithmetic_floor"]:
+        reason = (f"arithmetic regressed {arithmetic_regression:.6f}, beyond "
+                  f"its {before['arithmetic_floor']:.6f} two-seed floor")
+    else:
+        reason = "keep"
+    return {
+        "keep": keep,
+        "harmonic_gain": harmonic_gain,
+        "arithmetic_regression": arithmetic_regression,
+        "before": before,
+        "after": after,
+        "reason": reason,
+    }

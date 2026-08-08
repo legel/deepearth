@@ -58,7 +58,7 @@ try:
     from deepearth.autoresearch.scoring.objective import (
         QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
         capability_suite as observed_capability_suite, harmonic as capability_harmonic,
-        is_diagnostic,
+        is_diagnostic, judge as judge_capabilities,
     )
 except ModuleNotFoundError:  # direct execution from the repository root
     import sys
@@ -66,7 +66,7 @@ except ModuleNotFoundError:  # direct execution from the repository root
     from scoring.objective import (
         QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
         capability_suite as observed_capability_suite, harmonic as capability_harmonic,
-        is_diagnostic,
+        is_diagnostic, judge as judge_capabilities,
     )
 
 
@@ -596,31 +596,19 @@ class Coordinator:
             if live is not None:
                 evidence = card["evidence"]
                 prior_evidence = cur.get("evidence") or {}
-                if evidence["benchmark_protocol"] != prior_evidence.get("benchmark_protocol"):
-                    print("[ensue] NOT promoted: benchmark protocols differ; establish a new baseline "
-                          "instead of comparing incomparable scores", flush=True)
-                    return False
-                if evidence["capability_suite"] != prior_evidence.get("capability_suite"):
-                    print("[ensue] NOT promoted: capability suites differ; re-run both with the same suite",
-                          flush=True)
-                    return False
-                prior_floors = prior_evidence.get("floors") or {}
-                if "harmonic" not in prior_floors or "arithmetic" not in prior_floors:
-                    print("[ensue] NOT promoted: incumbent has no two-seed control spread", flush=True)
-                    return False
-                harmonic_floor = prior_floors["harmonic"]
-                gain = new - live
-                if gain <= harmonic_floor:
-                    print(f"[ensue] scorecard unchanged: harmonic gain {gain:+.6f} does not beat "
-                          f"its {harmonic_floor:.6f} two-seed floor", flush=True)
+                prior_runs = [{row["name"]: row["score"] for row in run.get("benchmarks", [])}
+                              for run in cur.get("benchmark_runs", [])]
+                decision = judge_capabilities(
+                    prior_runs, raw_runs,
+                    before_suite=prior_evidence.get("capability_suite", []),
+                    after_suite=evidence["capability_suite"],
+                    before_protocol=prior_evidence.get("benchmark_protocol", ""),
+                    after_protocol=evidence["benchmark_protocol"],
+                )
+                if not decision["keep"]:
+                    print(f"[ensue] NOT promoted: {decision['reason']}", flush=True)
                     return False
                 live_arithmetic = cur["headline"]["arithmetic"]
-                arithmetic_floor = prior_floors["arithmetic"]
-                regression = live_arithmetic - new_arithmetic
-                if regression > arithmetic_floor:
-                    print(f"[ensue] NOT promoted: arithmetic regressed {regression:.6f}, beyond its "
-                          f"{arithmetic_floor:.6f} two-seed floor", flush=True)
-                    return False
                 card = {**card, "previous": {
                     "harmonic": live, "arithmetic": live_arithmetic,
                     "val_bpb": (cur.get("diagnostics") or {}).get("val_bpb"),

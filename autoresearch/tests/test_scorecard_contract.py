@@ -207,6 +207,28 @@ def test_arithmetic_is_the_breadth_guard(monkeypatch):
     assert not _publisher(old, monkeypatch).publish_best(new)
 
 
+def test_one_capability_regression_is_not_a_suite_wide_veto(monkeypatch):
+    old = _card(benchmarks={"B08_species": 0.10, "B01_climate": 0.90,
+                            "B55_pollinator_phylo_transfer_recall": 0.04,
+                            "B56_family_phylo_graph_gain": 0.20})
+    new = _card(benchmarks={"B08_species": 0.20, "B01_climate": 0.80,
+                            "B55_pollinator_phylo_transfer_recall": 0.04,
+                            "B56_family_phylo_graph_gain": 0.20})
+    assert new["headline"]["harmonic"] > old["headline"]["harmonic"]
+    assert new["headline"]["arithmetic"] == old["headline"]["arithmetic"]
+    assert _publisher(old, monkeypatch).publish_best(new)
+
+
+def test_harmonic_gain_must_beat_incumbent_seed_spread(monkeypatch):
+    fixed = {"B55_pollinator_phylo_transfer_recall": 0.04,
+             "B56_family_phylo_graph_gain": 0.20}
+    old = _card(benchmark_runs=[{"B08_species": 0.10, "B01_climate": 0.90, **fixed},
+                                {"B08_species": 0.50, "B01_climate": 0.50, **fixed}])
+    new = _card(benchmarks={"B08_species": 0.50, "B01_climate": 0.50, **fixed})
+    assert new["headline"]["harmonic"] > old["headline"]["harmonic"]
+    assert not _publisher(old, monkeypatch).publish_best(new)
+
+
 def test_protocol_change_freezes_comparison(monkeypatch):
     old = _card()
     new = _card(benchmark_protocol="v4-future")
