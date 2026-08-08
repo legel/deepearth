@@ -29,9 +29,15 @@ diagnostics only and never affect target ranking or promotion.
 ## Run the experiment
 
 Form one distinct causal hypothesis, check Ensue for prior evidence, claim it, and build the smallest
-clean test. Compare the candidate with the live incumbent commit under the same config, cache, prepared
-data, hardware class, step budget, and exactly two matched seeds per arm. Reuse a valid matched control;
-rerunning one is grinding. Commit the candidate before measuring it.
+clean test. Screening and promotion are separate comparisons:
+
+- **1k screen:** compare the candidate with the approved 1k control for the current research base.
+- **8k confirmation:** compare the surviving candidate with the current live champion at 8k.
+
+Never compare a 1k result with an 8k result. Within either comparison, candidate and control must use
+the same protocol, active capability suite, config, cache, prepared data, hardware class, step budget,
+and exactly two matched seeds per arm. Reuse a valid matched control at that commit and scale; rerunning
+one is grinding. Commit the candidate before measuring it.
 
 The selected benchmark's two-seed mean must rise. If it does not, the hypothesis failed even when an
 unrelated benchmark raises the harmonic. A successful screen must also satisfy the official v4 judge:
@@ -44,9 +50,11 @@ unrelated benchmark raises the harmonic. A successful screen must also satisfy t
 The judge computes each mean from the two per-seed aggregate scores. It does not aggregate averaged
 benchmark rows, use a third seed, impose dozens of per-benchmark gates, or consult `val_bpb`.
 
-The fixed 1k screen decides whether a hypothesis advances, not whether it becomes champion. Only a
-screen winner proceeds through the software-engineering handoff and the fixed 8k full-scale confirmation.
-Only the confirmed full-scale result may replace the live champion or be pushed as a record.
+The fixed 1k screen decides whether a hypothesis advances, not whether it becomes champion. It never
+updates the live scorecard and is never called a record. Only a scientifically eligible screen winner
+proceeds through the software-engineering handoff and the fixed 8k full-scale confirmation. Only an 8k
+result that passes the same v4 judge against the current live champion may replace the live scorecard or
+be pushed as a record.
 
 ## Research surface
 
@@ -60,7 +68,9 @@ The evaluator, judge, score definitions, floors, splits, and baseline are immuta
 - After every completed two-seed experiment, show the full human-capability scorecard weakest-first,
   then harmonic, arithmetic, named-target movement, and only then the likelihood and mechanism
   diagnostics.
-- Publish every valid win, loss, and dead end to Ensue so the swarm does not repeat it.
+- Publish every valid win, loss, and dead end as an experiment record in Ensue so the swarm does not
+  repeat it. Experiment records do not update the live scorecard; only `publish_best()` does that after
+  an eligible 8k confirmation.
 - Prefer a new mechanism after a losing result; after three experiments in one subsystem, change the
   subsystem rather than tuning the same idea.
 - Keep experiments isolated, committed, reproducible, and fixed-step. Abandon rejected branches; do not
