@@ -203,6 +203,7 @@ class DeepEarth(nn.Module):
         family_env_expert: bool = False,
         family_env_vars: Optional[Sequence[str]] = None,
         family_alphaearth_expert: bool = False,
+        family_env_residual: bool = False,
         compile_processor: bool = False,
         rounds: int = 1,
         write_back: bool = True,
@@ -339,6 +340,7 @@ class DeepEarth(nn.Module):
         self.species_variable = species_variable
         self.register_buffer("species_family", species_family)
         self.family_env_vars = tuple(family_env_vars or ())
+        self.family_env_residual = family_env_residual
         self.family_count = int(species_family.max()) + 1 if species_family is not None else 0
         if species_variable is not None and species_embedding is not None:
             if species_operator == "tree":
@@ -478,6 +480,9 @@ class DeepEarth(nn.Module):
             self.family_env_head = nn.Sequential(
                 nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(),
                 nn.Linear(d_model, self.family_count))
+            if family_env_residual:
+                nn.init.zeros_(self.family_env_head[-1].weight)
+                nn.init.zeros_(self.family_env_head[-1].bias)
         self.family_ae_head = None
         if family_alphaearth_expert and self.family_count:
             # This private readout must not re-roll the shared model or its training masks.
@@ -883,13 +888,20 @@ class DeepEarth(nn.Module):
         return 1.0 - F.cosine_similarity(pred - mu, target - mu, dim=-1)
 
     def _family_env_logits(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                           context: dict) -> torch.Tensor:
+                           context: dict, alphaearth_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Private early expert over environment tokens; the shared fusion path is detached."""
         tokens, valid = [], []
         for name in self.family_env_vars:
             i = self.names.index(name)
             token = self.tok_norm(self._variable_token(name, values[name]) + self.type_emb[i]).detach()
             tokens.append(token); valid.append(observed[name])
+        if self.family_env_residual and self.family_ae_head is not None and "alphaearth" in values:
+            tokens.append(self.family_ae_head[:-1](values["alphaearth"].detach()).detach())
+            ae_valid = observed.get("alphaearth", alphaearth_valid)
+            if ae_valid is None:
+                ae_valid = torch.ones(values["alphaearth"].shape[0], dtype=torch.bool,
+                                      device=values["alphaearth"].device)
+            valid.append(ae_valid)
         tokens.append((context["position"] + self.position_token).detach())
         valid.append(torch.ones_like(valid[0]))
         kv = torch.stack(tokens, 1)
@@ -897,6 +909,18 @@ class DeepEarth(nn.Module):
         q = self.family_env_query.expand(kv.shape[0], -1, -1)
         pooled = self.family_env_attn(q, kv, kv, key_padding_mask=~mask, need_weights=False)[0][:, 0]
         return self.family_env_head(pooled)
+
+    def _family_conditioned_logits(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
+                                   context: dict, alphaearth_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
+        residual = self._family_env_logits(values, observed, context, alphaearth_valid)
+        if not self.family_env_residual or self.family_ae_head is None or "alphaearth" not in values:
+            return residual
+        valid = observed.get("alphaearth", alphaearth_valid)
+        if valid is None:
+            valid = torch.ones(values["alphaearth"].shape[0], dtype=torch.bool,
+                               device=values["alphaearth"].device)
+        prior = self._family_alphaearth_logits(values).detach()
+        return torch.where(valid[:, None], prior + residual, residual)
 
     def _family_alphaearth_logits(self, values: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Private habitat-to-family occupancy posterior from frozen AlphaEarth features."""
@@ -922,7 +946,7 @@ class DeepEarth(nn.Module):
         if self.family_env_attn is not None:
             valid = observed[self.species_variable].to(loss.dtype)
             target = self.species_family[values[self.species_variable]]
-            err = F.cross_entropy(self._family_env_logits(values, observed, context), target, reduction="none")
+            err = F.cross_entropy(self._family_conditioned_logits(values, observed, context), target, reduction="none")
             loss = loss + (err * valid).sum() / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2))
         if self.family_ae_head is not None:
             valid = (observed[self.species_variable] & observed["alphaearth"]).to(loss.dtype)
@@ -1187,7 +1211,8 @@ class DeepEarth(nn.Module):
             present[n] = observed[n] if (observed is not None and n in observed) \
                 else torch.ones(B, dtype=torch.bool, device=dev)
         z = self.encode(values, present, context)
-        family_logits = self._family_env_logits(values, present, context) \
+        ae_valid = observed.get("alphaearth") if observed is not None else None
+        family_logits = self._family_conditioned_logits(values, present, context, ae_valid) \
             if self.family_env_attn is not None and tuple(given) == self.family_env_vars else None
         family_valid = None
         if self.family_ae_head is not None and not given:

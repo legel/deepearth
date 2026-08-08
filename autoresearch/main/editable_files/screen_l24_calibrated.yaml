@@ -20,6 +20,7 @@ data:
 model:
   family_alphaearth_expert: true
   family_env_expert: true
+  family_env_residual: true
   continuous_calibration: true
   capacity: 12
   compile: false

@@ -81,7 +81,8 @@ def train_and_evaluate(config, device):
                    family_env_expert=m.get("family_env_expert", False),
                    family_env_vars=m.get("family_env_vars", (
                        "climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro")),
-                   family_alphaearth_expert=m.get("family_alphaearth_expert", False)) if sg else {}
+                   family_alphaearth_expert=m.get("family_alphaearth_expert", False),
+                   family_env_residual=m.get("family_env_residual", False)) if sg else {}
     if sg and sg.get("operator", "ou-attention") != "tree":   # real dated plant patristic (rules 7-12): replaces the embedding shadow for tree-covered species
         cdir0 = Path(d["cache_dir"]); cdir0 = cdir0 if cdir0.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
         pld = cdir0 / "gbif_plant_dist.npz"
