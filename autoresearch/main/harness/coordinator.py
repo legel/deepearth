@@ -188,8 +188,8 @@ def _num(value: Any, field: str, *, positive: bool = False) -> float:
 
 
 def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dims: dict,
-              benchmarks: dict, benchmark_protocol: str, capability_suite: Sequence[str],
-              seeds: int, harmonic_floor: float, arithmetic_floor: float, noise_floor: float,
+              benchmark_runs: Sequence[dict], benchmark_protocol: str,
+              capability_suite: Sequence[str], training_seeds: Sequence[int], noise_floor: float,
               retrieval_floors: Optional[dict] = None,
               params: int, steps: int, config: str, agent: str = "unknown",
               model: Optional[dict] = None, commit: Optional[str] = None, branch: Optional[str] = None,
@@ -207,17 +207,24 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
     """
     if not decomposition:
         raise ValueError("scorecard.decomposition: empty -- val_bpb without its per-variable lens is a bare number")
-    if not benchmarks:
-        raise ValueError("scorecard.benchmarks: empty -- rule 32 requires 100% of the suite scored")
+    if len(benchmark_runs) < 2:
+        raise ValueError("scorecard.benchmark_runs: a single-seed number is not a result")
+    if len(training_seeds) != len(benchmark_runs):
+        raise ValueError("scorecard.training_seeds: one seed is required for each benchmark run")
     if not benchmark_protocol:
         raise ValueError("scorecard.benchmark_protocol: missing")
     suite = tuple(sorted(capability_suite))
-    observed = observed_capability_suite(benchmarks)
-    if not suite or suite != observed:
-        raise ValueError(f"scorecard.capability_suite: declared {suite}, observed {observed}")
-    missing_quarantine = sorted(set(QUARANTINED_BENCHMARKS) - set(benchmarks))
-    if missing_quarantine:
-        raise ValueError(f"scorecard.benchmarks: quarantined measurements must still be reported: {missing_quarantine}")
+    keyset = set(benchmark_runs[0])
+    for i, run in enumerate(benchmark_runs):
+        observed = observed_capability_suite(run)
+        if not suite or suite != observed:
+            raise ValueError(f"scorecard.capability_suite: run {i} declared {suite}, observed {observed}")
+        if set(run) != keyset:
+            raise ValueError("scorecard.benchmark_runs: every seed must report the same benchmark keys")
+        missing_quarantine = sorted(set(QUARANTINED_BENCHMARKS) - set(run))
+        if missing_quarantine:
+            raise ValueError("scorecard.benchmarks: quarantined measurements must still be reported: "
+                             f"{missing_quarantine}")
     missing = sorted(set(decomposition) - set(revealed_dims))
     if missing:
         raise ValueError(f"scorecard.revealed_dims: missing {missing} -- shares cannot be computed")
@@ -247,10 +254,16 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
         })
     variables.sort(key=lambda v: (-v["share_pct"], v["name"]))
 
-    harmonic = capability_harmonic(benchmarks, suite=suite)
-    arithmetic = capability_arithmetic(benchmarks, suite=suite)
-    if harmonic_floor < 0 or arithmetic_floor < 0:
-        raise ValueError("scorecard.evidence.floors: measured spreads cannot be negative")
+    per_seed = [{"training_seed": int(seed),
+                 "harmonic": capability_harmonic(run, suite=suite),
+                 "arithmetic": capability_arithmetic(run, suite=suite)}
+                for seed, run in zip(training_seeds, benchmark_runs)]
+    harmonic = sum(run["harmonic"] for run in per_seed) / len(per_seed)
+    arithmetic = sum(run["arithmetic"] for run in per_seed) / len(per_seed)
+    harmonic_floor = max(run["harmonic"] for run in per_seed) - min(run["harmonic"] for run in per_seed)
+    arithmetic_floor = max(run["arithmetic"] for run in per_seed) - min(run["arithmetic"] for run in per_seed)
+    benchmarks = {name: sum(float(run[name]) for run in benchmark_runs) / len(benchmark_runs)
+                  for name in keyset}
 
     benchmark_rows = []
     for name, value in benchmarks.items():
@@ -288,10 +301,19 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
         },
         "variables": variables,
         "benchmarks": sorted(benchmark_rows, key=lambda b: b["name"]),
+        "benchmark_runs": [
+            {**summary,
+             "benchmarks": sorted(
+                 ({"name": name, "score": _num(value, f"benchmark_runs.{i}.{name}")}
+                  for name, value in benchmark_runs[i].items()),
+                 key=lambda row: row["name"],
+             )}
+            for i, summary in enumerate(per_seed)
+        ],
         "evidence": {
             "benchmark_protocol": benchmark_protocol,
             "capability_suite": list(suite),
-            "seeds": int(seeds),
+            "seeds": len(benchmark_runs),
             "floors": {
                 "harmonic": _num(harmonic_floor, "harmonic_floor"),
                 "arithmetic": _num(arithmetic_floor, "arithmetic_floor"),
@@ -314,8 +336,6 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
                                  "delivered_at": None},
         "previous": previous,
     }
-    if int(seeds) < 2:
-        raise ValueError(f"scorecard.seeds: {seeds} -- a single-seed number is not a result")
     return doc
 
 
@@ -548,10 +568,13 @@ class Coordinator:
         """
         if card.get("schema") != SCHEMA:
             raise ValueError(f"publish_best: build it with scorecard(); got schema {card.get('schema')!r}")
-        raw = {row["name"]: row["score"] for row in card.get("benchmarks", [])}
         suite = (card.get("evidence") or {}).get("capability_suite", [])
-        expected_harmonic = capability_harmonic(raw, suite=suite)
-        expected_arithmetic = capability_arithmetic(raw, suite=suite)
+        raw_runs = [{row["name"]: row["score"] for row in run.get("benchmarks", [])}
+                    for run in card.get("benchmark_runs", [])]
+        if len(raw_runs) < 2:
+            raise ValueError("publish_best: missing two-seed benchmark evidence")
+        expected_harmonic = sum(capability_harmonic(raw, suite=suite) for raw in raw_runs) / len(raw_runs)
+        expected_arithmetic = sum(capability_arithmetic(raw, suite=suite) for raw in raw_runs) / len(raw_runs)
         if not math.isclose(card["headline"]["harmonic"], expected_harmonic, abs_tol=2e-6):
             raise ValueError("publish_best: headline harmonic does not match the reported capabilities")
         if not math.isclose(card["headline"]["arithmetic"], expected_arithmetic, abs_tol=2e-6):
@@ -581,14 +604,18 @@ class Coordinator:
                     print("[ensue] NOT promoted: capability suites differ; re-run both with the same suite",
                           flush=True)
                     return False
-                harmonic_floor = evidence["floors"]["harmonic"]
+                prior_floors = prior_evidence.get("floors") or {}
+                if "harmonic" not in prior_floors or "arithmetic" not in prior_floors:
+                    print("[ensue] NOT promoted: incumbent has no two-seed control spread", flush=True)
+                    return False
+                harmonic_floor = prior_floors["harmonic"]
                 gain = new - live
                 if gain <= harmonic_floor:
                     print(f"[ensue] scorecard unchanged: harmonic gain {gain:+.6f} does not beat "
                           f"its {harmonic_floor:.6f} two-seed floor", flush=True)
                     return False
                 live_arithmetic = cur["headline"]["arithmetic"]
-                arithmetic_floor = evidence["floors"]["arithmetic"]
+                arithmetic_floor = prior_floors["arithmetic"]
                 regression = live_arithmetic - new_arithmetic
                 if regression > arithmetic_floor:
                     print(f"[ensue] NOT promoted: arithmetic regressed {regression:.6f}, beyond its "

@@ -124,6 +124,8 @@ def parse_run(log_path: str) -> dict:
     vram_match = re.search(r"^peak_vram_mb:\s+([0-9.]+)", txt, re.M)
     receipt_match = re.search(r"^RUN RECEIPT:\s*(\{.*\})$", txt, re.M)
     receipt = json.loads(receipt_match.group(1)) if receipt_match else None
+    benchmark_match = re.search(r"^BENCHMARK RECEIPT:\s*(\{.*\})$", txt, re.M)
+    benchmark_receipt = json.loads(benchmark_match.group(1)) if benchmark_match else None
     meta = {"training_seed": seed,
             "steps": int(steps_match.group(1)) if steps_match else None,
             "peak_vram_mb": float(vram_match.group(1)) if vram_match else None,
@@ -133,6 +135,9 @@ def parse_run(log_path: str) -> dict:
     # contrib 0.997)" -- match the score after the name, not requiring end-of-line, so B24/B56-B62 are captured.
     for m in re.finditer(r"^\s*(B\d+_\w+)\s+(-?[0-9.]+)(?:\s|$)", txt, re.M):
         scores[m.group(1)] = float(m.group(2))                 # last occurrence wins (final eval)
+    if benchmark_receipt:
+        scores = {k: float(v) for k, v in benchmark_receipt["scores"].items()}
+        protocol = benchmark_receipt.get("protocol") or protocol
     try:                                                       # RECOMPUTE the net from scores with the live logic, so
         from deepearth.autoresearch.main.harness.evaluate import net_score, arithmetic_net   # every champion record is comparable
         return {"benchmark_protocol": protocol, **meta, "scores": scores,

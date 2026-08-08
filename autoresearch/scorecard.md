@@ -5,9 +5,10 @@ instrument. `val_bpb` remains a reconstruction diagnostic and never decides prom
 
 ## Promotion gate
 
-A candidate and incumbent must carry the same protocol and the same active capability suite. Two
-matched seeds per arm provide separate full-spread floors for the two scorecard means. A candidate is
-promoted only when:
+A candidate and incumbent must carry the same protocol and the same active capability suite. The
+headline is the mean of the two per-seed harmonics and arithmetic means, not the aggregate of averaged
+benchmark rows. The incumbent control's two-seed full spreads are the floors. A candidate is promoted
+only when:
 
 1. its capability harmonic improves by more than the harmonic floor; and
 2. its capability arithmetic does not regress by more than the arithmetic floor.

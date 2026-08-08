@@ -244,8 +244,8 @@ def train_and_evaluate(config, device):
         Same data, split, masking and decoder path as training -- but NOT the same loss. Training uses centered
         cosine and log-C-normalized cross-entropy; those are not log-likelihoods, so val_bpb computes its own
         (Gaussian / retrieval / raw CE). Evaluated on test rows with a FIXED reveal mask and frozen reference
-        statistics, so the number is comparable across runs and model sizes. Additive over variables: the aggregate is
-        the gate, the decomposition is the lens each piece of science steers by.
+        statistics, so the number is comparable across runs and model sizes. Additive over variables: the aggregate
+        and decomposition are likelihood diagnostics for where capability changes landed.
 
         `val_batches` defaults to 48, i.e. ~24k sampled rows against a 29,668-row held-out split. Eight batches
         (~4k rows) under-sampled the split badly enough that the metric's own noise could exceed the effects it is
@@ -253,7 +253,7 @@ def train_and_evaluate(config, device):
         """
         from deepearth.autoresearch.scoring import objective
         if not len(source.test):
-            return float("nan"), {}
+            return float("nan"), {}, {}
         was_training = model.training
         model.eval()
         test_index = torch.tensor(source.test, device=device)
@@ -280,7 +280,8 @@ def train_and_evaluate(config, device):
                     e0, n0 = totals.get(name, (0.0, 0))
                     totals[name] = (e0 + err, n0 + n)
         model.train(was_training)
-        return objective.aggregate(totals), objective.decompose(totals)
+        return (objective.aggregate(totals), objective.decompose(totals),
+                {name: int(n) for name, (_, n) in totals.items()})
 
     model.train(); t0 = time.time()
     # Optional wall-clock training budget (s), measured from step 10 (excludes startup/compile), so architectures compare at equal time. Absent -> train the full ``steps``.
@@ -416,14 +417,24 @@ def train_and_evaluate(config, device):
     print(ev.format_benchmarks(raw), flush=True)
     print(f"benchmark_suite_seconds: {_eval_s:.1f} ({len(source.test)} held-out rows, {len(ev.normalized(raw))} active)", flush=True)
     ns = ev.net_score(raw)
-    peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if device.startswith("cuda") else 0.0
+    arith = ev.arithmetic_net(raw)
+    peak_vram_mb = torch.cuda.max_memory_allocated(device) / 1024 / 1024 if device.startswith("cuda") else 0.0
     if config.get("_tag"):
         print(f"tag:              {config['_tag']}", flush=True)   # parseable run label (matches --tag), so run.log self-identifies
     print(f"net_score:        {ns:.6f}", flush=True)          # parseable north star
-    _vb, _vbv = val_bpb()
+    print("BENCHMARK RECEIPT: " + json.dumps({
+        "protocol": ev.BENCHMARK_PROTOCOL, "scores": raw,
+        "harmonic": ns, "arithmetic": arith,
+    }, sort_keys=True), flush=True)
+    _vb, _vbv, _vbd = val_bpb()
     print(f"val_bpb:          {_vb:.6f}", flush=True)   # likelihood diagnostic: held-out bits/dim
     for _n in sorted(_vbv, key=lambda k: -_vbv[k]):
         print(f"  val_bpb.{_n:<22} {_vbv[_n]:.6f}", flush=True)   # the lens: per-variable bits/dim
+    print("LIKELIHOOD RECEIPT: " + json.dumps({
+        "val_bpb": _vb, "macro": sum(_vbv.values()) / max(len(_vbv), 1),
+        "decomposition": _vbv, "revealed_dims": _vbd,
+        "retrieval_floors": model.retrieval_floors(),
+    }, sort_keys=True), flush=True)
     scores["val_bpb"] = _vb
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}", flush=True)
     scores["net_score"] = ns

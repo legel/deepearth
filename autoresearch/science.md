@@ -169,8 +169,8 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     No SoTA champion is committed without `python -m deepearth.autoresearch.main.harness.champion_report --log <run> --desc
     <result> --save`: the commit headline states the net score BEFORE->AFTER (harmonic mean + arithmetic), the body
     describes what changed / why / how, and an enumerated list reports every benchmark's before->after (delta) with an
-    explicit regressions summary. Promotion requires a harmonic gain beyond its two-seed floor while the arithmetic
-    breadth score holds within its own floor. The helper diffs against the committed
+    explicit regressions summary. Promotion requires a mean harmonic gain beyond the incumbent control's two-seed
+    spread while the mean arithmetic breadth score holds within the control's spread. The helper diffs against the committed
     `autoresearch/main/records/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
 
 31. **Heads are DETACHED read-outs by default; the universal self-supervised reconstruction is inviolable.** The core

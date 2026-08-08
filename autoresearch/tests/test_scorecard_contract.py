@@ -22,16 +22,17 @@ from coordinator import SCHEMA, scorecard                          # noqa: E402
 
 
 def _card(**over):
+    benchmarks = over.pop("benchmarks", {"B08_species": 0.41, "B01_climate": 0.72,
+                                         "B55_pollinator_phylo_transfer_recall": 0.04,
+                                         "B56_family_phylo_graph_gain": 0.20})
     kw = dict(
         val_bpb=2.0356, macro=3.08,
         decomposition={"climate": 2.0004, "identity": 6.1, "clay": 5.2},
         revealed_dims={"climate": 17_762_000, "identity": 1, "clay": 1},
-        benchmarks={"B08_species": 0.41, "B01_climate": 0.72,
-                    "B55_pollinator_phylo_transfer_recall": 0.04,
-                    "B56_family_phylo_graph_gain": 0.20},
+        benchmark_runs=[benchmarks, benchmarks],
         benchmark_protocol="v3-human-capability-gate",
         capability_suite=("B01_climate", "B08_species"),
-        seeds=2, harmonic_floor=0.003, arithmetic_floor=0.004, noise_floor=0.0167,
+        training_seeds=(1337, 1339), noise_floor=0.0167,
         params=24_000_000, steps=1000, config="screen.yaml", agent="test",
         commit="abc1234", branch="exp/x", hardware={"gpu": "RTX PRO 6000", "gpus": 2},
     )
@@ -43,7 +44,7 @@ def test_the_front_end_can_rely_on_the_shape():
     c = _card()
     assert c["schema"] == SCHEMA
     assert set(c) == {"schema", "generated_at", "agent", "headline", "diagnostics", "model", "variables",
-                      "benchmarks", "evidence", "delivery", "previous"}
+                      "benchmarks", "benchmark_runs", "evidence", "delivery", "previous"}
     assert set(c["headline"]) == {"harmonic", "arithmetic"}
     assert c["diagnostics"] == {"val_bpb": 2.0356, "macro": 3.08}
     assert c["evidence"]["benchmark_protocol"] == "v3-human-capability-gate"
@@ -78,8 +79,8 @@ def test_a_directional_variable_contributes_one_dimension():
 
 
 @pytest.mark.parametrize("bad, why", [
-    ({"seeds": 1}, "a single-seed number is not a result"),
-    ({"benchmarks": {}}, "rule 32 requires 100% of the suite"),
+    ({"benchmark_runs": [{"B01_climate": 0.5}]}, "a single-seed number is not a result"),
+    ({"benchmarks": {}}, "an empty benchmark suite is not a result"),
     ({"decomposition": {}}, "val_bpb without its lens is a bare number"),
     ({"val_bpb": float("nan")}, "NaN is a crash, not a score"),
     ({"val_bpb": float("inf")}, "inf is a crash, not a score"),
@@ -158,6 +159,17 @@ def test_only_human_capabilities_enter_the_two_headline_means():
     assert roles["B56_family_phylo_graph_gain"] == "mechanism"
 
 
+def test_headline_is_the_mean_of_per_seed_scores():
+    fixed = {"B55_pollinator_phylo_transfer_recall": 0.04,
+             "B56_family_phylo_graph_gain": 0.20}
+    c = _card(benchmark_runs=[{"B08_species": 0.10, "B01_climate": 0.90, **fixed},
+                              {"B08_species": 0.50, "B01_climate": 0.50, **fixed}])
+    assert c["headline"]["harmonic"] == pytest.approx((0.18 + 0.50) / 2, abs=1e-6)
+    assert c["headline"]["harmonic"] != pytest.approx(0.42, abs=1e-3), \
+        "harmonic-of-mean is not the approved mean-of-seed-harmonics"
+    assert c["evidence"]["floors"]["harmonic"] == pytest.approx(0.32, abs=1e-6)
+
+
 def test_capability_suite_must_match_exactly_what_the_run_reports():
     with pytest.raises(ValueError, match="capability_suite"):
         _card(capability_suite=("B01_climate",))
@@ -188,8 +200,7 @@ def test_arithmetic_is_the_breadth_guard(monkeypatch):
     old = _card(benchmarks={"B08_species": 0.10, "B01_climate": 0.90,
                             "B55_pollinator_phylo_transfer_recall": 0.04,
                             "B56_family_phylo_graph_gain": 0.20})
-    new = _card(arithmetic_floor=0.01,
-                benchmarks={"B08_species": 0.12, "B01_climate": 0.85,
+    new = _card(benchmarks={"B08_species": 0.12, "B01_climate": 0.85,
                             "B55_pollinator_phylo_transfer_recall": 0.04,
                             "B56_family_phylo_graph_gain": 0.20})
     assert new["headline"]["harmonic"] > old["headline"]["harmonic"]

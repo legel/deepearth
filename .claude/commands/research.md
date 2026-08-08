@@ -194,9 +194,8 @@ publish with `publish_best()`:
 
 ```python
 card = scorecard(val_bpb=..., macro=..., decomposition=..., revealed_dims=...,
-                 benchmarks=..., benchmark_protocol=...,
-                 capability_suite=..., seeds=2,
-                 harmonic_floor=..., arithmetic_floor=..., noise_floor=...,
+                 benchmark_runs=[seed_1337_scores, seed_1339_scores], benchmark_protocol=...,
+                 capability_suite=..., training_seeds=[1337, 1339], noise_floor=...,
                  params=..., steps=..., config=..., agent=coord.agent_id)
 coord.publish_best(card)     # harmonic must clear its floor; arithmetic must hold
 ```
