@@ -207,8 +207,8 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
     """
     if not decomposition:
         raise ValueError("scorecard.decomposition: empty -- val_bpb without its per-variable lens is a bare number")
-    if len(benchmark_runs) < 2:
-        raise ValueError("scorecard.benchmark_runs: a single-seed number is not a result")
+    if len(benchmark_runs) != 2:
+        raise ValueError("scorecard.benchmark_runs: exactly two seeds are required")
     if len(training_seeds) != len(benchmark_runs):
         raise ValueError("scorecard.training_seeds: one seed is required for each benchmark run")
     if not benchmark_protocol:
@@ -573,8 +573,8 @@ class Coordinator:
         suite = (card.get("evidence") or {}).get("capability_suite", [])
         raw_runs = [{row["name"]: row["score"] for row in run.get("benchmarks", [])}
                     for run in card.get("benchmark_runs", [])]
-        if len(raw_runs) < 2:
-            raise ValueError("publish_best: missing two-seed benchmark evidence")
+        if len(raw_runs) != 2:
+            raise ValueError("publish_best: exactly two benchmark seeds are required")
         expected_harmonic = sum(capability_harmonic(raw, suite=suite) for raw in raw_runs) / len(raw_runs)
         expected_arithmetic = sum(capability_arithmetic(raw, suite=suite) for raw in raw_runs) / len(raw_runs)
         if not math.isclose(card["headline"]["harmonic"], expected_harmonic, abs_tol=2e-6):

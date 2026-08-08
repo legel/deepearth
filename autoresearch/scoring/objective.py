@@ -191,8 +191,8 @@ def arithmetic(raw: Mapping[str, float], suite: Optional[Iterable[str]] = None) 
 
 
 def _run_summary(runs: Sequence[Mapping[str, float]], suite: Sequence[str]) -> dict:
-    if len(runs) < 2:
-        raise ValueError("a promotion decision needs at least two benchmark seeds")
+    if len(runs) != 2:
+        raise ValueError("a promotion decision needs exactly two benchmark seeds")
     declared = tuple(sorted(suite))
     if not declared:
         raise ValueError("the capability suite is empty")
