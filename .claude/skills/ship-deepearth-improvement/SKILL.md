@@ -17,11 +17,10 @@ Require all of the following:
 
 - A named production behavior or capability improves.
 - Candidate and baseline used the same data, split, seed policy, budget, hardware class, and scoring protocol.
-- `val_bpb` drops by more than the noise floor **measured at that scale**, on at least two scales.
-  Never a fixed threshold: two-seed spreads are 0.0033 at 172.6M, 0.0167 at 21.8M and 0.027 at 796M,
-  which is wider than every champion-ladder step the old constants admitted.
-- The per-variable decomposition shows the drop in the variables the mechanism claims to serve, and an
-  ablation of that subsystem accounts for it. A gain that lands somewhere else is an initialization
+- The named human capability rises and the current-protocol `judge()` passes at both the 1k screen and
+  8k confirmation.
+- The `val_bpb` decomposition and mechanism diagnostics support the claimed causal story. A gain that
+  lands somewhere else is an initialization
   re-roll, not a result -- adding parameters shifts the RNG stream and re-initializes the whole model.
 - The mechanism can live in production without the harness.
 - The evidence is attributable to this mechanism, not a scoring, data, or infrastructure change.
@@ -104,12 +103,14 @@ Use the bundled PR template. Keep the public description concise and factual:
 - **Evidence:** exact baseline and candidate results, protocol, seeds, and focused tests.
 - **Scope:** explicit non-goals and compatibility statement.
 
-Do not open a scientific PR whose description cannot connect the production mechanism to a named `science.md` rule and a measured `val_bpb` change with its decomposition.
+Do not open a scientific PR whose description cannot connect the production mechanism to a named
+`science.md` rule, a measured human-capability improvement, the full scorecard, and its supporting
+diagnostics.
 
 There is no longer a separate encoder measurement to discount: probe and fusion optimize one objective,
 so an encoder result is a term in the fusion number rather than a proxy for it. State the harmonic and
-arithmetic benchmark means as well -- they are the language the public repository is reviewed in, and
-they remain the outward-facing report even though `val_bpb` is what gates promotion.
+arithmetic benchmark means as well -- they are the promotion gate and the language the public
+repository is reviewed in. Report `val_bpb` as supporting likelihood evidence.
 
 Never compare a mirror run to a public-main run: the evaluators differ by ~158 lines and the same config
 scores ~0.279 on the mirror against 0.332464 on public main. Baselines must come from the same tree.

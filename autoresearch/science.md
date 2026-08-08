@@ -30,8 +30,9 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
    batch, becoming a unifying fabric for all data inputs.
 4. **Earth4D must remain at least as fast and compute-optimized as it currently is**, e.g. based on CUDA kernels now
    in production, originally programmed by NVIDIA.
-5. **Earth4D must retain large-scale learning capacity;** small models must have no less than 100M parameters, while
-   base models should target 1B params.
+5. **Earth4D must retain large-scale learning capacity;** production architectures should target at least 100M
+   parameters for small models and 1B for base models. A smaller screen proxy is allowed to shorten the feedback loop,
+   but it must preserve the tested mechanism and cannot establish product-scale capacity by itself.
 6. **Earth4D must retain parallelizable memory and compute architectures**, such that several subsets of geography
    and time can be concurrently processed at scale.
 7. **The phylogenomic species network must preserve embeddings per species**, which share processing topologically
@@ -69,27 +70,17 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     modality measurably *hurts* any benchmark, that is a **bug** in how the data is integrated (fusion, masking,
     missing-value handling, or loss balance) to be found and fixed — never a reason to drop the modality. We do not
     validate "a better model without certain data"; we make the model correctly use all of it.
-19. **Minimize files and tokens.** The whole system must express its function in as few files and tokens as possible,
-    without compromising baseline production-quality clarity — self-documenting names and standard abbreviations,
-    code that does the talking. Fewer, denser, sharper files always beat more, thinner ones. This is measured over the
-    **critical-path surface that is *subject to change*** — every file whose content shapes end-to-end system behavior
-    and that an autoresearch agent may edit: all model/encoder/fusion code on the champion path, the config, and the
-    `README.md` / `science.md` / `autoresearch.md` documents. It **excludes** the fixed harness that is not subject to
-    change — `prepare.py` (downloads + caches data) and `evaluate.py` (runs the benchmarks and computes the final
-    score, the immutable ground truth). Each condensing pass must **quantify** that surface (file count + total
-    tokens, `.md` included) and drive it down. Every autoresearch agent reads exactly this enumerated surface, no more.
-20. **Fixed experiment budget: 10 minutes.** Each autoresearch experiment trains for 10 minutes of wall-clock (startup
-    and compilation excluded), then is scored by `evaluate.py`. Report benchmarks at that budget; compare experiments
-    at equal time so improvements reflect real efficiency, not just more steps.
-21. **Speed is a first-class score lever.** Because the budget is fixed (rule 20), wall-clock throughput converts
-    directly into training steps and therefore into `net_score`: any acceleration of the algorithm that does not
-    change its per-step mathematics *must* score at least as high, and under the budget, strictly higher. Optimizing
-    throughput — CUDA kernels, sparse/fused updates, compilation, memory traffic, batch size — is therefore a prized
-    research path, not a mere engineering nicety, and sits alongside the standing speed mandates (rules 4, 12). The
-    discipline is that a speedup must be **non-compromising**: bit-identical to the champion per step (verified against
-    the exact model, e.g. `hashencoder/test_precompute_exact.py`), so the extra steps are pure upside and never a
-    silent approximation traded for pace. A faster champion that ties the slower one at fixed time is a red flag — it
-    means the claimed speedup is not real, or a hidden compromise is cancelling it.
+19. **Minimize files and tokens.** Express the editable scientific implementation in as few files and tokens as
+    possible without compromising production clarity. Measure this over model, encoder, fusion, training, and config
+    files on the champion path. The operating contract, customer feedback, prepared data, evaluator, scoring, judge,
+    and publication code are fixed inputs to research, not surfaces an experiment may condense or edit.
+20. **Fixed-step experiment budgets.** Screen every hypothesis at exactly 1,000 training steps and confirm a survivor
+    at exactly 8,000. Candidate and control use the same step budget; wall-clock time never buys one arm more updates.
+21. **Speed is a production constraint and reported result, not a score multiplier.** Optimize CUDA kernels,
+    sparse/fused updates, compilation, memory traffic, and batch size under the standing speed mandates (rules 4, 12),
+    but compare scientific capability after equal optimization steps. A claimed implementation-only speedup must
+    preserve the champion's per-step mathematics (verified against the exact model, e.g.
+    `hashencoder/test_precompute_exact.py`) and report throughput or wall time separately.
 22. **Joint decoding is iterative, not one-shot — a multi-modal diffusion.** Reconstruct all variables *together* by
     refining every state over K rounds: each round fuses all states through the shared latent bottleneck, the latents
     self-attend (the joint model, rule 16), then every state re-reads the fused context *and* its own previous state and
@@ -179,8 +170,8 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     trains on the `.detach()`-ed pooled latent, so none commandeers the core and the net measures the core's capacity.
     A head MAY backprop only if it (a) writes to a dedicated **trait-subspace** -- extra latent bandwidth concatenated
     with, never overwriting, the universal channels (rule 23 for heads); (b) is one of **>=K reliability-weighted
-    heads** (sparse traits -> ~0 weight); (c) regresses **no universal metric beyond noise** (the champion-report guard
-    is the hard floor). Adopt only when the universal arithmetic holds while the niche family rises. A small coupling
+    heads** (sparse traits -> ~0 weight); and (c) raises its named capability while the protocol judge passes.
+    Individual movements remain visible, while harmonic and arithmetic make the promotion decision. A small coupling
     weight does NOT protect the universal axis (a single myco head cost -0.012 at both w=0.1 and w=1.0) -- only
     subspace isolation does.
 

@@ -13,7 +13,7 @@ It ensures, in order:
      ``.pt`` so every training run / experiment spins up in ~1 second.
   4. TEST I/O -- a small held-out inference bundle is materialized so the benchmark harness is ready to score.
 
-Run this ONCE before launching the autoresearch loop. It is not modified by experiments (see ``autoresearch.md``).
+Run this ONCE before launching the autoresearch loop. It is not modified by experiments (see ``PROGRAM.md``).
 """
 from __future__ import annotations
 import argparse, os, shutil, subprocess, sys, time, zipfile

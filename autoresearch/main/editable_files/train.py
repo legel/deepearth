@@ -284,7 +284,7 @@ def train_and_evaluate(config, device):
                 {name: int(n) for name, (_, n) in totals.items()})
 
     model.train(); t0 = time.time()
-    # Optional wall-clock training budget (s), measured from step 10 (excludes startup/compile), so architectures compare at equal time. Absent -> train the full ``steps``.
+    # Profiling-only wall-clock cutoff. Comparable research runs omit it and train the fixed step budget.
     time_budget = t.get("time_budget_s")
     t_budget_start = None
     steps_done = steps                                   # actual steps run (the budget usually stops us well short of `steps`)
@@ -468,7 +468,8 @@ def main():
     ap.add_argument("--device", default="cuda"); ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--cache_dir", default=None)
     ap.add_argument("--eval_ckpt", default=None, help="score an existing checkpoint (skip training)")
-    ap.add_argument("--time_budget", type=float, default=None, help="stop training after N seconds (experiment budget)")
+    ap.add_argument("--time_budget", type=float, default=None,
+                    help="profiling-only cutoff in seconds; results are not promotion-comparable")
     ap.add_argument("--seed", type=int, default=None, help="training seed for a paired confirmation")
     ap.add_argument("--tag", default=None, help="a label for this run (recorded, e.g. the experiment id)")
     ap.add_argument("--save", action="store_true", help="save the checkpoint (off by default; on only for champion runs)")

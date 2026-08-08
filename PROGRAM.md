@@ -49,6 +49,9 @@ clean test. Screening and promotion are separate comparisons:
 - **1k screen:** compare the candidate with the approved 1k control for the current research base.
 - **8k confirmation:** compare the surviving candidate with the current live champion at 8k.
 
+`1k` and `8k` are step budgets, not model-size labels or wall-clock budgets. Wall time is reported as
+efficiency telemetry and never buys a candidate extra optimization steps.
+
 Never compare a 1k result with an 8k result. Within either comparison, candidate and control must use
 the same research base, protocol, active capability suite, cache, prepared data, hardware class, step
 budget, and the fixed seed pair `1337` and `1338`. The committed hypothesis must be the only
@@ -65,7 +68,7 @@ Two separate decisions are required:
    contain the selected-target check, because target selection is research steering rather than a score
    definition.
 
-Both decisions must pass for a 1k candidate to advance to full confirmation. For a 1k screen,
+Both decisions must pass for a 1k candidate to advance to 8k confirmation. For a 1k screen,
 `before` is the approved 1k control; for an 8k confirmation, `before` is the live 8k champion. The
 current-protocol judge requires:
 
@@ -83,7 +86,7 @@ turning ordinary two-seed tail noise into a second judge.
 
 The fixed 1k screen decides whether a hypothesis advances, not whether it becomes champion. It never
 updates `LOOP-deepearth-best` and is never called a record break. Only a scientifically eligible screen
-winner proceeds through the software-engineering handoff and the fixed 8k full-scale confirmation.
+winner proceeds through the software-engineering handoff and the fixed 8k confirmation.
 At 8k, re-check both decisions against the live champion: the target must still rise and the
 current-protocol judge must pass. The loop enforces the target check before calling `publish_best()`;
 the coordinator mechanically enforces the judge. Only then may the result replace the live scorecard or be called a
@@ -111,7 +114,7 @@ The evaluator, judge, score definitions, floors, splits, and baseline are immuta
   subsystem rather than tuning the same idea.
 - Keep experiments isolated, committed, reproducible, and fixed-step. Abandon rejected branches; do not
   repair them by stacking fixes.
-- Push a confirmed full-scale record promptly to the private research mirror as one meaningful
+- Push a confirmed 8k record promptly to the private research mirror as one meaningful
   champion commit whose message includes the record diff. Never push candidate branches. Delivery to
   Lance's public repository is a separate, curated software-engineering PR, and a protocol migration is
   never a scientific breakthrough.

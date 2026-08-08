@@ -164,12 +164,16 @@ spent finding the next thing.
 **Discard by abandoning the branch, not by reverting in place.** If the screen misses the floor, drop the
 branch and pick a materially different hypothesis. Do not iterate a losing idea by patching it.
 
-## Scales
+## Step budgets
 
-| scale | params | use |
+| stage | steps | use |
 |---|---:|---|
-| screen | ~24M | the loop — every hypothesis, ~2 min warm |
-| full | ~796M | the merge gate and the product |
+| screen | 1,000 | matched candidate/control hypothesis filter |
+| confirmation | 8,000 | promotion comparison with the live champion |
+
+Step budget, not parameter count, defines these stages. Candidate and control remain matched except for
+the committed hypothesis; an experiment may change model size only when that change is the hypothesis.
+Product-scale training is a separate delivery decision, not part of this research gate.
 
 ## Where things live
 
