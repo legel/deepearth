@@ -38,7 +38,9 @@ are equal.
 
 $ARGUMENTS
 
-With no argument, target the weakest human capability in the current scorecard.
+With no argument, target the weakest actionable human capability in the current-protocol scorecard.
+If Ensue carries an older protocol, stop and hand off the baseline migration instead of researching
+against an incomparable score.
 
 One model, one loop. Improve DeepEarth, train at fixed steps, measure the full scorecard on held-out
 data, and keep only capability-harmonic gains that clear noise without losing arithmetic breadth.
@@ -56,7 +58,7 @@ The granularity the probes bought was isolation. That is now an ablation delta o
 decomposition: null a subsystem, read the change in the bits of the variables it serves. Isolated, in
 situ, and a term in the fusion number rather than a separate measurement.
 
-## The objective
+## Likelihood diagnostic
 
 `val_bpb` — held-out masked reconstruction, scored as a proper likelihood in bits per revealed dimension. It shares the
 model's data, split, masking and decoder path, but NOT its loss functions: training uses centered cosine for
@@ -87,11 +89,12 @@ goes through `champion_report.py` (rule 30).
 ## The loop
 
 0. **THINK.** Three inputs, in this order.
-   - **The scorecard.** Target the weakest human capability. Use `val_bpb`, its decomposition and
-     mechanism ablations only to form a causal explanation for that weakness.
+   - **The scorecard.** Start with the lowest active human capability. If it is not actionable, record
+     the concrete reason and take the next weakest; difficulty alone is not a reason to skip it. Use
+     `val_bpb`, its decomposition and mechanism ablations only to explain that weakness.
    - **`customer_feedback/`.** Read the original files, not a summary of them. They say which
      capabilities the customer actually wants and where the science is heading; a technically valid
-     result on a capability nobody asked for is a wasted iteration. Use them with the weakest variable
+     result on a capability nobody asked for is a wasted iteration. Use them with the weakest capability
      to choose the **surface area** — which subsystem to change.
    - **The swarm.** `coord.assert_connected()` first — it raises rather than degrading to silence,
      because every way this client breaks returns "no results", which looks exactly like "nothing to
@@ -101,8 +104,8 @@ goes through `champion_report.py` (rule 30).
      campaign semantically, including the 568 `LOOP-` records from prior work, so you never pay for a
      negative someone already published.
 
-   The target is `science.md` realized **while staying well-rounded**. The weakest capability says where
-   to push; harmonic rewards lifting it and arithmetic prevents a broad trade.
+   The target is `science.md` realized **while staying well-rounded**. The weakest actionable capability
+   says where to push; harmonic rewards lifting it and arithmetic prevents a broad trade.
 1. **CLAIM.** `coord.claim("description")`. If it returns `None` someone holds it — pick another. Claims
    expire, so a dead agent never blocks the swarm.
 2. **State one causal hypothesis.** Which variables should lose bits, and through which subsystem.
@@ -147,10 +150,9 @@ rituals — nothing elsewhere in this document adds another.
 | **Unreproducible run** | the tree was dirty, the cache differed, or the arms did not share seed and data | The number does not exist. Discard it — do not report it with a caveat. |
 | **Incomparable numbers** | comparing a mirror run to a public-main run | Void. The evaluators differ by ~158 lines; the same config scores ~0.279 on the mirror and 0.332464 on public main. |
 
-**Two matched seeds per arm is the standard.** Take a third only when the verdict actually turns on it —
-the arms overlap, or a regression is the only thing blocking a keep. Never open an experiment whose
-purpose is raising confidence in a result you already have: uncertainty is recorded, not resolved. A
-cycle spent re-confirming is a cycle not spent finding the next thing.
+**Use exactly two matched seeds per arm.** Do not add a third to rescue an ambiguous verdict. Record the
+uncertainty and move to a materially different hypothesis; a cycle spent re-confirming is a cycle not
+spent finding the next thing.
 
 **Discard by abandoning the branch, not by reverting in place.** If the screen misses the floor, drop the
 branch and pick a materially different hypothesis. Do not iterate a losing idea by patching it.
