@@ -1,6 +1,6 @@
 # Scorecard — how science is measured
 
-Protocol `v4-human-benchmark-gate` makes the human-interpretable benchmark suite the promotion
+Protocol `v5-conditional-phylo-transfer` makes the human-interpretable benchmark suite the promotion
 instrument. `val_bpb` remains a reconstruction diagnostic and never decides promotion.
 
 ## Promotion gate
@@ -32,6 +32,11 @@ rose inside its floor. The defect was not the harmonic; promotion ignored it.
 - `B55_pollinator_phylo_transfer_recall` remains measured and displayed but is quarantined from both
   means. It predicts from focal identity plus environment, scores against the neighbors' pollinator
   union, and never supplies relatives' pollinators as inputs; that does not test the capability named.
+- `B66_community_phylo_conditional_auc` measures the incremental community-ranking signal contributed
+  by a relative-reconstructed, seed-masked species identity over the exact same position and neighbor
+  context. It is a per-query, tie-aware ROC-AUC: `0.5` means the phylogenetic contribution is no better
+  than chance. The former contextual recall remains visible as
+  `B66_contextual_masked_community_recall`, a diagnostic excluded from both means.
 - A changed active capability set is a protocol break, not a comparable result.
 
 Quarantine requires a structural defect, not an inconvenient score. Repairing B55 requires a new
@@ -49,9 +54,9 @@ floor, never raw bits.
 
 ## Migration
 
-Earlier protocol scores and v4 scores are incomparable. Promotion is frozen until one fresh two-seed v4 baseline is
-published explicitly as the new baseline. Historical runs are not replayed. Thereafter the coordinator
-mechanically rejects protocol or capability-suite mismatches.
+Earlier protocol scores and v5 scores are incomparable. Promotion is frozen until one fresh two-seed
+v5 baseline is published explicitly as the new baseline. Historical runs are not replayed. Thereafter
+the coordinator mechanically rejects protocol or capability-suite mismatches.
 
 ## What a run reports
 
@@ -61,6 +66,7 @@ CAPABILITY HARMONIC                              <- primary gate
 CAPABILITY ARITHMETIC                            <- breadth guard
 QUARANTINED                                      <- raw score + reason
 MECHANISM DIAGNOSTICS                            <- raw ablation/information gains
+CONTEXT DIAGNOSTICS                              <- valid raw checks that do not isolate a capability
 UNCALIBRATED REPRESENTATION METRICS              <- raw cosine, reported but not gated
 val_bpb + macro + per-variable decomposition     <- likelihood diagnostics
 ```

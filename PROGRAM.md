@@ -66,8 +66,8 @@ Two separate decisions are required:
    definition.
 
 Both decisions must pass for a 1k candidate to advance to full confirmation. For a 1k screen,
-`before` is the approved 1k control; for an 8k confirmation, `before` is the live 8k champion. The v4
-judge requires:
+`before` is the approved 1k control; for an 8k confirmation, `before` is the live 8k champion. The
+current-protocol judge requires:
 
 1. candidate and incumbent have the same protocol and identical active capability suite;
 2. mean candidate harmonic minus mean incumbent harmonic is greater than the incumbent's two-seed
@@ -84,9 +84,9 @@ turning ordinary two-seed tail noise into a second judge.
 The fixed 1k screen decides whether a hypothesis advances, not whether it becomes champion. It never
 updates `LOOP-deepearth-best` and is never called a record break. Only a scientifically eligible screen
 winner proceeds through the software-engineering handoff and the fixed 8k full-scale confirmation.
-At 8k, re-check both decisions against the live champion: the target must still rise and the v4 judge
-must pass. The loop enforces the target check before calling `publish_best()`; the coordinator
-mechanically enforces the judge. Only then may the result replace the live scorecard or be called a
+At 8k, re-check both decisions against the live champion: the target must still rise and the
+current-protocol judge must pass. The loop enforces the target check before calling `publish_best()`;
+the coordinator mechanically enforces the judge. Only then may the result replace the live scorecard or be called a
 record break. The only non-breakthrough writes to that key are explicit protocol/schema baseline
 migrations and delivery stamps; neither may be described as a scientific improvement.
 

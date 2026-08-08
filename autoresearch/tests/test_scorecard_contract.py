@@ -24,15 +24,16 @@ from coordinator import SCHEMA, scorecard                          # noqa: E402
 def _card(**over):
     benchmarks = over.pop("benchmarks", {"B08_species": 0.41, "B01_climate": 0.72,
                                          "B55_pollinator_phylo_transfer_recall": 0.04,
-                                         "B56_family_phylo_graph_gain": 0.20})
+                                         "B56_family_phylo_graph_gain": 0.20,
+                                         "B66_contextual_masked_community_recall": 0.30})
     kw = dict(
         val_bpb=2.0356, macro=3.08,
         decomposition={"climate": 2.0004, "identity": 6.1, "clay": 5.2},
         revealed_dims={"climate": 17_762_000, "identity": 1, "clay": 1},
         benchmark_runs=[benchmarks, benchmarks],
-        benchmark_protocol="v4-human-benchmark-gate",
+        benchmark_protocol="v5-conditional-phylo-transfer",
         capability_suite=("B01_climate", "B08_species"),
-        training_seeds=(1337, 1339), noise_floor=0.0167,
+        training_seeds=(1337, 1338), noise_floor=0.0167,
         params=24_000_000, steps=1000, config="screen.yaml", agent="test",
         commit="abc1234", branch="exp/x", hardware={"gpu": "RTX PRO 6000", "gpus": 2},
     )
@@ -47,7 +48,7 @@ def test_the_front_end_can_rely_on_the_shape():
                       "benchmarks", "benchmark_runs", "evidence", "delivery", "previous"}
     assert set(c["headline"]) == {"harmonic", "arithmetic"}
     assert c["diagnostics"] == {"val_bpb": 2.0356, "macro": 3.08}
-    assert c["evidence"]["benchmark_protocol"] == "v4-human-benchmark-gate"
+    assert c["evidence"]["benchmark_protocol"] == "v5-conditional-phylo-transfer"
     assert c["evidence"]["hardware"] == {"gpu": "RTX PRO 6000", "gpus": 2}
     assert c["model"]["params"] == 24_000_000 and c["model"]["params_m"] == 24.0
     assert json.loads(json.dumps(c)) == c, "must survive a JSON round trip"
@@ -153,12 +154,14 @@ def test_only_human_capabilities_enter_the_two_headline_means():
     b = _card(benchmarks={"B08_species": 0.41, "B01_climate": 0.72,
                           "B09_infer_hydro_cos": 0.99,
                           "B55_pollinator_phylo_transfer_recall": 0.99,
-                          "B56_family_phylo_graph_gain": -0.99})
+                          "B56_family_phylo_graph_gain": -0.99,
+                          "B66_contextual_masked_community_recall": 0.99})
     assert a["headline"] == b["headline"], "quarantine and mechanism evidence cannot move the gate"
     roles = {row["name"]: row["role"] for row in b["benchmarks"]}
     assert roles["B09_infer_hydro_cos"] == "uncalibrated"
     assert roles["B55_pollinator_phylo_transfer_recall"] == "quarantined"
     assert roles["B56_family_phylo_graph_gain"] == "mechanism"
+    assert roles["B66_contextual_masked_community_recall"] == "diagnostic"
 
 
 def test_headline_is_the_mean_of_per_seed_scores():
@@ -233,7 +236,7 @@ def test_harmonic_gain_must_beat_incumbent_seed_spread(monkeypatch):
 
 def test_protocol_change_freezes_comparison(monkeypatch):
     old = _card()
-    new = _card(benchmark_protocol="v4-future")
+    new = _card(benchmark_protocol="v6-future")
     assert not _publisher(old, monkeypatch).publish_best(new)
 
 

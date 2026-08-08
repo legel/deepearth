@@ -109,7 +109,8 @@ DESC = {
     "B63_myco_from_species_f1": "mycorrhiza imputation given species identity, macro-F1",
     "B64_family_phylo_masked_imputation": "seed-masked species -> family from relatives, NN accuracy",
     "B65_myco_phylo_masked_imputation_f1": "seed-masked species -> mycorrhiza from relatives, macro-F1",
-    "B66_community_phylo_masked_recall": "seed-masked species -> community from relatives, recall@10",
+    "B66_community_phylo_conditional_auc": "relative-reconstructed identity contribution to community ranking, ROC-AUC",
+    "B66_contextual_masked_community_recall": "masked identity plus ordinary context -> community, recall@10 diagnostic",
     "B67_pollinator_phylo_masked_recall": "seed-masked plant -> own pollinators from relatives, recall@10",
 }
 

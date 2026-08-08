@@ -27,6 +27,14 @@ QUARANTINED_BENCHMARKS = {
         "focal identity + environment is scored against neighbors' pollinators; relatives are not inputs",
 }
 
+# Contextual sanity checks remain visible but do not enter the capability composite.  Unlike a
+# quarantine, these instruments are valid for what they actually measure; they are excluded because
+# they do not isolate the capability their paired benchmark is intended to test.
+DIAGNOSTIC_BENCHMARKS = {
+    "B66_contextual_masked_community_recall":
+        "raw masked-identity recall includes position and neighbor context; conditional AUC isolates phylogenetic transfer",
+}
+
 
 # ---------------------------------------------------------------- the objective
 
@@ -141,8 +149,8 @@ def diagnose_likelihood(before: Mapping[str, tuple], after: Mapping[str, tuple],
 # ---------------------------------------------------------------- diagnostics
 
 def is_diagnostic(k: str) -> bool:
-    """A derived difference benchmark (`*_gain`): capability with minus without a mechanism."""
-    return k.endswith("_gain")
+    """A valid mechanism or contextual diagnostic excluded from capability aggregation."""
+    return k.endswith("_gain") or k in DIAGNOSTIC_BENCHMARKS
 
 
 def is_uncalibrated(k: str) -> bool:

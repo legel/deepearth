@@ -50,13 +50,13 @@ INSIGHT = "LOOP-deepearth-insights/{slug}-{hash}"
 HYPOTHESIS = "LOOP-deepearth-hypotheses/{slug}-{hash}"
 BEST = "LOOP-deepearth-best"
 
-SCHEMA = "deepearth.scorecard/2"   # protocol v4 gates on human-readable task scores
+SCHEMA = "deepearth.scorecard/2"   # current protocol gates on human-readable task scores
 _ROUND = 6                          # every float is rounded here, so the same run twice is byte-identical
 _UNSET = object()                   # "no CAS guard given", distinct from expected=None ("cold start")
 
 try:
     from deepearth.autoresearch.scoring.objective import (
-        QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
+        DIAGNOSTIC_BENCHMARKS, QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
         capability_suite as observed_capability_suite, harmonic as capability_harmonic,
         is_diagnostic, is_uncalibrated, judge as judge_capabilities,
     )
@@ -64,7 +64,7 @@ except ModuleNotFoundError:  # direct execution from the repository root
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from scoring.objective import (
-        QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
+        DIAGNOSTIC_BENCHMARKS, QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
         capability_suite as observed_capability_suite, harmonic as capability_harmonic,
         is_diagnostic, is_uncalibrated, judge as judge_capabilities,
     )
@@ -270,6 +270,8 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
         row = {"name": name, "score": _num(value, f"benchmarks.{name}")}
         if name in QUARANTINED_BENCHMARKS:
             row.update(role="quarantined", reason=QUARANTINED_BENCHMARKS[name])
+        elif name in DIAGNOSTIC_BENCHMARKS:
+            row.update(role="diagnostic", reason=DIAGNOSTIC_BENCHMARKS[name])
         elif is_diagnostic(name):
             row["role"] = "mechanism"
         elif is_uncalibrated(name):
@@ -589,7 +591,7 @@ class Coordinator:
         if not force:
             if cur and cur.get("schema") != SCHEMA:
                 print("[ensue] promotion frozen: standing scorecard predates this contract; publish the fresh "
-                      "two-seed v4 baseline with force=True before comparing candidates", flush=True)
+                      "two-seed current-protocol baseline with force=True before comparing candidates", flush=True)
                 return False
             if expected is not _UNSET and live != expected:
                 print(f"[ensue] NOT promoted: incumbent moved to {live} (you decided against "

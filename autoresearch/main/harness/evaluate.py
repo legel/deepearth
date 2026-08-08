@@ -23,7 +23,63 @@ import torch.nn.functional as F
 # Increment whenever a benchmark definition, split, control, or suite membership changes.  Champion
 # records and graduation crossings carry this value so an old instrument can never be compared with a
 # new one merely because the benchmark names happen to overlap.
-BENCHMARK_PROTOCOL = "v4-human-benchmark-gate"
+BENCHMARK_PROTOCOL = "v5-conditional-phylo-transfer"
+
+
+def _tie_aware_binary_auc(scores, target) -> float:
+    """ROC-AUC for one binary query, with equal scores receiving half credit."""
+    scores = np.asarray(scores, dtype=np.float64).reshape(-1)
+    target = np.asarray(target, dtype=bool).reshape(-1)
+    if scores.shape != target.shape:
+        raise ValueError("scores and target must have the same shape")
+    positives = int(target.sum())
+    negatives = len(target) - positives
+    if not positives or not negatives:
+        return float("nan")
+
+    order = np.argsort(scores, kind="mergesort")
+    sorted_scores = scores[order]
+    ranked = np.empty(len(scores), dtype=np.float64)
+    starts = np.r_[0, np.flatnonzero(sorted_scores[1:] != sorted_scores[:-1]) + 1]
+    ends = np.r_[starts[1:], len(scores)]
+    for start, end in zip(starts, ends):
+        ranked[start:end] = 0.5 * ((start + 1) + end)
+    ranks = np.empty_like(ranked)
+    ranks[order] = ranked
+    return float((ranks[target].sum() - positives * (positives + 1) / 2)
+                 / (positives * negatives))
+
+
+def _conditional_community_auc(masked_logits: torch.Tensor, no_identity_logits: torch.Tensor,
+                               target: torch.Tensor) -> tuple[float, int]:
+    """Sum per-query AUCs of the identity-conditioned increment over the same context."""
+    if masked_logits.shape != no_identity_logits.shape or masked_logits.shape != target.shape:
+        raise ValueError("paired community logits and target must have the same shape")
+    deltas = (masked_logits - no_identity_logits).detach().float().cpu().numpy()
+    targets = target.detach().bool().cpu().numpy()
+    aucs = [_tie_aware_binary_auc(delta, truth) for delta, truth in zip(deltas, targets)]
+    valid = [auc for auc in aucs if not math.isnan(auc)]
+    return float(sum(valid)), len(valid)
+
+
+def _paired_calls(first, second, device):
+    """Run two stochastic arms from the same RNG state, consuming one arm's randomness."""
+    cpu_before = torch.random.get_rng_state()
+    cuda_device = torch.device(device) if str(device).startswith("cuda") else None
+    cuda_before = torch.cuda.get_rng_state(cuda_device) if cuda_device is not None else None
+    first_result = first()
+    cpu_after = torch.random.get_rng_state()
+    cuda_after = torch.cuda.get_rng_state(cuda_device) if cuda_device is not None else None
+    torch.random.set_rng_state(cpu_before)
+    if cuda_device is not None:
+        torch.cuda.set_rng_state(cuda_before, cuda_device)
+    try:
+        second_result = second()
+    finally:
+        torch.random.set_rng_state(cpu_after)
+        if cuda_device is not None:
+            torch.cuda.set_rng_state(cuda_after, cuda_device)
+    return first_result, second_result
 
 def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, num_classes: int) -> float:
     """Macro-F1 over the observed rows: mean per-class F1 (unweighted), so rare classes count as much as common."""
@@ -122,7 +178,8 @@ BENCHMARKS: List[str] = [
     "B63_myco_from_species_f1",         # symbiosis imputation GIVEN the species identity (isolates phylo imputation from env->species inference); honest bar = BioCLIP-NN 0.584
     "B64_family_phylo_masked_imputation",   # held-out species seed masked -> family from phylogenetic relatives
     "B65_myco_phylo_masked_imputation_f1", # held-out species seed masked -> mycorrhiza from relatives
-    "B66_community_phylo_masked_recall",   # held-out species seed masked -> local community from relatives
+    "B66_community_phylo_conditional_auc", # relative-reconstructed identity contribution to community ranking, ROC-AUC
+    "B66_contextual_masked_community_recall", # raw contextual recall diagnostic; does not isolate phylogenetic transfer
     "B67_pollinator_phylo_masked_recall",  # held-out plant seed masked -> its pollinators from relatives
 ]
 
@@ -422,9 +479,17 @@ def _evaluate_benchmarks_once(model, source, device, batch: int = 1536) -> Dict[
                     masked_target = tset.clone()
                     masked_target.scatter_(1, tid[:, None], False)  # probe target excludes self
                     with _masked_species_graph(model, species_holdout):
-                        masked = infer(["identity"], ["community"])["community"]
-                    add("B66_community_phylo_masked_recall",
+                        masked, no_identity = _paired_calls(
+                            lambda: infer(["identity"], ["community"])["community"],
+                            lambda: infer([], ["community"])["community"],
+                            device,
+                        )
+                    add("B66_contextual_masked_community_recall",
                         recall_sum(masked[hm], masked_target[hm]), int(hm.sum()))
+                    auc_sum, auc_count = _conditional_community_auc(
+                        masked[hm], no_identity[hm], masked_target[hm])
+                    if auc_count:
+                        add("B66_community_phylo_conditional_auc", auc_sum, auc_count)
 
         # ---- plant-pollinator interactions (GloBI): the pollinator distribution is the TARGET only (leak-safe) ----
         if hasattr(source, "poll_idx") and getattr(model, "poll_head", None) is not None and c0 < community_cap:
@@ -583,8 +648,9 @@ def observed_any(observed: Dict[str, torch.Tensor], name: str) -> bool:
 # scoring must not be editable by the experiments it judges. science.md rule 19 already calls this file
 # "the immutable ground truth"; it was stored in the editable tree anyway, and `score.py` kept a
 # hand-copy of two of them under a comment reading "keep byte-identical". One definition now, imported
-# by every evaluator. Protocol v4 changes membership, not any benchmark definition.
+# by every evaluator. A protocol change can alter definitions or membership, never historical records.
 from deepearth.autoresearch.scoring.objective import (          # noqa: E402  (must follow BENCHMARKS)
+    DIAGNOSTIC_BENCHMARKS,
     QUARANTINED_BENCHMARKS,
     SCORE_FLOOR as _SCORE_FLOOR,                    # noqa: F401  (re-exported for existing callers)
     capability_suite,
@@ -611,7 +677,9 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
             if not is_diagnostic(k) and not is_uncalibrated(k)
             and k not in QUARANTINED_BENCHMARKS}
     quarantined = {k: v for k, v in normed.items() if k in QUARANTINED_BENCHMARKS}
-    diags = {k: v for k, v in normed.items() if is_diagnostic(k)}
+    context_diags = {k: v for k, v in normed.items() if k in DIAGNOSTIC_BENCHMARKS}
+    diags = {k: v for k, v in normed.items()
+             if is_diagnostic(k) and k not in DIAGNOSTIC_BENCHMARKS}
     uncalibrated = {k: v for k, v in normed.items() if is_uncalibrated(k)}
     lines = [f"BENCHMARK PROTOCOL: {BENCHMARK_PROTOCOL}",
              "HUMAN CAPABILITIES (weakest first)",
@@ -635,6 +703,10 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
         lines.append("UNCALIBRATED REPRESENTATION METRICS (reported raw; excluded from both means):")
         for k in sorted(uncalibrated):
             lines.append(f"  {k:<34} {uncalibrated[k]:6.3f}")
+    if context_diags:
+        lines.append("CONTEXT DIAGNOSTICS (reported raw; excluded from both capability means):")
+        for k in sorted(context_diags):
+            lines.append(f"  {k:<34} {context_diags[k]:6.3f}  ({DIAGNOSTIC_BENCHMARKS[k]})")
     if diags:
         lines.append("MECHANISM DIAGNOSTICS (raw; excluded from both capability means):")
         for k in sorted(diags, key=lambda k: -diags[k]):

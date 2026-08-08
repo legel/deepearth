@@ -6,8 +6,9 @@
 
 Reference scores for the /autoresearch pipeline. Reproduce, then push against these.
 
-> Historical pre-v4 baseline. Its raw benchmark rows remain useful, but its means include uncalibrated
-> cosine metrics and are not comparable to `v4-human-benchmark-gate`. Establish a fresh two-seed v4 baseline.
+> Historical pre-v5 baseline. Its raw benchmark rows remain useful, but its means include uncalibrated
+> cosine metrics and are not comparable to `v5-conditional-phylo-transfer`. Establish a fresh two-seed
+> v5 baseline.
 
 **Config:** `autoresearch/main/editable_files/deepcal.yaml` (default, pollinator subsystem ON), `operator: latent-clade`, `bioclip_init: true`, spatial holdout, bf16, **batch 256, 8000 steps** on a single RTX 3090 (24GB). 
 On a ≥40GB GPU use the default `batch: 512` for ~2–3% higher scores. Command:
