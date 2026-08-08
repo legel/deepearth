@@ -62,6 +62,9 @@ control; for an 8k confirmation, `before` is the live 8k champion:
 
 The judge computes each mean from the two per-seed aggregate scores. It does not aggregate averaged
 benchmark rows, use a third seed, impose dozens of per-benchmark gates, or consult `val_bpb`.
+Every other capability movement remains visible in the scorecard and can motivate the next experiment,
+but it is not an undeclared promotion veto. This keeps rule 18's regressions observable without
+turning ordinary two-seed tail noise into a second judge.
 
 The fixed 1k screen decides whether a hypothesis advances, not whether it becomes champion. It never
 updates `LOOP-deepearth-best` and is never called a record break. Only a scientifically eligible screen

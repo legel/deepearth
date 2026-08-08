@@ -123,6 +123,9 @@ goes through `champion_report.py` (rule 30).
 
 - **Breadth must hold.** Harmonic must clear its two-seed floor and arithmetic may not regress beyond its
   own. Report every individual movement; do not create dozens of noisy hard gates.
+- **The named target must rise.** This is the causal check on the hypothesis, not a hidden gate over
+  every benchmark row. Other individual regressions stay visible and inform later work; arithmetic is
+  their promotion guard.
 - **Every change is a config toggle defaulting to current behaviour**, so the default path stays
   byte-identical and a flag can be flipped off without a rebuild.
 - **Commit the candidate before running it.** The diff IS the experiment; a number measured against
@@ -146,7 +149,7 @@ rituals — nothing elsewhere in this document adds another.
 | **Grinding** | measuring variance, re-tuning a weight you already tuned, re-running a control that exists, or three experiments deep with no new mechanism | Stop and change subsystem. Publish what you have with its seed count and spread. |
 | **Broken record** | a run fails for a reason that is not your hypothesis — crash, missing method, unbuildable config, stale or non-reproducing baseline, an instrument disagreeing with itself | Do not fix it in the loop. Publish an insight with the evidence, hand it to `ship-deepearth-improvement`, pick another hypothesis. |
 | **Metric tampering** | changing a metric, split, floor or baseline so a candidate passes | Revert it. Improve the model instead. The instruments are read-only for a reason. |
-| **Trading** | an aggregate improves while an owned variable regresses past its floor | Not a result. Report it as a trade and keep looking. |
+| **Trading** | strength elsewhere raises harmonic while the named target does not rise, or arithmetic regresses past its floor | Not a result. Report it as a trade and keep looking. |
 | **Unreproducible run** | the tree was dirty, the cache differed, or the arms did not share seed and data | The number does not exist. Discard it — do not report it with a caveat. |
 | **Incomparable numbers** | comparing a mirror run to a public-main run | Void. The evaluators differ by ~158 lines; the same config scores ~0.279 on the mirror and 0.332464 on public main. |
 
