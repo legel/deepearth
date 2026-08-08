@@ -26,8 +26,12 @@ def _card(**over):
         val_bpb=2.0356, macro=3.08,
         decomposition={"climate": 2.0004, "identity": 6.1, "clay": 5.2},
         revealed_dims={"climate": 17_762_000, "identity": 1, "clay": 1},
-        benchmarks={"B08_species": 0.41, "B01_climate": 0.72},
-        harmonic=0.3187, arithmetic=0.5707, seeds=2, noise_floor=0.0167,
+        benchmarks={"B08_species": 0.41, "B01_climate": 0.72,
+                    "B55_pollinator_phylo_transfer_recall": 0.04,
+                    "B56_family_phylo_graph_gain": 0.20},
+        benchmark_protocol="v3-human-capability-gate",
+        capability_suite=("B01_climate", "B08_species"),
+        seeds=2, harmonic_floor=0.003, arithmetic_floor=0.004, noise_floor=0.0167,
         params=24_000_000, steps=1000, config="screen.yaml", agent="test",
         commit="abc1234", branch="exp/x", hardware={"gpu": "RTX PRO 6000", "gpus": 2},
     )
@@ -38,9 +42,11 @@ def _card(**over):
 def test_the_front_end_can_rely_on_the_shape():
     c = _card()
     assert c["schema"] == SCHEMA
-    assert set(c) == {"schema", "generated_at", "agent", "headline", "model", "variables",
+    assert set(c) == {"schema", "generated_at", "agent", "headline", "diagnostics", "model", "variables",
                       "benchmarks", "evidence", "delivery", "previous"}
-    assert set(c["headline"]) == {"val_bpb", "macro", "harmonic", "arithmetic"}
+    assert set(c["headline"]) == {"harmonic", "arithmetic"}
+    assert c["diagnostics"] == {"val_bpb": 2.0356, "macro": 3.08}
+    assert c["evidence"]["benchmark_protocol"] == "v3-human-capability-gate"
     assert c["evidence"]["hardware"] == {"gpu": "RTX PRO 6000", "gpus": 2}
     assert c["model"]["params"] == 24_000_000 and c["model"]["params_m"] == 24.0
     assert json.loads(json.dumps(c)) == c, "must survive a JSON round trip"
@@ -139,3 +145,65 @@ def test_retrieval_floors_separate_apparent_headroom_from_real():
     gaussian = next(v for v in c["variables"] if v["name"] == "climate")
     assert gaussian["floor"] is None, "no floor for a variable that is not retrieval-scored"
     assert gaussian["headroom"] is None, "absent, not zero -- unknown is not the same as none"
+
+
+def test_only_human_capabilities_enter_the_two_headline_means():
+    a = _card()
+    b = _card(benchmarks={"B08_species": 0.41, "B01_climate": 0.72,
+                          "B55_pollinator_phylo_transfer_recall": 0.99,
+                          "B56_family_phylo_graph_gain": -0.99})
+    assert a["headline"] == b["headline"], "quarantine and mechanism evidence cannot move the gate"
+    roles = {row["name"]: row["role"] for row in b["benchmarks"]}
+    assert roles["B55_pollinator_phylo_transfer_recall"] == "quarantined"
+    assert roles["B56_family_phylo_graph_gain"] == "mechanism"
+
+
+def test_capability_suite_must_match_exactly_what_the_run_reports():
+    with pytest.raises(ValueError, match="capability_suite"):
+        _card(capability_suite=("B01_climate",))
+    with pytest.raises(ValueError, match="quarantined measurements"):
+        _card(benchmarks={"B08_species": 0.41, "B01_climate": 0.72})
+
+
+def _publisher(incumbent, monkeypatch):
+    from coordinator import Coordinator
+    coord = Coordinator(agent_id="test", api_key="test")
+    monkeypatch.setattr(coord, "best", lambda: incumbent)
+    monkeypatch.setattr(coord, "put", lambda *args, **kwargs: True)
+    return coord
+
+
+def test_promotion_uses_harmonic_not_val_bpb(monkeypatch):
+    old = _card(benchmarks={"B08_species": 0.40, "B01_climate": 0.70,
+                            "B55_pollinator_phylo_transfer_recall": 0.04,
+                            "B56_family_phylo_graph_gain": 0.20})
+    new = _card(val_bpb=9.0, macro=9.0,
+                benchmarks={"B08_species": 0.42, "B01_climate": 0.71,
+                            "B55_pollinator_phylo_transfer_recall": 0.01,
+                            "B56_family_phylo_graph_gain": -0.80})
+    assert _publisher(old, monkeypatch).publish_best(new)
+
+
+def test_arithmetic_is_the_breadth_guard(monkeypatch):
+    old = _card(benchmarks={"B08_species": 0.10, "B01_climate": 0.90,
+                            "B55_pollinator_phylo_transfer_recall": 0.04,
+                            "B56_family_phylo_graph_gain": 0.20})
+    new = _card(arithmetic_floor=0.01,
+                benchmarks={"B08_species": 0.12, "B01_climate": 0.85,
+                            "B55_pollinator_phylo_transfer_recall": 0.04,
+                            "B56_family_phylo_graph_gain": 0.20})
+    assert new["headline"]["harmonic"] > old["headline"]["harmonic"]
+    assert not _publisher(old, monkeypatch).publish_best(new)
+
+
+def test_protocol_change_freezes_comparison(monkeypatch):
+    old = _card()
+    new = _card(benchmark_protocol="v4-future")
+    assert not _publisher(old, monkeypatch).publish_best(new)
+
+
+def test_publisher_recomputes_the_headline_before_writing(monkeypatch):
+    old, new = _card(), _card()
+    new["headline"]["harmonic"] += 0.1
+    with pytest.raises(ValueError, match="harmonic does not match"):
+        _publisher(old, monkeypatch).publish_best(new)

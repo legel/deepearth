@@ -1,6 +1,6 @@
 """Ensue shared memory for the research loop.
 
-Multiple agents, different GPUs, one goal: the lowest `val_bpb`. Results flow through a shared Ensue
+Multiple agents, different GPUs, one goal: stronger human-interpretable capabilities. Results flow through a shared Ensue
 org; git stays local. Ensue is the shared brain, and it is additive -- if it is unreachable the loop
 continues solo.
 
@@ -50,9 +50,24 @@ INSIGHT = "LOOP-deepearth-insights/{slug}-{hash}"
 HYPOTHESIS = "LOOP-deepearth-hypotheses/{slug}-{hash}"
 BEST = "LOOP-deepearth-best"
 
-SCHEMA = "deepearth.scorecard/1"   # bump only on a breaking shape change; the front end pins on this
+SCHEMA = "deepearth.scorecard/2"   # v3 moves likelihood metrics out of the promotion headline
 _ROUND = 6                          # every float is rounded here, so the same run twice is byte-identical
 _UNSET = object()                   # "no CAS guard given", distinct from expected=None ("cold start")
+
+try:
+    from deepearth.autoresearch.scoring.objective import (
+        QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
+        capability_suite as observed_capability_suite, harmonic as capability_harmonic,
+        is_diagnostic,
+    )
+except ModuleNotFoundError:  # direct execution from the repository root
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from scoring.objective import (
+        QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
+        capability_suite as observed_capability_suite, harmonic as capability_harmonic,
+        is_diagnostic,
+    )
 
 
 _KEY_NAMES = ("ENSUE_API_KEY", "ENSUE_API_TOKEN")   # the old harness used _TOKEN; accept both
@@ -173,7 +188,8 @@ def _num(value: Any, field: str, *, positive: bool = False) -> float:
 
 
 def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dims: dict,
-              benchmarks: dict, harmonic: float, arithmetic: float, seeds: int, noise_floor: float,
+              benchmarks: dict, benchmark_protocol: str, capability_suite: Sequence[str],
+              seeds: int, harmonic_floor: float, arithmetic_floor: float, noise_floor: float,
               retrieval_floors: Optional[dict] = None,
               params: int, steps: int, config: str, agent: str = "unknown",
               model: Optional[dict] = None, commit: Optional[str] = None, branch: Optional[str] = None,
@@ -193,6 +209,15 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
         raise ValueError("scorecard.decomposition: empty -- val_bpb without its per-variable lens is a bare number")
     if not benchmarks:
         raise ValueError("scorecard.benchmarks: empty -- rule 32 requires 100% of the suite scored")
+    if not benchmark_protocol:
+        raise ValueError("scorecard.benchmark_protocol: missing")
+    suite = tuple(sorted(capability_suite))
+    observed = observed_capability_suite(benchmarks)
+    if not suite or suite != observed:
+        raise ValueError(f"scorecard.capability_suite: declared {suite}, observed {observed}")
+    missing_quarantine = sorted(set(QUARANTINED_BENCHMARKS) - set(benchmarks))
+    if missing_quarantine:
+        raise ValueError(f"scorecard.benchmarks: quarantined measurements must still be reported: {missing_quarantine}")
     missing = sorted(set(decomposition) - set(revealed_dims))
     if missing:
         raise ValueError(f"scorecard.revealed_dims: missing {missing} -- shares cannot be computed")
@@ -201,8 +226,8 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
     if total_dims <= 0:
         raise ValueError("scorecard.revealed_dims: total is zero")
 
-    # Share of the AGGREGATE, which is dimension-weighted -- this is the field that tells a reader why
-    # one variable can move the gate on its own, and the reason `judge()` also requires coverage.
+    # Share of the likelihood aggregate, which is dimension-weighted. This explains why val_bpb is a
+    # diagnostic rather than the capability-promotion gate.
     # `floor` is what a PERFECT predictor scores, in bits. Retrieval banks are drawn with replacement
     # and several variables are per-species, so identical rows split the softmax mass and the floor is
     # not zero -- phylo's is 2.11 nats (3.05 bits) of an 8.32-nat range. `headroom` is what is actually
@@ -222,15 +247,33 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
         })
     variables.sort(key=lambda v: (-v["share_pct"], v["name"]))
 
+    harmonic = capability_harmonic(benchmarks, suite=suite)
+    arithmetic = capability_arithmetic(benchmarks, suite=suite)
+    if harmonic_floor < 0 or arithmetic_floor < 0:
+        raise ValueError("scorecard.evidence.floors: measured spreads cannot be negative")
+
+    benchmark_rows = []
+    for name, value in benchmarks.items():
+        row = {"name": name, "score": _num(value, f"benchmarks.{name}")}
+        if name in QUARANTINED_BENCHMARKS:
+            row.update(role="quarantined", reason=QUARANTINED_BENCHMARKS[name])
+        elif is_diagnostic(name):
+            row["role"] = "mechanism"
+        else:
+            row["role"] = "capability"
+        benchmark_rows.append(row)
+
     doc = {
         "schema": SCHEMA,
         "generated_at": _now(),
         "agent": agent,
         "headline": {
-            "val_bpb": _num(val_bpb, "val_bpb", positive=True),   # the gate
-            "macro": _num(macro, "macro", positive=True),          # coverage: every capability equal
-            "harmonic": _num(harmonic, "harmonic"),                # the public-facing suite means
+            "harmonic": _num(harmonic, "harmonic"),
             "arithmetic": _num(arithmetic, "arithmetic"),
+        },
+        "diagnostics": {
+            "val_bpb": _num(val_bpb, "val_bpb", positive=True),
+            "macro": _num(macro, "macro", positive=True),
         },
         # What was trained. The count alone cannot be reproduced from -- two very different models hit
         # 24M -- so the architecture knobs travel with it.
@@ -244,13 +287,16 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
             "architecture": dict(model) if model else {},
         },
         "variables": variables,
-        "benchmarks": sorted(
-            ({"name": k, "score": _num(v, f"benchmarks.{k}")} for k, v in benchmarks.items()),
-            key=lambda b: b["name"],
-        ),
+        "benchmarks": sorted(benchmark_rows, key=lambda b: b["name"]),
         "evidence": {
+            "benchmark_protocol": benchmark_protocol,
+            "capability_suite": list(suite),
             "seeds": int(seeds),
-            "noise_floor": _num(noise_floor, "noise_floor"),
+            "floors": {
+                "harmonic": _num(harmonic_floor, "harmonic_floor"),
+                "arithmetic": _num(arithmetic_floor, "arithmetic_floor"),
+            },
+            "likelihood_noise_floor": _num(noise_floor, "noise_floor"),
             "commit": commit if commit is not None else _git("rev-parse", "--short", "HEAD"),
             "branch": branch if branch is not None else _git("branch", "--show-current"),
             # Mirror and public evaluators differ by ~158 lines; the same config scores ~0.279 against
@@ -483,7 +529,7 @@ class Coordinator:
     def publish_best(self, card: dict, *, expected: Any = _UNSET, force: bool = False) -> bool:
         """Promote a scorecard by compare-and-swap, mirroring Ensue's own `promote_best` contract.
 
-        `expected` is the incumbent `val_bpb` you OBSERVED when you decided to promote. The write
+        `expected` is the incumbent capability harmonic you OBSERVED when you decided to promote. The write
         lands only if the live incumbent still equals it; `None` means "I observed no incumbent"
         (cold start). Returns False when the incumbent moved -- a sibling won -- and the caller should
         re-read `best()`, re-decide against the new champion, and retry. Passing nothing re-reads and
@@ -502,31 +548,67 @@ class Coordinator:
         """
         if card.get("schema") != SCHEMA:
             raise ValueError(f"publish_best: build it with scorecard(); got schema {card.get('schema')!r}")
-        new = card["headline"]["val_bpb"]
+        raw = {row["name"]: row["score"] for row in card.get("benchmarks", [])}
+        suite = (card.get("evidence") or {}).get("capability_suite", [])
+        expected_harmonic = capability_harmonic(raw, suite=suite)
+        expected_arithmetic = capability_arithmetic(raw, suite=suite)
+        if not math.isclose(card["headline"]["harmonic"], expected_harmonic, abs_tol=2e-6):
+            raise ValueError("publish_best: headline harmonic does not match the reported capabilities")
+        if not math.isclose(card["headline"]["arithmetic"], expected_arithmetic, abs_tol=2e-6):
+            raise ValueError("publish_best: headline arithmetic does not match the reported capabilities")
+        new = card["headline"]["harmonic"]
+        new_arithmetic = card["headline"]["arithmetic"]
         cur = self.best()
-        live = (cur.get("headline") or {}).get("val_bpb") if cur else None
+        live = (cur.get("headline") or {}).get("harmonic") if cur else None
 
         if not force:
+            if cur and cur.get("schema") != SCHEMA:
+                print("[ensue] promotion frozen: standing scorecard predates v3; publish the fresh "
+                      "two-seed v3 baseline with force=True before comparing candidates", flush=True)
+                return False
             if expected is not _UNSET and live != expected:
                 print(f"[ensue] NOT promoted: incumbent moved to {live} (you decided against "
                       f"{expected}). Re-read best(), re-decide, retry.", flush=True)
                 return False
-            if live is not None and new >= live:
-                print(f"[ensue] scorecard unchanged: {new:.6f} does not beat {live:.6f}", flush=True)
-                return False
             if live is not None:
-                card = {**card, "previous": {"val_bpb": live, "agent": cur.get("agent"),
-                                             "commit": (cur.get("evidence") or {}).get("commit"),
-                                             "at": cur.get("generated_at")}}
+                evidence = card["evidence"]
+                prior_evidence = cur.get("evidence") or {}
+                if evidence["benchmark_protocol"] != prior_evidence.get("benchmark_protocol"):
+                    print("[ensue] NOT promoted: benchmark protocols differ; establish a new baseline "
+                          "instead of comparing incomparable scores", flush=True)
+                    return False
+                if evidence["capability_suite"] != prior_evidence.get("capability_suite"):
+                    print("[ensue] NOT promoted: capability suites differ; re-run both with the same suite",
+                          flush=True)
+                    return False
+                harmonic_floor = evidence["floors"]["harmonic"]
+                gain = new - live
+                if gain <= harmonic_floor:
+                    print(f"[ensue] scorecard unchanged: harmonic gain {gain:+.6f} does not beat "
+                          f"its {harmonic_floor:.6f} two-seed floor", flush=True)
+                    return False
+                live_arithmetic = cur["headline"]["arithmetic"]
+                arithmetic_floor = evidence["floors"]["arithmetic"]
+                regression = live_arithmetic - new_arithmetic
+                if regression > arithmetic_floor:
+                    print(f"[ensue] NOT promoted: arithmetic regressed {regression:.6f}, beyond its "
+                          f"{arithmetic_floor:.6f} two-seed floor", flush=True)
+                    return False
+                card = {**card, "previous": {
+                    "harmonic": live, "arithmetic": live_arithmetic,
+                    "val_bpb": (cur.get("diagnostics") or {}).get("val_bpb"),
+                    "agent": cur.get("agent"), "commit": prior_evidence.get("commit"),
+                    "at": cur.get("generated_at"),
+                }}
 
         ok = self.put(BEST, card,
-                      f"deepearth scorecard: val_bpb {new:.6f}, macro {card['headline']['macro']:.6f}, "
-                      f"harmonic {card['headline']['harmonic']:.4f} at {card['model']['params_m']}M params "
+                      f"deepearth scorecard: harmonic {new:.6f}, arithmetic {new_arithmetic:.6f}, "
+                      f"val_bpb diagnostic {card['diagnostics']['val_bpb']:.6f} at {card['model']['params_m']}M params "
                       f"({card['evidence']['seeds']} seeds) by {card.get('agent')}")
         if not ok:
             raise RuntimeError(f"publish_best: the write to {BEST} was lost -- the scorecard is NOT "
                                f"published. Do not report this result as recorded.")
-        print(f"[ensue] scorecard promoted: val_bpb {new:.6f} (was {live})", flush=True)
+        print(f"[ensue] scorecard promoted: harmonic {new:.6f} (was {live})", flush=True)
         return True
 
     def stamp_delivery(self, *, pr: int, pr_url: str, base_commit: str, merged: bool = False) -> bool:
@@ -542,10 +624,10 @@ class Coordinator:
     # ---------------------------------------------------------------- board
 
     def _maybe_update_board(self, variable: str, val_bpb: float, record: dict, config: str) -> bool:
-        """Read-compare-write with sanity checks. val_bpb is a loss: lower wins.
+        """Update a per-variable likelihood board. This is a diagnostic record, not champion promotion.
 
         The board ranks on `val_bpb`, which for the aggregate board is DIMENSION-WEIGHTED, while
-        `judge()` gates on `macro`. Those are different quantities and they can disagree -- one
+        the likelihood screen uses `macro`. Those are different quantities and they can disagree -- one
         variable carries 95.3% of the aggregate, so an arm can win it while losing macro, or the
         reverse. When a record carries both and they disagree, refuse the update and say so rather
         than letting whichever one the board happens to compare decide the champion silently.
@@ -562,7 +644,7 @@ class Coordinator:
         if new_macro is not None and old_macro is not None and new_macro >= old_macro:
             print(f"[ensue] REFUSING board update for {variable}: val_bpb improves "
                   f"({prev:.6f} -> {val_bpb:.6f}) but macro does not ({old_macro:.6f} -> {new_macro:.6f}). "
-                  f"judge() gates on macro; the aggregate is 95.3% one variable. Resolve which this "
+                  f"the likelihood screen uses macro; the aggregate is 95.3% one variable. Resolve which this "
                   f"board ranks before publishing.", flush=True)
             return False
         self.put(key, {**record, "config": config, "previous_val_bpb": prev,

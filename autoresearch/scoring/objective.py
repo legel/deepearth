@@ -1,4 +1,4 @@
-"""The single objective every loop reports.
+"""The scoring primitives every loop reports.
 
 `val_bpb` is held-out masked reconstruction scored as a proper likelihood, in bits per revealed dimension.
 It shares the model's data, split, masking and decoder path but NOT its loss functions: training uses
@@ -7,9 +7,8 @@ improve one and worsen the other. What it does guarantee is one number at every 
 It is additive over variables, so the aggregate aligns the loops and the per-variable decomposition
 gives each loop its granular target.
 
-Benchmarks are kept as diagnostics. They are not a promotion gate: the harmonic mean cannot resolve
-model size (24.0M and 796M tie at 0.332 vs 0.319-0.325) because it is dominated by the near-zero
-benchmarks neither model solves.
+Human-interpretable capabilities decide promotion. ``val_bpb`` and its decomposition remain the
+likelihood lens used to understand where a change landed; they do not decide whether a champion ships.
 """
 
 from __future__ import annotations
@@ -17,8 +16,16 @@ from __future__ import annotations
 import math
 from typing import Dict, Iterable, Mapping, Optional, Sequence
 
-SCORE_FLOOR = 1e-3          # keeps a harmonic diagnostic finite when a benchmark reads ~0
+SCORE_FLOOR = 1e-3          # keeps the capability harmonic finite when a benchmark reads ~0
 LN2 = math.log(2.0)
+
+# Quarantine is evidence-based, not a way to hide a weak score. B55 compares a pollinator-head output
+# to targets in a different input space, so the number is not a test of the named capability. Keep
+# computing and reporting it until the benchmark is repaired, but never let it steer promotion.
+QUARANTINED_BENCHMARKS = {
+    "B55_pollinator_phylo_transfer_recall":
+        "poll_head input-space mismatch makes the named transfer capability untestable",
+}
 
 
 # ---------------------------------------------------------------- the objective
@@ -69,8 +76,7 @@ def macro(per_variable: Mapping[str, tuple]) -> float:
     carries 95.3% of it, every other capability about 0.07-0.9%, `identity` -- species, the headline
     capability -- 0.076%. Directional variables are scored by retrieval against a frozen bank, so they
     contribute ONE dimension each regardless of native width. That measures reconstruction efficiency,
-    not scientific coverage. Report both: aggregate is the reconstruction gate, macro is the balance
-    number.
+    not scientific coverage. Report both as likelihood diagnostics.
     """
     d = decompose(per_variable)
     return sum(d.values()) / max(len(d), 1)
@@ -78,17 +84,19 @@ def macro(per_variable: Mapping[str, tuple]) -> float:
 
 def judge(before: Mapping[str, tuple], after: Mapping[str, tuple], floors: Mapping[str, float],
           weak: Sequence[str], owned: Sequence[str] = ()) -> dict:
-    """Decide keep or discard on coverage, not just on the aggregate.
+    """Diagnose whether a likelihood change landed as hypothesized.
+
+    This is not the champion gate. Human-capability harmonic and arithmetic decide promotion in
+    ``Coordinator.publish_best``; this decomposition-only helper cannot make that decision.
 
     Three conditions, all required:
 
-    1. **Reconstruction gate** -- the MACRO mean improves by more than its floor. Macro, not the
+    1. **Reconstruction signal** -- the MACRO mean improves by more than its floor. Macro, not the
        dimension-weighted aggregate, because training macro-averages: `_decode_loss` adds
        (err*w).sum()/w.sum() per variable, so each variable already contributes equally to the gradient.
        Gating on dimension weight would optimize one thing and judge another.
     2. **No owned regression** -- no variable this experiment claims may get worse by more than its own
-       measured floor. An aggregate win paid for by a regression elsewhere is a trade, and rule 32
-       forbids trades.
+       measured floor. This is causal evidence about where the likelihood change landed.
     3. **Coverage** -- at least one variable in `weak` must improve. Without it, moving one variable
        satisfies the aggregate alone: `climate` measures at 95.3% of it, so the model can get narrower
        while the number goes up.
@@ -149,6 +157,12 @@ def is_diagnostic(k: str) -> bool:
     return k.endswith("_gain")
 
 
+def capability_suite(raw: Mapping[str, float]) -> tuple[str, ...]:
+    """Comparable human capabilities present in one run, in stable order."""
+    return tuple(sorted(k for k in normalized(raw)
+                        if not is_diagnostic(k) and k not in QUARANTINED_BENCHMARKS))
+
+
 def normalized(raw: Mapping[str, float]) -> Dict[str, float]:
     """Clip each benchmark to its own natural range, drop NaNs. A capability is [0,1]; an ablation
     delta is a difference of two, so [-1,1] -- clipping deltas to [0,1] would make a regression
@@ -157,28 +171,24 @@ def normalized(raw: Mapping[str, float]) -> Dict[str, float]:
             if not (isinstance(v, float) and math.isnan(v))}
 
 
-def suite_mismatch(before: Mapping[str, float], after: Mapping[str, float]):
-    """(added, missing) keys between two runs. Non-empty means their aggregates are not comparable."""
-    return sorted(set(after) - set(before)), sorted(set(before) - set(after))
-
-
-def net_value(k: str, v: float) -> float:
-    """Safe [0,1] contribution of one benchmark. Deltas map affinely: 0.5 neutral, 1.0 at +1, 0.0 at -1."""
-    if is_diagnostic(k):
-        return 0.5 + 0.5 * float(max(-1.0, min(1.0, v)))
-    return max(v, SCORE_FLOOR)
-
-
 def harmonic(raw: Mapping[str, float], suite: Optional[Iterable[str]] = None) -> float:
-    """Harmonic mean over the declared suite. Diagnostic only -- never a gate. Pass ``suite`` or an
-    undeclared key can move it (a CLI flag once did, by adding six ~0.5 terms)."""
+    """Harmonic mean over a declared human-capability suite.
+
+    Callers must bind ``suite`` for a promotion comparison. That keeps optional diagnostics, quarantine
+    entries and CLI-dependent outputs from moving the primary score.
+    """
     normed = normalized(raw)
-    keys = normed.keys() if suite is None else [k for k in normed if k in set(suite)]
-    vals = [net_value(k, normed[k]) for k in keys]
+    declared = set(capability_suite(normed) if suite is None else suite)
+    keys = [k for k in normed if k in declared and not is_diagnostic(k)
+            and k not in QUARANTINED_BENCHMARKS]
+    vals = [max(normed[k], SCORE_FLOOR) for k in keys]
     return float(len(vals) / sum(1.0 / v for v in vals)) if vals else 0.0
 
 
-def arithmetic(raw: Mapping[str, float]) -> float:
-    """Arithmetic mean over capability benchmarks only. Moves when any benchmark improves."""
-    vals = [v for k, v in normalized(raw).items() if not is_diagnostic(k)]
+def arithmetic(raw: Mapping[str, float], suite: Optional[Iterable[str]] = None) -> float:
+    """Arithmetic breadth guard over the same declared human-capability suite."""
+    normed = normalized(raw)
+    declared = set(capability_suite(normed) if suite is None else suite)
+    vals = [v for k, v in normed.items() if k in declared and not is_diagnostic(k)
+            and k not in QUARANTINED_BENCHMARKS]
     return float(sum(vals) / len(vals)) if vals else 0.0

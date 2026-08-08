@@ -30,14 +30,15 @@ RECORD = next(p for p in Path(__file__).resolve().parents
 
 try:                                                        # canonical order so EVERY benchmark is listed (inactive ones marked, never silently missing)
     from deepearth.autoresearch.main.harness.evaluate import (
-        BENCHMARKS as _CANON, BENCHMARK_PROTOCOL, suite_mismatch,
+        BENCHMARKS as _CANON, BENCHMARK_PROTOCOL, capability_suite,
     )
 except Exception:
     _CANON = []
     BENCHMARK_PROTOCOL = "unknown"
 
-    def suite_mismatch(before, after):
-        return sorted(set(after) - set(before)), sorted(set(before) - set(after))
+    def capability_suite(raw):
+        return tuple(sorted(k for k in raw if not k.endswith("_gain")
+                            and k != "B55_pollinator_phylo_transfer_recall"))
 
 # One-line description per benchmark (given-set -> target, metric), so a reader grasps whole-system performance at a
 # glance. "env" = the location's full environment vector U; "phylo graph gain" = ablation delta from species-graph refinement.
@@ -180,13 +181,10 @@ def format_commit(new: dict, old: Optional[dict], desc: str, config: str = "") -
             row = f"{name}: {_f(before)} -> {_f(after)} ({d}){flag}"
         lines.append(f"{i:>2}. {row}" + (f"  -- {desc}" if desc else ""))
     if old is not None:
-        # THE SUITE MUST BE THE SAME SUITE. net_score averages over the declared benchmarks that are
-        # PRESENT, and hooks.instrument(spacetime_gain=True) only produces the six *_spacetime_gain
-        # keys when --st-gain is passed. Each lands near 0.5 through net_value and the harmonic mean is
-        # dominated by its near-zero terms, so merely passing the flag RAISES the net. A before/after
-        # that straddles that boundary records a CLI flag as a result, which is precisely what rule 30
-        # exists to prevent.
-        added, missing = suite_mismatch(os_, ns)
+        # A comparison is valid only over the same human-capability suite. Optional mechanism
+        # diagnostics remain reportable evidence but cannot create or invalidate a score change.
+        old_suite, new_suite = set(capability_suite(os_)), set(capability_suite(ns))
+        added, missing = sorted(new_suite - old_suite), sorted(old_suite - new_suite)
         if added or missing:
             lines += ["", "*** SUITE CHANGED — these two runs did not score the same benchmarks, so the",
                       "    net comparison above is NOT valid. Re-run both sides the same way.",

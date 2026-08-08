@@ -421,7 +421,7 @@ def train_and_evaluate(config, device):
         print(f"tag:              {config['_tag']}", flush=True)   # parseable run label (matches --tag), so run.log self-identifies
     print(f"net_score:        {ns:.6f}", flush=True)          # parseable north star
     _vb, _vbv = val_bpb()
-    print(f"val_bpb:          {_vb:.6f}", flush=True)   # the gate: held-out bits/dim
+    print(f"val_bpb:          {_vb:.6f}", flush=True)   # likelihood diagnostic: held-out bits/dim
     for _n in sorted(_vbv, key=lambda k: -_vbv[k]):
         print(f"  val_bpb.{_n:<22} {_vbv[_n]:.6f}", flush=True)   # the lens: per-variable bits/dim
     scores["val_bpb"] = _vb

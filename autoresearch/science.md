@@ -169,7 +169,8 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     No SoTA champion is committed without `python -m deepearth.autoresearch.main.harness.champion_report --log <run> --desc
     <result> --save`: the commit headline states the net score BEFORE->AFTER (harmonic mean + arithmetic), the body
     describes what changed / why / how, and an enumerated list reports every benchmark's before->after (delta) with an
-    explicit regressions summary — no individual metric may regress. The helper diffs against the committed
+    explicit regressions summary. Promotion requires a harmonic gain beyond its two-seed floor while the arithmetic
+    breadth score holds within its own floor. The helper diffs against the committed
     `autoresearch/main/records/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
 
 31. **Heads are DETACHED read-outs by default; the universal self-supervised reconstruction is inviolable.** The core
@@ -183,11 +184,11 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     weight does NOT protect the universal axis (a single myco head cost -0.012 at both w=0.1 and w=1.0) -- only
     subspace isolation does.
 
-32. **Score AND optimize 100% of the benchmark suite -- nothing excluded.** Every benchmark exists to be measured and
-    driven up. The net score is the harmonic mean over ALL active benchmarks -- capabilities AND ablation-delta /
-    information-gain diagnostics. Metrics not naturally bounded or that can sit near 0 (the deltas) are renormalized
-    (logistic, evaluate._net_value) so inclusion NEVER exceeds 1.0, NEVER forms a below-0 well, and is always
-    monotonically beneficial to raise (repetitive signal is fine). A champion must carry the WHOLE suite, not a subset.
+32. **Promote human capability, and report every instrument honestly.** The primary score is the harmonic mean over the
+    protocol-matched human-capability suite; its arithmetic mean is the breadth guard. Ablation and information gains
+    measure dependence on a mechanism, not capability, so report them separately and never mix them into either mean.
+    Structurally invalid benchmarks remain visible with a written quarantine reason. A champion must carry the same
+    complete active capability suite as its baseline; a membership change requires a new protocol and baseline.
 
 33. **Keep a GitHub-visible benchmark suite current.** `benchmarks/README.md` at the repository root is
     the public record of what DeepEarth can do, and it must be regenerated from a real run whenever the

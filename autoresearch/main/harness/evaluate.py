@@ -26,7 +26,7 @@ import torch.nn.functional as F
 # Increment whenever a benchmark definition, split, control, or suite membership changes.  Champion
 # records and graduation crossings carry this value so an old instrument can never be compared with a
 # new one merely because the benchmark names happen to overlap.
-BENCHMARK_PROTOCOL = "v2-aligned-encoder-controls"
+BENCHMARK_PROTOCOL = "v3-human-capability-gate"
 
 def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, num_classes: int) -> float:
     """Macro-F1 over the observed rows: mean per-class F1 (unweighted), so rare classes count as much as common."""
@@ -581,49 +581,57 @@ def observed_any(observed: Dict[str, torch.Tensor], name: str) -> bool:
     return name in observed and bool(observed[name].any())
 
 
-# WHAT A NUMBER MEANS IS NOT DEFINED HERE. `normalized`, `is_diagnostic`, `_net_value` and the score
+# WHAT A NUMBER MEANS IS NOT DEFINED HERE. Normalization, membership and the score
 # floor moved to `autoresearch/scoring.py`, which sits OUTSIDE every loop's `editable_files/` because
 # scoring must not be editable by the experiments it judges. science.md rule 19 already calls this file
 # "the immutable ground truth"; it was stored in the editable tree anyway, and `score.py` kept a
 # hand-copy of two of them under a comment reading "keep byte-identical". One definition now, imported
-# by all three loops. Bodies moved verbatim -- net_score on the champion record is unchanged to full
-# float precision (0.32413703851749265).
+# by every evaluator. Protocol v3 changes membership, not any benchmark definition.
 from deepearth.autoresearch.scoring.objective import (          # noqa: E402  (must follow BENCHMARKS)
+    QUARANTINED_BENCHMARKS,
     SCORE_FLOOR as _SCORE_FLOOR,                    # noqa: F401  (re-exported for existing callers)
+    capability_suite,
     is_diagnostic,
     harmonic as _shared_net_score,
-    net_value as _net_value,
     normalized,
-    arithmetic as arithmetic_net,
-    suite_mismatch,                                 # noqa: F401  (re-exported: before/after guard)
+    arithmetic as _shared_arithmetic,
 )
 
-# Re-export the canonical scorer with this evaluator's declared suite bound.  There is no second
-# implementation here for the harness and registry to drift between.
-net_score = functools.partial(_shared_net_score, suite=BENCHMARKS)
+# Bind both public means to the same human-capability membership. Optional outputs may be absent from a
+# particular holdout, but diagnostics and quarantined measurements can never move either mean.
+GATE_BENCHMARKS = tuple(b for b in BENCHMARKS
+                        if not is_diagnostic(b) and b not in QUARANTINED_BENCHMARKS)
+net_score = functools.partial(_shared_net_score, suite=GATE_BENCHMARKS)
+arithmetic_net = functools.partial(_shared_arithmetic, suite=GATE_BENCHMARKS)
 
 
 def format_benchmarks(raw: Dict[str, float]) -> str:
-    """Render every benchmark's [0,1] score (weakest first, so the binding constraint is on top), plus both the
-    harmonic-mean north star and the arithmetic mean over the active benchmarks."""
+    """Render capabilities first, then quarantine and mechanism diagnostics."""
     normed = normalized(raw)
-    caps = {k: v for k, v in normed.items() if not is_diagnostic(k)}
+    caps = {k: v for k, v in normed.items()
+            if not is_diagnostic(k) and k not in QUARANTINED_BENCHMARKS}
+    quarantined = {k: v for k, v in normed.items() if k in QUARANTINED_BENCHMARKS}
     diags = {k: v for k, v in normed.items() if is_diagnostic(k)}
     lines = [f"BENCHMARK PROTOCOL: {BENCHMARK_PROTOCOL}",
+             "HUMAN CAPABILITIES (weakest first)",
              "benchmark                             score"]
     for k in sorted(caps, key=lambda k: caps[k]):              # weakest-first: the harmonic mean's binding benchmarks lead
         lines.append(f"  {k:<34} {caps[k]:6.3f}")
-    defined_caps = [b for b in BENCHMARKS if not is_diagnostic(b)]
-    lines.append(f"NET SCORE (harmonic mean of ALL {len(normed)}/{len(BENCHMARKS)} active benchmarks, 100% incl. renormalized deltas): {net_score(raw):.4f}")
-    lines.append(f"  (arithmetic mean: {arithmetic_net(raw):.4f})")
+    lines.append(f"CAPABILITY HARMONIC ({len(caps)} active): {net_score(raw):.4f}")
+    lines.append(f"CAPABILITY ARITHMETIC ({len(caps)} active): {arithmetic_net(raw):.4f}")
+    defined_caps = list(GATE_BENCHMARKS)
     inactive = [b for b in defined_caps if b not in caps]      # declared but not produced by THIS eval (e.g. B25/B31 need a temporal-holdout run) -- named, never silently dropped
     if inactive:
         lines.append(f"INACTIVE ({len(inactive)} declared capabilities not produced by this eval run):")
         for b in inactive:
             why = "needs holdout: temporal (strictly-future forecast split)" if "forecast" in b else "required inputs/labels absent for this run"
             lines.append(f"  {b:<34} {why}")
-    if diags:                                                  # ablation-delta / information-gain: raw here, affine-renormalized INTO the net (_net_value)
-        lines.append("ablation-delta / information-gain benchmarks (raw; affine-renormalized into the net, never excluded):")
+    if quarantined:
+        lines.append("QUARANTINED (reported raw; excluded from both capability means):")
+        for k in sorted(quarantined):
+            lines.append(f"  {k:<34} {quarantined[k]:6.3f}  ({QUARANTINED_BENCHMARKS[k]})")
+    if diags:
+        lines.append("MECHANISM DIAGNOSTICS (raw; excluded from both capability means):")
         for k in sorted(diags, key=lambda k: -diags[k]):
-            lines.append(f"  {k:<34} {diags[k]:6.3f}  (net contrib {_net_value(k, diags[k]):.3f})")
+            lines.append(f"  {k:<34} {diags[k]:6.3f}")
     return "\n".join(lines)

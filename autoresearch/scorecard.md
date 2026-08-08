@@ -1,106 +1,61 @@
 # Scorecard — how science is measured
 
-One objective, reported at every scale. The `/research` command carries the program and the loop.
+Protocol `v3-human-capability-gate` makes the human-interpretable benchmark suite the promotion
+instrument. `val_bpb` remains a reconstruction diagnostic and never decides promotion.
 
-## The number
+## Promotion gate
 
-`val_bpb` — held-out masked reconstruction scored as a proper likelihood, in **bits per revealed
-dimension**. It shares the model's data, split, masking and decoder path, but **not its loss functions**:
-training uses centered cosine for continuous targets and cross-entropy divided by `log(num_classes)` for
-categorical, neither of which is a log-likelihood. `val_bpb` computes its own — Gaussian density, cosine
-retrieval against a frozen bank, raw cross-entropy — so a change can improve one and worsen the other,
-most plausibly on the z-scored continuous variables (soil, topo, climate, hydro).
+A candidate and incumbent must carry the same protocol and the same active capability suite. Two
+matched seeds per arm provide separate full-spread floors for the two scorecard means. A candidate is
+promoted only when:
 
-The reveal mask is seeded and the reference statistics are frozen, so it is deterministic and comparable
-across runs and model sizes.
+1. its capability harmonic improves by more than the harmonic floor; and
+2. its capability arithmetic does not regress by more than the arithmetic floor.
 
-**Diffusion-scored variables have no likelihood.** `val_bpb` raises rather than omitting them, so a
-diffusion-enabled run cannot produce a valid score until that head exposes a log-density.
+The harmonic is primary because it refuses to hide a weak capability behind strength elsewhere. The
+arithmetic is the breadth guard. There is no per-benchmark hard gate across the tail: dozens of
+simultaneous two-seed comparisons would reject real improvements through multiplicity. Every individual
+score is still reported before→after.
 
-Lower is better. It is additive over variables, which is what makes one number and granular targets the
-same measurement:
+This preserves Lance's intended harmonic. The AlphaEarth ablation is the control: harmonic fell
+`0.3614 -> 0.3422` and arithmetic also failed, while the dimension-weighted reconstruction aggregate
+rose inside its floor. The defect was not the harmonic; promotion ignored it.
 
-| level | what it is | who reads it |
-|---|---|---|
-| **aggregate** | total bits / total revealed dims | the promotion gate |
-| **per-variable** | bits/dim for one variable | the lens a given piece of science steers by |
-| **ablation delta** | per-variable bits with a subsystem nulled, minus without | that subsystem's in-situ contribution |
+## Membership
 
-There is no separate probe metric. A space-time result is the change in the bits of the space-time-dependent
-variables under an Earth4D ablation; a biological result is the change in species/phylo bits under a graph
-ablation. Both are terms in the fusion number, so a probe win *is* a fusion win by construction.
+- Ordinary human-interpretable task scores are capabilities and enter both means.
+- `*_gain` values are mechanism diagnostics. They show whether a subsystem matters; dependence is not
+  capability, so they enter neither mean.
+- `B55_pollinator_phylo_transfer_recall` remains measured and displayed but is quarantined from both
+  means. Its documented `poll_head` input-space mismatch makes the named transfer test untestable.
+- A changed active capability set is a protocol break, not a comparable result.
 
-## The gate
+Quarantine requires a structural defect, not an inconvenient score. Repairing B55 requires a new
+protocol baseline before it can re-enter the gate.
 
-`objective.judge()` decides keep or discard. Three conditions, all required:
+## Likelihood diagnostics
 
-1. **Reconstruction** — the aggregate `val_bpb` improves by more than its measured floor.
-2. **No regression** — no owned variable worsens by more than its own floor. An aggregate win paid for
-   elsewhere is a trade, and rule 32 forbids trades.
-3. **Coverage** — at least one *weak* capability improves, where weak comes from the benchmark scores.
+`val_bpb` is held-out masked-reconstruction likelihood in bits per revealed dimension. Its aggregate,
+macro view, per-variable decomposition, retrieval floors and headroom explain where a change landed.
+They are reported on every scorecard but do not affect the promotion decision.
 
-Condition 3 exists because the aggregate is dimension-weighted and therefore badly unbalanced. Measured
-directly by replaying the masking loop: `climate` carries **95.3%** of it, then phenology 0.92%, topo
-0.91%, chm 0.84%, soil 0.64%, hydro 0.45%, and every remaining capability — `identity`, `clay`, `phylo`,
-the vision embeddings — about **0.076%** each. Directional variables are scored by retrieval against a
-frozen bank, so each contributes ONE revealed dimension regardless of native width; an earlier analysis
-using native widths reported "six embeddings 97.8%, clay 30.1%" and was wrong by ~400×. Without a
-coverage rule, improving one variable satisfies the gate on its own and the model narrows while the
-number rises.
+Lower `val_bpb` is better. Absolute per-variable values are not comparable because differential entropy
+depends on target scale. For retrieval-scored variables, headroom is bits minus the measured retrieval
+floor, never raw bits.
 
-Weakness cannot be read off `val_bpb`. Bits/dim is a differential entropy whose scale reflects a
-variable's target variance, so it is not comparable across variables — the benchmark scores are, and
-they are what ranks capabilities.
+## Migration
 
-Report `macro()` alongside the aggregate: the unweighted mean over variables, where every scientific
-capability counts equally. Aggregate measures reconstruction efficiency; macro measures coverage.
-
-
-
-Fixed thresholds are gone. `MIN_REL_IMPROVEMENT` (1.5%), `MIN_ABS_IMPROVEMENT` (0.002) and
-`SEED_SIGMA_MULTIPLE` let the campaign promote inside its own noise — champion steps of +0.0013 to +0.0034
-against measured two-seed spreads of:
-
-| scale | budget | two-seed spread |
-|---|---|---:|
-| 796M | 600s | 0.027 |
-| 172.6M | 120s | 0.0033 |
-| 21.8M | 120s | 0.0167 |
-
-Measure the floor for your configuration before believing any delta. `objective.noise_floor()` takes matched
-seeds and has no default.
-
-## The benchmark suite (science.md rule 32)
-
-The harmonic and arithmetic means over the **whole** declared suite are the standing report. A champion
-carries the whole suite, not a subset, and **no individual metric may regress**. This is the language the
-public repository is reviewed in and the number that standardizes performance across runs — it is
-reported on every run and required for every champion commit via
-`main/harness/champion_report.py` (rule 30).
-
-`val_bpb` sits alongside it, not above it. It exists because the harmonic mean cannot resolve model size
-— 24.0M and 796M tie at 0.332 vs 0.319–0.325 — so it is what a *screen-scale* experiment steers by while
-the suite remains what a champion is judged on.
-
-Use the decomposition to see *where* a change landed and the suite to confirm nothing regressed.
-
-## Relation to science.md
-
-`science.md` rule 32 asks that 100% of the suite be scored and optimized; that still holds — every benchmark
-is measured and reported. What changed is that the suite no longer decides promotion, because it cannot
-distinguish a 4.6x model-size difference.
-
-Rule 30's before→after discipline is unchanged and now applies to `val_bpb` and its decomposition rather
-than to a harmonic mean.
-
-Rule 20's fixed budget is superseded by **fixed steps**: wall-clock equal-time made model sizes
-incomparable, since a small model takes more steps in the same seconds. Step counts measured flat
-(~1,030) across 21.7M–172.6M at 120s, so this is a change of contract, not of results.
+Protocol v2 and v3 scores are incomparable. Promotion is frozen until one fresh two-seed v3 baseline is
+published explicitly as the new baseline. Historical runs are not replayed. Thereafter the coordinator
+mechanically rejects protocol or capability-suite mismatches.
 
 ## What a run reports
 
-```
-val_bpb:          <aggregate, bits/dim>          <- the gate
-  per-variable:   <variable> <bits/dim>          <- the lens
-net_score / arithmetic mean                      <- diagnostics only
+```text
+HUMAN CAPABILITIES (weakest first)
+CAPABILITY HARMONIC                              <- primary gate
+CAPABILITY ARITHMETIC                            <- breadth guard
+QUARANTINED                                      <- raw score + reason
+MECHANISM DIAGNOSTICS                            <- raw ablation/information gains
+val_bpb + macro + per-variable decomposition     <- likelihood diagnostics
 ```

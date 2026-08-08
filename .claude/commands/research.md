@@ -38,10 +38,10 @@ are equal.
 
 $ARGUMENTS
 
-With no argument, target the weakest variable in the current `val_bpb` decomposition.
+With no argument, target the weakest human capability in the current scorecard.
 
-One model, one objective, one loop. Improve DeepEarth, train at fixed steps, measure `val_bpb` on
-held-out data, keep what clears the noise floor, repeat.
+One model, one loop. Improve DeepEarth, train at fixed steps, measure the full scorecard on held-out
+data, and keep only capability-harmonic gains that clear noise without losing arithmetic breadth.
 
 ## Why there is one loop
 
@@ -72,26 +72,23 @@ It is additive over variables, so one number and granular targets are the same m
 
 | level | what it is |
 |---|---|
-| aggregate | the gate |
-| per-variable | the lens the work steers by |
-| ablation delta | that subsystem's in-situ contribution |
+| aggregate | reconstruction-efficiency diagnostic |
+| per-variable | likelihood lens for where a change landed |
+| ablation delta | that subsystem's in-situ contribution diagnostic |
 
 Lower is better. It is a differential entropy, so it is not zero-based and absolute per-variable values
 say more about target variance than about model quality. **Only differences are meaningful.**
 
-The harmonic and arithmetic means over the whole suite are the standing report (rule 32) — the language
-the public repository is reviewed in, and what standardizes performance across runs. A champion carries
-the whole suite and no individual metric may regress; every champion commit goes through
-`champion_report.py` (rule 30).
-
-`val_bpb` sits alongside, not above. It is what a screen-scale experiment steers by, because the harmonic
-mean cannot resolve a 4.6x size difference (24.0M and 796M tie).
+The harmonic over the protocol-matched human-capability suite is the primary promotion score; arithmetic
+is its breadth guard (rule 32). Mechanism gains and quarantined benchmarks are reported separately.
+`val_bpb` sits alongside as a likelihood diagnostic and never affects promotion. Every champion commit
+goes through `champion_report.py` (rule 30).
 
 ## The loop
 
 0. **THINK.** Three inputs, in this order.
-   - **The decomposition.** Target the weakest variable — the one costing the most bits. That is where
-     the headroom is, and the aggregate cannot improve much while it dominates.
+   - **The scorecard.** Target the weakest human capability. Use `val_bpb`, its decomposition and
+     mechanism ablations only to form a causal explanation for that weakness.
    - **`customer_feedback/`.** Read the original files, not a summary of them. They say which
      capabilities the customer actually wants and where the science is heading; a technically valid
      result on a capability nobody asked for is a wasted iteration. Use them with the weakest variable
@@ -104,26 +101,25 @@ mean cannot resolve a 4.6x size difference (24.0M and 796M tie).
      campaign semantically, including the 568 `LOOP-` records from prior work, so you never pay for a
      negative someone already published.
 
-   The target is `science.md` realized **while staying well-rounded**: no capability may be traded away
-   to lift another. The weakest variable says where to push; the decomposition says whether you pushed
-   it without paying for it elsewhere.
+   The target is `science.md` realized **while staying well-rounded**. The weakest capability says where
+   to push; harmonic rewards lifting it and arithmetic prevents a broad trade.
 1. **CLAIM.** `coord.claim("description")`. If it returns `None` someone holds it — pick another. Claims
    expire, so a dead agent never blocks the swarm.
 2. **State one causal hypothesis.** Which variables should lose bits, and through which subsystem.
 3. **Change only the surface that tests it.** Commit before running — a dirty tree makes the run
    unreproducible and it cannot set a record.
 3. **Run the pair at fixed steps**, candidate and control, same seed, same cache, same prepared data.
-4. **Measure the noise floor at that scale** if you do not already have it: two matched seeds of the
-   control, full spread. There is no default and no fixed threshold.
-5. **Read the decomposition.** Did the bits drop in the variables the hypothesis named? Does an ablation
-   of the subsystem account for it? If the gain landed elsewhere, it is an initialization re-roll —
+4. **Measure both score floors at that scale** if you do not already have them: two matched control
+   seeds, full spread for capability harmonic and arithmetic. There is no default.
+5. **Read the capability score first, then the diagnostics.** Did the named benchmark rise? Do `val_bpb`,
+   its decomposition and an ablation explain why? If the gain landed elsewhere, it is an initialization re-roll —
    adding parameters shifts the RNG stream and re-initializes the whole model.
-7. **Record it**, in `val_bpb` and its decomposition, with both benchmark means alongside.
+7. **Record it** with every human benchmark first and all likelihood/mechanism diagnostics alongside.
 
 ## Standing rules
 
-- **No individual capability may regress** to raise an aggregate. An aggregate win paid for elsewhere is
-  a trade, not a result.
+- **Breadth must hold.** Harmonic must clear its two-seed floor and arithmetic may not regress beyond its
+  own. Report every individual movement; do not create dozens of noisy hard gates.
 - **Every change is a config toggle defaulting to current behaviour**, so the default path stays
   byte-identical and a flag can be flipped off without a rebuild.
 - **Commit the candidate before running it.** The diff IS the experiment; a number measured against
@@ -131,10 +127,9 @@ mean cannot resolve a 4.6x size difference (24.0M and 796M tie).
 - **Publish dead ends with their reason.** A negative that is not written down gets re-run by someone.
 - **Fixed steps, never fixed wall clock.** Equal-time makes sizes incomparable — a smaller model takes
   more steps in the same seconds.
-- **The gate is a measured floor, not a constant.** Two-seed spreads run 0.0033 / 0.0167 / 0.027
-  depending on scale; fixed thresholds admitted champion steps of +0.0013, which is inside the noise.
-- **Benchmarks diagnose; `val_bpb` gates.** Confirmation against the full model happens once, at the
-  merge decision — not per experiment.
+- **The gate uses measured floors, not constants.** Measure two-seed spreads for harmonic and arithmetic
+  at the evaluated scale.
+- **Human capabilities gate; `val_bpb` diagnoses.** Never promote a likelihood-only win.
 - **Stay at the screen scale for the whole loop.** An intermediate scale answers neither question: it
   does not iterate fast and it is not what you ship.
 
@@ -199,9 +194,11 @@ publish with `publish_best()`:
 
 ```python
 card = scorecard(val_bpb=..., macro=..., decomposition=..., revealed_dims=...,
-                 benchmarks=..., harmonic=..., arithmetic=...,     # 100% of the suite, rule 32
-                 seeds=..., noise_floor=..., params=..., steps=..., config=..., agent=coord.agent_id)
-coord.publish_best(card)     # refuses a card that does not beat the standing val_bpb
+                 benchmarks=..., benchmark_protocol=...,
+                 capability_suite=..., seeds=2,
+                 harmonic_floor=..., arithmetic_floor=..., noise_floor=...,
+                 params=..., steps=..., config=..., agent=coord.agent_id)
+coord.publish_best(card)     # harmonic must clear its floor; arithmetic must hold
 ```
 
 Every field is required and validated: a card missing its benchmarks, its decomposition or its seed
