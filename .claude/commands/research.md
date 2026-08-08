@@ -100,8 +100,9 @@ goes through `champion_report.py` (rule 30).
      to choose the **surface area** — which subsystem to change.
    - **The swarm.** `coord.assert_connected()` first — it raises rather than degrading to silence,
      because every way this client breaks returns "no results", which looks exactly like "nothing to
-     learn". Then `state()` for the board, live claims, insights and open
-     hypotheses. Your baseline is the swarm's best, not your local one: if someone has beaten it, adopt
+     learn". Then `state()` for the live scorecard, diagnostic likelihood board, claims, insights and
+     open hypotheses. `state()["scorecard"]` is your baseline; the likelihood board is context only.
+     Your baseline is the swarm's best, not your local one: if someone has beaten it, adopt
      theirs and push from there. Run `already_tried(description)` before claiming: it searches every
      campaign semantically, including the 568 `LOOP-` records from prior work, so you never pay for a
      negative someone already published.
@@ -195,7 +196,7 @@ like "nothing to learn". Needs `ENSUE_API_KEY` or `ENSUE_API_TOKEN` (env, `.auto
 | namespace | holds | written by |
 |---|---|---|
 | `LOOP-deepearth-best` | **the current scorecard** — the full state of what is best and how it was measured | `coord.publish_best()`, at promotion and at delivery |
-| `LOOP-deepearth-<variable>` | per-variable board: best `val_bpb` for that variable | `publish_result()`, when a run sets a record |
+| `LOOP-deepearth-<variable>` | diagnostic per-variable board: best `val_bpb`; never target selection or promotion | `publish_result()`, when a run sets a likelihood record |
 | `LOOP-deepearth-runs/<variable>/…` | one record per experiment, win or loss | `publish_result()` |
 | `LOOP-deepearth-claims/…` | live claims, expiring | `claim()` |
 | `LOOP-deepearth-insights/…` | findings, corrections, blockers | `post_insight()` |

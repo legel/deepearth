@@ -25,7 +25,8 @@ diagnostics only and never affect target ranking or promotion.
 
 ## Select the target
 
-1. Read `LOOP-deepearth-best`, the live Ensue scorecard. It must use the evaluator's current protocol,
+1. Read `state()["scorecard"]`, the live `LOOP-deepearth-best` Ensue scorecard. Do not use the
+   diagnostic per-variable likelihood board as the baseline. The scorecard must use the evaluator's current protocol,
    declare its active capability suite, and contain exactly two benchmark seeds. A stale or partial
    scorecard is a baseline-migration blocker, not research evidence.
 2. Read only benchmark rows whose role is `capability` and whose names belong to that declared suite.

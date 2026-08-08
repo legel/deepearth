@@ -136,6 +136,21 @@ def test_the_scorecard_key_cannot_be_clobbered_by_a_board_write():
                                    val_bpb=1.0, decomposition={}, status="keep", config="y")
 
 
+def test_research_state_exposes_scorecard_as_baseline(monkeypatch):
+    """The diagnostic likelihood board must not masquerade as the scientific baseline."""
+    from coordinator import Coordinator
+
+    coord = Coordinator(agent_id="test", api_key="test")
+    monkeypatch.setattr(coord, "best", lambda: {"schema": SCHEMA, "headline": {"harmonic": 0.4}})
+    monkeypatch.setattr(coord, "get", lambda key: {key: {"val_bpb": 1.9}})
+    monkeypatch.setattr(coord, "keys", lambda *args, **kwargs: [])
+
+    state = coord.state()
+    assert state["scorecard"]["headline"]["harmonic"] == 0.4
+    assert "diagnostic_likelihood_board" in state
+    assert "board" not in state, "an unlabeled likelihood board invites agents to steer on it"
+
+
 def test_retrieval_floors_separate_apparent_headroom_from_real():
     """phylo's bank holds 925 unique species across 4096 rows drawn with replacement, so a perfect
     predictor still pays ~2.11 nats. Reading its 9.64 bits as headroom overstates it by a third."""

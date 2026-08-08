@@ -62,8 +62,9 @@ def decompose(per_variable: Mapping[str, tuple]) -> Dict[str, float]:
 def improved(before: float, after: float, floor: float) -> bool:
     """val_bpb is a loss: lower is better. ``floor`` is the noise measured AT THIS SCALE, not a constant.
 
-    Fixed thresholds are what let the campaign promote inside its own noise -- champion steps of
+    Fixed thresholds are what let a likelihood diagnostic claim improvement inside its own noise -- champion steps of
     +0.0013 to +0.0034 against two-seed spreads of 0.0033 (172.6M), 0.0167 (21.8M) and 0.027 (796M).
+    This helper does not participate in capability promotion.
     """
     return (before - after) > floor
 
@@ -77,7 +78,7 @@ def noise_floor(values: Sequence[float]) -> float:
 
 
 def macro(per_variable: Mapping[str, tuple]) -> float:
-    """Unweighted mean of per-variable bits/dim -- every scientific capability counts equally.
+    """Unweighted mean of per-variable bits/dim -- every reconstruction variable counts equally.
 
     `aggregate` weights by revealed dimensions, and measurement shows that is degenerate: `climate`
     carries 95.3% of it, every other capability about 0.07-0.9%, `identity` -- species, the headline

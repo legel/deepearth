@@ -468,14 +468,19 @@ class Coordinator:
     # ---------------------------------------------------------------- THINK
 
     def state(self, variable: str = "aggregate") -> dict:
-        """What to read before picking an experiment: the board, live claims, insights, open hypotheses.
+        """What to read before picking an experiment.
+
+        ``scorecard`` is the scientific baseline and selects the weakest active human capability.
+        ``diagnostic_likelihood_board`` is historical val_bpb bookkeeping for the requested variable;
+        it never selects a target or decides promotion.
 
         The org already holds prior campaigns under `LOOP-earth4d-*`. Read them -- a dead end published
         there is a dead end you do not have to pay for again.
         """
         board = self.get(BOARD.format(variable=variable))
         return {
-            "board": board,
+            "scorecard": self.best(),
+            "diagnostic_likelihood_board": board,
             "claims": self.keys("LOOP-deepearth-claims/", 50),
             "insights": self.keys("LOOP-deepearth-insights/", 30),
             "hypotheses": self.keys("LOOP-deepearth-hypotheses/", 30),
@@ -511,8 +516,8 @@ class Coordinator:
             # schema. Reserve the name rather than trusting callers to avoid it.
             raise ValueError(
                 "publish_result(variable='best') would overwrite LOOP-deepearth-best, the scorecard. "
-                "Publish the champion with scorecard() + publish_best(); use variable='aggregate' for "
-                "the campaign board.")
+                "Publish the champion with scorecard() + publish_best(); use variable='aggregate' only "
+                "for the diagnostic likelihood board.")
         key = RUN.format(variable=variable, slug=_slug(description),
                          stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
                          hash=_hash(description))
@@ -645,8 +650,8 @@ class Coordinator:
     def _maybe_update_board(self, variable: str, val_bpb: float, record: dict, config: str) -> bool:
         """Update a per-variable likelihood board. This is a diagnostic record, not champion promotion.
 
-        The board ranks on `val_bpb`, which for the aggregate board is DIMENSION-WEIGHTED, while
-        the likelihood screen uses `macro`. Those are different quantities and they can disagree -- one
+        The diagnostic board ranks on `val_bpb`, which for the aggregate board is DIMENSION-WEIGHTED,
+        while `diagnose_likelihood()` uses `macro`. Those diagnostics can disagree -- one
         variable carries 95.3% of the aggregate, so an arm can win it while losing macro, or the
         reverse. When a record carries both and they disagree, refuse the update and say so rather
         than letting whichever one the board happens to compare decide the champion silently.
@@ -663,8 +668,8 @@ class Coordinator:
         if new_macro is not None and old_macro is not None and new_macro >= old_macro:
             print(f"[ensue] REFUSING board update for {variable}: val_bpb improves "
                   f"({prev:.6f} -> {val_bpb:.6f}) but macro does not ({old_macro:.6f} -> {new_macro:.6f}). "
-                  f"the likelihood screen uses macro; the aggregate is 95.3% one variable. Resolve which this "
-                  f"board ranks before publishing.", flush=True)
+                  f"the likelihood diagnostic uses macro; the aggregate is 95.3% one variable. This does "
+                  f"not affect the capability scorecard or promotion.", flush=True)
             return False
         self.put(key, {**record, "config": config, "previous_val_bpb": prev,
                        "previous_by": cur.get("agent") if isinstance(cur, dict) else None,
