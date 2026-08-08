@@ -196,8 +196,12 @@ class DeepEarth(nn.Module):
         species_operator: str = "ou-attention",
         species_tree: Optional[dict] = None,
         species_tip_row: Optional[torch.Tensor] = None,   # (latent-clade) species-local vocab index of each in-tree tip, in tree-tip order
+        species_mask_posterior: Optional[str] = None,
         species_distance: Optional[tuple] = None,   # (dated[m,m], model_idx[m]): real dated patristic for tree-covered species -> replaces the embedding shadow (ou-attention)
         species_text: Optional[torch.Tensor] = None,
+        species_family: Optional[torch.Tensor] = None,
+        family_env_expert: bool = False,
+        family_env_vars: Optional[Sequence[str]] = None,
         compile_processor: bool = False,
         rounds: int = 1,
         write_back: bool = True,
@@ -332,6 +336,9 @@ class DeepEarth(nn.Module):
 
         # species graph: refine identity through phylogenetic-neighbor attention. "tree" propagates over the dated phylogeny; "ou-attention" biases attention with an embedding-derived distance.
         self.species_variable = species_variable
+        self.register_buffer("species_family", species_family)
+        self.family_env_vars = tuple(family_env_vars or ())
+        self.family_count = int(species_family.max()) + 1 if species_family is not None else 0
         if species_variable is not None and species_embedding is not None:
             if species_operator == "tree":
                 assert species_tree is not None, "species_operator='tree' needs the parsed tree (source.tree)"
@@ -342,7 +349,8 @@ class DeepEarth(nn.Module):
                     "species_operator='latent-clade' needs source.lca_tree + source.lca_tip_row"
                 self.species_graph = SpeciesGraph(species_embedding.shape[0], d_model, operator="latent-clade",
                                                   tree=species_tree, tip_row=species_tip_row, n_heads=species_heads,
-                                                  n_layers=species_layers, species_text=species_text)
+                                                  n_layers=species_layers, species_text=species_text,
+                                                  mask_posterior=species_mask_posterior)
             else:
                 distance = SpeciesGraph.distance_from_embedding(species_embedding)   # BioCLIP-embedding shadow (kept for inductively-placed species not on the dated tree)
                 if species_distance is not None:                                     # overwrite the tree-covered block with the REAL dated patristic (rules 7-12), rescaled to the shadow's scale
@@ -462,6 +470,13 @@ class DeepEarth(nn.Module):
         if self.species_trait_recon and species_variable is not None:
             self.species_myco_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5))
             self._species_myco = None; self._species_myco_valid = None; self._train_species = None
+        self.family_env_attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True) \
+            if family_env_expert and self.family_count else None
+        if self.family_env_attn is not None:
+            self.family_env_query = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+            self.family_env_head = nn.Sequential(
+                nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(),
+                nn.Linear(d_model, self.family_count))
         if compile_processor:
             self._refine = torch.compile(self._refine)
 
@@ -859,6 +874,29 @@ class DeepEarth(nn.Module):
         mu = (target[obs].mean(0, keepdim=True) if obs.any() else target.mean(0, keepdim=True)).detach()
         return 1.0 - F.cosine_similarity(pred - mu, target - mu, dim=-1)
 
+    def _family_env_logits(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
+                           context: dict) -> torch.Tensor:
+        """Private early expert over environment tokens; the shared fusion path is detached."""
+        tokens, valid = [], []
+        for name in self.family_env_vars:
+            i = self.names.index(name)
+            token = self.tok_norm(self._variable_token(name, values[name]) + self.type_emb[i]).detach()
+            tokens.append(token); valid.append(observed[name])
+        tokens.append((context["position"] + self.position_token).detach())
+        valid.append(torch.ones_like(valid[0]))
+        kv = torch.stack(tokens, 1)
+        mask = torch.stack(valid, 1)
+        q = self.family_env_query.expand(kv.shape[0], -1, -1)
+        pooled = self.family_env_attn(q, kv, kv, key_padding_mask=~mask, need_weights=False)[0][:, 0]
+        return self.family_env_head(pooled)
+
+    def _factor_family_mass(self, species_logits: torch.Tensor, family_logits: torch.Tensor) -> torch.Tensor:
+        prob = species_logits.float().softmax(-1)
+        mass = prob.new_zeros(prob.shape[0], self.family_count)
+        mass.scatter_add_(1, self.species_family.expand(prob.shape[0], -1), prob)
+        correction = F.log_softmax(family_logits.float(), -1) - mass.clamp_min(1e-8).log()
+        return species_logits + correction[:, self.species_family].to(species_logits.dtype)
+
     def reconstruction_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
                             context: dict, hide_prob: float = 0.35) -> torch.Tensor:
         """One training step: reveal each variable with prob ``1 - hide_prob`` and reconstruct every hidden-but-observed variable, at one fixed shape."""
@@ -868,7 +906,13 @@ class DeepEarth(nn.Module):
         blank = torch.rand(B, device=dev) < 0.15
         for n in self.names:
             present[n] = present[n] & ~blank
-        return self.masked_loss(values, observed, present, context)
+        loss = self.masked_loss(values, observed, present, context)
+        if self.family_env_attn is not None:
+            valid = observed[self.species_variable].to(loss.dtype)
+            target = self.species_family[values[self.species_variable]]
+            err = F.cross_entropy(self._family_env_logits(values, observed, context), target, reduction="none")
+            loss = loss + (err * valid).sum() / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2))
+        return loss
 
     def masked_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
                     present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
@@ -1126,6 +1170,8 @@ class DeepEarth(nn.Module):
             present[n] = observed[n] if (observed is not None and n in observed) \
                 else torch.ones(B, dtype=torch.bool, device=dev)
         z = self.encode(values, present, context)
+        family_logits = self._family_env_logits(values, present, context) \
+            if self.family_env_attn is not None and tuple(given) == self.family_env_vars else None
         out = {}
         for t in targets:
             if t == "community":                                                 # env-conditioned community distribution
@@ -1141,4 +1187,6 @@ class DeepEarth(nn.Module):
                 out[t] = torch.sigmoid(self.flower_head(self._head_in(z, self.species_variable)).squeeze(-1))
             else:
                 out[t] = self.decode(z, t)
+                if t == self.species_variable and family_logits is not None:
+                    out[t] = self._factor_family_mass(out[t], family_logits)
         return out

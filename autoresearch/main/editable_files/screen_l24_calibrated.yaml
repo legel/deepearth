@@ -18,6 +18,7 @@ data:
   n_neighbors: 16
   time_axis: true
 model:
+  family_env_expert: true
   continuous_calibration: true
   capacity: 12
   compile: false
@@ -64,6 +65,7 @@ model:
     bioclip_init: true
     heads: 4
     layers: 2
+    masked_posterior: exact-ou
     operator: latent-clade
     top_k: 128
     variable: identity

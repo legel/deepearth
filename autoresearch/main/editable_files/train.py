@@ -71,10 +71,15 @@ def train_and_evaluate(config, device):
                    species_layers=sg.get("layers", 2), species_heads=sg.get("heads", 4),
                    species_top_k=sg.get("top_k"), species_flex=sg.get("flex", False),
                    species_operator=sg.get("operator", "ou-attention"),
+                   species_mask_posterior=sg.get("masked_posterior"),
                    species_tree=source.tree if sg.get("operator") == "tree"
                                 else (source.lca_tree if sg.get("operator") == "latent-clade" else None),
                    species_tip_row=source.lca_tip_row if sg.get("operator") == "latent-clade" else None,
-                   species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None) if sg else {}
+                   species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None,
+                   species_family=source.class_group if m.get("family_env_expert", False) else None,
+                   family_env_expert=m.get("family_env_expert", False),
+                   family_env_vars=m.get("family_env_vars", (
+                       "climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro"))) if sg else {}
     if sg and sg.get("operator", "ou-attention") != "tree":   # real dated plant patristic (rules 7-12): replaces the embedding shadow for tree-covered species
         cdir0 = Path(d["cache_dir"]); cdir0 = cdir0 if cdir0.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
         pld = cdir0 / "gbif_plant_dist.npz"
@@ -196,7 +201,8 @@ def train_and_evaluate(config, device):
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
-                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head", "cal_gain", "cal_bias"))]
+                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head", "family_env", "cal_gain", "cal_bias"))]
+    family_env_clip_params = [p for n, p in model.named_parameters() if "family_env" in n]
     # The continuous-head calibration fits a standardized squared error whose gradient starts ~10^3x the cosine
     # terms'. In the backbone's clip group that would inflate the global norm and shrink every backbone update --
     # the same clip-coupling artifact the pollinator graph is separated for. Its own group keeps the flag inert.
@@ -325,7 +331,7 @@ def train_and_evaluate(config, device):
             if torch.isfinite(loss):
                 nonfinite_streak = 0
                 opt.zero_grad(); loss.backward()
-                if flat.grad is None or not torch.isfinite(flat.grad).all() or not finite_grads(clip_params + freq_params + poll_clip_params):
+                if flat.grad is None or not torch.isfinite(flat.grad).all() or not finite_grads(clip_params + freq_params + poll_clip_params + family_env_clip_params):
                     opt.zero_grad(set_to_none=True)
                     model._abs_dydx = None; model._abs_inputs = None
                     model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
@@ -334,6 +340,7 @@ def train_and_evaluate(config, device):
                 torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
                 if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
                 if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+                if family_env_clip_params: torch.nn.utils.clip_grad_norm_(family_env_clip_params, 5.0)
                 if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
                 opt.step(); clamp_res()   # AdamW on everything else
             else:
@@ -367,11 +374,12 @@ def train_and_evaluate(config, device):
             continue
         nonfinite_streak = 0
         opt.zero_grad(); loss.backward()
-        if not finite_grads(clip_params + freq_params + poll_clip_params):
+        if not finite_grads(clip_params + freq_params + poll_clip_params + family_env_clip_params):
             opt.zero_grad(set_to_none=True); sched.step(); continue
         torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
         if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
         if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+        if family_env_clip_params: torch.nn.utils.clip_grad_norm_(family_env_clip_params, 5.0)
         if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
         opt.step(); clamp_res(); sched.step()
         if step % 500 == 0:
