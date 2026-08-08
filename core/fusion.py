@@ -216,6 +216,8 @@ class DeepEarth(nn.Module):
         species_tip_row: Optional[torch.Tensor] = None,   # (latent-clade) species-local vocab index of each in-tree tip, in tree-tip order
         species_distance: Optional[tuple] = None,   # (dated[m,m], model_idx[m]): real dated patristic for tree-covered species -> replaces the embedding shadow (ou-attention)
         species_text: Optional[torch.Tensor] = None,
+        species_family: Optional[torch.Tensor] = None,
+        family_alphaearth_expert: bool = False,
         compile_processor: bool = False,
         rounds: int = 1,
         write_back: bool = True,
@@ -331,6 +333,8 @@ class DeepEarth(nn.Module):
 
         # species graph: refine identity through phylogenetic-neighbor attention. "tree" propagates over the dated phylogeny; "ou-attention" biases attention with an embedding-derived distance.
         self.species_variable = species_variable
+        self.register_buffer("species_family", species_family)
+        self.family_count = int(species_family.max()) + 1 if species_family is not None else 0
         if species_variable is not None and species_embedding is not None:
             if species_operator == "tree":
                 assert species_tree is not None, "species_operator='tree' needs the parsed tree (source.tree)"
@@ -461,6 +465,12 @@ class DeepEarth(nn.Module):
         if self.species_trait_recon and species_variable is not None:
             self.species_myco_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5))
             self._species_myco = None; self._species_myco_valid = None; self._train_species = None
+        self.family_ae_head = None
+        if family_alphaearth_expert and self.family_count:
+            with torch.random.fork_rng(devices=[]):
+                self.family_ae_head = nn.Sequential(
+                    nn.LayerNorm(64), nn.Linear(64, d_model), nn.GELU(),
+                    nn.Linear(d_model, self.family_count))
         if compile_processor:
             self._refine = torch.compile(self._refine)
 
@@ -834,6 +844,22 @@ class DeepEarth(nn.Module):
         mu = (target[obs].mean(0, keepdim=True) if obs.any() else target.mean(0, keepdim=True)).detach()
         return 1.0 - F.cosine_similarity(pred - mu, target - mu, dim=-1)
 
+    def _factor_family_mass(self, species_logits: torch.Tensor, family_logits: torch.Tensor) -> torch.Tensor:
+        prob = species_logits.float().softmax(-1)
+        mass = prob.new_zeros(prob.shape[0], self.family_count)
+        mass.scatter_add_(1, self.species_family.expand(prob.shape[0], -1), prob)
+        correction = F.log_softmax(family_logits.float(), -1) - mass.clamp_min(1e-8).log()
+        return species_logits + correction[:, self.species_family].to(species_logits.dtype)
+
+    def family_alphaearth_loss(self, values: Dict[str, torch.Tensor],
+                               observed: Dict[str, torch.Tensor]) -> torch.Tensor:
+        if self.family_ae_head is None:
+            return self.type_emb.new_zeros(())
+        valid = (observed[self.species_variable] & observed["alphaearth"]).to(self.type_emb.dtype)
+        target = self.species_family[values[self.species_variable]]
+        err = F.cross_entropy(self.family_ae_head(values["alphaearth"].detach()), target, reduction="none")
+        return (err * valid).sum() / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2))
+
     def reconstruction_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
                             context: dict, hide_prob: float = 0.35) -> torch.Tensor:
         """One training step: reveal each variable with prob ``1 - hide_prob`` and reconstruct every hidden-but-observed variable, at one fixed shape."""
@@ -970,6 +996,9 @@ class DeepEarth(nn.Module):
             present[n] = observed[n] if (observed is not None and n in observed) \
                 else torch.ones(B, dtype=torch.bool, device=dev)
         z = self.encode(values, present, context)
+        family_logits = self.family_ae_head(values["alphaearth"].detach()) \
+            if self.family_ae_head is not None and not given else None
+        family_valid = observed.get("alphaearth") if observed is not None and family_logits is not None else None
         out = {}
         for t in targets:
             if t == "community":                                                 # env-conditioned community distribution
@@ -985,4 +1014,8 @@ class DeepEarth(nn.Module):
                 out[t] = torch.sigmoid(self.flower_head(self._head_in(z, self.species_variable)).squeeze(-1))
             else:
                 out[t] = self.decode(z, t)
+                if t == self.species_variable and family_logits is not None:
+                    factored = self._factor_family_mass(out[t], family_logits)
+                    out[t] = torch.where(family_valid[:, None], factored, out[t]) \
+                        if family_valid is not None else factored
         return out

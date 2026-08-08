@@ -65,7 +65,9 @@ def train_and_evaluate(config, device):
                    species_tree=source.tree if sg.get("operator") == "tree"
                                 else (source.lca_tree if sg.get("operator") == "latent-clade" else None),
                    species_tip_row=source.lca_tip_row if sg.get("operator") == "latent-clade" else None,
-                   species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None) if sg else {}
+                   species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None,
+                   species_family=source.class_group if m.get("family_alphaearth_expert", False) else None,
+                   family_alphaearth_expert=m.get("family_alphaearth_expert", False)) if sg else {}
     if sg and sg.get("operator", "ou-attention") != "tree":   # real dated plant patristic (rules 7-12): replaces the embedding shadow for tree-covered species
         cdir0 = Path(d["cache_dir"]); cdir0 = cdir0 if cdir0.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
         pld = cdir0 / "gbif_plant_dist.npz"
@@ -177,11 +179,12 @@ def train_and_evaluate(config, device):
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
-                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head"))]
+                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head", "family_ae"))]
     # The pollinator graph trains from the (detached-plant) interaction loss; clip it in its OWN group so its gradient
     # magnitude does not inflate the global plant clip norm and shrink backbone updates (else enabling pollinators
     # spuriously regresses plant heads — a clip-coupling artifact, not real competition).
     poll_clip_params = [p for n, p in model.named_parameters() if "pollinator_graph" in n.lower()]
+    family_ae_clip_params = [p for n, p in model.named_parameters() if "family_ae" in n]
     hash_encoders = [mod for mod in model.modules() if hasattr(mod, "clamp_per_level_scale")]
     def clamp_res():                                     # keep learnable per-level resolutions in the safe (scale>0) region
         for he in hash_encoders:
@@ -253,12 +256,14 @@ def train_and_evaluate(config, device):
             else:
                 ctx = model.context_from_flat(flat, coords, nbr_coords, manifold_coords, nbr_values)
                 loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
+            loss = loss + model.family_alphaearth_loss(values, observed)
             if torch.isfinite(loss):
                 opt.zero_grad(); loss.backward()
                 model.sparse_hash_step(flat, idx)                        # sparse Adam on the absolute hash table
                 torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
                 if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
                 if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+                if family_ae_clip_params: torch.nn.utils.clip_grad_norm_(family_ae_clip_params, 5.0)
                 opt.step(); clamp_res()   # AdamW on everything else
             model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
             if step % 500 == 0:
@@ -278,12 +283,14 @@ def train_and_evaluate(config, device):
             ctx = model.context(coords, nbr_coords, manifold_coords, nbr_values)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
                 loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
+        loss = loss + model.family_alphaearth_loss(values, observed)
         if not torch.isfinite(loss):                    # backstop: never let one bad step poison the weights
             opt.zero_grad(set_to_none=True); sched.step(); continue
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
         if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
         if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+        if family_ae_clip_params: torch.nn.utils.clip_grad_norm_(family_ae_clip_params, 5.0)
         opt.step(); clamp_res(); sched.step()
         if step % 500 == 0:
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
