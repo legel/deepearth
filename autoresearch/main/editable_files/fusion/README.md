@@ -1,10 +1,3 @@
-> **Moved here from the repository root `core/` (2026-07-30).** It was imported by exactly one loop —
-> main's `train.py` and `evaluate.py` — so a top-level `core/` read as shared while being owned by the
-> fusion loop. It now lives with its owner. each probe loop's `editable_files/` stayed top-level for the opposite reason: all
-> three loops import it, because it is the interface a probe loop improves and fusion consumes.
->
-> Probe loops must not import this directory.
-
 # DeepEarth core
 
 The model. A masked multimodal autoencoder over spatio-temporally covarying variables: given whichever variables

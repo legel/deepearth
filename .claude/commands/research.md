@@ -38,9 +38,10 @@ are equal.
 
 $ARGUMENTS
 
-With no argument, target the weakest actionable human capability in the current-protocol scorecard.
-If Ensue carries an older protocol, stop and hand off the baseline migration instead of researching
-against an incomparable score.
+With no argument, target the weakest active human capability in the current-protocol scorecard. Never
+skip an active row. If that instrument is structurally invalid, stop and hand off its repair or protocol
+migration instead of quietly selecting the next benchmark. If Ensue carries an older protocol, stop
+and hand off the baseline migration instead of researching against an incomparable score.
 
 One model, one loop. Improve DeepEarth, train at fixed steps, measure the full scorecard on held-out
 data, and keep only capability-harmonic gains that clear noise without losing arithmetic breadth.
@@ -89,9 +90,10 @@ goes through `champion_report.py` (rule 30).
 ## The loop
 
 0. **THINK.** Three inputs, in this order.
-   - **The scorecard.** Start with the lowest active human capability. If it is not actionable, record
-     the concrete reason and take the next weakest; difficulty alone is not a reason to skip it. Use
-     `val_bpb`, its decomposition and mechanism ablations only to explain that weakness.
+   - **The scorecard.** Start with the lowest active human capability. Do not skip it for difficulty or
+     prior failures. If its evaluator or required data is structurally invalid, publish the evidence and
+     stop for a software-engineering repair or explicit protocol migration. Use `val_bpb`, its
+     decomposition and mechanism ablations only to explain the capability weakness.
    - **`customer_feedback/`.** Read the original files, not a summary of them. They say which
      capabilities the customer actually wants and where the science is heading; a technically valid
      result on a capability nobody asked for is a wasted iteration. Use them with the weakest capability
@@ -104,17 +106,19 @@ goes through `champion_report.py` (rule 30).
      campaign semantically, including the 568 `LOOP-` records from prior work, so you never pay for a
      negative someone already published.
 
-   The target is `science.md` realized **while staying well-rounded**. The weakest actionable capability
+   The target is `science.md` realized **while staying well-rounded**. The weakest active capability
    says where to push; harmonic rewards lifting it and arithmetic prevents a broad trade.
 1. **CLAIM.** `coord.claim("description")`. If it returns `None` someone holds it — pick another. Claims
    expire, so a dead agent never blocks the swarm.
-2. **State one causal hypothesis.** Which variables should lose bits, and through which subsystem.
+2. **State one causal hypothesis.** Which human capability should rise, through which subsystem, and
+   which diagnostic movement would support that mechanism.
 3. **Change only the surface that tests it.** Commit before running — a dirty tree makes the run
    unreproducible and it cannot set a record.
-3. **Run the pair at fixed steps**, candidate and control, same seed, same cache, same prepared data.
-4. **Measure both score floors at that scale** if you do not already have them: two matched control
+4. **Run the pair at fixed steps** on seeds `1337` and `1338`, candidate and control matched on cache,
+   prepared data, hardware class and every non-hypothesis setting.
+5. **Measure both score floors at that scale** if you do not already have them: two matched control
    seeds, full spread for capability harmonic and arithmetic. There is no default.
-5. **Read the capability score first, then the diagnostics.** Did the named benchmark rise? Do `val_bpb`,
+6. **Read the capability score first, then the diagnostics.** Did the named benchmark rise? Do `val_bpb`,
    its decomposition and an ablation explain why? If the gain landed elsewhere, it is an initialization re-roll —
    adding parameters shifts the RNG stream and re-initializes the whole model.
 7. **Record it** with every human benchmark first and all likelihood/mechanism diagnostics alongside.
@@ -147,13 +151,13 @@ rituals — nothing elsewhere in this document adds another.
 | break | you are doing it when | do this |
 |---|---|---|
 | **Grinding** | measuring variance, re-tuning a weight you already tuned, re-running a control that exists, or three experiments deep with no new mechanism | Stop and change subsystem. Publish what you have with its seed count and spread. |
-| **Broken record** | a run fails for a reason that is not your hypothesis — crash, missing method, unbuildable config, stale or non-reproducing baseline, an instrument disagreeing with itself | Do not fix it in the loop. Publish an insight with the evidence, hand it to `ship-deepearth-improvement`, pick another hypothesis. |
+| **Broken record** | a run fails for a reason that is not your hypothesis — crash, missing method, unbuildable config, stale or non-reproducing baseline, an instrument disagreeing with itself | Do not fix it in the loop. Publish an insight with the evidence and hand it to `ship-deepearth-improvement`. If it invalidates the selected target or baseline, pause; otherwise pick another mechanism for the same target. |
 | **Metric tampering** | changing a metric, split, floor or baseline so a candidate passes | Revert it. Improve the model instead. The instruments are read-only for a reason. |
 | **Trading** | strength elsewhere raises harmonic while the named target does not rise, or arithmetic regresses past its floor | Not a result. Report it as a trade and keep looking. |
 | **Unreproducible run** | the tree was dirty, the cache differed, or the arms did not share seed and data | The number does not exist. Discard it — do not report it with a caveat. |
 | **Incomparable numbers** | comparing a mirror run to a public-main run | Void. The evaluators differ by ~158 lines; the same config scores ~0.279 on the mirror and 0.332464 on public main. |
 
-**Use exactly two matched seeds per arm.** Do not add a third to rescue an ambiguous verdict. Record the
+**Use exactly seeds 1337 and 1338 per arm.** Do not add a third to rescue an ambiguous verdict. Record the
 uncertainty and move to a materially different hypothesis; a cycle spent re-confirming is a cycle not
 spent finding the next thing.
 

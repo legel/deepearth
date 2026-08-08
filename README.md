@@ -13,84 +13,18 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 > state of the art. The current evidence gate is defined by the `/research` command and the autoresearch
 > scorecard.
 
-## How research runs here: granular probe loops first, fusion last
+## How research runs here
 
-We build **backwards**. Each autonomous research loop owns **one probe and its own data**, and recovers
-signal for one part of the science in [`autoresearch/science.md`](autoresearch/science.md). Only once
-those signals are established do they get plugged into the fusion layer — the full model comes last.
+DeepEarth uses one end-to-end autoresearch loop. Encoder, fusion, masking, optimization and data-channel
+changes are tested inside the same model and judged on the same held-out human-capability suite. The
+lowest active capability selects the target; the two-seed harmonic is the primary score and arithmetic
+is the breadth guard. Reconstruction `val_bpb` and mechanism ablations explain results but do not gate
+promotion.
 
-```
-                       ┌─────────────────────────────────────────────┐
-   APEX                │  autoresearch/main/            FUSION       │   runs LAST
-   consumes the        │  integrates the finished encoders           │
-   probes' output      └──────────────────▲──────────────────────────┘
-                                          │  depends on — the one legitimate edge,
-                                          │  taken once the science is filled out
-            ┌─────────────────────────────┴─────────────────────────────┐
-   SCIENCE  │  autoresearch/main/editable_files/encoders/earth4d.py + phylogenomic.py
-   LOOPS    │  one probe · own data · own metric · own evals · own tests
-            │  independent code · NEVER import a sibling
-            └─────────────────────────────▲─────────────────────────────┘
-                                          │  develops
-            ┌─────────────────────────────┴─────────────────────────────┐
-   LEAVES   │  .../spacetime/editable_files/   (Earth4D + CUDA hash)
-            │  .../biological/editable_files/  (phylogenomic)
-            └───────────────────────────────────────────────────────────┘
-```
-
-Read it bottom-up. An **encoder is a leaf** — the artifact under development — and it lives *inside* the
-probe loop that develops it, because a leaf belongs to exactly one loop. A **probe loop** is the only
-thing that changes its encoder, and never touches a sibling's. **`main` is the apex**: it consumes each
-probe's finished encoder and runs last.
-
-Dependencies point **upward only**. `main → probes` is legitimate and expected; `probe → sibling probe`
-or `probe → main` is a cycle or a hidden coupling, and
-either. Everything a loop owns lives under it: its program, its editable code, its encoder, its data, its
-records, its tests. Nothing about a loop sits at the repository root.
-
-Read it bottom-up: an **encoder is a leaf** — the artifact under development. A **probe loop** sits above
-its encoder and is the only thing that changes it. **`main` is the apex**: it will consume each probe's
-finished encoder, and it runs last. Dependencies point *upward only*. A probe importing a sibling probe,
-or a probe importing `main`, is a cycle or a hidden coupling, and
-
-each probe loop's `editable_files/` is still top-level rather than inside its probe loop. That consolidation waits until the
-scientific performance is filled out — moving a CUDA build and its ABI-specific `.so` mid-campaign buys
-nothing. The dependency direction is already correct; only the file location is provisional.
-
-A fusion model trained before its constituent signals are established cannot tell you which part
-works: it is confounded and slow, and every number it produces is a joint claim about everything at
-once. A probe loop makes **one narrow claim, in minutes, against fair controls** — and a claim that
-survives its own validation is what earns a place in fusion. So a probe loop's job is not to raise an
-aggregate; it is to recover a real signal on one capability and prove the signal is the encoder's, not
-borrowed from a frozen pretrained embedding.
-
-Every loop keeps its fixed judge separate from its editable science, so scope is never ambiguous:
-
-```
-autoresearch/<loop>/
-  program/                the contract: objective, scorecard, what counts as evidence
-  harness.py or harness/  fixed runner, splits, controls, metrics, and records
-  probe.py                fixed capability validation where applicable
-  editable_files/
-     earth4d.py or phylogenomic.py   public science entrypoint
-     lib/                 modular scientific mechanisms composed by that entrypoint
-  records/                harness-written board, traces, ledgers — never hand-edited
-```
-
-each probe loop's `editable_files/` stays top-level because it is the **interface** between the loops: a probe loop improves an
-encoder, the fusion loop consumes it. Anything owned by one loop lives inside it — which is why the
-fusion model moved from `core/` to `autoresearch/main/editable_files/fusion/`.
-
-**Where the campaign stands:** [`autoresearch/scorecard.md`](autoresearch/scorecard.md) indexes every
-loop's scorecard. Each loop publishes `program/scorecard.txt` — the current best per metric with its fair
-gain and diagnosis, generated by that loop's harness after every run — beside a `scorecard.md` that
-explains what the rows mean.
-
-**Rules that hold across every loop** — see [`autoresearch/README.md`](autoresearch/README.md):
-one probe per loop · no loop imports another loop's code · only the fusion loop touches the fusion
-model · an experiment is an edit on a branch, never a new file or a new flag · a record from an
-unpushed commit is discovery-only · `main` is reached only by a result that cleared its loop's evidence
-bar.
+[`PROGRAM.md`](PROGRAM.md) is the operating contract,
+[`autoresearch/scorecard.md`](autoresearch/scorecard.md) defines scoring, and the `/research` command is
+the executable procedure. Experimental science is confined to
+`autoresearch/main/editable_files/`; the evaluator and scoring code are immutable to the research loop.
 
 ## Exciting News:
 

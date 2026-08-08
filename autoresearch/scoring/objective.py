@@ -4,8 +4,8 @@
 It shares the model's data, split, masking and decoder path but NOT its loss functions: training uses
 centered cosine and log-C-normalized cross-entropy, which are not log-likelihoods. A change can therefore
 improve one and worsen the other. What it does guarantee is one number at every scale.
-It is additive over variables, so the aggregate aligns the loops and the per-variable decomposition
-gives each loop its granular target.
+It is additive over variables, so its aggregate and per-variable decomposition explain where a change
+landed. They do not select the research target or gate promotion.
 
 Human-interpretable capabilities decide promotion. ``val_bpb`` and its decomposition remain the
 likelihood lens used to understand where a change landed; they do not decide whether a champion ships.
@@ -47,8 +47,7 @@ def aggregate(per_variable: Mapping[str, tuple]) -> float:
 
 
 def decompose(per_variable: Mapping[str, tuple]) -> Dict[str, float]:
-    """Per-variable bits/dim. The granular target -- a loop steers by the variables it owns, and cannot
-    win by trading another variable's budget away."""
+    """Per-variable bits/dim: the diagnostic lens for where a likelihood change landed."""
     return {k: bits_per_dim(float(n), int(d)) for k, (n, d) in per_variable.items()}
 
 

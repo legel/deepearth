@@ -2,7 +2,7 @@
 
 Autonomous research on DeepEarth. One model, one objective, one loop.
 
-**Start here:** the `/research` command — it is the program: how an experiment runs, and the contract it runs under.
+**Start here:** [`PROGRAM.md`](../PROGRAM.md) is the operating contract; the `/research` command executes it.
 **How science is measured:** [`scorecard.md`](../autoresearch/scorecard.md).
 **What the model must be:** [`science.md`](science.md).
 
@@ -31,18 +31,11 @@ topography, Daymet and the phylogenies. It builds the prepared cache and is not 
 
 ## The objective in one paragraph
 
-`val_bpb` is held-out masked reconstruction, scored as a proper likelihood in bits per revealed dimension. It shares the
-model's data, split, masking and decoder path, but NOT its loss functions: training uses centered cosine for
-continuous targets and cross-entropy divided by log(num_classes) for categorical, while val_bpb uses a
-Gaussian density, cosine retrieval against a frozen bank, and raw cross-entropy. That is deliberate -- the
-training rescalings keep the shared gradient balanced and are not log-likelihoods -- but it means a change
-can improve one and worsen the other, most plausibly on the z-scored continuous variables. A result about one encoder is
-still a term in the model's own number rather than a proxy for it, because the data, split and masking
-are shared. It is additive over variables: the aggregate gates promotion, the per-variable decomposition is
-the lens a given piece of work steers by, and an ablation delta attributes a change to the subsystem
-that caused it. The harmonic and arithmetic benchmark means are still computed and reported — they are
-how the public repository is reviewed — but they are diagnostics, because they cannot resolve a 4.6x
-difference in model size.
+The human-capability suite decides promotion. Its two-seed harmonic is the primary score and its
+two-seed arithmetic mean is the breadth guard. The weakest active capability selects the research
+target. `val_bpb` is held-out masked-reconstruction likelihood in bits per revealed dimension; its
+aggregate, macro view, decomposition and ablations diagnose where a change landed but never decide
+promotion. See [`scorecard.md`](scorecard.md) for exact membership and gate semantics.
 
 ## What changed, and why
 
