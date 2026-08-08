@@ -50,7 +50,7 @@ INSIGHT = "LOOP-deepearth-insights/{slug}-{hash}"
 HYPOTHESIS = "LOOP-deepearth-hypotheses/{slug}-{hash}"
 BEST = "LOOP-deepearth-best"
 
-SCHEMA = "deepearth.scorecard/2"   # v3 moves likelihood metrics out of the promotion headline
+SCHEMA = "deepearth.scorecard/2"   # protocol v4 gates on human-readable task scores
 _ROUND = 6                          # every float is rounded here, so the same run twice is byte-identical
 _UNSET = object()                   # "no CAS guard given", distinct from expected=None ("cold start")
 
@@ -58,7 +58,7 @@ try:
     from deepearth.autoresearch.scoring.objective import (
         QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
         capability_suite as observed_capability_suite, harmonic as capability_harmonic,
-        is_diagnostic, judge as judge_capabilities,
+        is_diagnostic, is_uncalibrated, judge as judge_capabilities,
     )
 except ModuleNotFoundError:  # direct execution from the repository root
     import sys
@@ -66,7 +66,7 @@ except ModuleNotFoundError:  # direct execution from the repository root
     from scoring.objective import (
         QUARANTINED_BENCHMARKS, arithmetic as capability_arithmetic,
         capability_suite as observed_capability_suite, harmonic as capability_harmonic,
-        is_diagnostic, judge as judge_capabilities,
+        is_diagnostic, is_uncalibrated, judge as judge_capabilities,
     )
 
 
@@ -272,6 +272,8 @@ def scorecard(*, val_bpb: float, macro: float, decomposition: dict, revealed_dim
             row.update(role="quarantined", reason=QUARANTINED_BENCHMARKS[name])
         elif is_diagnostic(name):
             row["role"] = "mechanism"
+        elif is_uncalibrated(name):
+            row.update(role="uncalibrated", reason="raw cosine has no human scale without an empirical null")
         else:
             row["role"] = "capability"
         benchmark_rows.append(row)
@@ -586,8 +588,8 @@ class Coordinator:
 
         if not force:
             if cur and cur.get("schema") != SCHEMA:
-                print("[ensue] promotion frozen: standing scorecard predates v3; publish the fresh "
-                      "two-seed v3 baseline with force=True before comparing candidates", flush=True)
+                print("[ensue] promotion frozen: standing scorecard predates this contract; publish the fresh "
+                      "two-seed v4 baseline with force=True before comparing candidates", flush=True)
                 return False
             if expected is not _UNSET and live != expected:
                 print(f"[ensue] NOT promoted: incumbent moved to {live} (you decided against "

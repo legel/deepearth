@@ -187,6 +187,7 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
 32. **Promote human capability, and report every instrument honestly.** The primary score is the harmonic mean over the
     protocol-matched human-capability suite; its arithmetic mean is the breadth guard. Ablation and information gains
     measure dependence on a mechanism, not capability, so report them separately and never mix them into either mean.
+    Raw cosine similarities also remain outside both means until an empirical null gives them a human-readable scale.
     Structurally invalid benchmarks remain visible with a written quarantine reason. A champion must carry the same
     complete active capability suite as its baseline; a membership change requires a new protocol and baseline.
 

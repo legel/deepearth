@@ -38,6 +38,7 @@ except Exception:
 
     def capability_suite(raw):
         return tuple(sorted(k for k in raw if not k.endswith("_gain")
+                            and not k.endswith("_cos")
                             and k != "B55_pollinator_phylo_transfer_recall"))
 
 # One-line description per benchmark (given-set -> target, metric), so a reader grasps whole-system performance at a

@@ -1,6 +1,6 @@
 # Scorecard — how science is measured
 
-Protocol `v3-human-capability-gate` makes the human-interpretable benchmark suite the promotion
+Protocol `v4-human-benchmark-gate` makes the human-interpretable benchmark suite the promotion
 instrument. `val_bpb` remains a reconstruction diagnostic and never decides promotion.
 
 ## Promotion gate
@@ -27,6 +27,8 @@ rose inside its floor. The defect was not the harmonic; promotion ignored it.
 - Ordinary human-interpretable task scores are capabilities and enter both means.
 - `*_gain` values are mechanism diagnostics. They show whether a subsystem matters; dependence is not
   capability, so they enter neither mean.
+- Raw `*_cos` representation scores remain reported but enter neither mean until they carry an
+  empirical null. A cosine such as `0.556` has no human meaning by itself.
 - `B55_pollinator_phylo_transfer_recall` remains measured and displayed but is quarantined from both
   means. Its documented `poll_head` input-space mismatch makes the named transfer test untestable.
 - A changed active capability set is a protocol break, not a comparable result.
@@ -46,7 +48,7 @@ floor, never raw bits.
 
 ## Migration
 
-Protocol v2 and v3 scores are incomparable. Promotion is frozen until one fresh two-seed v3 baseline is
+Earlier protocol scores and v4 scores are incomparable. Promotion is frozen until one fresh two-seed v4 baseline is
 published explicitly as the new baseline. Historical runs are not replayed. Thereafter the coordinator
 mechanically rejects protocol or capability-suite mismatches.
 
@@ -58,5 +60,6 @@ CAPABILITY HARMONIC                              <- primary gate
 CAPABILITY ARITHMETIC                            <- breadth guard
 QUARANTINED                                      <- raw score + reason
 MECHANISM DIAGNOSTICS                            <- raw ablation/information gains
+UNCALIBRATED REPRESENTATION METRICS              <- raw cosine, reported but not gated
 val_bpb + macro + per-variable decomposition     <- likelihood diagnostics
 ```

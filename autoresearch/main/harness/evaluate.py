@@ -1,11 +1,8 @@
 """The DeepCal benchmark suite and the harmonic-mean north star.
 
 A trained :class:`~deepearth.autoresearch.main.editable_files.fusion.fusion.DeepEarth` is scored on the full suite, each benchmark asking "given the
-widely-available context U (and sometimes a ground photo), how well is a sparse target induced?" Every metric is
-already in ``[0, 1]`` (top-k accuracy, macro-F1, unit-embedding cosine, recall@k, MRR), so the score IS the raw value:
-no baseline/target remap, because a hand-set target below a metric's attainable maximum is an artificial ceiling. The
-net score is the harmonic mean (power mean p = -1) of the active benchmarks, so lifting the weakest helps most and none
-can be traded for another.
+widely-available context U (and sometimes a ground photo), how well is a sparse target induced? Human-readable task
+scores form the harmonic mean. Raw cosine and mechanism deltas remain reported but do not enter it.
 
 ``U`` is everything obtainable at a point without observing the organism (space-time position, climate, soil, clay,
 NAIP, topo, chm, hydro). Benchmarks are computed on the held-out split (spatial 0.5-degree blocks by default;
@@ -26,7 +23,7 @@ import torch.nn.functional as F
 # Increment whenever a benchmark definition, split, control, or suite membership changes.  Champion
 # records and graduation crossings carry this value so an old instrument can never be compared with a
 # new one merely because the benchmark names happen to overlap.
-BENCHMARK_PROTOCOL = "v3-human-capability-gate"
+BENCHMARK_PROTOCOL = "v4-human-benchmark-gate"
 
 def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, num_classes: int) -> float:
     """Macro-F1 over the observed rows: mean per-class F1 (unweighted), so rare classes count as much as common."""
@@ -586,12 +583,13 @@ def observed_any(observed: Dict[str, torch.Tensor], name: str) -> bool:
 # scoring must not be editable by the experiments it judges. science.md rule 19 already calls this file
 # "the immutable ground truth"; it was stored in the editable tree anyway, and `score.py` kept a
 # hand-copy of two of them under a comment reading "keep byte-identical". One definition now, imported
-# by every evaluator. Protocol v3 changes membership, not any benchmark definition.
+# by every evaluator. Protocol v4 changes membership, not any benchmark definition.
 from deepearth.autoresearch.scoring.objective import (          # noqa: E402  (must follow BENCHMARKS)
     QUARANTINED_BENCHMARKS,
     SCORE_FLOOR as _SCORE_FLOOR,                    # noqa: F401  (re-exported for existing callers)
     capability_suite,
     is_diagnostic,
+    is_uncalibrated,
     harmonic as _shared_net_score,
     normalized,
     arithmetic as _shared_arithmetic,
@@ -600,7 +598,8 @@ from deepearth.autoresearch.scoring.objective import (          # noqa: E402  (m
 # Bind both public means to the same human-capability membership. Optional outputs may be absent from a
 # particular holdout, but diagnostics and quarantined measurements can never move either mean.
 GATE_BENCHMARKS = tuple(b for b in BENCHMARKS
-                        if not is_diagnostic(b) and b not in QUARANTINED_BENCHMARKS)
+                        if not is_diagnostic(b) and not is_uncalibrated(b)
+                        and b not in QUARANTINED_BENCHMARKS)
 net_score = functools.partial(_shared_net_score, suite=GATE_BENCHMARKS)
 arithmetic_net = functools.partial(_shared_arithmetic, suite=GATE_BENCHMARKS)
 
@@ -609,9 +608,11 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
     """Render capabilities first, then quarantine and mechanism diagnostics."""
     normed = normalized(raw)
     caps = {k: v for k, v in normed.items()
-            if not is_diagnostic(k) and k not in QUARANTINED_BENCHMARKS}
+            if not is_diagnostic(k) and not is_uncalibrated(k)
+            and k not in QUARANTINED_BENCHMARKS}
     quarantined = {k: v for k, v in normed.items() if k in QUARANTINED_BENCHMARKS}
     diags = {k: v for k, v in normed.items() if is_diagnostic(k)}
+    uncalibrated = {k: v for k, v in normed.items() if is_uncalibrated(k)}
     lines = [f"BENCHMARK PROTOCOL: {BENCHMARK_PROTOCOL}",
              "HUMAN CAPABILITIES (weakest first)",
              "benchmark                             score"]
@@ -630,6 +631,10 @@ def format_benchmarks(raw: Dict[str, float]) -> str:
         lines.append("QUARANTINED (reported raw; excluded from both capability means):")
         for k in sorted(quarantined):
             lines.append(f"  {k:<34} {quarantined[k]:6.3f}  ({QUARANTINED_BENCHMARKS[k]})")
+    if uncalibrated:
+        lines.append("UNCALIBRATED REPRESENTATION METRICS (reported raw; excluded from both means):")
+        for k in sorted(uncalibrated):
+            lines.append(f"  {k:<34} {uncalibrated[k]:6.3f}")
     if diags:
         lines.append("MECHANISM DIAGNOSTICS (raw; excluded from both capability means):")
         for k in sorted(diags, key=lambda k: -diags[k]):

@@ -146,10 +146,16 @@ def is_diagnostic(k: str) -> bool:
     return k.endswith("_gain")
 
 
+def is_uncalibrated(k: str) -> bool:
+    """A representation score whose raw scale has no human meaning without an empirical null."""
+    return k.endswith("_cos")
+
+
 def capability_suite(raw: Mapping[str, float]) -> tuple[str, ...]:
     """Comparable human capabilities present in one run, in stable order."""
     return tuple(sorted(k for k in normalized(raw)
-                        if not is_diagnostic(k) and k not in QUARANTINED_BENCHMARKS))
+                        if not is_diagnostic(k) and not is_uncalibrated(k)
+                        and k not in QUARANTINED_BENCHMARKS))
 
 
 def normalized(raw: Mapping[str, float]) -> Dict[str, float]:
@@ -168,7 +174,7 @@ def harmonic(raw: Mapping[str, float], suite: Optional[Iterable[str]] = None) ->
     """
     normed = normalized(raw)
     declared = set(capability_suite(normed) if suite is None else suite)
-    keys = [k for k in normed if k in declared and not is_diagnostic(k)
+    keys = [k for k in normed if k in declared and not is_diagnostic(k) and not is_uncalibrated(k)
             and k not in QUARANTINED_BENCHMARKS]
     vals = [max(normed[k], SCORE_FLOOR) for k in keys]
     return float(len(vals) / sum(1.0 / v for v in vals)) if vals else 0.0
@@ -178,7 +184,8 @@ def arithmetic(raw: Mapping[str, float], suite: Optional[Iterable[str]] = None) 
     """Arithmetic breadth guard over the same declared human-capability suite."""
     normed = normalized(raw)
     declared = set(capability_suite(normed) if suite is None else suite)
-    vals = [v for k, v in normed.items() if k in declared and not is_diagnostic(k)
+    vals = [v for k, v in normed.items()
+            if k in declared and not is_diagnostic(k) and not is_uncalibrated(k)
             and k not in QUARANTINED_BENCHMARKS]
     return float(sum(vals) / len(vals)) if vals else 0.0
 
