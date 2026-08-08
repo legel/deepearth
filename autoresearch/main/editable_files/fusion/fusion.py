@@ -202,6 +202,7 @@ class DeepEarth(nn.Module):
         species_family: Optional[torch.Tensor] = None,
         family_env_expert: bool = False,
         family_env_vars: Optional[Sequence[str]] = None,
+        family_alphaearth_expert: bool = False,
         compile_processor: bool = False,
         rounds: int = 1,
         write_back: bool = True,
@@ -477,6 +478,13 @@ class DeepEarth(nn.Module):
             self.family_env_head = nn.Sequential(
                 nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(),
                 nn.Linear(d_model, self.family_count))
+        self.family_ae_head = None
+        if family_alphaearth_expert and self.family_count:
+            # This private readout must not re-roll the shared model or its training masks.
+            with torch.random.fork_rng(devices=[]):
+                self.family_ae_head = nn.Sequential(
+                    nn.LayerNorm(64), nn.Linear(64, d_model), nn.GELU(),
+                    nn.Linear(d_model, self.family_count))
         if compile_processor:
             self._refine = torch.compile(self._refine)
 
@@ -890,6 +898,10 @@ class DeepEarth(nn.Module):
         pooled = self.family_env_attn(q, kv, kv, key_padding_mask=~mask, need_weights=False)[0][:, 0]
         return self.family_env_head(pooled)
 
+    def _family_alphaearth_logits(self, values: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Private habitat-to-family occupancy posterior from frozen AlphaEarth features."""
+        return self.family_ae_head(values["alphaearth"].detach())
+
     def _factor_family_mass(self, species_logits: torch.Tensor, family_logits: torch.Tensor) -> torch.Tensor:
         prob = species_logits.float().softmax(-1)
         mass = prob.new_zeros(prob.shape[0], self.family_count)
@@ -911,6 +923,11 @@ class DeepEarth(nn.Module):
             valid = observed[self.species_variable].to(loss.dtype)
             target = self.species_family[values[self.species_variable]]
             err = F.cross_entropy(self._family_env_logits(values, observed, context), target, reduction="none")
+            loss = loss + (err * valid).sum() / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2))
+        if self.family_ae_head is not None:
+            valid = (observed[self.species_variable] & observed["alphaearth"]).to(loss.dtype)
+            target = self.species_family[values[self.species_variable]]
+            err = F.cross_entropy(self._family_alphaearth_logits(values), target, reduction="none")
             loss = loss + (err * valid).sum() / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2))
         return loss
 
@@ -1172,6 +1189,10 @@ class DeepEarth(nn.Module):
         z = self.encode(values, present, context)
         family_logits = self._family_env_logits(values, present, context) \
             if self.family_env_attn is not None and tuple(given) == self.family_env_vars else None
+        family_valid = None
+        if self.family_ae_head is not None and not given:
+            family_logits = self._family_alphaearth_logits(values)
+            family_valid = observed.get("alphaearth") if observed is not None else None
         out = {}
         for t in targets:
             if t == "community":                                                 # env-conditioned community distribution
@@ -1188,5 +1209,7 @@ class DeepEarth(nn.Module):
             else:
                 out[t] = self.decode(z, t)
                 if t == self.species_variable and family_logits is not None:
-                    out[t] = self._factor_family_mass(out[t], family_logits)
+                    factored = self._factor_family_mass(out[t], family_logits)
+                    out[t] = torch.where(family_valid[:, None], factored, out[t]) \
+                        if family_valid is not None else factored
         return out
