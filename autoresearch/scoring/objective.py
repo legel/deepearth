@@ -19,12 +19,12 @@ from typing import Dict, Iterable, Mapping, Optional, Sequence
 SCORE_FLOOR = 1e-3          # keeps the capability harmonic finite when a benchmark reads ~0
 LN2 = math.log(2.0)
 
-# Quarantine is evidence-based, not a way to hide a weak score. B55 compares a pollinator-head output
-# to targets in a different input space, so the number is not a test of the named capability. Keep
-# computing and reporting it until the benchmark is repaired, but never let it steer promotion.
+# Quarantine is evidence-based, not a way to hide a weak score. B55 predicts from focal identity +
+# environment, then scores against the neighbors' pollinator union; relatives' pollinators are never
+# inputs. Keep reporting it until repaired, but do not call it phylogenetic transfer.
 QUARANTINED_BENCHMARKS = {
     "B55_pollinator_phylo_transfer_recall":
-        "poll_head input-space mismatch makes the named transfer capability untestable",
+        "focal identity + environment is scored against neighbors' pollinators; relatives are not inputs",
 }
 
 

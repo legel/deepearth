@@ -30,7 +30,8 @@ rose inside its floor. The defect was not the harmonic; promotion ignored it.
 - Raw `*_cos` representation scores remain reported but enter neither mean until they carry an
   empirical null. A cosine such as `0.556` has no human meaning by itself.
 - `B55_pollinator_phylo_transfer_recall` remains measured and displayed but is quarantined from both
-  means. Its documented `poll_head` input-space mismatch makes the named transfer test untestable.
+  means. It predicts from focal identity plus environment, scores against the neighbors' pollinator
+  union, and never supplies relatives' pollinators as inputs; that does not test the capability named.
 - A changed active capability set is a protocol break, not a comparable result.
 
 Quarantine requires a structural defect, not an inconvenient score. Repairing B55 requires a new
