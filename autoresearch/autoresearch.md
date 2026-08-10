@@ -3,16 +3,9 @@
 Autonomous research on DeepEarth: improve the model, train for a fixed budget, score the full benchmark suite, keep
 gains, repeat indefinitely. DeepCal is the first instance (California plant ecology).
 
-**Objective:** maximize the **harmonic mean of the CAPABILITY benchmarks** (`net_score` in `evaluate.py`) — the suite
-is B1..B60 and climbing, each natively in [0,1] (accuracy/F1/cosine/recall/AUC/skill/calibration). Report the harmonic
-mean (headline: no metric may be sacrificed — lift the weakest) AND the arithmetic mean. **No individual metric may
-regress** to raise it.
-
-**Selection signal (operator-authorized 2026-07-15): you MAY optimize and select on the ARITHMETIC mean.** The
-harmonic net is dominated by a few near-zero benchmarks (community recall B20-B22) whose single-seed variance
-(0.003<->0.016) swings it 0.02<->0.13, so it is noise for single-seed A/B. The arithmetic mean is the stable
-discovery signal: keep/promote candidates on arithmetic mean. Still report BOTH means, and no individual metric
-may regress to raise it.
+**Promotion criterion:** use the public `evaluate.py` definitions unchanged. A run passes only when its harmonic
+`net_score` rises and its arithmetic mean does not fall. Report both numbers; no private aggregate or alternate score
+participates in promotion.
 
 **Scoring integrity (metrics are gaming-proof, audited 2026-07-13):** every benchmark's metric is chosen so a
 no-information baseline scores ~0 and there is no artificial ceiling. (a) Community/species-distribution benchmarks use

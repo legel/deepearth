@@ -121,6 +121,12 @@ def _f(v):
     return f"{v:.3f}" if v is not None else "  -  "
 
 
+def passes(old: dict, new: dict) -> bool:
+    """A champion must improve harmonic breadth without lowering arithmetic breadth."""
+    return (new["harmonic"] > old["harmonic"] and
+            new["arithmetic"] >= old["arithmetic"])
+
+
 def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> str:
     ns = new["scores"]
     os_ = (old or {}).get("scores", {})
@@ -149,10 +155,12 @@ def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> s
             flag = "" if before is None else ("  ^" if after > before + 1e-9 else ("  v" if after < before - 1e-9 else "  ="))
             row = f"{name}: {_f(before)} -> {_f(after)} ({d}){flag}"
         lines.append(f"{i:>2}. {row}" + (f"  -- {desc}" if desc else ""))
-    if old is not None:                                        # regression guard summary (science.md: NO metric regressing)
+    if old is not None:                                        # informational per-benchmark regression summary
         reg = [f"{n} ({os_[n]:.3f}->{ns[n]:.3f})" for n in sorted(ns, key=_n)
                if n in os_ and ns[n] < os_[n] - 0.005]
-        lines += ["", f"REGRESSIONS (>0.005): {', '.join(reg) if reg else 'none'}"]
+        verdict = "PASS" if passes(old, new) else "FAIL"
+        lines += ["", f"PROMOTION: {verdict} (harmonic must rise; arithmetic must hold)",
+                  f"REGRESSIONS (>0.005): {', '.join(reg) if reg else 'none'}"]
     return "\n".join(lines)
 
 
@@ -169,6 +177,8 @@ def main():
     old = json.loads(RECORD.read_text()) if RECORD.exists() else None
     print(format_commit(new, old, a.desc, a.config))
     if a.save:
+        if old is not None and not passes(old, new):
+            raise SystemExit("promotion failed: harmonic must rise and arithmetic must not decline")
         import getpass, datetime
         hist = (old or {}).get("history", [])
         hist.append({"user": getpass.getuser(),
