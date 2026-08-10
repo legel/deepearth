@@ -37,14 +37,14 @@ def _has_required(d: Path) -> bool:
 
 
 def resolve_data_dir(cache_dir_cfg: str) -> Path:
-    """Pick the data directory: prefer the download target, then an existing local cache, else download."""
-    if _has_required(DATA_DIR):
-        print(f"[data] ready at {DATA_DIR}")
-        return DATA_DIR
+    """Pick the configured cache, then the download target, or download it."""
     cfg = Path(cache_dir_cfg) if cache_dir_cfg else None
     if cfg and _has_required(cfg):
         print(f"[data] using existing local cache {cfg}")
         return cfg
+    if _has_required(DATA_DIR):
+        print(f"[data] ready at {DATA_DIR}")
+        return DATA_DIR
     print(f"[data] not found locally; downloading from {DATA_URL_BASE} -> {DATA_DIR}")
     download_data()
     if not _has_required(DATA_DIR):
@@ -138,12 +138,9 @@ def ensure_kernel() -> None:
 
 def ensure_prepared(config: dict, data_dir: Path, device: str) -> str:
     """Build the assembled-dataset cache (the slow glob + KD-tree) once, so runs spin up instantly."""
-    import hashlib, json
     from deepearth.autoresearch import data as data_module
     d = dict(config["data"]); d["cache_dir"] = str(data_dir)
-    keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km")}
-    tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
-    prepared = str(DATA_DIR / f"prepared_{tag}.pt")
+    prepared = str(data_module.prepared_cache_path(d))
     if Path(prepared).exists():
         print(f"[prepared] cache present: {prepared}")
         return prepared
@@ -155,16 +152,16 @@ def ensure_prepared(config: dict, data_dir: Path, device: str) -> str:
     return prepared
 
 
-def ensure_test_io(prepared: str, device: str) -> None:
+def ensure_test_io(prepared: str, data_dir: Path, device: str) -> None:
     """Materialize a small held-out inference bundle (indices + truth) so the benchmark harness is ready to score
     and results are inspectable. Lightweight; the full suite runs at eval time in ``benchmarks.py``."""
     import torch
     from deepearth.autoresearch import data as data_module
-    bundle = DATA_DIR / "test_io_sample.pt"
+    bundle = data_dir / "test_io_sample.pt"
     if bundle.exists():
         print(f"[test-io] present: {bundle}")
         return
-    src = data_module.build("california", cache_dir=str(DATA_DIR), device=device, prepared=prepared)
+    src = data_module.build("california", cache_dir=str(data_dir), device=device, prepared=prepared)
     n = min(256, len(src.test))
     idx = src.test[:n]
     torch.save({"test_index_sample": idx, "n_test": len(src.test), "n_train": len(src.train),
@@ -191,7 +188,7 @@ def main():
         cache_dir_cfg = str(REPO / cache_dir_cfg)
     data_dir = resolve_data_dir(cache_dir_cfg)
     prepared = ensure_prepared(config, data_dir, a.device)
-    ensure_test_io(prepared, a.device)
+    ensure_test_io(prepared, data_dir, a.device)
     print("=== prepare complete: ready for `python -m deepearth.autoresearch.train` and the autoresearch loop ===")
 
 

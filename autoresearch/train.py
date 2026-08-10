@@ -44,15 +44,15 @@ def train_and_evaluate(config, device):
     seed = config.get("training", {}).get("seed", 0)   # fixed seed -> matched-init A/B: backbone benchmarks bit-identical across runs, so a detached head's causal effect is isolated (no run-to-run noise masquerading as regression).
     torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
     d = config["data"]
-    # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reused across runs; keyed by the data settings that change the assembled set.
-    import hashlib, json
-    keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km")}
-    tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
-    prepared = str(Path(__file__).resolve().parents[1] / "data" / "deepcal" / f"prepared_{tag}.pt")
+    prepared = data_module.prepared_cache_path(d)
+    if not prepared.exists():
+        raise FileNotFoundError(
+            f"prepared cache missing: {prepared}; run `python -m deepearth.autoresearch.prepare` first"
+        )
     source = data_module.build(d["adapter"], cache_dir=d["cache_dir"], n_neighbors=d.get("n_neighbors", 24),
                                device=device, holdout=d.get("holdout", "spatial"), subset=d.get("subset"),
                                time_axis=d.get("time_axis", False), meta_path=d.get("meta_path"),
-                               time_km=d.get("time_km", 50.0), prepared=prepared)
+                               time_km=d.get("time_km", 50.0), prepared=str(prepared))
     dims = source.variable_dims()
     variables = build_variables(config["variables"], dims)
     m = config["model"]

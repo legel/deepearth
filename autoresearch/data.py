@@ -4,7 +4,7 @@ Each adapter exposes per-observation variable values, a presence mask, coordinat
 nearest-neighbor index. Register a new source by adding an adapter and naming it in a config.
 """
 from __future__ import annotations
-import csv, glob
+import csv, glob, hashlib, json
 from pathlib import Path
 from typing import Callable, Dict
 import numpy as np
@@ -12,6 +12,9 @@ import torch
 from scipy.spatial import cKDTree
 
 _REGISTRY: Dict[str, Callable] = {}
+_PREPARED_FIELDS = (
+    "adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km", "meta_path",
+)
 
 
 def register(name: str):
@@ -23,6 +26,21 @@ def register(name: str):
 
 def build(name: str, **kwargs):
     return _REGISTRY[name](**kwargs)
+
+
+def prepared_cache_path(settings: dict) -> Path:
+    """Return the assembled-cache path shared by preparation and training."""
+    cache_dir = Path(settings["cache_dir"]).expanduser().resolve()
+    key = {name: settings.get(name) for name in _PREPARED_FIELDS}
+    key["cache_dir"] = str(cache_dir)
+    key["inputs"] = [
+        (str(path.relative_to(cache_dir)), stat.st_size, stat.st_mtime_ns)
+        for path in sorted(cache_dir.rglob("*"))
+        if path.is_file() and not path.name.startswith(("prepared_", "ckpt_", "test_io_sample"))
+        for stat in (path.stat(),)
+    ]
+    tag = hashlib.md5(json.dumps(key, sort_keys=True, default=str).encode()).hexdigest()[:10]
+    return cache_dir / f"prepared_{tag}.pt"
 
 
 def _normalize(a):
