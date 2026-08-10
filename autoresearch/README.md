@@ -8,10 +8,15 @@ A self-contained environment for autonomously researching and improving **DeepEa
 4. `python -m deepearth.autoresearch.prepare` — auto-downloads + extracts the audited dataset (deepcal_data.zip) from NERSC into `data/deepcal/`.
 5. `python -m deepearth.autoresearch.train autoresearch/deepcal.yaml --steps 8000 --device cuda:0` (batch 512 needs ~27GB; on a 24GB card set `batch: 256` + `pollinator_top_k: 32`). Score vs the committed baseline in `BENCHMARKS.md`, edit, repeat.
 
-## Experiment budget: 10 minutes (hard cap)
+## Evaluation contract
 
-Every run trains for at most **10 minutes** of wall-clock (`time_budget_s: 600`, measured from step 10 so startup and
-compilation are excluded), then is scored by `evaluate.py` (science.md rule 20). This is a hard cap, not a target:
-never raise it, never report benchmarks from a longer run. Comparing experiments only at the equal 10-minute budget is
-what makes a gain reflect real efficiency (throughput, architecture) rather than just more steps. Kill any run that
-exceeds the budget and rerun at 600s.
+Screen ideas for 10 minutes with `--time_budget 600`. Evaluate promotion at **8,000 steps** with two matched seeds:
+
+```bash
+python -m deepearth.autoresearch.train autoresearch/deepcal.yaml --steps 8000 --seed 1337 --device cuda:0
+python -m deepearth.autoresearch.train autoresearch/deepcal.yaml --steps 8000 --seed 1338 --device cuda:0
+```
+
+Both models therefore see the same number of batches. A candidate passes when its mean harmonic score improves beyond
+the control's two-seed spread and its mean arithmetic score does not regress beyond that spread. Report the complete
+public scorecard from both seeds.

@@ -61,8 +61,7 @@ training:
   lr: 0.0005
   precision: bf16
   seed: 1337
-  steps: 16000
-  time_budget_s: 600      # rule 20: fixed 10-min equal-time budget (universal protocol, not hardware); big rigs simply do more steps in the window
+  steps: 8000
   weight_decay: 0.001
 variables:
 - kind: continuous

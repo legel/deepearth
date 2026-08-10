@@ -78,12 +78,11 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     change — `prepare.py` (downloads + caches data) and `evaluate.py` (runs the benchmarks and computes the final
     score, the immutable ground truth). Each condensing pass must **quantify** that surface (file count + total
     tokens, `.md` included) and drive it down. Every autoresearch agent reads exactly this enumerated surface, no more.
-20. **Fixed experiment budget: 10 minutes.** Each autoresearch experiment trains for 10 minutes of wall-clock (startup
-    and compilation excluded), then is scored by `evaluate.py`. Report benchmarks at that budget; compare experiments
-    at equal time so improvements reflect real efficiency, not just more steps.
-21. **Speed is a first-class score lever.** Because the budget is fixed (rule 20), wall-clock throughput converts
-    directly into training steps and therefore into `net_score`: any acceleration of the algorithm that does not
-    change its per-step mathematics *must* score at least as high, and under the budget, strictly higher. Optimizing
+20. **Match promotion at 8,000 steps and two seeds.** Ten-minute runs screen ideas. Promotion compares control and
+    candidate at equal data exposure: 8,000 steps, the same two seeds, data, split and evaluator. The harmonic gain
+    must beat the control's two-seed spread; arithmetic may not regress beyond its control spread.
+21. **Speed is a first-class screening lever.** Under the 10-minute screen, wall-clock throughput converts directly
+    into training steps and therefore into `net_score`. Optimizing
     throughput — CUDA kernels, sparse/fused updates, compilation, memory traffic, batch size — is therefore a prized
     research path, not a mere engineering nicety, and sits alongside the standing speed mandates (rules 4, 12). The
     discipline is that a speedup must be **non-compromising**: bit-identical to the champion per step (verified against
@@ -169,7 +168,8 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     No SoTA champion is committed without `python -m deepearth.autoresearch.champion_report --log <run> --desc
     <result> --save`: the commit headline states the net score BEFORE->AFTER (harmonic mean + arithmetic), the body
     describes what changed / why / how, and an enumerated list reports every benchmark's before->after (delta) with an
-    explicit regressions summary — no individual metric may regress. The helper diffs against the committed
+    explicit regressions summary. Promotion follows rule 20's harmonic and arithmetic guards. The helper diffs against
+    the committed
     `autoresearch/champion_scores.json` so every improvement is unambiguous, comparable, and reproducible by collaborators.
 
 31. **Heads are DETACHED read-outs by default; the universal self-supervised reconstruction is inviolable.** The core

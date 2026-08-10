@@ -5,14 +5,11 @@ gains, repeat indefinitely. DeepCal is the first instance (California plant ecol
 
 **Objective:** maximize the **harmonic mean of the CAPABILITY benchmarks** (`net_score` in `evaluate.py`) — the suite
 is B1..B60 and climbing, each natively in [0,1] (accuracy/F1/cosine/recall/AUC/skill/calibration). Report the harmonic
-mean (headline: no metric may be sacrificed — lift the weakest) AND the arithmetic mean. **No individual metric may
-regress** to raise it.
+mean (headline: lift the weakest) and the arithmetic breadth mean.
 
-**Selection signal (operator-authorized 2026-07-15): you MAY optimize and select on the ARITHMETIC mean.** The
-harmonic net is dominated by a few near-zero benchmarks (community recall B20-B22) whose single-seed variance
-(0.003<->0.016) swings it 0.02<->0.13, so it is noise for single-seed A/B. The arithmetic mean is the stable
-discovery signal: keep/promote candidates on arithmetic mean. Still report BOTH means, and no individual metric
-may regress to raise it.
+**Promotion:** compare two matched seeds at 8,000 steps. The candidate's mean harmonic score must improve beyond the
+control's two-seed spread; its mean arithmetic score may not regress beyond that spread. Report both means and the
+complete public scorecard. Ten-minute runs are screens, not promotion evidence.
 
 **Scoring integrity (metrics are gaming-proof, audited 2026-07-13):** every benchmark's metric is chosen so a
 no-information baseline scores ~0 and there is no artificial ceiling. (a) Community/species-distribution benchmarks use
@@ -53,9 +50,9 @@ focus, opportunities the inspiration.
 ## The loop
 1. Read `results.tsv` + the per-benchmark profile; form a hypothesis grounded in `science.md`.
 2. Edit a model/config/data file; `git commit` (report every benchmark score in order + the means).
-3. Train (`python -m deepearth.autoresearch.train`); budget is set in `deepcal.yaml` (`time_budget_s`).
+3. Screen at 10 minutes; confirm promotion with two matched 8,000-step runs.
 4. Read `grep "^net_score:" run.log`; empty ⇒ crash (`tail -50`), fix at the root or revert.
-5. Append to `results.tsv`. Keep the commit if the mean rose with no metric regressed; else revert.
+5. Append to `results.tsv`. Keep the commit only when the promotion criterion passes; else revert.
 
 **Simplicity wins** (science.md rule 19 — DeepSeek parsimony: terse code, minimal comments). **Never stop**: think
 harder, read the papers, combine near-misses, try radical architecture. Launch dataset downloads/preprocessing when

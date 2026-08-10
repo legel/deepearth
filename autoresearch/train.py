@@ -362,6 +362,7 @@ def main():
     ap = argparse.ArgumentParser(description="Train a DeepEarth model from a config (default deepcal.yaml).")
     ap.add_argument("config", nargs="?", default=str(Path(__file__).with_name("deepcal.yaml")))
     ap.add_argument("--device", default="cuda"); ap.add_argument("--steps", type=int, default=None)
+    ap.add_argument("--seed", type=int, default=None, help="override the training seed")
     ap.add_argument("--cache_dir", default=None)
     ap.add_argument("--eval_ckpt", default=None, help="score an existing checkpoint (skip training)")
     ap.add_argument("--time_budget", type=float, default=None, help="stop training after N seconds (experiment budget)")
@@ -371,6 +372,9 @@ def main():
     config = yaml.safe_load(open(a.config))
     if a.steps is not None:
         config["training"]["steps"] = a.steps
+        config["training"].pop("time_budget_s", None)
+    if a.seed is not None:
+        config["training"]["seed"] = a.seed
     if a.cache_dir is not None:
         config["data"]["cache_dir"] = a.cache_dir
     # Portability: a relative cache_dir is resolved against the repo root (where prepare.py downloads the cache), so a fresh clone on any device works without editing absolute paths.
