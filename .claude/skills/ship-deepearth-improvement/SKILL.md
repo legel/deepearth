@@ -29,6 +29,26 @@ Stop without preparing a PR if any condition is missing. Do not turn promising, 
 
 Read `coord.best()` first. It is the standing scorecard — the aggregate and macro `val_bpb`, the per-variable decomposition, both suite means, the seeds and measured floor behind the claim, and the delivery fields. If `delivery.pr` is already set for this result, it has shipped; there is nothing to select. Selecting against anything else risks preparing a PR for a result the swarm has already superseded.
 
+### Compact model replacement
+
+Use this screen when the proposal is to replace the public 800M default, not add an isolated mechanism. It supersedes
+the private 1k/8k and `val_bpb` gates above, but not the evidence standard:
+
+- Use the registered 800M public-main scorecard as the frozen acceptance bar; do not rerun the large model merely to
+  qualify a compact candidate. Change only the production model/config needed to express the compact candidate.
+- Run two compact-model seeds through Lance's unchanged public evaluator with the registered data, split and fixed-time
+  budget. Private scorecards establish provenance but never decide this delivery.
+- Pass only when both compact seeds beat the registered 800M harmonic and meet or exceed its arithmetic mean. If the
+  registered baseline lacks an exact protocol identity, stop and repair the record rather than rerunning the model.
+- Report Lance's complete public scorecard plus parameters, peak VRAM, steps completed and wall time. No private
+  aggregate, encoder score or mechanism diagnostic may substitute for harmonic and arithmetic.
+- Treat the 100M floor in public `science.md` rule 5 as a falsifiable design prior. A smaller replacement may revise
+  that rule only when the matched public evidence above passes and the reduction in parameters or memory is material.
+- Expose the compact model's exact hash capacities and total parameter count. Do not present hash collisions as free:
+  explain them as parameter sharing and inspect the full scorecard for lost spatial detail.
+
+If the compact candidate does not pass, do not open a compromise PR. Keep the 800M default and return to research.
+
 ## 2. Start from public main
 
 Fetch `legel/deepearth` immediately before beginning. Record the exact `origin/main` SHA and its registered private baseline.
@@ -69,7 +89,8 @@ Run validation from a clean checkout of the candidate and the exact registered `
 
 1. Run focused correctness tests for the changed functionality.
 2. Run relevant production smoke tests and import/build checks.
-3. Run the private canonical evaluation with the same protocol as the baseline.
+3. Run the canonical evaluation with the same protocol as the baseline. For a compact replacement, score only the
+   candidate with the unchanged public evaluator and compare it to the registered 800M scorecard.
 4. Compare the full scorecard, not only the target metric.
 5. Investigate any material regression before proceeding.
 6. Save logs and scorecards privately; summarize only decision-relevant evidence publicly.
@@ -111,6 +132,9 @@ There is no longer a separate encoder measurement to discount: probe and fusion 
 so an encoder result is a term in the fusion number rather than a proxy for it. State the harmonic and
 arithmetic benchmark means as well -- they are the promotion gate and the language the public
 repository is reviewed in. Report `val_bpb` as supporting likelihood evidence.
+
+For a compact-model replacement, omit private `val_bpb` from the customer-facing claim. Report both compact public
+scorecards against the registered 800M harmonic/arithmetic means, plus efficiency measurements.
 
 Never compare a mirror run to a public-main run: the evaluators differ by ~158 lines and the same config
 scores ~0.279 on the mirror against 0.332464 on public main. Baselines must come from the same tree.
