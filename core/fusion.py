@@ -205,6 +205,9 @@ class DeepEarth(nn.Module):
         manifolds: Optional[Dict[str, int]] = None,
         capacity: int = 16,
         reference_latitude_deg: float = 0.0,
+        absolute_log2_hashmap_size: int = 20,
+        absolute_levels: int = 18,
+        continuous_calibration: bool = False,
         species_variable: Optional[str] = None,
         species_embedding: Optional[torch.Tensor] = None,
         species_layers: int = 2,
@@ -214,8 +217,15 @@ class DeepEarth(nn.Module):
         species_operator: str = "ou-attention",
         species_tree: Optional[dict] = None,
         species_tip_row: Optional[torch.Tensor] = None,   # (latent-clade) species-local vocab index of each in-tree tip, in tree-tip order
+        species_mask_posterior: Optional[str] = None,
         species_distance: Optional[tuple] = None,   # (dated[m,m], model_idx[m]): real dated patristic for tree-covered species -> replaces the embedding shadow (ou-attention)
         species_text: Optional[torch.Tensor] = None,
+        species_family: Optional[torch.Tensor] = None,
+        family_alphaearth_expert: bool = False,
+        family_env_expert: bool = False,
+        family_env_vars: Optional[Sequence[str]] = None,
+        family_env_residual: bool = False,
+        orthogonal_blank_hidden: int = 0,
         compile_processor: bool = False,
         rounds: int = 1,
         write_back: bool = True,
@@ -291,6 +301,16 @@ class DeepEarth(nn.Module):
                     self.decoders[v.name] = _dec(v.num_classes)
             else:
                 raise ValueError(f"unknown variable kind {v.kind!r} for {v.name!r}")
+        # Cosine is scale-free; fit magnitude through a detached per-dimension affine.
+        self.continuous_calibration = continuous_calibration
+        self.cal_gain = nn.ParameterDict()
+        self.cal_bias = nn.ParameterDict()
+        if continuous_calibration:
+            for v in self.variables:
+                if v.kind == "continuous" and v.reconstruct and v.name in self.decoders:
+                    self.cal_gain[v.name] = nn.Parameter(torch.ones(v.dim))
+                    self.cal_bias[v.name] = nn.Parameter(torch.zeros(v.dim))
+
         self.type_emb = nn.Parameter(torch.randn(len(self.variables), d_model) * 0.02)
         # A dedicated always-present space-time token, so a query revealing no variable keeps its position (variable tokens are zeroed by the present-mask).
         self.position_token = nn.Parameter(torch.randn(d_model) * 0.02)
@@ -300,8 +320,9 @@ class DeepEarth(nn.Module):
         self.decode_query = nn.Parameter(torch.randn(len(self.variables), d_model) * 0.02)
 
         # Absolute location memory: coarse regional/long-period memorization (~200M, 20% of Earth4D); fine structure lives in the relative encoder.
-        self.absolute_encoder = Earth4D(verbose=False, spatial_levels=18, temporal_levels=18,
-                                        spatial_log2_hashmap_size=20, temporal_log2_hashmap_size=20,
+        self.absolute_encoder = Earth4D(verbose=False, spatial_levels=absolute_levels, temporal_levels=absolute_levels,
+                                        spatial_log2_hashmap_size=absolute_log2_hashmap_size,
+                                        temporal_log2_hashmap_size=absolute_log2_hashmap_size,
                                         temporal_basis=absolute_temporal_basis,
                                         freq_log_scale_init=-2.5)   # start coarse (~1 km finest); learned from there
         # Project Earth4D's [xyz | xyt|yzt|xzt] as separate spatial/spatiotemporal channels; each variable learns a
@@ -331,6 +352,10 @@ class DeepEarth(nn.Module):
 
         # species graph: refine identity through phylogenetic-neighbor attention. "tree" propagates over the dated phylogeny; "ou-attention" biases attention with an embedding-derived distance.
         self.species_variable = species_variable
+        self.register_buffer("species_family", species_family)
+        self.family_env_vars = tuple(family_env_vars or ())
+        self.family_env_residual = family_env_residual
+        self.family_count = int(species_family.max()) + 1 if species_family is not None else 0
         if species_variable is not None and species_embedding is not None:
             if species_operator == "tree":
                 assert species_tree is not None, "species_operator='tree' needs the parsed tree (source.tree)"
@@ -341,7 +366,8 @@ class DeepEarth(nn.Module):
                     "species_operator='latent-clade' needs source.lca_tree + source.lca_tip_row"
                 self.species_graph = SpeciesGraph(species_embedding.shape[0], d_model, operator="latent-clade",
                                                   tree=species_tree, tip_row=species_tip_row, n_heads=species_heads,
-                                                  n_layers=species_layers, species_text=species_text)
+                                                  n_layers=species_layers, species_text=species_text,
+                                                  mask_posterior=species_mask_posterior)
             else:
                 distance = SpeciesGraph.distance_from_embedding(species_embedding)   # BioCLIP-embedding shadow (kept for inductively-placed species not on the dated tree)
                 if species_distance is not None:                                     # overwrite the tree-covered block with the REAL dated patristic (rules 7-12), rescaled to the shadow's scale
@@ -461,6 +487,38 @@ class DeepEarth(nn.Module):
         if self.species_trait_recon and species_variable is not None:
             self.species_myco_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5))
             self._species_myco = None; self._species_myco_valid = None; self._train_species = None
+        self.family_ae_head = None
+        if family_alphaearth_expert and self.family_count:
+            with torch.random.fork_rng(devices=[]):
+                self.family_ae_head = nn.Sequential(
+                    nn.LayerNorm(64), nn.Linear(64, d_model), nn.GELU(),
+                    nn.Linear(d_model, self.family_count))
+        self.family_env_attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True) \
+            if family_env_expert and self.family_count else None
+        if self.family_env_attn is not None:
+            self.family_env_query = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+            self.family_env_head = nn.Sequential(
+                nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(),
+                nn.Linear(d_model, self.family_count))
+            if family_env_residual:
+                nn.init.zeros_(self.family_env_head[-1].weight)
+                nn.init.zeros_(self.family_env_head[-1].bias)
+        self.blank_adapters = nn.ModuleDict()
+        self.blank_family = None
+        if orthogonal_blank_hidden > 0 and self.family_ae_head is None:
+            raise ValueError("orthogonal_blank_hidden requires family_alphaearth_expert")
+        if orthogonal_blank_hidden > 0 and self.family_count:
+            with torch.random.fork_rng(devices=[]):
+                for route in ("species", "community"):
+                    self.blank_adapters[route] = nn.Sequential(
+                        nn.LayerNorm(d_model), nn.Linear(d_model, orthogonal_blank_hidden), nn.GELU(),
+                        nn.Linear(orthogonal_blank_hidden, d_model))
+                self.blank_family = nn.Linear(d_model, self.family_count)
+            for adapter in self.blank_adapters.values():
+                nn.init.zeros_(adapter[-1].weight)
+                nn.init.zeros_(adapter[-1].bias)
+            nn.init.zeros_(self.blank_family.weight)
+            nn.init.zeros_(self.blank_family.bias)
         if compile_processor:
             self._refine = torch.compile(self._refine)
 
@@ -749,7 +807,57 @@ class DeepEarth(nn.Module):
         sp = self._reencode(self.species_variable, pooled)      # expected phylo-refined species embedding
         return torch.cat([pooled.detach(), sp.detach()], -1) if detach else torch.cat([pooled, sp], -1)
 
-    def decode(self, latents: torch.Tensor, name: str) -> torch.Tensor:
+    @staticmethod
+    def _frozen_head(module: nn.Sequential, x: torch.Tensor) -> torch.Tensor:
+        for layer in module:
+            if isinstance(layer, nn.Linear):
+                x = F.linear(x, layer.weight.detach(),
+                             None if layer.bias is None else layer.bias.detach())
+            elif isinstance(layer, nn.GELU):
+                x = F.gelu(x, approximate=layer.approximate)
+            else:
+                raise TypeError(f"unsupported frozen head layer: {type(layer).__name__}")
+        return x
+
+    def _blank_route(self, z: torch.Tensor, route: str) -> torch.Tensor:
+        pooled = self._pooled(z, self.species_variable).detach()
+        return pooled + self.blank_adapters[route](pooled)
+
+    def _blank_species(self, z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        corrected = self._blank_route(z, "species")
+        species = corrected @ self._refined_species.detach().t()
+        return corrected, species, self.blank_family(corrected)
+
+    def _orthogonal_blank_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor],
+                               observed: Dict[str, torch.Tensor], blank: torch.Tensor) -> torch.Tensor:
+        _, species, family_residual = self._blank_species(z.detach())
+        family = self._family_alphaearth_logits(values).detach() + family_residual
+        species = self._factor_family_mass(species, family)
+        target = values[self.species_variable]
+        valid = (blank & observed[self.species_variable] & observed["alphaearth"]).float()
+        species_loss = 0.5 * (
+            (F.cross_entropy(species.float(), target, reduction="none") * valid).sum()
+            / valid.sum().clamp_min(1.0) / math.log(species.shape[-1])
+            + (F.cross_entropy(family.float(), self.species_family[target], reduction="none") * valid).sum()
+            / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2)))
+        terms = [species_loss]
+        if self._sdist_weight > 0 and "_sdist_idx" in values:
+            corrected = self._blank_route(z, "community")
+            logits = self._frozen_head(self.comm_head, corrected) @ self._refined_species.detach().t()
+            idx = values["_sdist_idx"].clamp(0, logits.shape[1] - 1)
+            dist = torch.zeros_like(logits, dtype=torch.float32)
+            dist.scatter_add_(1, idx, values["_sdist_frq"].float())
+            terms.append((-(dist * F.log_softmax(logits.float(), -1)).sum(-1) * blank).sum()
+                         / blank.sum().clamp_min(1) / math.log(logits.shape[-1]))
+        return sum(terms)
+
+    def _calibrated(self, name: str, pred: torch.Tensor) -> torch.Tensor:
+        """Apply a fitted per-dimension affine when enabled."""
+        if name in self.cal_gain:
+            return pred * self.cal_gain[name] + self.cal_bias[name]
+        return pred
+
+    def decode(self, latents: torch.Tensor, name: str, calibrated: bool = True) -> torch.Tensor:
         """Read one variable back from the latents. The species variable reads against the refined species states; a diffusion variable is sampled from its head."""
         if self.joint_decode:
             Pall = self._pooled_all(latents)                 # [B,V,d]
@@ -762,7 +870,8 @@ class DeepEarth(nn.Module):
         pooled = self._pooled(latents, name)
         if name in self.diffusion_heads:
             return self.diffusion_heads[name].sample(pooled)
-        return self.decoders[name](pooled)
+        out = self.decoders[name](pooled)
+        return self._calibrated(name, out) if calibrated else out
 
     def decode_field(self, latents: torch.Tensor, query_pos: torch.Tensor,
                      names: Optional[Sequence[str]] = None) -> Dict[str, torch.Tensor]:
@@ -834,6 +943,60 @@ class DeepEarth(nn.Module):
         mu = (target[obs].mean(0, keepdim=True) if obs.any() else target.mean(0, keepdim=True)).detach()
         return 1.0 - F.cosine_similarity(pred - mu, target - mu, dim=-1)
 
+    def _family_env_logits(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
+                           context: dict, alphaearth_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Private early expert over environment tokens; the shared fusion path is detached."""
+        tokens, valid = [], []
+        for name in self.family_env_vars:
+            i = self.names.index(name)
+            token = self.tok_norm(self._variable_token(name, values[name]) + self.type_emb[i]).detach()
+            tokens.append(token); valid.append(observed[name])
+        if self.family_env_residual and self.family_ae_head is not None and "alphaearth" in values:
+            tokens.append(self.family_ae_head[:-1](values["alphaearth"].detach()).detach())
+            ae_valid = observed.get("alphaearth", alphaearth_valid)
+            if ae_valid is None:
+                ae_valid = torch.ones(values["alphaearth"].shape[0], dtype=torch.bool,
+                                      device=values["alphaearth"].device)
+            valid.append(ae_valid)
+        tokens.append((context["position"] + self.position_token).detach())
+        valid.append(torch.ones_like(valid[0]))
+        kv = torch.stack(tokens, 1)
+        mask = torch.stack(valid, 1)
+        q = self.family_env_query.expand(kv.shape[0], -1, -1)
+        pooled = self.family_env_attn(q, kv, kv, key_padding_mask=~mask, need_weights=False)[0][:, 0]
+        return self.family_env_head(pooled)
+
+    def _family_alphaearth_logits(self, values: Dict[str, torch.Tensor]) -> torch.Tensor:
+        return self.family_ae_head(values["alphaearth"].detach())
+
+    def _family_conditioned_logits(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
+                                   context: dict, alphaearth_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
+        residual = self._family_env_logits(values, observed, context, alphaearth_valid)
+        if not self.family_env_residual or self.family_ae_head is None or "alphaearth" not in values:
+            return residual
+        valid = observed.get("alphaearth", alphaearth_valid)
+        if valid is None:
+            valid = torch.ones(values["alphaearth"].shape[0], dtype=torch.bool,
+                               device=values["alphaearth"].device)
+        prior = self._family_alphaearth_logits(values).detach()
+        return torch.where(valid[:, None], prior + residual, residual)
+
+    def _factor_family_mass(self, species_logits: torch.Tensor, family_logits: torch.Tensor) -> torch.Tensor:
+        prob = species_logits.float().softmax(-1)
+        mass = prob.new_zeros(prob.shape[0], self.family_count)
+        mass.scatter_add_(1, self.species_family.expand(prob.shape[0], -1), prob)
+        correction = F.log_softmax(family_logits.float(), -1) - mass.clamp_min(1e-8).log()
+        return species_logits + correction[:, self.species_family].to(species_logits.dtype)
+
+    def family_alphaearth_loss(self, values: Dict[str, torch.Tensor],
+                               observed: Dict[str, torch.Tensor]) -> torch.Tensor:
+        if self.family_ae_head is None:
+            return self.type_emb.new_zeros(())
+        valid = (observed[self.species_variable] & observed["alphaearth"]).to(self.type_emb.dtype)
+        target = self.species_family[values[self.species_variable]]
+        err = F.cross_entropy(self._family_alphaearth_logits(values), target, reduction="none")
+        return (err * valid).sum() / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2))
+
     def reconstruction_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
                             context: dict, hide_prob: float = 0.35) -> torch.Tensor:
         """One training step: reveal each variable with prob ``1 - hide_prob`` and reconstruct every hidden-but-observed variable, at one fixed shape."""
@@ -843,12 +1006,23 @@ class DeepEarth(nn.Module):
         blank = torch.rand(B, device=dev) < 0.15
         for n in self.names:
             present[n] = present[n] & ~blank
-        return self.masked_loss(values, observed, present, context)
+        loss = self.masked_loss(values, observed, present, context)
+        if self.family_env_attn is not None:
+            valid = observed[self.species_variable].to(loss.dtype)
+            target = self.species_family[values[self.species_variable]]
+            err = F.cross_entropy(self._family_conditioned_logits(values, observed, context), target, reduction="none")
+            loss = loss + (err * valid).sum() / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2))
+        if self.blank_adapters:
+            loss = loss + self._orthogonal_blank_loss(self._blank_query_z, values, observed, blank)
+            self._blank_query_z = None
+        return loss
 
     def masked_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
                     present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
         """Reconstruction loss for a fixed reveal mask (no randomness), so it can be compiled/CUDA-graphed with the random masking left outside."""
         z = self.encode(values, present, context)
+        if self.blank_adapters:
+            self._blank_query_z = z.detach()
         if self.round_loss == "all" and self._round_stack is not None:
             zs = self._round_stack                           # [K,B,n_lat,d]: deep-supervise every round, same targets
             loss = sum(self._decode_loss(zs[k], values, observed, present) for k in range(zs.shape[0])) / zs.shape[0]
@@ -894,8 +1068,19 @@ class DeepEarth(nn.Module):
             if v.name in self.diffusion_heads:
                 err = self.diffusion_heads[v.name].loss(values[v.name], self._pooled(z, v.name), reduce=False)
             else:
-                pred = self.decode(z, v.name)
+                pred = self.decode(z, v.name, calibrated=False)
                 err = self._reconstruction_error(v.name, pred, values[v.name])
+                if v.name in self.cal_gain:
+                    # Fit scale without changing representation gradients.
+                    tgt = values[v.name].float()
+                    seen = tgt.norm(dim=-1) > 1e-6
+                    ref = tgt[seen] if seen.any() else tgt
+                    # Unit-normalized targets need no magnitude calibration.
+                    if ref.numel() and not bool(((ref.norm(dim=-1) - 1.0).abs() < 1e-3).all()):
+                        var = ref.var(0, unbiased=False).clamp_min(1e-6).detach()
+                        cal = self._calibrated(v.name, pred.detach().float())
+                        z2 = (((cal - tgt) ** 2) / var).mean(-1)   # 1.0 = predicting the target mean
+                        loss = loss + (z2 * w).sum() / w.sum().clamp_min(1.0)
                 # Cross-modal contrastive (JEPA / rule 16): the predicted continuous embedding must retrieve its own
                 # target against the batch (InfoNCE) -- a global signal point-wise cosine cannot give.
                 if self.contrastive_weight > 0.0 and v.name in self.contrastive_vars and v.kind == "continuous":
@@ -970,11 +1155,33 @@ class DeepEarth(nn.Module):
             present[n] = observed[n] if (observed is not None and n in observed) \
                 else torch.ones(B, dtype=torch.bool, device=dev)
         z = self.encode(values, present, context)
+        context_z = None
+        if self.blank_adapters and "community" in targets:
+            context_present = {n: torch.zeros_like(present[n]) for n in self.names}
+            context_z = self.encode(values, context_present, context)
+        ae_valid = observed.get("alphaearth") if observed is not None else None
+        family_logits = self._family_conditioned_logits(values, present, context, ae_valid) \
+            if self.family_env_attn is not None and tuple(given) == self.family_env_vars else None
+        family_valid = None
+        if self.family_ae_head is not None and not given:
+            family_logits = self._family_alphaearth_logits(values)
+            family_valid = observed.get("alphaearth") if observed is not None else None
+        blank_species = self._blank_species(z) if self.blank_adapters and not given else None
+        if blank_species is not None and family_logits is not None:
+            family_logits = family_logits + blank_species[2]
         out = {}
         for t in targets:
             if t == "community":                                                 # env-conditioned community distribution
-                out[t] = (self.comm_head(self._pooled(z, self.species_variable)) @ self._refined_species.t()) if getattr(self, "comm_head", None) is not None \
-                    else self.decode(z, self.species_variable)                   # fallback (no head): the identity posterior
+                pooled = self._pooled(z, self.species_variable)
+                if getattr(self, "comm_head", None) is not None:
+                    logits = self.comm_head(pooled) @ self._refined_species.t()
+                    if context_z is not None:
+                        base = self.comm_head(self._pooled(context_z, self.species_variable))
+                        corrected = self.comm_head(self._blank_route(context_z, "community"))
+                        logits = logits + (corrected - base) @ self._refined_species.t()
+                    out[t] = logits
+                else:
+                    out[t] = self.decode(z, self.species_variable)                # fallback: identity posterior
             elif t == "pollinator":                                              # plant -> pollinator interaction (rule 27)
                 out[t] = self.poll_head(self._pooled(z, self.species_variable)) @ self._pollinator_basis().t()
             elif t == "lfmc":                                                    # species -> live fuel moisture (B34)
@@ -984,5 +1191,10 @@ class DeepEarth(nn.Module):
             elif t == "flower":                                                  # observation -> flowering probability (B26)
                 out[t] = torch.sigmoid(self.flower_head(self._head_in(z, self.species_variable)).squeeze(-1))
             else:
-                out[t] = self.decode(z, t)
+                out[t] = blank_species[1] if blank_species is not None and t == self.species_variable \
+                    else self.decode(z, t)
+                if t == self.species_variable and family_logits is not None:
+                    factored = self._factor_family_mass(out[t], family_logits)
+                    out[t] = torch.where(family_valid[:, None], factored, out[t]) \
+                        if family_valid is not None else factored
         return out

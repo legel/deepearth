@@ -30,8 +30,8 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
    batch, becoming a unifying fabric for all data inputs.
 4. **Earth4D must remain at least as fast and compute-optimized as it currently is**, e.g. based on CUDA kernels now
    in production, originally programmed by NVIDIA.
-5. **Earth4D must retain large-scale learning capacity;** small models must have no less than 100M parameters, while
-   base models should target 1B params.
+5. **Earth4D capacity is measured by held-out capability, not parameter count.** Prefer the smallest model that meets
+   or exceeds the current harmonic and arithmetic benchmark means; scale only when measured capabilities improve.
 6. **Earth4D must retain parallelizable memory and compute architectures**, such that several subsets of geography
    and time can be concurrently processed at scale.
 7. **The phylogenomic species network must preserve embeddings per species**, which share processing topologically

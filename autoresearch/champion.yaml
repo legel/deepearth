@@ -3,20 +3,25 @@ condition_on:
 - vision_bio
 data:
   adapter: california
-  cache_dir: /workspace/deepearth/data/deepcal
+  cache_dir: data/deepcal
   n_neighbors: 16
   time_axis: true
 model:
-  capacity: 20
-  compile: compiled
+  absolute_log2_hashmap_size: 14
+  family_alphaearth_expert: true
+  family_env_expert: true
+  family_env_residual: true
+  continuous_calibration: true
+  capacity: 12
+  compile: false
   contrastive_vars:
   - vision_dino
   - naip_rgb
   - naip_ir
   - clay
   contrastive_weight: 0.3
-  d_model: 256
-  decoder_hidden: 2048
+  d_model: 128
+  decoder_hidden: 512
   densify_weight: 0.3
   flower_weight: 0.1
   lfmc_weight: 0.1
@@ -26,8 +31,9 @@ model:
   manifolds:
     biological: phylo
   myco_weight: 0.1
-  n_latents: 32
-  n_layers: 4
+  n_latents: 24
+  n_layers: 2
+  orthogonal_blank_hidden: 512
   phylo_mask_weight: 0.1
   poll_weight: 0.1
   pollinator_top_k: 64
@@ -36,6 +42,7 @@ model:
   - 8000
   - 300
   - 130
+  relative_log2_hashmap_size: 16
   rounds: 2
   sdist_weight: 1.0
   smooth_geo: true
@@ -45,11 +52,12 @@ model:
   - 4.0
   - 16.0
   - 64.0
-  sparse_hash: true
+  sparse_hash: false
   species_graph:
     bioclip_init: true
     heads: 4
     layers: 2
+    masked_posterior: exact-ou
     operator: latent-clade
     top_k: 128
     variable: identity
@@ -58,16 +66,15 @@ model:
   alphaearth_geo: true
   diffusion: true
   mod_encoder: prenorm
-  latent_diffusion: true
 name: DeepCal
 training:
   batch: 512
   hide_prob: 0.5
-  lr: 0.0005
-  precision: bf16
+  lr: 0.001
+  precision: fp32
   seed: 1337
-  steps: 16000
-  time_budget_s: 4000
+  steps: 8000
+  time_budget_s: 600
   weight_decay: 0.001
 variables:
 - kind: continuous

@@ -43,6 +43,10 @@ def train_and_evaluate(config, device):
     torch.set_float32_matmul_precision("high")   # [Ensue] enable TF32 tensor cores for fp32 matmuls (~1.3-2x, Earth4D hash stays fp32) — free throughput
     seed = config.get("training", {}).get("seed", 0)   # fixed seed -> matched-init A/B: backbone benchmarks bit-identical across runs, so a detached head's causal effect is isolated (no run-to-run noise masquerading as regression).
     torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
+
+    def finite_grads(parameters):
+        return all(p.grad is None or torch.isfinite(p.grad).all() for p in parameters)
+
     d = config["data"]
     # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reused across runs; keyed by the data settings that change the assembled set.
     import hashlib, json
@@ -62,10 +66,19 @@ def train_and_evaluate(config, device):
                    species_layers=sg.get("layers", 2), species_heads=sg.get("heads", 4),
                    species_top_k=sg.get("top_k"), species_flex=sg.get("flex", False),
                    species_operator=sg.get("operator", "ou-attention"),
+                   species_mask_posterior=sg.get("masked_posterior"),
                    species_tree=source.tree if sg.get("operator") == "tree"
                                 else (source.lca_tree if sg.get("operator") == "latent-clade" else None),
                    species_tip_row=source.lca_tip_row if sg.get("operator") == "latent-clade" else None,
-                   species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None) if sg else {}
+                   species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None,
+                   species_family=source.class_group if (m.get("family_alphaearth_expert", False) or
+                                                         m.get("family_env_expert", False)) else None,
+                   family_alphaearth_expert=m.get("family_alphaearth_expert", False),
+                   family_env_expert=m.get("family_env_expert", False),
+                   family_env_vars=m.get("family_env_vars", (
+                       "climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro")),
+                   family_env_residual=m.get("family_env_residual", False),
+                   orthogonal_blank_hidden=m.get("orthogonal_blank_hidden", 0)) if sg else {}
     if sg and sg.get("operator", "ou-attention") != "tree":   # real dated plant patristic (rules 7-12): replaces the embedding shadow for tree-covered species
         cdir0 = Path(d["cache_dir"]); cdir0 = cdir0 if cdir0.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
         pld = cdir0 / "gbif_plant_dist.npz"
@@ -93,6 +106,9 @@ def train_and_evaluate(config, device):
         poll_kw = dict(pollinator_text=source.pollinator_text, pollinator_top_k=m.get("pollinator_top_k", 64),
                        pollinator_distance=pdist)
     model = DeepEarth(variables, d_model=m.get("d_model", 256), n_latents=m.get("n_latents", 24),
+                      absolute_log2_hashmap_size=m.get("absolute_log2_hashmap_size", 20),
+                      absolute_levels=m.get("absolute_levels", 18),
+                      continuous_calibration=m.get("continuous_calibration", False),
                       n_layers=m.get("n_layers", 4), capacity=m.get("capacity", 16),
                       relative_window=tuple(m.get("relative_window", (8000., 8000., 300., 130.))), **rel_extra,
                       manifolds=manifolds, compile_processor=m.get("compile") == "processor",
@@ -152,7 +168,17 @@ def train_and_evaluate(config, device):
     freq_lr = t.get("freq_lr", lr0 * 0.3)
     freq_params = [p for n, p in model.named_parameters() if any(k in n for k in freq_keys)]
     freq_ids = {id(p) for p in freq_params}
+    steps = t["steps"]; batch = t.get("batch", 512)
     sparse_hash = m.get("sparse_hash", False)
+    _vram = torch.cuda.get_device_properties(device).total_memory / 1e9 if str(device).startswith("cuda") else 1e9
+    if _vram < 24:
+        batch_cap = 128
+        if batch > batch_cap:
+            print(f"[hw] {_vram:.0f}GB GPU: batch {batch}->{batch_cap} (VRAM-adaptive)", flush=True)
+            batch = batch_cap
+        if sparse_hash:
+            print(f"[hw] {_vram:.0f}GB GPU: sparse_hash off (+2GB precompute won't fit; bit-identical math)", flush=True)
+            sparse_hash = False
     if sparse_hash:
         model.enable_sparse_hash(source.coords, lr=lr0, weight_decay=wd0)
         freq_ids |= {id(p) for p in model.absolute_hash_params()}
@@ -164,20 +190,18 @@ def train_and_evaluate(config, device):
         print("optimizer: 8-bit AdamW (bitsandbytes) — for 24GB-class GPUs", flush=True)
     else:
         opt = torch.optim.AdamW(groups, weight_decay=wd0, fused=True)
-    steps = t["steps"]; batch = t.get("batch", 512)
-    # VRAM-adaptive: the config carries big-rig-optimal values; on smaller GPUs auto-cap batch and drop the sparse_hash
-    # precompute (+2GB, bit-identical math) so ONE pushed config runs best on 80GB rigs AND 24GB cards without hand-tuning.
-    _vram = torch.cuda.get_device_properties(device).total_memory / 1e9 if str(device).startswith("cuda") else 1e9
-    if _vram < 40:                                    # 24GB 3090/4090 etc.; A100/H100/H200 (40-80GB) keep the config's values
-        _bcap = 128 if _vram < 18 else 256
-        if batch > _bcap: print(f"[hw] {_vram:.0f}GB GPU: batch {batch}->{_bcap} (VRAM-adaptive)", flush=True); batch = _bcap
-        if sparse_hash: print(f"[hw] {_vram:.0f}GB GPU: sparse_hash off (+2GB precompute won't fit; bit-identical math)", flush=True); sparse_hash = False
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
     bf16 = t.get("precision", "fp32") == "bf16"
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
-                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head"))]
+                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head", "family_env", "family_ae", "blank_adapters", "blank_family", "cal_gain", "cal_bias"))]
+    family_env_clip_params = [p for n, p in model.named_parameters() if "family_env" in n]
+    family_ae_clip_params = [p for n, p in model.named_parameters() if "family_ae" in n]
+    blank_clip_params = [p for n, p in model.named_parameters()
+                         if "blank_adapters" in n or "blank_family" in n]
+    # Clip task-specific heads independently from the shared backbone.
+    cal_clip_params = [p for n, p in model.named_parameters() if "cal_gain" in n or "cal_bias" in n]
     # The pollinator graph trains from the (detached-plant) interaction loss; clip it in its OWN group so its gradient
     # magnitude does not inflate the global plant clip norm and shrink backbone updates (else enabling pollinators
     # spuriously regresses plant heads — a clip-coupling artifact, not real competition).
@@ -193,6 +217,8 @@ def train_and_evaluate(config, device):
     if hasattr(_dyn.config, "cache_size_limit"): _dyn.config.cache_size_limit = 64
     _cm = m.get("compile")
     compile_full = _cm in (True, "full", "graph", "compiled")
+    if blank_clip_params and compile_full:
+        raise ValueError("orthogonal_blank_hidden requires compile: false")
     cuda_graphs = _cm in ("full", "graph")
     tc_mode = "reduce-overhead" if cuda_graphs else "default"
     # bf16 covers the Processor and decoders; the Earth4D hash stays fp32 (bf16 rounding near the [-0.9,0.9] coord edge reads OOB), so context() is fp32 and only masked_loss casts.
@@ -226,6 +252,7 @@ def train_and_evaluate(config, device):
     if _dw != 1.0 and hasattr(source, "has_vision"):
         _sw = torch.where(source.has_vision[source.train_index], torch.tensor(1.0, device=device),
                           torch.tensor(_dw, device=device))
+    nonfinite_streak = 0
     for step in range(steps):
         if step == 10:
             t_budget_start = time.time()
@@ -253,12 +280,24 @@ def train_and_evaluate(config, device):
             else:
                 ctx = model.context_from_flat(flat, coords, nbr_coords, manifold_coords, nbr_values)
                 loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
+            loss = loss + model.family_alphaearth_loss(values, observed)
             if torch.isfinite(loss):
                 opt.zero_grad(); loss.backward()
+                if flat.grad is None or not torch.isfinite(flat.grad).all() or not finite_grads(
+                        clip_params + freq_params + poll_clip_params + family_env_clip_params +
+                        family_ae_clip_params + blank_clip_params + cal_clip_params):
+                    opt.zero_grad(set_to_none=True)
+                    model._abs_dydx = None; model._abs_inputs = None
+                    model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
+                    continue
                 model.sparse_hash_step(flat, idx)                        # sparse Adam on the absolute hash table
                 torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
                 if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
                 if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+                if family_env_clip_params: torch.nn.utils.clip_grad_norm_(family_env_clip_params, 5.0)
+                if blank_clip_params: torch.nn.utils.clip_grad_norm_(blank_clip_params, 5.0)
+                if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
+                if family_ae_clip_params: torch.nn.utils.clip_grad_norm_(family_ae_clip_params, 5.0)
                 opt.step(); clamp_res()   # AdamW on everything else
             model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
             if step % 500 == 0:
@@ -278,12 +317,25 @@ def train_and_evaluate(config, device):
             ctx = model.context(coords, nbr_coords, manifold_coords, nbr_values)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
                 loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
+        loss = loss + model.family_alphaearth_loss(values, observed)
         if not torch.isfinite(loss):                    # backstop: never let one bad step poison the weights
-            opt.zero_grad(set_to_none=True); sched.step(); continue
+            nonfinite_streak += 1; opt.zero_grad(set_to_none=True); sched.step()
+            print(f"  non-finite loss at step {step} ({nonfinite_streak}/3)", flush=True)
+            if nonfinite_streak >= 3:
+                raise FloatingPointError("three consecutive non-finite losses")
+            continue
+        nonfinite_streak = 0
         opt.zero_grad(); loss.backward()
+        if not finite_grads(clip_params + freq_params + poll_clip_params + family_env_clip_params +
+                            family_ae_clip_params + blank_clip_params + cal_clip_params):
+            opt.zero_grad(set_to_none=True); sched.step(); continue
         torch.nn.utils.clip_grad_norm_(clip_params, 5.0)
         if freq_params: torch.nn.utils.clip_grad_norm_(freq_params, 2.0)
         if poll_clip_params: torch.nn.utils.clip_grad_norm_(poll_clip_params, 5.0)
+        if family_env_clip_params: torch.nn.utils.clip_grad_norm_(family_env_clip_params, 5.0)
+        if blank_clip_params: torch.nn.utils.clip_grad_norm_(blank_clip_params, 5.0)
+        if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
+        if family_ae_clip_params: torch.nn.utils.clip_grad_norm_(family_ae_clip_params, 5.0)
         opt.step(); clamp_res(); sched.step()
         if step % 500 == 0:
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
