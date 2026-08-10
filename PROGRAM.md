@@ -23,16 +23,22 @@ per-seed capability arithmetic means is the breadth guard.
 `val_bpb`, its decomposition, raw cosine metrics, quarantined benchmarks, and mechanism deltas are
 diagnostics only and never affect target ranking or promotion.
 
+Target selection, research advancement, and score promotion are distinct decisions. The target tells
+the loop where to work. Target improvement says whether its hypothesis worked. The harmonic and
+arithmetic judge says whether that improvement is broad enough to promote. Never substitute one for
+another.
+
 ## Select the target
 
 1. Read `state()["scorecard"]`, the live `LOOP-deepearth-best` Ensue scorecard. Do not use the
    diagnostic per-variable likelihood board as the baseline. The scorecard must use the evaluator's current protocol,
    declare its active capability suite, and contain exactly two benchmark seeds. A stale or partial
    scorecard is a baseline-migration blocker, not research evidence.
-2. Read only benchmark rows whose role is `capability` and whose names belong to that declared suite.
-   Rank their published two-seed mean scores from lowest to highest, breaking an exact tie by benchmark
-   name. The lowest row is the target. Quarantined, inactive, uncalibrated, and
-   mechanism-diagnostic rows never enter the ranking.
+2. Read `scorecard["benchmarks"]`. Each row's `score` is already its mean across the two published seed
+   runs. Keep only rows whose role is `capability` and whose names belong to
+   `scorecard["evidence"]["capability_suite"]`. Rank those scores from lowest to highest, breaking an
+   exact tie by benchmark name. The first row is the target. Do not rank either seed alone, the harmonic,
+   `val_bpb`, or any quarantined, inactive, uncalibrated, or diagnostic row.
 3. Never skip an active capability. Difficulty, a low score, or failed hypotheses are reasons to change
    mechanism, not target. If the target's evaluator or required data is structurally invalid, publish
    the evidence and stop research for a software-engineering repair. It must either be repaired in
@@ -41,6 +47,11 @@ diagnostics only and never affect target ranking or promotion.
 4. Read the original files in `customer_feedback/`, then the relevant `val_bpb` decomposition and
    mechanism diagnostics. Use them to choose the subsystem and hypothesis; do not replace the selected
    human capability with a proxy target.
+
+Select the target once, before forming the hypothesis, and keep it fixed for that experiment. An
+explicit instruction from the principal may name a different active capability; otherwise neither an
+agent argument, customer feedback, a promising diagnostic, nor movement elsewhere in the suite may
+redirect the loop from the deterministic weakest-first target.
 
 ## Run the experiment
 
@@ -65,11 +76,13 @@ Two separate decisions are required:
 1. **Research advancement:** the selected benchmark's two-seed mean must rise. This is the causal check
    on the stated hypothesis. If it does not rise, the hypothesis failed even when unrelated benchmarks
    raise the harmonic.
-2. **Score promotion:** `judge()` must pass. This is the only scoring gate. It deliberately does not
-   contain the selected-target check, because target selection is research steering rather than a score
-   definition.
+2. **Score promotion:** `judge()` must pass. This is the only composite-score gate. It deliberately does
+   not contain the selected-target check, because target improvement is a research-eligibility check,
+   not a component of the score definition.
 
-Both decisions must pass for a 1k candidate to advance to 8k confirmation. For a 1k screen,
+Both decisions must pass for a 1k candidate to advance to 8k confirmation and again for an 8k candidate
+to publish. Passing `judge()` without improving the fixed target is a trade, not a breakthrough;
+improving the target without passing `judge()` is a narrow result, not a promotion. For a 1k screen,
 `before` is the approved 1k control; for an 8k confirmation, `before` is the live 8k champion. The
 current-protocol judge requires:
 
