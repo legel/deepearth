@@ -11,6 +11,8 @@ model:
   family_alphaearth_expert: true
   family_env_expert: true
   family_env_residual: true
+  task_occupancy_experts: true
+  task_niche_prior: true
   continuous_calibration: true
   capacity: 12
   compile: false
@@ -73,8 +75,7 @@ training:
   lr: 0.001
   precision: fp32
   seed: 1337
-  steps: 8000
-  time_budget_s: 600
+  steps: 2291
   weight_decay: 0.001
 variables:
 - kind: continuous

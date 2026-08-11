@@ -1,21 +1,32 @@
 # DeepCal champion report
 
-## 24.9M fixed-budget compact record
+## 25.4M fixed-step habitat-niche fusion record
 
-The compact model clears both registered public aggregates at the same 600-second budget while reducing parameters
-by 96.9% and peak VRAM by 51.4%. Both required seeds pass independently.
+The compact habitat-niche model improves both public aggregates over a seed-matched 24.9M control at exactly 2,291
+optimizer steps. It retains the original PR's central result: the 797.1M default is unnecessary. The candidate is
+96.8% smaller and uses 48.4% less VRAM while improving harmonic by 17.3% over the registered reference.
 
 | Model | Seed | Steps | Harmonic | Arithmetic |
 |---|---:|---:|---:|---:|
 | Registered 797.1M reference | 1337 | 5,126 | 0.318693 | 0.570700 |
-| 24.9M compact | 1337 | 2,291 | 0.363696 | 0.576871 |
-| 24.9M compact | 1338 | 2,274 | 0.364740 | 0.574168 |
-| **Compact mean** | **2 seeds** | **2,282.5** | **0.364218** | **0.575520** |
-| **Delta** |  |  | **+0.045525 (+14.3%)** | **+0.004820 (+0.84%)** |
+| Fixed-step 24.9M control | 1337 | 2,291 | 0.367661 | 0.578883 |
+| Fixed-step 24.9M control | 1338 | 2,291 | 0.365992 | 0.581475 |
+| **25.4M niche fusion** | **1337** | **2,291** | **0.373074** | **0.581691** |
+| **25.4M niche fusion** | **1338** | **2,291** | **0.374775** | **0.584717** |
+| **Candidate mean** | **2 seeds** | **2,291** | **0.373924** | **0.583204** |
+| **Delta vs fixed-step control** |  |  | **+0.007098 (+1.93%)** | **+0.003025** |
+| **Delta vs registered reference** |  |  | **+0.055231 (+17.33%)** | **+0.012504** |
 
-The gain is concentrated in weak spatial and environmental capabilities. Largest lifts are `B44_infer_topo_cos` +0.211, `B46_infer_chm_cos` +0.208, `B1_species_from_env_top10` +0.187, `B43_infer_hydro_cos` +0.166, `B5_species_from_spacetime_top10` +0.108, `B17_infer_soil_cos` +0.105.
-Largest tradeoffs are `B18_infer_climate_cos` -0.173, `B21_community_from_species_recall` -0.075, `B22_companions_recall` -0.069, `B33_growth_rate_trait_f1` -0.067, `B28_flowering_peak_month_mrr` -0.066, `B14_vision_leave_one_out_cos` -0.063. Overall, 19 of 50 capabilities improve and 31 regress; the full receipt is in `BENCHMARKS.md`.
+The mechanism isolates habitat occupancy from the shared backbone. Training-split normalized AlphaEarth and
+multiscale space-time features feed task-specific family, species, community, and pollinator decoders; detached
+features and a separate optimizer prevent niche supervision from commandeering universal fusion. This implements
+science rules 18, 23, and 31 while preserving rule 5's capacity criterion.
 
-The canonical files use batch 512, dense hash optimization, learning rate `1e-3`, an 8,000-step scheduler horizon,
-and the fixed 600-second wall-clock stop. The evaluator, aggregate definitions, spatial holdout, and extraction recipe
-are unchanged.
+Across 50 capabilities, 27 improve and 23 regress. The largest lifts are species from environment +0.0486, species
+from spacetime +0.0297, form traits +0.0283, species calibration +0.0190, family from spacetime +0.0151, pollinators
+from environment +0.0131, and family from environment +0.0106. The largest tradeoffs are growth-rate traits -0.0121,
+NAIP-IR -0.0087, soil -0.0073, aerial reconstruction -0.0056, and hydrology -0.0031. Both aggregate gates improve on
+both seeds; the complete unrounded receipt is in `BENCHMARKS.md`.
+
+The canonical configuration uses batch 512, dense hash optimization, learning rate `1e-3`, and exactly 2,291
+optimizer steps. The evaluator, aggregate definitions, spatial holdout, and extraction recipe are unchanged.

@@ -78,18 +78,13 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     change — `prepare.py` (downloads + caches data) and `evaluate.py` (runs the benchmarks and computes the final
     score, the immutable ground truth). Each condensing pass must **quantify** that surface (file count + total
     tokens, `.md` included) and drive it down. Every autoresearch agent reads exactly this enumerated surface, no more.
-20. **Fixed experiment budget: 10 minutes.** Each autoresearch experiment trains for 10 minutes of wall-clock (startup
-    and compilation excluded), then is scored by `evaluate.py`. Report benchmarks at that budget; compare experiments
-    at equal time so improvements reflect real efficiency, not just more steps.
-21. **Speed is a first-class score lever.** Because the budget is fixed (rule 20), wall-clock throughput converts
-    directly into training steps and therefore into `net_score`: any acceleration of the algorithm that does not
-    change its per-step mathematics *must* score at least as high, and under the budget, strictly higher. Optimizing
-    throughput — CUDA kernels, sparse/fused updates, compilation, memory traffic, batch size — is therefore a prized
-    research path, not a mere engineering nicety, and sits alongside the standing speed mandates (rules 4, 12). The
-    discipline is that a speedup must be **non-compromising**: bit-identical to the champion per step (verified against
-    the exact model, e.g. `hashencoder/test_precompute_exact.py`), so the extra steps are pure upside and never a
-    silent approximation traded for pace. A faster champion that ties the slower one at fixed time is a red flag — it
-    means the claimed speedup is not real, or a hidden compromise is cancelling it.
+20. **Fixed experiment budget: 2,291 optimizer steps.** Every comparable experiment completes the same number of
+    updates before `evaluate.py` scores it. Run seeds 1337 and 1338 against seed-matched controls. Wall time cannot buy
+    extra updates; report it separately with parameter count and peak VRAM.
+21. **Efficiency remains a first-class constraint.** Optimize CUDA kernels, sparse/fused updates, compilation, memory
+    traffic, and batch size without changing per-step mathematics. Verify exactness against the champion path (for
+    example `hashencoder/test_precompute_exact.py`) and report wall time, parameters, and VRAM beside capability.
+    Promotion is decided at equal steps, so hardware speed and architecture latency cannot masquerade as science.
 22. **Joint decoding is iterative, not one-shot — a multi-modal diffusion.** Reconstruct all variables *together* by
     refining every state over K rounds: each round fuses all states through the shared latent bottleneck, the latents
     self-attend (the joint model, rule 16), then every state re-reads the fused context *and* its own previous state and

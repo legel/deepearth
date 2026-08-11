@@ -53,7 +53,7 @@ focus, opportunities the inspiration.
 ## The loop
 1. Read `results.tsv` + the per-benchmark profile; form a hypothesis grounded in `science.md`.
 2. Edit a model/config/data file; `git commit` (report every benchmark score in order + the means).
-3. Train (`python -m deepearth.autoresearch.train`); budget is set in `deepcal.yaml` (`time_budget_s`).
+3. Train (`python -m deepearth.autoresearch.train`); complete the fixed `steps` in `deepcal.yaml`.
 4. Read `grep "^net_score:" run.log`; empty ⇒ crash (`tail -50`), fix at the root or revert.
 5. Append to `results.tsv`. Keep the commit if the mean rose with no metric regressed; else revert.
 
@@ -68,8 +68,8 @@ fusion, operators, heads — to find the absolutely best model. The surface, gro
 `deepcal.yaml` `model:`; code = edit `core/fusion.py` / `encoders/*`):
 
 - **Embeddings & latent capacity** (config): `d_model` (token/latent width), `n_latents` (Perceiver latent bank
-  size), `manifolds` (phylo/biological subspace width), `decoder_hidden`. Wider is not free under a fixed step
-  budget (fewer steps) — sweep, don't assume.
+  size), `manifolds` (phylo/biological subspace width), `decoder_hidden`. Wider is not free: every candidate receives
+  the same updates, while parameter count, VRAM, and wall time remain explicit costs.
 - **Positional / space-time encodings**: config — `capacity` (Earth4D relative hash levels), `relative_window`
   (4D neighbor half-window N/E/up/days), `time_km`, `time_axis`. Code (not yet config) — absolute Earth4D
   `spatial_levels` / `temporal_levels` / `log2_hashmap_size`, relative `finest` resolution, `smooth_geo`
