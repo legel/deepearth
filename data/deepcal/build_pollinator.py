@@ -379,7 +379,7 @@ _RPI_MAP = Path("/home/photon/ecological/sandbox/deepearth/data/deepcal/pollinat
 
 def cmd_remap_pollinator_interactions(argv):
     argparse.ArgumentParser(prog="build_pollinator remap_pollinator_interactions").parse_args(argv)
-    D = Path(os.environ.get("DEEPCAL_DATA_DIR", "/home/photon/4tb/deepcal_dogfood/data/deepcal"))
+    D = Path(os.environ.get("DEEPCAL_DATA_DIR", "/home/photon/4tb/deepearth/data/deepcal"))
     z = dict(np.load(D / "gbif_pollinator_dist.npz", allow_pickle=True))
     m = {int(k): v for k, v in json.load(open(_RPI_MAP)).items()}             # old_idx -> final_idx | None
     W = z["marg_poll_idx"].shape[1]                                          # top-K width (40)
