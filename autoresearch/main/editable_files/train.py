@@ -77,13 +77,15 @@ def train_and_evaluate(config, device):
                    species_tip_row=source.lca_tip_row if sg.get("operator") == "latent-clade" else None,
                    species_text=getattr(source, "species_text", None) if sg.get("bioclip_init") else None,
                    species_family=source.class_group if (m.get("family_env_expert", False) or
-                                                         m.get("family_alphaearth_expert", False)) else None,
+                                                         m.get("family_alphaearth_expert", False) or
+                                                         m.get("task_occupancy_experts", False)) else None,
                    family_env_expert=m.get("family_env_expert", False),
                    family_env_vars=m.get("family_env_vars", (
                        "climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro")),
                    family_alphaearth_expert=m.get("family_alphaearth_expert", False),
                    family_env_residual=m.get("family_env_residual", False),
-                   orthogonal_blank_hidden=m.get("orthogonal_blank_hidden", 0)) if sg else {}
+                   orthogonal_blank_hidden=m.get("orthogonal_blank_hidden", 0),
+                   task_occupancy_experts=m.get("task_occupancy_experts", False)) if sg else {}
     if sg and sg.get("operator", "ou-attention") != "tree":   # real dated plant patristic (rules 7-12): replaces the embedding shadow for tree-covered species
         cdir0 = Path(d["cache_dir"]); cdir0 = cdir0 if cdir0.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
         pld = cdir0 / "gbif_plant_dist.npz"
@@ -173,11 +175,23 @@ def train_and_evaluate(config, device):
     freq_lr = t.get("freq_lr", lr0 * 0.3)
     freq_params = [p for n, p in model.named_parameters() if any(k in n for k in freq_keys)]
     freq_ids = {id(p) for p in freq_params}
+    occupancy_params = [p for n, p in model.named_parameters() if "occupancy_experts" in n]
+    occupancy_ids = {id(p) for p in occupancy_params}
+    steps = t["steps"]; batch = t.get("batch", 512)
     sparse_hash = m.get("sparse_hash", False)
+    _vram = torch.cuda.get_device_properties(device).total_memory / 1e9 if str(device).startswith("cuda") else 1e9
+    if _vram < 24:
+        batch_cap = 128
+        if batch > batch_cap:
+            print(f"[hw] {_vram:.0f}GB GPU: batch {batch}->{batch_cap} (VRAM-adaptive)", flush=True)
+            batch = batch_cap
+        if sparse_hash:
+            print(f"[hw] {_vram:.0f}GB GPU: sparse_hash off (+2GB precompute won't fit; bit-identical math)", flush=True)
+            sparse_hash = False
     if sparse_hash:
         model.enable_sparse_hash(source.coords, lr=lr0, weight_decay=wd0)
         freq_ids |= {id(p) for p in model.absolute_hash_params()}
-    rest_params = [p for p in model.parameters() if id(p) not in freq_ids]
+    rest_params = [p for p in model.parameters() if id(p) not in freq_ids and id(p) not in occupancy_ids]
     groups = [{"params": rest_params, "lr": lr0}, {"params": freq_params, "lr": freq_lr}]
     if t.get("adam8bit", False) or os.environ.get("DEEPCAL_ADAM8BIT"):    # 8-bit Adam (bitsandbytes): optimizer state 4->1 byte/moment, accuracy-matched (arXiv:2110.02861); for lower-VRAM GPUs
         from bitsandbytes.optim import AdamW8bit
@@ -185,14 +199,8 @@ def train_and_evaluate(config, device):
         print("optimizer: 8-bit AdamW (bitsandbytes) — for 24GB-class GPUs", flush=True)
     else:
         opt = torch.optim.AdamW(groups, weight_decay=wd0, fused=True)
-    steps = t["steps"]; batch = t.get("batch", 512)
-    # VRAM-adaptive: the config carries big-rig-optimal values; on smaller GPUs auto-cap batch and drop the sparse_hash
-    # precompute (+2GB, bit-identical math) so ONE pushed config runs best on 80GB rigs AND 24GB cards without hand-tuning.
-    _vram = torch.cuda.get_device_properties(device).total_memory / 1e9 if str(device).startswith("cuda") else 1e9
-    if _vram < 40:                                    # 24GB 3090/4090 etc.; A100/H100/H200 (40-80GB) keep the config's values
-        _bcap = 128 if _vram < 18 else 256
-        if batch > _bcap: print(f"[hw] {_vram:.0f}GB GPU: batch {batch}->{_bcap} (VRAM-adaptive)", flush=True); batch = _bcap
-        if sparse_hash: print(f"[hw] {_vram:.0f}GB GPU: sparse_hash off (+2GB precompute won't fit; bit-identical math)", flush=True); sparse_hash = False
+    occupancy_opt = torch.optim.AdamW(occupancy_params, lr=lr0, weight_decay=wd0, fused=True) \
+        if occupancy_params else None
     _warm = int(t.get("warmup_steps", 0))                 # optional linear warmup -> peak lr, then cosine; default 0 = unchanged
     if _warm > 0:
         _wu = torch.optim.lr_scheduler.LinearLR(opt, start_factor=0.02, end_factor=1.0, total_iters=_warm)
@@ -201,11 +209,13 @@ def train_and_evaluate(config, device):
         print(f"[sched] linear warmup {_warm} steps -> cosine over {steps-_warm}", flush=True)
     else:
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
+    occupancy_sched = torch.optim.lr_scheduler.CosineAnnealingLR(occupancy_opt, steps) \
+        if occupancy_opt is not None else None
     bf16 = t.get("precision", "fp32") == "bf16"
     hide_prob = t.get("hide_prob", 0.35)
     # Hash gradients are well-behaved; clip only the non-hash params (where instability comes from) to avoid a huge per-step reduction.
     clip_params = [p for n, p in model.named_parameters()
-                   if id(p) not in freq_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head", "family_env", "family_ae", "blank_adapters", "blank_family", "cal_gain", "cal_bias"))]
+                   if id(p) not in freq_ids and id(p) not in occupancy_ids and not any(k in n.lower() for k in ("earth4d", "hash_encoder", "hashgrid", "comm_head", "poll_head", "poll_emb", "pollinator_graph", "lfmc_head", "flower_head", "myco_head", "family_env", "family_ae", "blank_adapters", "blank_family", "cal_gain", "cal_bias"))]
     family_env_clip_params = [p for n, p in model.named_parameters() if "family_env" in n]
     family_ae_clip_params = [p for n, p in model.named_parameters() if "family_ae" in n]
     blank_clip_params = [p for n, p in model.named_parameters()
@@ -231,6 +241,8 @@ def train_and_evaluate(config, device):
     compile_full = _cm in (True, "full", "graph", "compiled")
     if blank_clip_params and compile_full:
         raise ValueError("orthogonal_blank_hidden requires compile: false")
+    if occupancy_params and compile_full:
+        raise ValueError("task_occupancy_experts requires compile: false")
     cuda_graphs = _cm in ("full", "graph")
     tc_mode = "reduce-overhead" if cuda_graphs else "default"
     # bf16 covers the Processor and decoders; the Earth4D hash stays fp32 (bf16 rounding near the [-0.9,0.9] coord edge reads OOB), so context() is fp32 and only masked_loss casts.
@@ -318,6 +330,7 @@ def train_and_evaluate(config, device):
         idx = (source.train_index[torch.multinomial(_sw, batch, replacement=True)] if _sw is not None
                else source.train_index[torch.randint(0, len(source.train_index), (batch,), device=device)])
         values, observed, coords, nbr_coords, manifold_coords, nbr_values = source.batch(idx)
+        occupancy_loss = None
         if sparse_hash:
             # Refresh the cached discrete cell every K steps so the fast-path hit rate tracks slow resolution drift
             # (correctness holds regardless — the kernel recomputes on a cache miss). Kept outside the compiled step.
@@ -337,6 +350,7 @@ def train_and_evaluate(config, device):
             else:
                 ctx = model.context_from_flat(flat, coords, nbr_coords, manifold_coords, nbr_values)
                 loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
+                occupancy_loss = model.occupancy_expert_loss(values, observed, ctx)
             if torch.isfinite(loss):
                 nonfinite_streak = 0
                 opt.zero_grad(); loss.backward()
@@ -354,12 +368,17 @@ def train_and_evaluate(config, device):
                 if blank_clip_params: torch.nn.utils.clip_grad_norm_(blank_clip_params, 5.0)
                 if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
                 opt.step(); clamp_res()   # AdamW on everything else
+                if occupancy_loss is not None and torch.isfinite(occupancy_loss):
+                    occupancy_opt.zero_grad(); occupancy_loss.backward()
+                    if finite_grads(occupancy_params):
+                        torch.nn.utils.clip_grad_norm_(occupancy_params, 5.0); occupancy_opt.step()
             else:
                 nonfinite_streak += 1; opt.zero_grad(set_to_none=True)
                 print(f"  non-finite loss at step {step} ({nonfinite_streak}/3)", flush=True)
                 if nonfinite_streak >= 3:
                     raise FloatingPointError("three consecutive non-finite losses")
             model.set_sparse_lr(sched.get_last_lr()[0]); sched.step()
+            if occupancy_sched is not None: occupancy_sched.step()
             if step % 500 == 0:
                 print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
             continue
@@ -377,8 +396,10 @@ def train_and_evaluate(config, device):
             ctx = model.context(coords, nbr_coords, manifold_coords, nbr_values)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16):
                 loss = model.reconstruction_loss(values, observed, ctx, hide_prob=hide_prob)
+            occupancy_loss = model.occupancy_expert_loss(values, observed, ctx)
         if not torch.isfinite(loss):                    # backstop: never let one bad step poison the weights
             nonfinite_streak += 1; opt.zero_grad(set_to_none=True); sched.step()
+            if occupancy_sched is not None: occupancy_sched.step()
             print(f"  non-finite loss at step {step} ({nonfinite_streak}/3)", flush=True)
             if nonfinite_streak >= 3:
                 raise FloatingPointError("three consecutive non-finite losses")
@@ -395,6 +416,11 @@ def train_and_evaluate(config, device):
         if blank_clip_params: torch.nn.utils.clip_grad_norm_(blank_clip_params, 5.0)
         if cal_clip_params: torch.nn.utils.clip_grad_norm_(cal_clip_params, 5.0)
         opt.step(); clamp_res(); sched.step()
+        if occupancy_loss is not None and torch.isfinite(occupancy_loss):
+            occupancy_opt.zero_grad(); occupancy_loss.backward()
+            if finite_grads(occupancy_params):
+                torch.nn.utils.clip_grad_norm_(occupancy_params, 5.0); occupancy_opt.step()
+        if occupancy_sched is not None: occupancy_sched.step()
         if step % 500 == 0:
             print(f"  step {step} loss {float(loss):.3f} [{time.time()-t0:.0f}s]", flush=True)
         if step and step % 2000 == 0 and not eval_ckpt:  # PERIODIC-CKPT: a silent death never costs more than ~2k steps
@@ -421,7 +447,7 @@ def train_and_evaluate(config, device):
     for _p in model.parameters():
         _p.grad = None
     try:
-        del opt, sched
+        del opt, sched, occupancy_opt, occupancy_sched
     except Exception:
         pass
     gc.collect(); torch.cuda.empty_cache()

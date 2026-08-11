@@ -21,6 +21,7 @@ model:
   family_alphaearth_expert: true
   family_env_expert: true
   family_env_residual: true
+  task_occupancy_experts: true
   orthogonal_blank_hidden: 512
   continuous_calibration: true
   capacity: 12
