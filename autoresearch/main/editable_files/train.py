@@ -67,6 +67,17 @@ def train_and_evaluate(config, device):
     m = config["model"]
     manifolds = {name: dims[dim_key] for name, dim_key in m.get("manifolds", {}).items()}
     sg = m.get("species_graph")
+    niche_stats = {}
+    if m.get("task_niche_prior", False):
+        train_rows = source.train_index
+        coords = source.coords[train_rows].float()
+        alphaearth, ae_valid, _ = source.extra["alphaearth"]
+        ae_rows = train_rows[ae_valid[train_rows]]
+        ae = alphaearth[ae_rows].float()
+        niche_stats = {
+            "niche_coord_mean": coords.mean(0), "niche_coord_scale": coords.std(0),
+            "niche_ae_mean": ae.mean(0), "niche_ae_scale": ae.std(0),
+        }
     species = dict(species_variable=sg["variable"], species_embedding=source.phylo,
                    species_layers=sg.get("layers", 2), species_heads=sg.get("heads", 4),
                    species_top_k=sg.get("top_k"), species_flex=sg.get("flex", False),
@@ -85,7 +96,8 @@ def train_and_evaluate(config, device):
                    family_alphaearth_expert=m.get("family_alphaearth_expert", False),
                    family_env_residual=m.get("family_env_residual", False),
                    orthogonal_blank_hidden=m.get("orthogonal_blank_hidden", 0),
-                   task_occupancy_experts=m.get("task_occupancy_experts", False)) if sg else {}
+                   task_occupancy_experts=m.get("task_occupancy_experts", False),
+                   task_niche_prior=m.get("task_niche_prior", False), **niche_stats) if sg else {}
     if sg and sg.get("operator", "ou-attention") != "tree":   # real dated plant patristic (rules 7-12): replaces the embedding shadow for tree-covered species
         cdir0 = Path(d["cache_dir"]); cdir0 = cdir0 if cdir0.is_absolute() else Path(__file__).resolve().parents[1] / d["cache_dir"]
         pld = cdir0 / "gbif_plant_dist.npz"
@@ -175,7 +187,8 @@ def train_and_evaluate(config, device):
     freq_lr = t.get("freq_lr", lr0 * 0.3)
     freq_params = [p for n, p in model.named_parameters() if any(k in n for k in freq_keys)]
     freq_ids = {id(p) for p in freq_params}
-    occupancy_params = [p for n, p in model.named_parameters() if "occupancy_experts" in n]
+    occupancy_params = [p for n, p in model.named_parameters()
+                        if "occupancy_experts" in n or n.startswith("niche_")]
     occupancy_ids = {id(p) for p in occupancy_params}
     steps = t["steps"]; batch = t.get("batch", 512)
     sparse_hash = m.get("sparse_hash", False)

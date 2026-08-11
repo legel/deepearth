@@ -206,6 +206,11 @@ class DeepEarth(nn.Module):
         family_env_residual: bool = False,
         orthogonal_blank_hidden: int = 0,
         task_occupancy_experts: bool = False,
+        task_niche_prior: bool = False,
+        niche_coord_mean: Optional[torch.Tensor] = None,
+        niche_coord_scale: Optional[torch.Tensor] = None,
+        niche_ae_mean: Optional[torch.Tensor] = None,
+        niche_ae_scale: Optional[torch.Tensor] = None,
         compile_processor: bool = False,
         rounds: int = 1,
         write_back: bool = True,
@@ -507,6 +512,27 @@ class DeepEarth(nn.Module):
             for head in self.occupancy_experts.values():
                 nn.init.zeros_(head[-1].weight)
                 nn.init.zeros_(head[-1].bias)
+        self.niche_trunk = None
+        self.niche_experts = None
+        if task_niche_prior and self.family_ae_head is not None:
+            if any(x is None for x in (niche_coord_mean, niche_coord_scale,
+                                       niche_ae_mean, niche_ae_scale)):
+                raise ValueError("task_niche_prior requires training-split feature statistics")
+            self.register_buffer("niche_coord_mean", niche_coord_mean.float())
+            self.register_buffer("niche_coord_scale", niche_coord_scale.float().clamp_min(1e-4))
+            self.register_buffer("niche_ae_mean", niche_ae_mean.float())
+            self.register_buffer("niche_ae_scale", niche_ae_scale.float().clamp_min(1e-4))
+            with torch.random.fork_rng(devices=[]):
+                self.niche_trunk = nn.Sequential(
+                    nn.LayerNorm(116), nn.Linear(116, 512), nn.GELU(),
+                    nn.Linear(512, 256), nn.GELU())
+                outputs = {"family": self.family_count, "identity": d_model,
+                           "community": d_model}
+                if self.poll_emb is not None:
+                    outputs["pollinator"] = d_model
+                self.niche_experts = nn.ModuleDict({
+                    name: nn.Linear(256, size) for name, size in outputs.items()
+                })
         self.blank_adapters = nn.ModuleDict()
         self.blank_family = None
         if orthogonal_blank_hidden > 0 and self.family_count:
@@ -570,7 +596,8 @@ class DeepEarth(nn.Module):
         feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
                  for name, val in (neighbor_values or {}).items()}
         tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
-        return {"position_s": pos_s, "position_t": pos_t, "position": pos_s + pos_t, "tokens": tokens}
+        return {"position_s": pos_s, "position_t": pos_t, "position": pos_s + pos_t,
+                "tokens": tokens, "coords": query_coords.detach()}
 
     def context_from_flat(self, flat: torch.Tensor, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
                           manifold_positions: Optional[Dict[str, torch.Tensor]] = None,
@@ -587,7 +614,8 @@ class DeepEarth(nn.Module):
         feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
                  for name, val in (neighbor_values or {}).items()}
         tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
-        return {"position_s": pos_s, "position_t": pos_t, "position": pos_s + pos_t, "tokens": tokens}
+        return {"position_s": pos_s, "position_t": pos_t, "position": pos_s + pos_t,
+                "tokens": tokens, "coords": query_coords.detach()}
 
     def _project_position(self, flat: torch.Tensor):
         """Project Earth4D's [xyz | xyt|yzt|xzt] output into (spatial, spatiotemporal) d_model channels separately,
@@ -1008,6 +1036,17 @@ class DeepEarth(nn.Module):
             habitat = self.family_ae_head[:-1](alphaearth)
         return torch.cat((habitat, context["position"].detach()), -1)
 
+    def _niche_feature(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
+                       context: dict) -> torch.Tensor:
+        coords = (context["coords"] - self.niche_coord_mean) / self.niche_coord_scale
+        geo = [coords]
+        for frequency in (0.5, 1.0, 2.0, 4.0, 8.0, 16.0):
+            geo.extend((torch.sin(math.pi * frequency * coords),
+                        torch.cos(math.pi * frequency * coords)))
+        alphaearth = (values["alphaearth"].detach() - self.niche_ae_mean) / self.niche_ae_scale
+        alphaearth = alphaearth * observed["alphaearth"][:, None]
+        return self.niche_trunk(torch.cat((alphaearth, *geo), -1))
+
     def occupancy_expert_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
                               context: dict) -> Optional[torch.Tensor]:
         if self.occupancy_experts is None:
@@ -1015,8 +1054,15 @@ class DeepEarth(nn.Module):
         feature = self._occupancy_feature(values, observed, context)
         target = values[self.species_variable]
         valid = (observed[self.species_variable] & observed["alphaearth"]).float()
-        family = self._family_alphaearth_logits(values).detach() + self.occupancy_experts["family"](feature)
+        base_family = self._family_conditioned_logits(
+            values, observed, context, observed.get("alphaearth")).detach()
+        family = base_family + self.occupancy_experts["family"](feature)
+        niche = self._niche_feature(values, observed, context) if self.niche_trunk is not None else None
+        if niche is not None:
+            family = family + self.niche_experts["family"](niche)
         identity = self.occupancy_experts["identity"](feature)
+        if niche is not None:
+            identity = identity + self.niche_experts["identity"](niche)
         species = identity @ self._refined_species.detach().to(identity.dtype).t()
         species = self._factor_family_mass(species, family)
         losses = [
@@ -1027,6 +1073,8 @@ class DeepEarth(nn.Module):
         ]
         if "_sdist_idx" in values:
             community = self.occupancy_experts["community"](feature)
+            if niche is not None:
+                community = community + self.niche_experts["community"](niche)
             logits = community @ self._refined_species.detach().to(community.dtype).t()
             idx = values["_sdist_idx"].clamp(0, logits.shape[-1] - 1)
             dist = torch.zeros_like(logits, dtype=torch.float32).scatter_add_(
@@ -1037,6 +1085,8 @@ class DeepEarth(nn.Module):
                               / math.log(logits.shape[-1]))
         if "pollinator" in self.occupancy_experts and "_poll_idx" in values:
             pollinator = self.occupancy_experts["pollinator"](feature)
+            if niche is not None and "pollinator" in self.niche_experts:
+                pollinator = pollinator + self.niche_experts["pollinator"](niche)
             logits = pollinator @ self._pollinator_basis().detach().to(pollinator.dtype).t()
             idx = values["_poll_idx"].clamp(0, logits.shape[-1] - 1)
             dist = torch.zeros_like(logits, dtype=torch.float32).scatter_add_(
@@ -1350,13 +1400,18 @@ class DeepEarth(nn.Module):
             family_valid = observed.get("alphaearth") if observed is not None else None
         universal = tuple(given) == self.family_env_vars
         occupancy = None
+        niche = None
         if self.occupancy_experts is not None and (not given or universal):
             occupancy_observed = observed or {
                 "alphaearth": torch.ones(B, dtype=torch.bool, device=dev),
             }
             occupancy = self._occupancy_feature(values, occupancy_observed, context)
+            if self.niche_trunk is not None:
+                niche = self._niche_feature(values, occupancy_observed, context)
             if family_logits is not None:
                 family_logits = family_logits + self.occupancy_experts["family"](occupancy)
+                if niche is not None:
+                    family_logits = family_logits + self.niche_experts["family"](niche)
         blank_species = self._blank_species(z) if self.blank_adapters and not given else None
         if blank_species is not None and family_logits is not None:
             family_logits = family_logits + blank_species[2]
@@ -1375,10 +1430,14 @@ class DeepEarth(nn.Module):
                     out[t] = self.decode(z, self.species_variable)                # fallback: identity posterior
                 if occupancy is not None and universal:
                     out[t] = out[t] + self.occupancy_experts["community"](occupancy) @ self._refined_species.t()
+                if niche is not None and universal:
+                    out[t] = out[t] + self.niche_experts["community"](niche) @ self._refined_species.t()
             elif t == "pollinator":                                              # plant -> pollinator interaction (rule 27)
                 out[t] = self.poll_head(self._pooled(z, self.species_variable)) @ self._pollinator_basis().t()
                 if occupancy is not None and "pollinator" in self.occupancy_experts:
                     out[t] = out[t] + self.occupancy_experts["pollinator"](occupancy) @ self._pollinator_basis().t()
+                if niche is not None and "pollinator" in self.niche_experts:
+                    out[t] = out[t] + self.niche_experts["pollinator"](niche) @ self._pollinator_basis().t()
             elif t == "lfmc":                                                    # species -> live fuel moisture (B34)
                 out[t] = self.lfmc_head(self._head_in(z, self.species_variable)).squeeze(-1).exp()
             elif t == "myco":                                                    # species -> mycorrhizal type logits (B42)
@@ -1390,6 +1449,8 @@ class DeepEarth(nn.Module):
                     else self.decode(z, t)
                 if t == self.species_variable and occupancy is not None:
                     out[t] = out[t] + self.occupancy_experts["identity"](occupancy) @ self._refined_species.t()
+                if t == self.species_variable and niche is not None:
+                    out[t] = out[t] + self.niche_experts["identity"](niche) @ self._refined_species.t()
                 if t == self.species_variable and family_logits is not None:
                     factored = self._factor_family_mass(out[t], family_logits)
                     out[t] = torch.where(family_valid[:, None], factored, out[t]) \
