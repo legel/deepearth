@@ -155,13 +155,81 @@ function vData() {
       <span style="color:var(--ink-2)"> ${esc(t.composed_of ?? "")}</span></span>
       <span class="num">${esc(String(t.count_per_example ?? ""))}</span>
       <code class="num">d=${esc(String(t.dim ?? "?"))}</code></div>`).join("");
+  route.after = initMap;
   return `<h1>Data</h1>
-    <p class="sub">Every observation the model trains on — its sources, its token structure, its raw form.
-      Map view and live runs land next.</p>
+    <p class="sub">Every observation the model trains on — pinned to earth at (x,y,z,t),
+      colored by the spatial holdout. Click a point for its full record.</p>
+    <div class="filterbar">
+      <select id="fsplit"><option value="">train + test</option>
+        <option value="train">train</option><option value="test">test</option></select>
+      <input id="fsp" placeholder="search species — e.g. Quercus" autocomplete="off">
+      <div class="spdrop" id="spdrop" hidden></div>
+      <span class="count" id="obscount"></span>
+    </div>
+    <div class="maprow">
+      <div id="map"></div>
+      <div class="obspanel" id="obspanel"><p class="sub" style="margin:0">No observation selected.
+        Points: <b style="color:var(--code)">train</b> · <b style="color:var(--data)">test</b> —
+        the model never sees a test cell (0.5° blocks, 1/6 held out).</p></div>
+    </div>
     <h2>Modalities</h2><div class="rows">${mods || empty("registry lacks data schema")}</div>
     <h2>Context window — one training example</h2>
     <p class="sub">${esc(tk?.context_window?.formula_round0 ?? "")}</p>
     <div class="rows">${toks}</div>`;
+}
+
+/* ---- map (Leaflet + ESRI World Imagery) ---- */
+const mapState = { sp: null };
+async function initMap() {
+  if (typeof L === "undefined") { $("#map").textContent = "Leaflet unavailable (offline?)"; return; }
+  const map = L.map("map", { renderer: L.canvas(), preferCanvas: true });
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { attribution: "Esri World Imagery", maxZoom: 19 }).addTo(map);
+  map.setView([37.3, -119.5], 6);
+  let layer = null;
+  async function draw() {
+    const q = new URLSearchParams();
+    if ($("#fsplit").value) q.set("split", $("#fsplit").value);
+    if (mapState.sp != null) q.set("sp", mapState.sp);
+    const o = await api("observations?" + q);
+    if (!o) { $("#obscount").textContent = "no index — run dashboard.observations"; return; }
+    $("#obscount").textContent = `${o.shown.toLocaleString()} of ${o.total.toLocaleString()} shown`;
+    if (layer) layer.remove();
+    layer = L.layerGroup(o.id.map((id, i) =>
+      L.circleMarker([o.lat[i], o.lon[i]], {
+        radius: 3, weight: .7, color: "#fff", fillOpacity: .8,
+        fillColor: o.test[i] ? "#eb6834" : "#3987e5",
+      }).on("click", () => showObs(id))), { pane: "markerPane" }).addTo(map);
+  }
+  async function showObs(id) {
+    const d = await api("observation/" + id);
+    if (!d) return;
+    $("#obspanel").innerHTML = `<div class="latin">${esc(d.species)}</div>
+      <span class="chip" style="border-color:var(--${d.split === "test" ? "data" : "code"})">${d.split}</span>
+      <dl class="kv">
+        <dt>x, y</dt><dd>${d.lat.toFixed(5)}, ${d.lon.toFixed(5)}</dd>
+        <dt>z</dt><dd>${d.elev.toFixed(1)} m</dd>
+        <dt>t</dt><dd>${d.date ?? "unknown"}</dd>
+        <dt>gbifID</dt><dd><a href="${d.source}" target="_blank" style="color:var(--code)">${d.gbifID} ↗</a></dd>
+      </dl>
+      <div>${d.modalities.map(m => `<span class="chip">${m}</span>`).join("")}</div>
+      <p class="sub" style="margin:.8rem 0 0;font-size:.8rem">Original photos and record at the GBIF link.</p>`;
+  }
+  $("#fsplit").onchange = draw;
+  const inp = $("#fsp"), drop = $("#spdrop");
+  inp.oninput = async () => {
+    mapState.sp = null;
+    if (inp.value.length < 2) { drop.hidden = true; draw(); return; }
+    const hits = await api("species?q=" + encodeURIComponent(inp.value));
+    drop.innerHTML = (hits ?? []).map(h =>
+      `<div data-sp="${h.sp}"><i>${esc(h.name)}</i> <span style="color:var(--muted)">${h.n}</span></div>`).join("");
+    drop.hidden = !hits?.length;
+    drop.querySelectorAll("div").forEach(el => el.onclick = () => {
+      mapState.sp = +el.dataset.sp; inp.value = el.querySelector("i").textContent;
+      drop.hidden = true; draw();
+    });
+  };
+  draw();
 }
 
 /* ---- router ---- */
@@ -170,10 +238,12 @@ async function route() {
   document.querySelectorAll("nav a").forEach(a =>
     a.classList.toggle("active", a.hash === "#/" + (p1 || "status")));
   const r = { status: vStatus, code: vCode, science: () => vScience(p2), benchmarks: vBench, data: vData };
+  route.after = null;
   view.innerHTML = p1 === "file" ? await vFile(decodeURIComponent(location.hash.slice(7)))
     : p1 === "rule" ? vRule(p2)
     : p1 === "bench" ? vBenchOne(p2)
     : (r[p1] ?? vStatus)();
+  route.after?.();
   window.scrollTo(0, 0);
 }
 addEventListener("hashchange", route);

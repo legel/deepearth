@@ -63,6 +63,71 @@ def code(p):
     return Response((REPO / p).read_text(errors="replace"), mimetype="text/plain")
 
 
+_OBS = {}
+
+
+def _obs():
+    if not _OBS:
+        import numpy as np
+        p = STATE / "observations.npz"
+        p.exists() or abort(404)
+        _OBS.update(np.load(p))
+        _OBS["species"] = json.loads((STATE / "species.json").read_text())
+    return _OBS
+
+
+MODS = ["daymet", "naip", "clay", "soil", "topo", "chm", "hydro", "flower", "species_dist"]
+
+
+@app.get("/api/observations")
+def observations():
+    import numpy as np
+    o = _obs()
+    n = len(o["lat"])
+    keep = np.ones(n, bool)
+    if (split := request.args.get("split")) in ("train", "test"):
+        keep &= o["test"] == (split == "test")
+    if (sp := request.args.get("sp", type=int)) is not None:
+        keep &= o["sp"] == sp
+    idx = np.where(keep)[0]
+    cap = request.args.get("n", 12000, type=int)
+    if len(idx) > cap:
+        idx = idx[:: len(idx) // cap + 1]                 # deterministic thinning
+    return jsonify({"total": int(keep.sum()), "shown": len(idx),
+                    "id": o["gbifID"][idx].tolist(), "lat": o["lat"][idx].round(5).tolist(),
+                    "lon": o["lon"][idx].round(5).tolist(), "sp": o["sp"][idx].tolist(),
+                    "test": o["test"][idx].astype(int).tolist()})
+
+
+@app.get("/api/observation/<int:gid>")
+def observation(gid):
+    import numpy as np
+    o = _obs()
+    hits = np.where(o["gbifID"] == gid)[0]
+    len(hits) or abort(404)
+    i = int(hits[0])
+    days = float(o["days"][i])
+    date = None if np.isnan(days) else (np.datetime64("1970-01-01") + np.timedelta64(int(days), "D")).item().isoformat()
+    return jsonify({
+        "gbifID": int(gid), "lat": float(o["lat"][i]), "lon": float(o["lon"][i]),
+        "elev": float(o["elev"][i]), "date": date,
+        "species": o["species"]["binomial"][int(o["sp"][i])], "sp": int(o["sp"][i]),
+        "split": "test" if o["test"][i] else "train",
+        "modalities": [m for b, m in enumerate(MODS) if int(o["mods"][i]) >> b & 1],
+        "source": f"https://www.gbif.org/occurrence/{gid}"})
+
+
+@app.get("/api/species")
+def species():
+    o = _obs()
+    q = request.args.get("q", "").lower()
+    s = o["species"]
+    hits = [{"sp": i, "name": nm, "n": c} for i, (nm, c) in enumerate(zip(s["binomial"], s["count"]))
+            if q in nm.lower() and c > 0]
+    hits.sort(key=lambda x: -x["n"])
+    return jsonify(hits[:30])
+
+
 @app.get("/api/runs")
 def runs():
     out = []

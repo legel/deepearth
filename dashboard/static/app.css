@@ -68,4 +68,30 @@ code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .
 .pill.code { border-color: var(--code); } .pill.science { border-color: var(--science); }
 .pill.bench { border-color: var(--bench); } .pill.data { border-color: var(--data); }
 
-@media (max-width: 900px) { header, main { padding-left: 1.2rem; padding-right: 1.2rem; } }
+/* data view — map + observation panel */
+.maprow { display: grid; grid-template-columns: 1fr 340px; gap: 12px; }
+#map { height: 580px; border: 1px solid var(--border); border-radius: 6px; background: #dcd9d2; }
+.obspanel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+            padding: 1.1rem 1.2rem; overflow-y: auto; max-height: 580px; }
+.obspanel .latin { font-style: italic; font-size: 1.05rem; font-weight: 650; }
+.filterbar { display: flex; gap: .8rem; align-items: center; margin: 0 0 .8rem; position: relative; }
+.filterbar select, .filterbar input {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 4px; padding: .3rem .6rem; }
+.filterbar input { width: 240px; }
+.filterbar .count { color: var(--muted); font-size: .82rem; margin-left: auto; }
+.spdrop { position: absolute; top: 2.4rem; left: 0; z-index: 1200; background: var(--surface);
+          border: 1px solid var(--line); border-radius: 4px; min-width: 300px;
+          box-shadow: 0 6px 24px rgba(11,11,11,.12); }
+.spdrop div { padding: .35rem .7rem; cursor: pointer; }
+.spdrop div:hover { background: var(--plane); }
+.chip { display: inline-block; background: var(--plane); border: 1px solid var(--grid);
+        border-radius: 99px; padding: .06em .6em; font-size: .76rem; color: var(--ink-2);
+        margin: 0 .25em .3em 0; }
+.legend { display: flex; gap: 1.1rem; font-size: .82rem; color: var(--ink-2); margin-top: .5rem; }
+.legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: .35em; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: .15rem .9rem; font-size: .88rem; margin: .8rem 0; }
+.kv dt { color: var(--muted); } .kv dd { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 900px) { header, main { padding-left: 1.2rem; padding-right: 1.2rem; }
+  .maprow { grid-template-columns: 1fr; } }
