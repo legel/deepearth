@@ -77,3 +77,7 @@ results.tsv
 encoders/spacetime/hashencoder/build/
 **/*.so
 deepearth
+
+# dashboard generated state (regenerate: dashboard/README.md)
+dashboard/state/
+dashboard/runs/

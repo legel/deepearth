@@ -1,0 +1,71 @@
+/* DeepEarth dashboard — gallery-light, hairlines, air. */
+:root {
+  color-scheme: light;
+  --plane: #f9f9f7; --surface: #fcfcfb;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --line: #c3c2b7; --border: rgba(11,11,11,.10);
+  --code: #2a78d6; --science: #4a3aa7; --bench: #1baf7a; --data: #eb6834;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --seq: #2a78d6;
+}
+* { margin: 0; box-sizing: border-box; }
+body {
+  background: var(--plane); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+a { color: inherit; text-decoration: none; }
+
+header {
+  display: flex; align-items: baseline; gap: 2.5rem;
+  padding: 1.6rem 3rem; border-bottom: 1px solid var(--grid);
+}
+.wordmark { font-size: 1.05rem; font-weight: 650; letter-spacing: .16em; text-transform: uppercase; }
+nav { display: flex; gap: 1.6rem; }
+nav a { color: var(--ink-2); font-size: .92rem; padding-bottom: .2rem; }
+nav a.active { color: var(--ink); border-bottom: 2px solid var(--ink); }
+.meta { margin-left: auto; color: var(--muted); font-size: .8rem; }
+
+main { max-width: 1280px; margin: 0 auto; padding: 2.6rem 3rem 6rem; }
+h1 { font-size: 1.5rem; font-weight: 650; margin-bottom: .4rem; }
+h2 { font-size: 1.02rem; font-weight: 650; margin: 2.2rem 0 .8rem; }
+.sub { color: var(--ink-2); margin-bottom: 2rem; max-width: 60ch; }
+.empty { color: var(--muted); border: 1px dashed var(--line); border-radius: 6px;
+         padding: 2.2rem; text-align: center; margin-top: 2rem; }
+.empty code { color: var(--ink-2); }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .86em; }
+
+/* status tiles */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.tile {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: .9rem 1rem; cursor: pointer; display: block;
+}
+.tile:hover { border-color: var(--line); }
+.tile .s { display: inline-flex; align-items: center; gap: .45em;
+           font-size: .78rem; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.tile .s .dot { width: 9px; height: 9px; border-radius: 50%; }
+.tile h3 { font-size: .95rem; font-weight: 600; margin-top: .35rem; }
+.tile p { color: var(--ink-2); font-size: .84rem; margin-top: .25rem; }
+.tile.sys { padding: 1.3rem 1.2rem; }
+.tile.sys h3 { font-size: 1.15rem; }
+
+/* generic list rows */
+.rows { border-top: 1px solid var(--grid); }
+.row { display: flex; gap: 1.2rem; align-items: baseline; padding: .55rem .2rem;
+       border-bottom: 1px solid var(--grid); }
+.row:hover { background: var(--surface); }
+.row .id { color: var(--muted); font-size: .8rem; min-width: 3.2rem; }
+.row .grow { flex: 1; }
+.row .num { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: .88rem; }
+
+/* score bar */
+.bar { height: 10px; border-radius: 0 4px 4px 0; background: var(--seq); min-width: 2px; }
+.bartrack { flex: 0 0 220px; background: var(--surface); border-left: 2px solid var(--line); }
+
+/* pillar accents */
+.pill { display: inline-block; padding: .05em .55em; border-radius: 99px;
+        font-size: .75rem; border: 1px solid var(--border); color: var(--ink-2); }
+.pill.code { border-color: var(--code); } .pill.science { border-color: var(--science); }
+.pill.bench { border-color: var(--bench); } .pill.data { border-color: var(--data); }
+
+@media (max-width: 900px) { header, main { padding-left: 1.2rem; padding-right: 1.2rem; } }

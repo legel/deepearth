@@ -1,0 +1,462 @@
+{
+ "rules": [
+  {
+   "id": 1,
+   "title": "Causal auto-regressive forecasting",
+   "summary": "Earth4D learns spatio-temporal distributions via causal auto-regressive model forecasting future states from past states.",
+   "system": "earth4d",
+   "keywords": [
+    "autoregressive",
+    "forecast",
+    "causal",
+    "temporal",
+    "earth4d"
+   ]
+  },
+  {
+   "id": 2,
+   "title": "Absolute and relative encoders",
+   "summary": "Earth4D pairs an absolute GPS/time NeRF-like encoder with a relative limited-context 4D LSTM-like encoder.",
+   "system": "earth4d",
+   "keywords": [
+    "absolute_encoder",
+    "relative_encoder",
+    "lat",
+    "lon",
+    "context_window"
+   ]
+  },
+  {
+   "id": 3,
+   "title": "Positional encodings fused per-token",
+   "summary": "Earth4D positional encodings must be trained and fused with every token in each batch's context window.",
+   "system": "earth4d",
+   "keywords": [
+    "positional_encoding",
+    "fuse",
+    "token",
+    "earth4d",
+    "batch"
+   ]
+  },
+  {
+   "id": 4,
+   "title": "Retain CUDA kernel speed",
+   "summary": "Earth4D must stay at least as fast as current production NVIDIA-origin CUDA kernels.",
+   "system": "earth4d",
+   "keywords": [
+    "cuda",
+    "kernel",
+    "hashencoder",
+    "throughput",
+    "benchmark"
+   ]
+  },
+  {
+   "id": 5,
+   "title": "Capability over parameter count",
+   "summary": "Measure Earth4D by held-out capability; prefer smallest model meeting current benchmark means; scale only when capability improves.",
+   "system": "earth4d",
+   "keywords": [
+    "harmonic_mean",
+    "param_count",
+    "held_out",
+    "benchmark",
+    "capacity"
+   ]
+  },
+  {
+   "id": 6,
+   "title": "Parallelizable memory and compute",
+   "summary": "Earth4D architecture must allow concurrent processing of multiple geography/time subsets at scale.",
+   "system": "earth4d",
+   "keywords": [
+    "parallel",
+    "shard",
+    "batch",
+    "concurrent",
+    "memory"
+   ]
+  },
+  {
+   "id": 7,
+   "title": "Per-species embeddings share topology",
+   "summary": "Phylogenomic network preserves per-species embeddings that share processing topologically per evolutionary history.",
+   "system": "phylo",
+   "keywords": [
+    "species_embedding",
+    "phylo",
+    "tree",
+    "topology",
+    "graph"
+   ]
+  },
+  {
+   "id": 8,
+   "title": "Self-supervised from scientific trees",
+   "summary": "Phylogenomic species network must be self-supervised, based entirely on scientifically-derived phylogenetic trees.",
+   "system": "phylo",
+   "keywords": [
+    "self_supervised",
+    "phylogeny",
+    "tree",
+    "newick",
+    "species"
+   ]
+  },
+  {
+   "id": 9,
+   "title": "Projectable embedding for unknowns",
+   "summary": "Phylogenomic embedding space must admit projection of new species with unknown tree-of-life position.",
+   "system": "phylo",
+   "keywords": [
+    "embedding",
+    "project",
+    "unseen_species",
+    "zero_shot",
+    "phylo"
+   ]
+  },
+  {
+   "id": 10,
+   "title": "Learnable in-context neighbor updates",
+   "summary": "Species network is learnable: in-context species and neighboring species update every batch.",
+   "system": "phylo",
+   "keywords": [
+    "neighbor",
+    "update",
+    "batch",
+    "learnable",
+    "species_graph"
+   ]
+  },
+  {
+   "id": 11,
+   "title": "Neighbor embedding propagation",
+   "summary": "A batch with only Species A must update embeddings of neighbor species B, C, ..., n-th neighbor.",
+   "system": "phylo",
+   "keywords": [
+    "propagate",
+    "neighbor",
+    "gradient",
+    "species",
+    "update"
+   ]
+  },
+  {
+   "id": 12,
+   "title": "Fast phylogenomic gather-update",
+   "summary": "Species network gather and update must become extremely fast, likely via optimized CUDA.",
+   "system": "phylo",
+   "keywords": [
+    "cuda",
+    "gather",
+    "scatter",
+    "sparse",
+    "phylo"
+   ]
+  },
+  {
+   "id": 13,
+   "title": "Token context window fusion",
+   "summary": "Core multi-modal fusion inputs a context window of tokens 1..T.",
+   "system": "fusion",
+   "keywords": [
+    "context_window",
+    "tokens",
+    "fusion",
+    "sequence",
+    "T"
+   ]
+  },
+  {
+   "id": 14,
+   "title": "Token composition four encodings",
+   "summary": "Each token combines Earth4D encoding, phylogenomic encoding, modality-specific encoding, and learnable modality-type nn.Embedding.",
+   "system": "fusion",
+   "keywords": [
+    "nn.Embedding",
+    "modality",
+    "token",
+    "dinov3",
+    "concat"
+   ]
+  },
+  {
+   "id": 15,
+   "title": "Mask-as-query with memory",
+   "summary": "PerceiverIO-style masking of tokens as querying; attend over full window plus accessible long-term memory.",
+   "system": "fusion",
+   "keywords": [
+    "mask",
+    "query",
+    "attention",
+    "perceiver",
+    "memory"
+   ]
+  },
+  {
+   "id": 16,
+   "title": "Joint distribution modeling",
+   "summary": "Representation must simultaneously model joint distributions of all variables, Hinton/DBM-inspired generative multi-modal modeling.",
+   "system": "fusion",
+   "keywords": [
+    "joint",
+    "distribution",
+    "covariance",
+    "boltzmann",
+    "generative"
+   ]
+  },
+  {
+   "id": 17,
+   "title": "MADE-style Bayesian posterior",
+   "summary": "Train as Bayesian probabilistic model: unmasking additional evidence yields most-likely posterior system state.",
+   "system": "method",
+   "keywords": [
+    "made",
+    "bayesian",
+    "posterior",
+    "unmask",
+    "likelihood"
+   ]
+  },
+  {
+   "id": 18,
+   "title": "All modalities always included",
+   "summary": "Ingest every prepared modality; a modality hurting benchmarks is an integration bug, never a drop reason.",
+   "system": "data",
+   "keywords": [
+    "modality",
+    "ingest",
+    "missing_value",
+    "loss_balance",
+    "fusion"
+   ]
+  },
+  {
+   "id": 19,
+   "title": "Minimize files and tokens",
+   "summary": "Express the system in fewest files/tokens on the mutable critical-path surface; quantify and shrink it each pass.",
+   "system": "method",
+   "keywords": [
+    "token_count",
+    "file_count",
+    "surface",
+    "condense",
+    "readme"
+   ]
+  },
+  {
+   "id": 20,
+   "title": "Fixed 2291-step budget",
+   "summary": "Every comparable experiment runs exactly 2,291 optimizer steps, seeds 1337/1338, with seed-matched controls.",
+   "system": "method",
+   "keywords": [
+    "2291",
+    "steps",
+    "seed",
+    "1337",
+    "optimizer"
+   ]
+  },
+  {
+   "id": 21,
+   "title": "Efficiency without math change",
+   "summary": "Optimize kernels, fusion, compilation, memory without changing per-step math; verify exactness; report time/params/VRAM.",
+   "system": "method",
+   "keywords": [
+    "cuda",
+    "exactness",
+    "vram",
+    "wall_time",
+    "compile"
+   ]
+  },
+  {
+   "id": 22,
+   "title": "Iterative multi-modal diffusion decoding",
+   "summary": "Reconstruct all variables jointly over K refinement rounds through the shared latent bottleneck; even observed states revisable.",
+   "system": "fusion",
+   "keywords": [
+    "K_rounds",
+    "refine",
+    "latent",
+    "diffusion",
+    "state"
+   ]
+  },
+  {
+   "id": 23,
+   "title": "Preserve per-variable marginals",
+   "summary": "Each variable keeps own channel and decoder; cross-modal flow only via O(N\u00b7L) latent highway, never O(N\u00b2).",
+   "system": "fusion",
+   "keywords": [
+    "decoder",
+    "marginal",
+    "latent",
+    "per_variable",
+    "bottleneck"
+   ]
+  },
+  {
+   "id": 24,
+   "title": "Dense 4D field modeling",
+   "summary": "Infer most-likely embedding of every variable at every space-time patch, pinning observations, matching sensor resolutions.",
+   "system": "fusion",
+   "keywords": [
+    "patch",
+    "dense",
+    "field",
+    "naip",
+    "interpolate"
+   ]
+  },
+  {
+   "id": 25,
+   "title": "Maskable phylogenomic embedding",
+   "summary": "Species' phylogenomic embedding is a maskable, reconstructable MADE state; randomly withhold per batch and reconstruct.",
+   "system": "phylo",
+   "keywords": [
+    "mask",
+    "reconstruct",
+    "phylo_embedding",
+    "withhold",
+    "species"
+   ]
+  },
+  {
+   "id": 26,
+   "title": "Frozen BioCLIP text seed",
+   "summary": "Seed species embeddings from frozen BioCLIP 2.5 text embeddings via a small learned probe; compute once per species per batch.",
+   "system": "phylo",
+   "keywords": [
+    "bioclip",
+    "frozen",
+    "probe",
+    "text_embedding",
+    "1024"
+   ]
+  },
+  {
+   "id": 27,
+   "title": "Bidirectional plant-pollinator induction",
+   "summary": "Model interactions as bilinear form between two separately phylo-refined trees so one pair propagates both ways.",
+   "system": "phylo",
+   "keywords": [
+    "pollinator",
+    "bilinear",
+    "interaction",
+    "bipartite",
+    "plant"
+   ]
+  },
+  {
+   "id": 28,
+   "title": "No fuzzy science grounding",
+   "summary": "Every component fit to real data or a frozen SOTA foundation embedding; no unvalidated priors or heuristics.",
+   "system": "method",
+   "keywords": [
+    "sota",
+    "validate",
+    "frozen",
+    "foundation",
+    "real_data"
+   ]
+  },
+  {
+   "id": 29,
+   "title": "Exact tree-GP clade attention",
+   "summary": "Refine species graph via exact OU tree-GP O(N) message passing on internal clade nodes; LatentCladeAttention unifies out-of-tree.",
+   "system": "phylo",
+   "keywords": [
+    "LatentCladeAttention",
+    "OU",
+    "cophenetic",
+    "clade",
+    "message_passing"
+   ]
+  },
+  {
+   "id": 30,
+   "title": "Champion before-after reporting",
+   "summary": "Every champion commit runs champion_report.py, states BEFORE->AFTER scores per benchmark; no metric may regress.",
+   "system": "method",
+   "keywords": [
+    "champion_report",
+    "champion_scores.json",
+    "harmonic",
+    "regression",
+    "before_after"
+   ]
+  },
+  {
+   "id": 31,
+   "title": "Detached heads, inviolable core",
+   "summary": "Heads train on detached pooled latents by default; backprop allowed only via isolated trait-subspace with reliability weighting.",
+   "system": "method",
+   "keywords": [
+    "detach",
+    "head",
+    "trait_subspace",
+    "pooled",
+    "reliability"
+   ]
+  },
+  {
+   "id": 32,
+   "title": "Score full benchmark suite",
+   "summary": "Net score is harmonic mean over ALL benchmarks including renormalized deltas; champions carry the whole suite.",
+   "system": "method",
+   "keywords": [
+    "harmonic_mean",
+    "_net_value",
+    "logistic",
+    "benchmark",
+    "suite"
+   ]
+  }
+ ],
+ "foundations": [
+  {
+   "name": "DINOv3",
+   "role": "Vision encoder embedding iNaturalist, NAIP, Sentinel-2 imagery (SAT493M variant for satellite)."
+  },
+  {
+   "name": "CLAY v1.5",
+   "role": "Open geospatial foundation model vision encoder for satellite imagery."
+  },
+  {
+   "name": "GraphCast",
+   "role": "GNN causal spatio-temporal simulator inspiration (deterministic weather forecasting)."
+  },
+  {
+   "name": "GenCast",
+   "role": "GNN probabilistic spatio-temporal simulator inspiration (probabilistic weather forecasting)."
+  },
+  {
+   "name": "JEPA (I-JEPA)",
+   "role": "Joint-embedding predictive architecture inspiring embedding-space masked prediction fusion."
+  },
+  {
+   "name": "Perceiver IO",
+   "role": "Latent-bottleneck architecture inspiring mask-as-query multi-modal fusion."
+  },
+  {
+   "name": "Deep Boltzmann Machines (Srivastava & Salakhutdinov)",
+   "role": "Hinton-lineage joint multi-modal distribution modeling inspiration (rule 16)."
+  },
+  {
+   "name": "MADE",
+   "role": "Masked autoencoder for distribution estimation; basis of Bayesian posterior training (rule 17)."
+  },
+  {
+   "name": "BioCLIP / BioCLIP 2 / 2.5",
+   "role": "Tree-of-life foundation model; frozen 2.5 ViT-H 1024-d text embeddings seed species representations (rule 26)."
+  },
+  {
+   "name": "LP-FT",
+   "role": "Evidence that naive fine-tuning distorts pretrained geometry; justifies frozen-prior-plus-probe design."
+  }
+ ]
+}

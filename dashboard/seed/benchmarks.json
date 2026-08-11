@@ -1,0 +1,601 @@
+{
+ "benchmarks": [
+  {
+   "id": "B1",
+   "key": "B1_species_from_env_top10",
+   "family": "species_identification",
+   "measures": "species distribution modeling from full environmental context",
+   "inputs": "universal env context U",
+   "target": "species (top-10)",
+   "current_score": 0.40322906835647837
+  },
+  {
+   "id": "B2",
+   "key": "B2_species_from_photo_top1",
+   "family": "species_identification",
+   "measures": "flagship species ID fusing env context with ground photo",
+   "inputs": "U + ground photo",
+   "target": "species (top-1)",
+   "current_score": 0.8279627881892948
+  },
+  {
+   "id": "B3",
+   "key": "B3_species_from_photo_top5",
+   "family": "species_identification",
+   "measures": "species ID from env context plus ground photo",
+   "inputs": "U + ground photo",
+   "target": "species (top-5)",
+   "current_score": 0.9538897128218957
+  },
+  {
+   "id": "B4",
+   "key": "B4_species_from_photo_only_top1",
+   "family": "species_identification",
+   "measures": "species ID from photo alone, no environmental context",
+   "inputs": "ground photo only",
+   "target": "species (top-1)",
+   "current_score": 0.8303222327086424
+  },
+  {
+   "id": "B5",
+   "key": "B5_species_from_spacetime_top10",
+   "family": "species_identification",
+   "measures": "species prediction from bare space-time position",
+   "inputs": "space-time coords only",
+   "target": "species (top-10)",
+   "current_score": 0.401392072266415
+  },
+  {
+   "id": "B6",
+   "key": "B6_family_from_env",
+   "family": "taxonomy",
+   "measures": "niche determinism: taxonomic family from environment",
+   "inputs": "universal env context U",
+   "target": "family (accuracy)",
+   "current_score": 0.1595153026830255
+  },
+  {
+   "id": "B7",
+   "key": "B7_family_from_phylo",
+   "family": "taxonomy",
+   "measures": "family recovery from phylogenetic embedding",
+   "inputs": "phylo embedding",
+   "target": "family (accuracy)",
+   "current_score": 0.9522381016583524
+  },
+  {
+   "id": "B8",
+   "key": "B8_family_from_spacetime",
+   "family": "taxonomy",
+   "measures": "family prediction from bare space-time position",
+   "inputs": "space-time coords only",
+   "target": "family (accuracy)",
+   "current_score": 0.16096467574491033
+  },
+  {
+   "id": "B9",
+   "key": "B9_phylo_from_photo_cos",
+   "family": "taxonomy",
+   "measures": "infer evolutionary/phylo vector from photo and env",
+   "inputs": "U + ground photo",
+   "target": "phylo embedding (cosine)",
+   "current_score": 0.8265858874321627
+  },
+  {
+   "id": "B10",
+   "key": "B10_traits_from_photo_env_f1",
+   "family": "traits",
+   "measures": "trait prediction fusing photo and environment",
+   "inputs": "U + ground photo",
+   "target": "trait classes (macro-F1)",
+   "current_score": 0.9181479698413321
+  },
+  {
+   "id": "B11",
+   "key": "B11_traits_from_photo_f1",
+   "family": "traits",
+   "measures": "trait prediction from photo alone",
+   "inputs": "ground photo only",
+   "target": "trait classes (macro-F1)",
+   "current_score": 0.9149939367942928
+  },
+  {
+   "id": "B12",
+   "key": "B12_traits_leave_one_out_f1",
+   "family": "traits",
+   "measures": "trait imputation from all other observed variables",
+   "inputs": "all variables except trait",
+   "target": "held-out trait (macro-F1)",
+   "current_score": 0.9929149278512417
+  },
+  {
+   "id": "B13",
+   "key": "B13_imagine_vision_cos",
+   "family": "vision_imagination",
+   "measures": "imagine ground-level appearance (DINO embedding) from non-vision context",
+   "inputs": "non-vision observed variables",
+   "target": "DINO vision embedding",
+   "current_score": 0.6045074069437286
+  },
+  {
+   "id": "B14",
+   "key": "B14_vision_leave_one_out_cos",
+   "family": "vision_imagination",
+   "measures": "reconstruct ground vision from all other variables",
+   "inputs": "all variables except vision_dino",
+   "target": "DINO vision embedding",
+   "current_score": 0.6660979349239988
+  },
+  {
+   "id": "B15",
+   "key": "B15_vision_from_aerial_cos",
+   "family": "vision_imagination",
+   "measures": "cross-view: predict ground vision from aerial imagery",
+   "inputs": "NAIP aerial embeddings",
+   "target": "DINO vision embedding",
+   "current_score": 0.25478276181642107
+  },
+  {
+   "id": "B16",
+   "key": "B16_infer_clay_cos",
+   "family": "env_reconstruction",
+   "measures": "reconstruct clay/Sentinel-2 modality from rest of U",
+   "inputs": "U minus clay",
+   "target": "clay embedding (cosine)",
+   "current_score": 0.6689229478922207
+  },
+  {
+   "id": "B17",
+   "key": "B17_infer_soil_cos",
+   "family": "env_reconstruction",
+   "measures": "reconstruct SSURGO soil modality from rest of U",
+   "inputs": "U minus soil",
+   "target": "soil embedding (cosine)",
+   "current_score": 0.5033351640519997
+  },
+  {
+   "id": "B18",
+   "key": "B18_infer_climate_cos",
+   "family": "env_reconstruction",
+   "measures": "reconstruct Daymet climate from rest of U",
+   "inputs": "U minus climate",
+   "target": "climate embedding (cosine)",
+   "current_score": 0.45735544667855355
+  },
+  {
+   "id": "B19",
+   "key": "B19_infer_aerial_cos",
+   "family": "env_reconstruction",
+   "measures": "reconstruct NAIP RGB aerial from non-aerial U",
+   "inputs": "U minus both aerials",
+   "target": "NAIP RGB embedding",
+   "current_score": 0.4920742593718713
+  },
+  {
+   "id": "B20",
+   "key": "B20_community_from_env_recall",
+   "family": "community",
+   "measures": "predict local co-occurring species set from environment",
+   "inputs": "universal env context U",
+   "target": "community set (recall@10)",
+   "current_score": 0.22249939441680908
+  },
+  {
+   "id": "B21",
+   "key": "B21_community_from_species_recall",
+   "family": "community",
+   "measures": "predict co-occurring species from focal species identity",
+   "inputs": "focal species identity",
+   "target": "community set (recall@10)",
+   "current_score": 0.20502255360285443
+  },
+  {
+   "id": "B22",
+   "key": "B22_companions_recall",
+   "family": "community",
+   "measures": "predict companion species from species plus environment",
+   "inputs": "species identity + U",
+   "target": "companion set (recall@10)",
+   "current_score": 0.2023489902416865
+  },
+  {
+   "id": "B23",
+   "key": "B23_species_calibration_mrr",
+   "family": "calibration",
+   "measures": "calibration of the species posterior ranking",
+   "inputs": "universal env context U",
+   "target": "true-species rank (MRR)",
+   "current_score": 0.19170993085143473
+  },
+  {
+   "id": "B24",
+   "key": "B24_geo_information_gain",
+   "family": "diagnostics_gain",
+   "measures": "information gained from location: derived delta B2 minus B1",
+   "inputs": "derived from B2, B1",
+   "target": "score difference",
+   "current_score": 0.4247337198328165
+  },
+  {
+   "id": "B25",
+   "key": "B25_forecast_climate_cos",
+   "family": "forecasting",
+   "measures": "forecast strictly-future climate on temporal holdout",
+   "inputs": "U minus climate, future",
+   "target": "future climate embedding",
+   "current_score": null
+  },
+  {
+   "id": "B26",
+   "key": "B26_flowering_auc",
+   "family": "phenology",
+   "measures": "predict flowering state from environmental context",
+   "inputs": "universal env context U",
+   "target": "flowering label (ROC-AUC)",
+   "current_score": 0.7508130900193699
+  },
+  {
+   "id": "B27",
+   "key": "B27_flowering_fidelity",
+   "family": "phenology",
+   "measures": "flowering agreement between imagined and real vision",
+   "inputs": "U vs U+photo",
+   "target": "flowering probability agreement",
+   "current_score": 0.7343103885650635
+  },
+  {
+   "id": "B28",
+   "key": "B28_flowering_peak_month_mrr",
+   "family": "phenology",
+   "measures": "seasonality: rank true peak-flowering month via time sweep",
+   "inputs": "species + 12-month sweep",
+   "target": "peak flowering month (MRR)",
+   "current_score": 0.3664889737717555
+  },
+  {
+   "id": "B29",
+   "key": "B29_species_dist_30m_skill",
+   "family": "species_distribution",
+   "measures": "per-cell 30m species-distribution KL skill score",
+   "inputs": "universal env context U",
+   "target": "30m species frequency distribution",
+   "current_score": null
+  },
+  {
+   "id": "B30",
+   "key": "B30_seasonality_trait_f1",
+   "family": "traits",
+   "measures": "seasonality trait classification from photo and environment",
+   "inputs": "U + ground photo",
+   "target": "seasonality class (macro-F1)",
+   "current_score": 0.9405183973639211
+  },
+  {
+   "id": "B31",
+   "key": "B31_forecast_vision_cos",
+   "family": "forecasting",
+   "measures": "forecast future ground appearance on temporal holdout",
+   "inputs": "U, temporal holdout",
+   "target": "future vision embedding",
+   "current_score": null
+  },
+  {
+   "id": "B32",
+   "key": "B32_plant_type_trait_f1",
+   "family": "traits",
+   "measures": "plant-type (habit) trait classification",
+   "inputs": "U + ground photo",
+   "target": "plant type (macro-F1)",
+   "current_score": 0.9410777674883561
+  },
+  {
+   "id": "B33",
+   "key": "B33_growth_rate_trait_f1",
+   "family": "traits",
+   "measures": "growth-rate trait classification",
+   "inputs": "U + ground photo",
+   "target": "growth rate (macro-F1)",
+   "current_score": 0.909036340147153
+  },
+  {
+   "id": "B34",
+   "key": "B34_lfmc_from_env",
+   "family": "ecophysiology",
+   "measures": "predict species peak fire-season live fuel moisture",
+   "inputs": "universal env context U",
+   "target": "log-LFMC (Pearson r)",
+   "current_score": 0.3708965137818947
+  },
+  {
+   "id": "B35",
+   "key": "B35_sun_trait_f1",
+   "family": "traits",
+   "measures": "sun/light-requirement trait classification",
+   "inputs": "U + ground photo",
+   "target": "sun requirement (macro-F1)",
+   "current_score": 0.9113183181426332
+  },
+  {
+   "id": "B36",
+   "key": "B36_ease_of_care_trait_f1",
+   "family": "traits",
+   "measures": "ease-of-care (horticultural niche breadth) classification",
+   "inputs": "U + ground photo",
+   "target": "ease-of-care class (macro-F1)",
+   "current_score": 0.9557085419488134
+  },
+  {
+   "id": "B37",
+   "key": "B37_imagine_vision_bio_cos",
+   "family": "vision_imagination",
+   "measures": "imagine BioCLIP-2 ground-vision embedding from non-vision context",
+   "inputs": "non-vision observed variables",
+   "target": "BioCLIP-2 embedding (anomaly cosine)",
+   "current_score": 0.5052223966757178
+  },
+  {
+   "id": "B38",
+   "key": "B38_water_soil_regime_f1",
+   "family": "ecophysiology",
+   "measures": "water and soil-drainage regime classification",
+   "inputs": "U + ground photo",
+   "target": "water+drainage classes (macro-F1)",
+   "current_score": 0.9068602616292605
+  },
+  {
+   "id": "B39",
+   "key": "B39_species_dist_3km_skill",
+   "family": "species_distribution",
+   "measures": "per-cell 3km species-distribution KL skill score",
+   "inputs": "universal env context U",
+   "target": "3km species frequency distribution",
+   "current_score": null
+  },
+  {
+   "id": "B40",
+   "key": "B40_species_dist_300m_skill",
+   "family": "species_distribution",
+   "measures": "per-cell 300m species-distribution KL skill score",
+   "inputs": "universal env context U",
+   "target": "300m species frequency distribution",
+   "current_score": null
+  },
+  {
+   "id": "B41",
+   "key": "B41_pollinator_from_species_recall",
+   "family": "interactions",
+   "measures": "predict local pollinator set from plant identity and env",
+   "inputs": "species identity + U",
+   "target": "pollinator set (recall@10)",
+   "current_score": 0.46034516708100504
+  },
+  {
+   "id": "B42",
+   "key": "B42_mycorrhiza_from_env",
+   "family": "symbiosis",
+   "measures": "predict mycorrhizal type (FungalRoot 5-class) from environment",
+   "inputs": "universal env context U",
+   "target": "mycorrhizal type (macro-F1)",
+   "current_score": 0.20895285807027658
+  },
+  {
+   "id": "B43",
+   "key": "B43_infer_hydro_cos",
+   "family": "env_reconstruction",
+   "measures": "reconstruct drainage/wind (HydroSHEDS+Winstral) from rest of U",
+   "inputs": "U minus hydro",
+   "target": "hydro embedding (cosine)",
+   "current_score": 0.6579119597578107
+  },
+  {
+   "id": "B44",
+   "key": "B44_infer_topo_cos",
+   "family": "env_reconstruction",
+   "measures": "reconstruct 3DEP 1m microtopography from rest of U",
+   "inputs": "U minus topo",
+   "target": "topo embedding (anomaly cosine)",
+   "current_score": 0.6238050737261402
+  },
+  {
+   "id": "B45",
+   "key": "B45_vision_bio_leave_one_out_cos",
+   "family": "vision_imagination",
+   "measures": "reconstruct BioCLIP-2 vision from all other variables",
+   "inputs": "all variables except vision_bio",
+   "target": "BioCLIP-2 embedding (anomaly cosine)",
+   "current_score": 0.5243876048202896
+  },
+  {
+   "id": "B46",
+   "key": "B46_infer_chm_cos",
+   "family": "env_reconstruction",
+   "measures": "reconstruct canopy height/structure (NAIP-CHM) from rest of U",
+   "inputs": "U minus chm",
+   "target": "CHM embedding (anomaly cosine)",
+   "current_score": 0.8657406586689079
+  },
+  {
+   "id": "B47",
+   "key": "B47_infer_naip_ir_cos",
+   "family": "env_reconstruction",
+   "measures": "reconstruct NAIP-IR aerial from U minus both aerials",
+   "inputs": "U minus both aerials",
+   "target": "NAIP-IR embedding (anomaly cosine)",
+   "current_score": 0.3920792738703748
+  },
+  {
+   "id": "B48",
+   "key": "B48_pollinator_from_photo_only_recall",
+   "family": "interactions",
+   "measures": "predict pollinators from the ground photo alone",
+   "inputs": "ground photo only",
+   "target": "pollinator set (recall@10)",
+   "current_score": 0.41936040267921915
+  },
+  {
+   "id": "B49",
+   "key": "B49_form_trait_f1",
+   "family": "traits",
+   "measures": "growth-form trait classification",
+   "inputs": "U + ground photo",
+   "target": "growth form (macro-F1)",
+   "current_score": 0.8738038703812587
+  },
+  {
+   "id": "B50",
+   "key": "B50_pollinator_from_spacetime_recall",
+   "family": "interactions",
+   "measures": "pollinators from bare location via habitat geography",
+   "inputs": "space-time coords only",
+   "target": "pollinator set (recall@10)",
+   "current_score": 0.18451018085418083
+  },
+  {
+   "id": "B51",
+   "key": "B51_pollinator_from_env_recall",
+   "family": "interactions",
+   "measures": "predict pollinator set from environment only",
+   "inputs": "universal env context U",
+   "target": "pollinator set (recall@10)",
+   "current_score": 0.18453773007545615
+  },
+  {
+   "id": "B52",
+   "key": "B52_pollinator_from_photo_recall",
+   "family": "interactions",
+   "measures": "predict pollinators fusing env and ground photo",
+   "inputs": "U + ground photo",
+   "target": "pollinator set (recall@10)",
+   "current_score": 0.42121332994181376
+  },
+  {
+   "id": "B53",
+   "key": "B53_pollinator_calibration_mrr",
+   "family": "interactions",
+   "measures": "calibration of pollinator posterior ranking",
+   "inputs": "species identity + U",
+   "target": "top pollinator rank (MRR)",
+   "current_score": 0.6835514890282357
+  },
+  {
+   "id": "B54",
+   "key": "B54_pollinator_dist_kl",
+   "family": "interactions",
+   "measures": "match predicted vs true pollinator frequency distribution",
+   "inputs": "species identity + U",
+   "target": "pollinator frequencies (exp(-KL))",
+   "current_score": 0.5310396367649524
+  },
+  {
+   "id": "B55",
+   "key": "B55_pollinator_phylo_transfer_recall",
+   "family": "interactions",
+   "measures": "cross-tree induction: pollinators of phylogenetic relatives",
+   "inputs": "species identity + U",
+   "target": "relatives' pollinator set (recall@10)",
+   "current_score": 0.038137699904036884
+  },
+  {
+   "id": "B56",
+   "key": "B56_family_phylo_graph_gain",
+   "family": "diagnostics_gain",
+   "measures": "species-graph contribution to family-from-phylo accuracy",
+   "inputs": "ablation delta B7",
+   "target": "accuracy gain",
+   "current_score": 0.22910206282863693
+  },
+  {
+   "id": "B57",
+   "key": "B57_flowering_phylo_graph_gain",
+   "family": "diagnostics_gain",
+   "measures": "species-graph contribution to flowering AUC",
+   "inputs": "ablation delta B26",
+   "target": "AUC gain",
+   "current_score": 0.0005402385564277634
+  },
+  {
+   "id": "B58",
+   "key": "B58_lfmc_phylo_graph_gain",
+   "family": "diagnostics_gain",
+   "measures": "species-graph contribution to LFMC correlation",
+   "inputs": "ablation delta B34",
+   "target": "correlation gain",
+   "current_score": 0
+  },
+  {
+   "id": "B59",
+   "key": "B59_pollinator_phylo_graph_gain",
+   "family": "diagnostics_gain",
+   "measures": "species-graph contribution to pollinator recall",
+   "inputs": "ablation delta B51",
+   "target": "recall gain",
+   "current_score": 5.110326739503346e-05
+  },
+  {
+   "id": "B60",
+   "key": "B60_community_phylo_graph_gain",
+   "family": "diagnostics_gain",
+   "measures": "species-graph contribution to community recall",
+   "inputs": "ablation delta B20",
+   "target": "recall gain",
+   "current_score": 0.05815320511658986
+  },
+  {
+   "id": "B61",
+   "key": "B61_trait_phylo_graph_gain",
+   "family": "diagnostics_gain",
+   "measures": "species-graph contribution to trait macro-F1",
+   "inputs": "ablation delta B10",
+   "target": "macro-F1 gain",
+   "current_score": 0.03508008663070533
+  },
+  {
+   "id": "B62",
+   "key": "B62_mycorrhiza_phylo_graph_gain",
+   "family": "diagnostics_gain",
+   "measures": "species-graph contribution to mycorrhiza macro-F1",
+   "inputs": "ablation delta B42",
+   "target": "macro-F1 gain",
+   "current_score": 0.0033621049409600923
+  },
+  {
+   "id": "B63",
+   "key": "B63_myco_from_species_f1",
+   "family": "symbiosis",
+   "measures": "phylo imputation of mycorrhizal type given species identity",
+   "inputs": "species identity",
+   "target": "mycorrhizal type (macro-F1)",
+   "current_score": 0.9877667529245612
+  }
+ ],
+ "scoring": {
+  "net_score": {
+   "function": "net_score(raw)",
+   "file": "/home/photon/4tb/deepearth/autoresearch/evaluate.py",
+   "line": 512,
+   "definition": "Harmonic mean (power mean p=-1) of ALL active benchmarks after normalized() (clip to [0,1], drop NaN) and per-benchmark _net_value mapping: len(vals) / sum(1/v). 100% inclusion \u2014 capability metrics AND ablation-deltas.",
+   "net_value_mapping": "_net_value (line 496): diagnostic '_gain' benchmarks are affine-mapped 0.5 + 0.5*clip(v,-1,1) so neutral=0.5 and they cannot nuke the mean; plain capability scores are floored at _SCORE_FLOOR=1e-3 (line 471) to keep the harmonic finite. _GAIN_SCALE=0.1 (line 493) is a logistic scale used only in format_benchmarks display of net-contrib.",
+   "champion_value": 0.37392445564359744
+  },
+  "arithmetic_net": {
+   "function": "arithmetic_net(raw)",
+   "file": "/home/photon/4tb/deepearth/autoresearch/evaluate.py",
+   "line": 523,
+   "definition": "Plain arithmetic mean of normalized active CAPABILITY scores only, excluding benchmarks where is_diagnostic(k) is True. Reported alongside the harmonic north star for legibility.",
+   "champion_value": 0.5832041629044415
+  },
+  "normalized": {
+   "function": "normalized(raw)",
+   "line": 474,
+   "definition": "Every metric is already naturally in [0,1] (top-k, accuracy, macro-F1, cosine, recall@k, MRR); score = clip(raw, 0, 1), NaN entries dropped. No baseline/target remap."
+  },
+  "is_diagnostic": {
+   "function": "is_diagnostic(k)",
+   "line": 483,
+   "definition": "Returns k.endswith('_gain'). Marks DERIVED difference benchmarks (B24 geo_information_gain and B56-B62 *_phylo_graph_gain \u2014 ablation deltas). They are excluded from arithmetic_net and from the capability table, but ARE included in the harmonic net_score via the _net_value affine renormalization (0.5 + 0.5*delta).",
+   "note": "Docstring says B24 = B2-B1 is a gain benchmark; note B24's key ends in '_gain' so it is diagnostic, while B63 is a capability despite being symbiosis-family."
+  },
+  "inactive_benchmarks": "A benchmark whose required inputs, labels, or holdout split are absent for a run is simply omitted from the returned dict (inactive) and drops out of both means. B25/B31 require holdout='temporal'; B29/B39/B40 require data/deepcal/gbif_species_dist.npz plus source.gbifID. Inactive benchmarks in champion_scores.json: B25, B29, B31, B39, B40."
+ },
+ "registry_location": "The benchmark registry is the module-level list BENCHMARKS: List[str] at line 44 of /home/photon/4tb/deepearth/autoresearch/evaluate.py (63 entries, B1-B63, in suite order with inline comments naming the science.md capability each realizes). Scores are produced by evaluate_benchmarks(model, source, device, batch=1536) at line 112 (decorated @torch.no_grad() at line 111), which populates a dict keyed by the same strings; champion scores live in /home/photon/4tb/deepearth/autoresearch/champion_scores.json under the 'scores' key."
+}
