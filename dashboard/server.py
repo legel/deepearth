@@ -60,6 +60,16 @@ def verification():
     return jsonify(_state("verification") or abort(404))
 
 
+@app.get("/api/callgraph")
+def callgraph():
+    return jsonify(_state("callgraph") or abort(404))
+
+
+@app.get("/api/flow")
+def flow():
+    return jsonify(_state("flow") or abort(404))
+
+
 @app.get("/api/findings")
 def findings():
     p = ROOT / "seed" / "findings.json"
@@ -137,6 +147,9 @@ DAYMET_COLS = ["dayl", "prcp", "srad", "swe", "tmax", "tmin", "vp"]
 TOPO_COLS = ["elev", "slope_deg", "northness", "eastness", "TRI", "curvature", "VRM", "HLI",
              "TPI8", "TPI24", "TPI72", "TPI140"]
 SOIL_COLS = ["pH", "organic_matter", "clay_%", "sand_%", "silt_%", "awc", "ksat", "cec7", "bulk_density"]
+HYDRO_COLS = ["TWI", "HAND_m", "ln_SCA", "Sx_west", "Sx_max", "TPI"]          # build_hydrowind_torch.py:108
+CHM_COLS = ["mean_m", "std_m", "max_m", "p50_m", "p90_m", "p95_m", "cover>2m",
+            "gap<0.5m", "shrub_0.5-2m", "rumple", "heterogeneity"]            # build_chm.py:26-37
 DATA = REPO / "data" / "deepcal"
 _RAW = {}
 
@@ -171,7 +184,8 @@ def observation_raw(gid):
         out["climate"] = {"cols": DAYMET_COLS, "rows": [[r3(v) for v in r] for r in d]}
     for npz, key, names in [("gbif_soil_tokens.npz", "soil", SOIL_COLS),
                             ("gbif_topo_tokens.npz", "topo", TOPO_COLS),
-                            ("gbif_hydro_tokens.npz", "hydro", None)]:
+                            ("gbif_hydro_tokens.npz", "hydro", HYDRO_COLS),
+                            ("gbif_chm_tokens.npz", "chm", CHM_COLS)]:
         idx, arr = _kv(npz, key)
         if (i := idx.get(gid)) is not None:
             v = [r3(x) for x in arr[i]]

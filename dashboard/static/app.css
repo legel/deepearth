@@ -151,5 +151,31 @@ svg.dimmed .gn.on { opacity: 1; }
 .obspanel h4 { font-size: .8rem; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
                color: var(--ink-2); margin: 1.1rem 0 .3rem; border-top: 1px solid var(--grid); padding-top: .8rem; }
 
+/* architecture flow — stages from the callgraph, animated replay */
+.frow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; align-items: start; }
+.fstage { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: .7rem .8rem; transition: box-shadow .25s, border-color .25s; cursor: pointer; }
+.fstage.active { border-color: var(--code); box-shadow: 0 0 0 2px rgba(42, 120, 214, .25); }
+.fs-t { font-size: .76rem; font-weight: 650; text-transform: uppercase; letter-spacing: .05em;
+        color: var(--ink-2); margin-bottom: .45rem; }
+.fdef { display: flex; gap: .4em; align-items: center; font: 11.5px/1.7 ui-monospace, Menlo, monospace;
+        color: var(--ink-2); }
+.fdef:hover { color: var(--code); }
+.fdef .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px; }
+.ftoks { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: .4rem; }
+.tok { width: 10px; height: 10px; border-radius: 2px; background: var(--seq); opacity: .75; }
+.tok.categorical { background: var(--science); }
+.tok.lat { background: var(--data); border-radius: 50%; }
+.fstage.active .tok { animation: tokpulse 1.2s ease infinite; }
+@keyframes tokpulse { 50% { opacity: .25; } }
+.fplay { display: flex; gap: 1rem; align-items: center; margin: .6rem 0 .8rem; }
+.fplay button { font: inherit; background: var(--ink); color: var(--surface); border: 0;
+                border-radius: 4px; padding: .35rem .9rem; cursor: pointer; }
+.fout { display: flex; gap: .5rem; align-items: center; font-size: .8rem; padding: .1rem 0; }
+.imgpair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: .3rem 0 .5rem; }
+.imgpair figure { margin: 0; }
+.imgpair img { width: 100%; border-radius: 4px; }
+.imgpair figcaption { font-size: .7rem; color: var(--muted); margin-top: .15rem; }
+
 @media (max-width: 900px) { header, main { padding-left: 1.2rem; padding-right: 1.2rem; }
-  .maprow { grid-template-columns: 1fr; } }
+  .maprow { grid-template-columns: 1fr; } .frow { grid-template-columns: repeat(2, 1fr); } }

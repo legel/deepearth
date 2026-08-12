@@ -42,6 +42,8 @@ See `ARCHITECTURE.md`. Pipeline: `registry.py` (deterministic) -> `audit.py`
 | `state/observations.npz` | `python -m dashboard.observations` | after data cache changes |
 | `runs/<id>.jsonl` | `python -m dashboard.tracker <config> [--tag t]` | every training run |
 | `state/reconstructions.json` | `python -m dashboard.reconstruct <ckpt>` | after a run worth inspecting |
+| `state/callgraph.json` | `python -m dashboard.callgraph` | after code/config changes — reachability truth |
+| `state/flow.json` | `python -m dashboard.flow` | after callgraph or data cache changes |
 | `state/verification.json` | periodic adversarial agent fleet (see ARCHITECTURE.md) | before decisions |
 
 `seed/*.json` are curated registries (benchmark semantics, rule structure, token

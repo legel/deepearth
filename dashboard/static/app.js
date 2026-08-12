@@ -11,8 +11,9 @@ const api = async p => { const r = await fetch("/api/" + p); return r.ok ? r.jso
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function load() {
-  [state.reg, state.graph, state.status, state.verif, state.findings, state.recon] = await Promise.all(
-    [api("registry"), api("graph"), api("status"), api("verification"), api("findings"), api("reconstructions")]);
+  [state.reg, state.graph, state.status, state.verif, state.findings, state.recon, state.flow, state.callg] =
+    await Promise.all([api("registry"), api("graph"), api("status"), api("verification"),
+                       api("findings"), api("reconstructions"), api("flow"), api("callgraph")]);
   const meta = await api("meta");
   if (meta?.head) $("#meta").textContent = `${meta.head.sha} · ${meta.head.subject}` +
     (meta.audited ? ` · audited ${meta.audited}` : " · not yet audited");
@@ -106,10 +107,24 @@ async function snippet(ref) {
     ? `<div class="cl"><span class="ln">…</span><span class="lc">+${+e - cap} more — open the file</span></div>` : ""}</div>`;
 }
 
+const REACHORD = ["live", "gated", "data-pipeline", "tests", "recipes", "tooling", "island"];
+function reachChip(ref) {                                // proof of integration from the call graph
+  const m = ref.match(/^(.+?):(\d+)-(\d+)$/);
+  if (!m || !state.callg || !m[1].endsWith(".py")) return "";
+  const ds = state.callg.defs.filter(d => d.path === m[1] && d.start <= +m[3] && d.end >= +m[2]);
+  if (!ds.length) return "";
+  const best = ds.reduce((a, b) => REACHORD.indexOf(a.reach) <= REACHORD.indexOf(b.reach) ? a : b);
+  return best.reach === "live" ? `<span class="s" style="color:var(--good)">● live</span>`
+    : best.reach === "gated" ? `<span class="s" style="color:var(--warning)">◐ gated: ${esc(best.gate ?? "?")}</span>`
+    : best.reach === "island" ? `<span class="s" style="color:var(--critical)">✕ never called</span>`
+    : `<span class="s" style="color:var(--muted)">${esc(best.reach)}</span>`;
+}
+
 const mkRow = (ref, s, note) => `
     <div class="row erow" data-ref="${esc(ref)}">
       <span class="id">${s}</span>
       <code class="grow expand" title="show the code">▸ ${esc(ref)}</code>
+      ${reachChip(ref)}
       <span class="num">${esc(note)}</span>
       <a class="pill" href="#/file/${ref}">open ↗</a>
     </div><div class="snipbox" hidden></div>`;
@@ -263,15 +278,7 @@ function vBenchOne(id) {
 
 function vData() {
   if (!state.reg) return needReg();
-  const ds = state.reg.data_schema, tk = state.reg.tokens;
-  const mods = (ds?.modalities ?? []).map(m => `<div class="row"><span class="grow"><b>${esc(m.name)}</b>
-      <span style="color:var(--ink-2)"> ${esc(m.origin ?? "")}</span></span>
-      <code class="num">${esc(JSON.stringify(m.shape ?? m.dims ?? ""))}</code></div>`).join("");
-  const toks = (tk?.tokens ?? []).map(t => `<div class="row"><span class="grow"><b>${esc(t.token_type)}</b>
-      <span style="color:var(--ink-2)"> ${esc(t.composed_of ?? "")}</span></span>
-      <span class="num">${esc(String(t.count_per_example ?? ""))}</span>
-      <code class="num">d=${esc(String(t.dim ?? "?"))}</code></div>`).join("");
-  route.after = () => initMap(location.hash.split("/")[2]);
+  route.after = () => { initMap(location.hash.split("/")[2]); armFlow(null); };
   return `<h1>Data</h1>
     <p class="sub">Every observation the model trains on — pinned to earth at (x,y,z,t),
       colored by the spatial holdout. Click a point for its full record.</p>
@@ -288,10 +295,100 @@ function vData() {
         Points: <b style="color:var(--code)">train</b> · <b style="color:var(--data)">test</b> —
         the model never sees a test cell (0.5° blocks, 1/6 held out).</p></div>
     </div>
-    <h2>Modalities</h2><div class="rows">${mods || empty("registry lacks data schema")}</div>
-    <h2>Context window — one training example</h2>
-    <p class="sub">${esc(tk?.context_window?.formula_round0 ?? "")}</p>
-    <div class="rows">${toks}</div>`;
+    ${modalityCensus()}
+    <h2>Architecture flow — a real observation through the real code</h2>
+    <div id="flowbox">${state.flow ? "" : empty("Run <code>python -m dashboard.flow</code>.")}</div>`;
+}
+
+/* ---- modality census: the dataset as it actually exists on disk ---- */
+const human = b => b > 2 ** 30 ? (b / 2 ** 30).toFixed(1) + " GB" : (b / 2 ** 20).toFixed(0) + " MB";
+function modalityCensus() {
+  const f = state.flow;
+  if (!f) return `<h2>Modalities</h2>` + empty("Run <code>python -m dashboard.flow</code> for the real census.");
+  const rows = f.modalities.map(m => {
+    const main = Object.entries(m.keys).sort((a, b) => b[1][0].length - a[1][0].length)[0];
+    const cov = m.coverage;
+    return `<div class="row">
+      <code class="grow" title="${esc(Object.entries(m.keys).map(([k, v]) => `${k} ${JSON.stringify(v[0])} ${v[1]}`).join("\n"))}">
+        ${esc(m.name)}${m.files > 1 ? ` <span class="num">× ${m.files}</span>` : ""}
+        ${m.stray ? `<span class="s" style="color:var(--serious)">▲ stray — loaded by nothing</span>` : ""}</code>
+      <code class="num">${esc(main[0])} ${esc(JSON.stringify(main[1][0]))} ${esc(main[1][1])}</code>
+      <span class="num">${human(m.bytes)}</span>
+      <span class="bartrack" style="flex-basis:110px"><span class="bar" style="width:${(cov ?? 0) * 100}%"></span></span>
+      <span class="num" style="min-width:4em;text-align:right">${cov == null ? "—" : (cov * 100).toFixed(1) + "%"}</span>
+      ${m.loaders.slice(0, 1).map(l => `<a class="pill" href="#/file/${l.split(":")[0]}:${l.split(":")[1]}-${l.split(":")[1]}">${esc(l)}</a>`).join("")}
+    </div>`;
+  }).join("");
+  return `<h2>Modalities — the dataset as it exists on disk (${f.modalities.length} artifacts,
+      ${f.n_observations.toLocaleString()} observations)</h2>
+    <p class="sub">Read from the cache file headers, joined on gbifID for coverage; each row links the
+      exact loader line. Hover a name for every key, shape, and dtype.</p>
+    <div class="rows">${rows}</div>`;
+}
+
+/* ---- architecture flow: stages from the callgraph, dims from the champion yaml, animated ---- */
+const REACHDOT = { live: "good", gated: "warning", island: "critical" };
+function fdef(d) {
+  if (!d) return "";
+  const q = d.id.split("::")[1];
+  return `<a class="fdef" href="#/file/${d.path}:${d.start}-${d.end}"
+      title="${esc(d.path)}:${d.start}–${d.end} · ${d.reach}${d.gate ? " (gate: " + d.gate + ")" : ""}">
+    <span class="dot" style="background:var(--${REACHDOT[d.reach] ?? "muted"})"></span>${esc(q)}</a>`;
+}
+
+function armFlow(gid) {
+  const box = $("#flowbox"), f = state.flow;
+  if (!box || !f) return;
+  const A = f.arch, D = A.dims;
+  gid ??= Object.keys(state.recon?.rows ?? {})[0];
+  const rec = state.recon?.rows?.[gid];
+  const vsq = A.variables.map(v => `<span class="tok ${v.kind}" title="${esc(v.name)} (${v.kind})"></span>`).join("");
+  const stage = (i, title, body) => `<div class="fstage" data-i="${i}">
+      <div class="fs-t">${title}</div>${body}</div>`;
+  const outs = !rec ? `<p class="sub" style="font-size:.8rem">run dashboard.reconstruct for real outputs</p>`
+    : Object.entries(rec).slice(0, 6).map(([t, r]) => r.top
+      ? `<div class="fout"><b>${esc(t)}</b> → <i>${esc(r.top[0][0])}</i>
+         <span class="s" style="color:var(--${r.rank === 0 ? "good" : "warning"})">rank ${r.rank}</span></div>`
+      : `<div class="fout"><b>${esc(t)}</b> <span class="bartrack" style="flex-basis:70px"><span class="bar"
+         style="width:${Math.max(0, r.cos) * 100}%"></span></span> <span class="num">cos ${r.cos}</span></div>`).join("");
+  const captions = [
+    `batch of ${D.batch} observations · gbifID ${gid ?? "—"} + its ${D.n_neighbors} nearest neighbors leave disk`,
+    `(x,y,z,t) → Earth4D hash grids (xyz + xyt/yzt/xzt); relative offsets for ${D.n_neighbors} neighbors`,
+    `species seeds refined over the phylogeny (${D.n_manifolds} manifold${D.n_manifolds > 1 ? "s" : ""})`,
+    `${D.context_tokens} tokens = ${D.n_variables} variables + 1 position + ${(1 + D.n_manifolds) * D.n_neighbors} neighbor · each d=${D.d_model}`,
+    `${D.n_latents} latents read ${D.context_tokens} tokens · ${D.n_layers} blocks · ${D.rounds} refinement rounds`,
+    `each variable decoded from the latents — masked ones are the model's posterior`,
+  ];
+  box.innerHTML = `
+    <p class="sub">Stages are the live defs of the champion call graph — every chip opens the exact
+      code span; dims are read from the config, outputs from a real held-out inference
+      ${gid ? `(gbifID <a href="#/data/${gid}" style="color:var(--code)">${gid}</a>)` : ""}.</p>
+    <div class="fplay"><button id="fbtn">▶ replay</button><span id="fcap" class="num"></span></div>
+    <div class="frow">
+      ${stage(0, "sources", `<div class="ftoks">${vsq}</div><div class="num">${D.n_variables} modalities</div>`)}
+      ${stage(1, "space-time", A.stages[1].defs.map(fdef).join(""))}
+      ${stage(2, "species", A.stages[2].defs.map(fdef).join(""))}
+      ${stage(3, "tokens", `<div class="ftoks">${"<span class=tok></span>".repeat(Math.min(D.context_tokens, 47))}</div>
+        <div class="num">${D.context_tokens} × d${D.d_model}</div>${A.stages[3].defs.map(fdef).join("")}`)}
+      ${stage(4, "latent fusion", `<div class="ftoks">${"<span class='tok lat'></span>".repeat(D.n_latents)}</div>
+        <div class="num">${D.n_latents} latents · ×${D.rounds} rounds</div>${A.stages[4].defs.map(fdef).join("")}`)}
+      ${stage(5, "decode → posterior", `${outs}${A.stages[5].defs.map(fdef).join("")}`)}
+    </div>`;
+  let timer = null;
+  const setStep = i => {
+    box.querySelectorAll(".fstage").forEach(s => s.classList.toggle("active", +s.dataset.i === i));
+    $("#fcap").textContent = captions[i] ?? "";
+  };
+  $("#fbtn").onclick = () => {
+    clearInterval(timer);
+    let i = 0;
+    setStep(i);
+    timer = setInterval(() => { i += 1; if (i > 5) { clearInterval(timer); return; } setStep(i); }, 1400);
+  };
+  box.querySelectorAll(".fstage").forEach(s => s.onclick = e => {
+    if (e.target.closest(".fdef")) return;
+    clearInterval(timer); setStep(+s.dataset.i);
+  });
 }
 
 /* compact climate strip: tmax/tmin lines (°C) + prcp bars (mm) over 180 days */
@@ -337,7 +434,7 @@ async function initMap(deepId) {
     layer = L.layerGroup(o.id.map((id, i) => {
       const isRec = recIds.has(String(id));
       return L.circleMarker([o.lat[i], o.lon[i]], {
-        radius: isRec ? 5 : 3, weight: isRec ? 2 : .7, color: "#fff", fillOpacity: .85,
+        radius: isRec ? 7 : 4.5, weight: isRec ? 2.2 : 1, color: "#fff", fillOpacity: .85,
         fillColor: o.test[i] ? "#eb6834" : "#3987e5",
       }).on("click", () => showObs(id));
     }), { pane: "markerPane" }).addTo(map);
@@ -378,11 +475,20 @@ async function initMap(deepId) {
     if (!raw) { $("#rawrec").outerHTML = recHtml; return; }
     const kv = obj => `<dl class="kv" style="font-size:.8rem">` +
       Object.entries(obj).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v ?? "—"}</dd>`).join("") + "</dl>";
+    const t2 = (la, lo, z) => [z, Math.floor((lo + 180) / 360 * 2 ** z),
+      Math.floor((1 - Math.log(Math.tan(la * Math.PI / 180) + 1 / Math.cos(la * Math.PI / 180)) / Math.PI) / 2 * 2 ** z)];
+    const [az, ax, ay] = t2(d.lat, d.lon, 16), [sz, sx, sy] = t2(d.lat, d.lon, 13);
     $("#rawrec").innerHTML = recHtml +
+      `<h4>Imagery at this coordinate</h4><div class="imgpair">
+        <figure><img src="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${az}/${ay}/${ax}" loading="lazy">
+          <figcaption>aerial · Esri World Imagery z16 (NAIP-derived in CA)</figcaption></figure>
+        <figure><img src="https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/${sz}/${sy}/${sx}.jpg" loading="lazy">
+          <figcaption>Sentinel-2 · EOX s2cloudless z13 (Clay's sensor)</figcaption></figure></div>` +
       (raw.climate ? `<h4>Daymet — 180 days to observation</h4>${climateChart(raw.climate)}` : "") +
       (raw.soil ? `<h4>SSURGO soil</h4>${kv(raw.soil)}` : "") +
       (raw.topo ? `<h4>3DEP terrain (1 m)</h4>${kv(raw.topo)}` : "") +
-      (raw.hydro ? `<h4>Hydrology</h4><code style="font-size:.78rem">[${raw.hydro.join(", ")}]</code>` : "");
+      (raw.chm ? `<h4>NAIP-CHM canopy structure</h4>${kv(raw.chm)}` : "") +
+      (raw.hydro ? `<h4>Hydrology + wind (3DEP 2 m)</h4>${kv(raw.hydro)}` : "");
   }
   if (deepId) showObs(deepId, true);
   $("#fsplit").onchange = draw;
