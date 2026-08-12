@@ -70,6 +70,11 @@ def flow():
     return jsonify(_state("flow") or abort(404))
 
 
+@app.get("/api/trace")
+def trace():
+    return jsonify(_state("trace") or abort(404))
+
+
 @app.get("/api/findings")
 def findings():
     p = ROOT / "seed" / "findings.json"

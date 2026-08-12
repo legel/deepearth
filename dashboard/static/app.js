@@ -11,9 +11,10 @@ const api = async p => { const r = await fetch("/api/" + p); return r.ok ? r.jso
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function load() {
-  [state.reg, state.graph, state.status, state.verif, state.findings, state.recon, state.flow, state.callg] =
+  [state.reg, state.graph, state.status, state.verif, state.findings, state.recon, state.flow,
+   state.callg, state.trace] =
     await Promise.all([api("registry"), api("graph"), api("status"), api("verification"),
-                       api("findings"), api("reconstructions"), api("flow"), api("callgraph")]);
+                       api("findings"), api("reconstructions"), api("flow"), api("callgraph"), api("trace")]);
   const meta = await api("meta");
   if (meta?.head) $("#meta").textContent = `${meta.head.sha} · ${meta.head.subject}` +
     (meta.audited ? ` · audited ${meta.audited}` : " · not yet audited");
@@ -278,7 +279,7 @@ function vBenchOne(id) {
 
 function vData() {
   if (!state.reg) return needReg();
-  route.after = () => { initMap(location.hash.split("/")[2]); armFlow(null); };
+  route.after = () => initMap(location.hash.split("/")[2]);
   return `<h1>Data</h1>
     <p class="sub">Every observation the model trains on — pinned to earth at (x,y,z,t),
       colored by the spatial holdout. Click a point for its full record.</p>
@@ -295,9 +296,7 @@ function vData() {
         Points: <b style="color:var(--code)">train</b> · <b style="color:var(--data)">test</b> —
         the model never sees a test cell (0.5° blocks, 1/6 held out).</p></div>
     </div>
-    ${modalityCensus()}
-    <h2>Architecture flow — a real observation through the real code</h2>
-    <div id="flowbox">${state.flow ? "" : empty("Run <code>python -m dashboard.flow</code>.")}</div>`;
+    ${modalityCensus()}`;
 }
 
 /* ---- modality census: the dataset as it actually exists on disk ---- */
@@ -326,70 +325,86 @@ function modalityCensus() {
     <div class="rows">${rows}</div>`;
 }
 
-/* ---- architecture flow: stages from the callgraph, dims from the champion yaml, animated ---- */
-const REACHDOT = { live: "good", gated: "warning", island: "critical" };
-function fdef(d) {
-  if (!d) return "";
-  const q = d.id.split("::")[1];
-  return `<a class="fdef" href="#/file/${d.path}:${d.start}-${d.end}"
-      title="${esc(d.path)}:${d.start}–${d.end} · ${d.reach}${d.gate ? " (gate: " + d.gate + ")" : ""}">
-    <span class="dot" style="background:var(--${REACHDOT[d.reach] ?? "muted"})"></span>${esc(q)}</a>`;
+/* ---- Flow: the executed model — every nn.Module of a real forward pass on a real batch ---- */
+const fmtS = s => (s && s[0] ? s[0].join("×") : "—");
+const fmtP = p => p >= 1e6 ? (p / 1e6).toFixed(1) + "M" : p >= 1e3 ? (p / 1e3).toFixed(1) + "k" : String(p);
+
+function bandHtml(b) {
+  const comp = b.events.find(e => e.name === b.top);
+  const params = b.events.reduce((s, e) => s + e.params, 0);
+  const out = comp ?? b.events[b.events.length - 1];
+  return `<div class="fband">
+    <div class="fband-h">
+      <a href="#/file/${out.file}:${out.line}-${out.line}"><b>${esc(b.top)}</b>
+        <span class="num">${esc(out.cls)}</span></a>
+      <span class="num">${fmtP(params)} params · out ${fmtS(out.out)}${out.sample
+        ? ` · μ=${out.sample.mean} σ=${out.sample.std}` : ""}</span>
+    </div>
+    <div class="fsubs">${subGroups(b.events.filter(e => e.name !== b.top), b.top)}</div></div>`;
 }
 
-function armFlow(gid) {
-  const box = $("#flowbox"), f = state.flow;
-  if (!box || !f) return;
-  const A = f.arch, D = A.dims;
-  gid ??= Object.keys(state.recon?.rows ?? {})[0];
-  const rec = state.recon?.rows?.[gid];
-  const vsq = A.variables.map(v => `<span class="tok ${v.kind}" title="${esc(v.name)} (${v.kind})"></span>`).join("");
-  const stage = (i, title, body) => `<div class="fstage" data-i="${i}">
-      <div class="fs-t">${title}</div>${body}</div>`;
-  const outs = !rec ? `<p class="sub" style="font-size:.8rem">run dashboard.reconstruct for real outputs</p>`
-    : Object.entries(rec).slice(0, 6).map(([t, r]) => r.top
-      ? `<div class="fout"><b>${esc(t)}</b> → <i>${esc(r.top[0][0])}</i>
-         <span class="s" style="color:var(--${r.rank === 0 ? "good" : "warning"})">rank ${r.rank}</span></div>`
-      : `<div class="fout"><b>${esc(t)}</b> <span class="bartrack" style="flex-basis:70px"><span class="bar"
-         style="width:${Math.max(0, r.cos) * 100}%"></span></span> <span class="num">cos ${r.cos}</span></div>`).join("");
-  const captions = [
-    `batch of ${D.batch} observations · gbifID ${gid ?? "—"} + its ${D.n_neighbors} nearest neighbors leave disk`,
-    `(x,y,z,t) → Earth4D hash grids (xyz + xyt/yzt/xzt); relative offsets for ${D.n_neighbors} neighbors`,
-    `species seeds refined over the phylogeny (${D.n_manifolds} manifold${D.n_manifolds > 1 ? "s" : ""})`,
-    `${D.context_tokens} tokens = ${D.n_variables} variables + 1 position + ${(1 + D.n_manifolds) * D.n_neighbors} neighbor · each d=${D.d_model}`,
-    `${D.n_latents} latents read ${D.context_tokens} tokens · ${D.n_layers} blocks · ${D.rounds} refinement rounds`,
-    `each variable decoded from the latents — masked ones are the model's posterior`,
-  ];
-  box.innerHTML = `
-    <p class="sub">Stages are the live defs of the champion call graph — every chip opens the exact
-      code span; dims are read from the config, outputs from a real held-out inference
-      ${gid ? `(gbifID <a href="#/data/${gid}" style="color:var(--code)">${gid}</a>)` : ""}.</p>
-    <div class="fplay"><button id="fbtn">▶ replay</button><span id="fcap" class="num"></span></div>
-    <div class="frow">
-      ${stage(0, "sources", `<div class="ftoks">${vsq}</div><div class="num">${D.n_variables} modalities</div>`)}
-      ${stage(1, "space-time", A.stages[1].defs.map(fdef).join(""))}
-      ${stage(2, "species", A.stages[2].defs.map(fdef).join(""))}
-      ${stage(3, "tokens", `<div class="ftoks">${"<span class=tok></span>".repeat(Math.min(D.context_tokens, 47))}</div>
-        <div class="num">${D.context_tokens} × d${D.d_model}</div>${A.stages[3].defs.map(fdef).join("")}`)}
-      ${stage(4, "latent fusion", `<div class="ftoks">${"<span class='tok lat'></span>".repeat(D.n_latents)}</div>
-        <div class="num">${D.n_latents} latents · ×${D.rounds} rounds</div>${A.stages[4].defs.map(fdef).join("")}`)}
-      ${stage(5, "decode → posterior", `${outs}${A.stages[5].defs.map(fdef).join("")}`)}
-    </div>`;
-  let timer = null;
-  const setStep = i => {
-    box.querySelectorAll(".fstage").forEach(s => s.classList.toggle("active", +s.dataset.i === i));
-    $("#fcap").textContent = captions[i] ?? "";
-  };
-  $("#fbtn").onclick = () => {
-    clearInterval(timer);
-    let i = 0;
-    setStep(i);
-    timer = setInterval(() => { i += 1; if (i > 5) { clearInterval(timer); return; } setStep(i); }, 1400);
-  };
-  box.querySelectorAll(".fstage").forEach(s => s.onclick = e => {
-    if (e.target.closest(".fdef")) return;
-    clearInterval(timer); setStep(+s.dataset.i);
-  });
+function subGroups(evts, top) {
+  const subs = {};
+  for (const e of evts) {
+    const s = top ? e.name.slice(top.length + 1).split(".")[0] : e.name.split(".")[0];
+    (subs[s] ??= []).push(e);
+  }
+  return Object.entries(subs).map(([s, es]) => {
+    const head = es.find(e => e.name.endsWith("." + s) || e.name === s) ?? es[0];
+    return `<a class="fsub" href="#/file/${head.file}:${head.line}-${head.line}"
+        title="${esc(head.name)} · ${esc(head.cls)} · in ${fmtS(head.in)} → out ${fmtS(head.out)}${head.sample
+          ? `\nreal output values [${head.sample.first.join(", ")}…] μ=${head.sample.mean} σ=${head.sample.std}` : ""}">
+      <div class="fsub-h">${esc(s)} <span>${esc(head.cls)}</span></div>
+      <div class="num">${fmtS(head.in)} → ${fmtS(head.out)}</div>
+      <div class="num">${fmtP(es.reduce((x, e) => x + e.params, 0))} params · ${es.length} call${es.length > 1 ? "s" : ""}</div>
+    </a>`;
+  }).join("");
 }
+
+function vFlow() {
+  const t = state.trace;
+  if (!t) return `<h1>Flow</h1>` + empty(`No execution trace yet. Run
+    <code>python -m dashboard.trace data/deepcal/ckpt_&lt;tag&gt;.pt</code> — it hooks every nn.Module,
+    pushes a real batch through the real forward pass, and records what executed.`);
+  const inf = t.events.filter(e => e.phase === "inference");
+  const infNames = new Set(inf.map(e => e.name));
+  const trn = t.events.filter(e => e.phase === "training-loss" && !infNames.has(e.name));
+  const bands = [], seen = {};
+  for (const e of inf) {
+    const top = e.name.split(".")[0];
+    if (!(top in seen)) { seen[top] = bands.length; bands.push({ top, events: [] }); }
+    bands[seen[top]].events.push(e);
+  }
+  const B = t.batch;
+  const obsChips = B.gbifIDs.map((g, i) => `<a class="chip" href="#/data/${g}"
+      title="(x,y,z) = ${B.coords[i].slice(0, 3).join(", ")}"><i>${esc(B.species[i])}</i></a>`).join(" ");
+  const varRows = Object.entries(B.variables).map(([k, v]) => `<div class="row">
+      <b class="grow">${esc(k)}</b><code class="num">${v.shape.join("×")} ${esc(v.dtype)}</code>
+      <code class="num" title="first values of the real tensor">[${(v.sample?.first ?? []).join(", ")} …]</code></div>`).join("");
+  const outRows = B.outputs.top3.map((t3, i) => `<div class="row">
+      <i class="grow">${esc(B.species[i])}</i><span class="num">→</span>
+      ${t3.map(([n, p]) => `<span class="chip"
+        style="${n === B.species[i] ? "border-color:var(--good)" : ""}">${esc(n)} ${(p * 100).toFixed(1)}%</span>`).join("")}
+    </div>`).join("");
+  return `<h1>Flow</h1>
+    <p class="sub">The model as it actually executed: <b>${t.events.length} module calls</b> recorded by
+      forward hooks on the ${(t.n_params / 1e6).toFixed(1)}M-parameter checkpoint
+      <code>${esc(t.ckpt.split("/").pop())}</code>, over a batch of ${B.gbifIDs.length} real held-out
+      observations. Every box is a real nn.Module — its code name, class, parameters, and the real
+      tensor shapes and values it saw. Click any box to open its source.</p>
+    <h2>The batch — ${B.gbifIDs.length} real observations</h2>
+    <div style="margin-bottom:.6rem">${obsChips}</div>
+    <div class="rows">${varRows}</div>
+    <h2>Forward pass — execution order</h2>
+    ${bands.map(bandHtml).join(`<div class="farrow">↓</div>`)}
+    <div class="farrow">↓</div>
+    <h2>Posterior — <code>${esc(B.outputs.target)}</code> masked, inferred from everything else</h2>
+    <div class="rows">${outRows}</div>
+    <p class="sub">training-step masked-reconstruction loss on this batch: <b>${B.outputs.loss}</b></p>
+    ${trn.length ? `<h2>Training-path extras — modules that only run in the loss pass</h2>
+      <div class="fband"><div class="fsubs">${subGroups(trn, "")}</div></div>` : ""}`;
+}
+
 
 /* compact climate strip: tmax/tmin lines (°C) + prcp bars (mm) over 180 days */
 function climateChart(c) {
@@ -777,7 +792,7 @@ async function route() {
   const [_, p1, p2] = location.hash.split("/");
   document.querySelectorAll("nav a").forEach(a =>
     a.classList.toggle("active", a.hash === "#/" + (p1 || "status")));
-  const r = { status: vStatus, graph: vGraph, code: vCode, science: () => vScience(p2),
+  const r = { status: vStatus, graph: vGraph, flow: vFlow, code: vCode, science: () => vScience(p2),
               benchmarks: vBench, data: vData };
   route.after = null;
   clearInterval(window._poll);
