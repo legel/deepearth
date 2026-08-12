@@ -46,6 +46,8 @@ See `ARCHITECTURE.md`. Pipeline: `registry.py` (deterministic) -> `audit.py`
 | `state/callgraph.json` | `python -m dashboard.callgraph` | after code/config changes — reachability truth |
 | `state/flow.json` | `python -m dashboard.flow` | after callgraph or data cache changes |
 | `state/verification.json` | periodic adversarial agent fleet (see ARCHITECTURE.md) | before decisions |
+| `state/triage.json` | `python -m dashboard.audit --triage-islands` | after callgraph changes — island action plan |
+| E2E behavior check | `node dashboard/tests/sweep.js` | after UI changes; prints ALL CLEAN |
 
 `seed/*.json` are curated registries (benchmark semantics, rule structure, token
 architecture, operational findings). `python -m dashboard.audit --refresh-seed
