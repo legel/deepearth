@@ -61,9 +61,28 @@ function vStatus() {
     <span class="s" style="color:var(--${f.sev === "serious" ? "serious" : "warning"})">${GLYPH[f.sev] ?? "!"} ${f.id}</span>
     <span class="grow"><b>${esc(f.title)}</b> — <span style="color:var(--ink-2)">${esc(f.detail)}</span>
       ${(f.refs ?? []).map(r => `<code style="font-size:.76rem">${esc(r)}</code>`).join(" ")}</span></div>`).join("");
+  let reachHtml = "";
+  if (state.callg) {
+    const model = state.callg.defs.filter(d =>
+      /^(core|encoders)\//.test(d.path) || (/^autoresearch\//.test(d.path) && !/recipes/.test(d.path)));
+    const isl = model.filter(d => d.reach === "island");
+    const gat = model.filter(d => d.reach === "gated");
+    const live = model.filter(d => d.reach === "live").length;
+    reachHtml = `<h2>Champion-path reachability — static call graph under the current config</h2>
+      <p class="sub">${model.length} defs in the model codebase: <b style="color:var(--good)">${live} live</b> ·
+        <b style="color:var(--warning)">${gat.length} gated off</b> ·
+        <b style="color:var(--critical)">${isl.length} never called</b>.
+        Code that exists but does not run is capability, not implementation.</p>
+      <div class="rows">${[...isl.map(d => ["island", d]), ...gat.map(d => ["gated", d])].map(([k, d]) => `
+        <a class="row" href="#/file/${d.path}:${d.start}-${d.end}">
+          <span class="s" style="color:var(--${k === "island" ? "critical" : "warning"})">${k === "island" ? "✕ island" : "◐ " + esc(d.gate ?? "gated")}</span>
+          <code class="grow">${esc(d.id)}</code>
+          <span class="num">${esc(d.path)}:${d.start}–${d.end}</span></a>`).join("")}</div>`;
+  }
   return `<h1>System status</h1>
     <p class="sub">Five systems, thirty-two principles. Every claim opens to its evidence.</p>
     <div class="tiles">${sys}</div><h2>Principles — worst first</h2><div class="tiles">${rules}</div>
+    ${reachHtml}
     ${finds ? `<h2>Operational findings — from actually running the system</h2><div class="rows">${finds}</div>` : ""}`;
 }
 

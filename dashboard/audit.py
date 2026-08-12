@@ -14,7 +14,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 STATE, CACHE = ROOT / "state", ROOT / "state" / "cache"
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+
+
+def _env(key, default=None):
+    """Repo .env wins over ambient environment — the project controls which account pays."""
+    p = REPO / ".env"
+    if p.exists():
+        for line in p.read_text().splitlines():
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip()
+    return os.environ.get(key, default)
+
+
+MODEL = _env("GEMINI_MODEL", "gemini-3.6-flash")
 URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 PROMPT_V = "v1"                                       # bump to invalidate cache
 SYSTEMS = ["earth4d", "phylo", "fusion", "method", "data"]
@@ -22,7 +34,7 @@ STATUSES = ["good", "warning", "serious", "critical", "unknown"]
 
 
 def gemini(prompt: str, retries: int = 3) -> dict:
-    key = os.environ["GEMINI_API_KEY"]
+    key = _env("GEMINI_API_KEY")
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
                        "generationConfig": {"response_mime_type": "application/json",
                                             "temperature": 0.1}}).encode()
@@ -125,9 +137,54 @@ def _run_context(reg):
             + "\n".join(f"  {k} {v:.3f} ({d:+.3f} vs champion)" for k, v, d in movers))
 
 
+REACH_ORD = ["live", "gated", "data-pipeline", "tests", "recipes", "tooling", "island"]
+
+
+def _reachability(reg, graph):
+    """Per rule: how its linked .py code actually reaches the champion path (from callgraph.json)."""
+    p = STATE / "callgraph.json"
+    if not p.exists():
+        return {}
+    defs = json.loads(p.read_text())["defs"]
+    out = {}
+    for r in reg["rules"]:
+        blocks = {e["src"] for e in graph["edges"]
+                  if e["dst"] == f"R{r['id']}" and e["src"].split(":")[0].endswith(".py")}
+        cnt, gates, islands = {"live": 0, "gated": 0, "island": 0}, set(), []
+        for b in blocks:
+            path, rng = b.rsplit(":", 1)
+            s, e = map(int, rng.split("-"))
+            ds = [d for d in defs if d["path"] == path and d["start"] <= e and d["end"] >= s]
+            if not ds:
+                continue
+            best = min(ds, key=lambda d: REACH_ORD.index(d["reach"]))
+            if best["reach"] in cnt:
+                cnt[best["reach"]] += 1
+                if best["reach"] == "gated":
+                    gates.add(best.get("gate", "?"))
+                if best["reach"] == "island":
+                    islands.append(best["id"].split("::")[1])
+        out[r["id"]] = (cnt, sorted(gates), islands[:4])
+    return out
+
+
+def _reach_lines(rules, reach):
+    return "\n".join(
+        f"R{r['id']}: live {c['live']}, gated {c['gated']}{' (' + ','.join(g) + ')' if g else ''}, "
+        f"island {c['island']}{' (' + ','.join(i) + ')' if i else ''}"
+        for r in rules if (v := reach.get(r["id"])) for c, g, i in [v]) or "no reachability data"
+
+
 STATUS = """You audit DeepEarth's "{system}" system. Judge each rule's implementation status from
 the evidence. Statuses: good (implemented + validated), warning (partial/untested),
 serious (major gap), critical (absent/broken), unknown (insufficient evidence).
+
+HARD CONSTRAINT — champion-path reachability (static call graph under the current config):
+{reach}
+Code that is "island" (never called) or "gated" (config flag off) is NOT implemented on the
+champion path. A rule whose only code is island => at best serious. A rule with ANY island or
+gated defs among its linked code is at best warning — it is partially implemented, and your
+"next" must name the dead/gated part. Only all-live rules may be good.
 
 RULES OF THIS SYSTEM:
 {rules}
@@ -147,7 +204,7 @@ Return JSON: {{"rules": [{{"id": <int>, "status": "<status>", "headline": "<=15 
 Judge from evidence only. Cite ids you actually saw."""
 
 
-def status_system(reg, graph, system):
+def status_system(reg, graph, system, reach):
     rules = [r for r in reg["rules"] if r["system"] == system]
     ev = {}
     for e in graph["edges"]:
@@ -155,7 +212,7 @@ def status_system(reg, graph, system):
             ev.setdefault(e["dst"], []).append(f"{e['src']} ({e['note']})")
     scores = {b["id"]: b["current_score"] for b in reg["benchmarks"]}
     prompt = STATUS.format(
-        system=system,
+        system=system, reach=_reach_lines(rules, reach),
         rules="\n".join(f"R{r['id']} {r['title']}: {r['summary']}" for r in rules),
         evidence=json.dumps(ev, indent=0)[:40_000],
         scores=json.dumps(scores), run=_run_context(reg))
@@ -201,9 +258,10 @@ def run(status_only=False, graph_only=False):
 
     if not graph_only:
         graph = json.loads(graph_p.read_text())
+        reach = _reachability(reg, graph)
         rules_out, sys_out = [], {}
         for s in SYSTEMS:
-            out = status_system(reg, graph, s)
+            out = status_system(reg, graph, s, reach)
             rules_out += out.get("rules", [])
             sys_out[s] = out.get("system", {})
         status = {"audited": time.strftime("%Y-%m-%dT%H:%M:%S"), "head": reg["head"],
