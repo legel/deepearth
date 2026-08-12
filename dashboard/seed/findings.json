@@ -15,6 +15,9 @@
    "refs": ["core/fusion.py:1158-1169", "autoresearch/champion_scores.json"]},
   {"id": "F5", "sev": "warning", "title": "Dead and stale code in champion path",
    "detail": "R15 memory bank (set_memory/experience) is never called; phylogenomic.py module self-test fails on a stale no-mask assertion; both mislead readers about live capability.",
-   "refs": ["core/fusion.py:392-398", "encoders/biological/phylogenomic.py:634"]}
+   "refs": ["core/fusion.py:392-398", "encoders/biological/phylogenomic.py:634"]},
+  {"id": "F6", "sev": "warning", "title": "Model shape depends on prepared-cache vs fresh assembly",
+   "detail": "A model built from the prepared_*.pt cache omitted pollinator_graph while a fresh data assembly (identical yaml) instantiates it — checkpoints then fail strict load across the two paths. Same config should always build the same module tree.",
+   "refs": ["autoresearch/data.py", "core/fusion.py:359-390", "dashboard/reconstruct.py"]}
  ]
 }
