@@ -7,33 +7,45 @@ All training data is visible, down to single observations on a satellite map.
 ## Pipeline
 
 ```
-registry.py   deterministic extraction   repo tree, science.md rules, evaluate.py
-                                         benchmarks, champion scores
-                                            -> state/registry.json
-audit.py      LLM inference (Gemini)     connectivity: code block <-> rule <-> benchmark
-                                         status: per rule + per system, concise, cited
-                                            -> state/graph.json, state/status.json
-logger.py     training capture           RunLogger JSONL events, flushed live
-                                            -> runs/<run_id>.jsonl
-server.py     Flask localhost            serves state/, runs/, repo file content, static/
-static/       one-page app               Status | Code | Science | Benchmarks | Data
+registry.py      deterministic         repo tree/blocks, rules, benchmarks, scores -> state/registry.json
+callgraph.py     deterministic         static reachability under the ACTUAL config: every def
+                                       live | gated(key) | island | pipeline/tests/tooling -> state/callgraph.json
+flow.py          deterministic         modality census from cache-file headers + gbifID joins;
+                                       architecture dims from the yaml -> state/flow.json
+audit.py         Gemini (cached)       connectivity edges + per-rule status; consumes reachability,
+                                       run movers, and findings -> state/graph.json, state/status.json
+tracker.py       zero-code-change      wraps train.py, parses its stdout -> runs/<id>.jsonl (live)
+trace.py         GPU, per checkpoint   forward hooks on every nn.Module, real batch -> state/trace.json
+reconstruct.py   GPU, per checkpoint   masked posteriors vs ground truth, 64 held-out obs
+                                            -> state/reconstructions.json
+observations.py  deterministic         343k-obs map index, exact holdout replica -> state/observations.npz
+refresh.py       orchestrator          registry -> callgraph -> flow -> audit, in order (the
+                                       post-commit hook runs it with --graph-only)
+server.py        thin Flask reader     serves state/, runs/, code content, static/
+static/          one-page app          Status | Graph | Flow | Code | Science | Benchmarks | Data | Runs
 ```
 
-`registry.py` is deterministic and free. `audit.py` spends LLM tokens; it caches
-by content hash and only re-audits changed blocks. `server.py` is a thin reader:
-it never computes, it serves what the pipeline wrote.
+Deterministic layers are free and always fresh (post-commit hook). `audit.py` spends LLM
+tokens behind a content-hash cache. GPU layers run per checkpoint. `server.py` never
+computes. `/api/meta` reports each artifact's build head; the header warns on skew.
 
 ## State artifacts (gitignored)
 
-- `state/registry.json` — files, blocks, rules, benchmarks, scores. Ground truth
-  extracted from the repo, no LLM.
-- `state/graph.json` — edges `{code block <-> rule}`, `{code block <-> benchmark}`,
-  `{rule <-> benchmark}`, each `{src, dst, strength, note<=140ch}`.
-- `state/status.json` — per rule and per system: `{status, headline<=90ch,
-  evidence: [block/benchmark ids], next<=120ch}`. Status one of
-  `good | warning | serious | critical | unknown`.
-- `state/cache/` — LLM response cache keyed by sha256 of (prompt schema, content).
-- `runs/*.jsonl` — training events: `config`, `step`, `eval`, `final`.
+- `state/registry.json` — files, blocks, rules, benchmarks, scores. No LLM.
+- `state/callgraph.json` — per-def reachability verdicts + gates. The proof-of-integration
+  layer: capability never counts as implementation.
+- `state/flow.json` — the dataset as it exists on disk (real shapes/dtypes/coverage) +
+  config-derived architecture dims.
+- `state/graph.json` — edges `{code block <-> rule/benchmark}` `{src, dst, s, note<=90ch}`;
+  tier-2 verified hunt edges (✓✓) survive every rebuild.
+- `state/status.json` — per rule + system `{status, headline, evidence, next}`.
+- `state/verification.json` — adversarial fleet verdicts; they override tier-1 in every view.
+- `state/trace.json` — the executed model: module events with real shapes/values.
+- `state/reconstructions.json` — real masked posteriors vs ground truth per observation.
+- `state/cache/` — LLM response cache (content-hash keyed).
+- `runs/*.jsonl` — training events: `config`, `startup`, `step`, `transfer`, `final`.
+- `seed/findings.json` — committed, curated: defects proven by running the system (F1–F7),
+  each with receipts.
 
 ## LLM contract (efficiency is a requirement)
 
