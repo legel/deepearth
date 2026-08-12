@@ -96,7 +96,9 @@ code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .
 .legend { display: flex; gap: 1.1rem; font-size: .82rem; color: var(--ink-2); margin-top: .5rem; }
 .legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: .35em; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: .15rem .9rem; font-size: .88rem; margin: .8rem 0; }
-.kv dt { color: var(--muted); } .kv dd { font-variant-numeric: tabular-nums; }
+.kv dt { color: var(--muted); } .kv dd { font-variant-numeric: tabular-nums; margin: 0; }
+.obspanel h4 { font-size: .8rem; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+               color: var(--ink-2); margin: 1.1rem 0 .3rem; border-top: 1px solid var(--grid); padding-top: .8rem; }
 
 @media (max-width: 900px) { header, main { padding-left: 1.2rem; padding-right: 1.2rem; }
   .maprow { grid-template-columns: 1fr; } }

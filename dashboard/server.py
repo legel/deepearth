@@ -117,6 +117,52 @@ def observation(gid):
         "source": f"https://www.gbif.org/occurrence/{gid}"})
 
 
+DAYMET_COLS = ["dayl", "prcp", "srad", "swe", "tmax", "tmin", "vp"]
+TOPO_COLS = ["elev", "slope_deg", "northness", "eastness", "TRI", "curvature", "VRM", "HLI",
+             "TPI8", "TPI24", "TPI72", "TPI140"]
+SOIL_COLS = ["pH", "organic_matter", "clay_%", "sand_%", "silt_%", "awc", "ksat", "cec7", "bulk_density"]
+DATA = REPO / "data" / "deepcal"
+_RAW = {}
+
+
+def _kv(npz_name, key):
+    if npz_name not in _RAW:
+        import numpy as np
+        z = np.load(DATA / npz_name, allow_pickle=True)
+        _RAW[npz_name] = (dict(zip(z["gbifID"].tolist(), range(len(z["gbifID"])))), z[key])
+    return _RAW[npz_name]
+
+
+def _daymet(gid):
+    import numpy as np
+    if "daymet_idx" not in _RAW:                        # gbifID -> (chunk, row) over all shards
+        idx = {}
+        for p in sorted((DATA / "gbif_daymet_tokens").glob("chunk*.npz")):
+            for r, g in enumerate(np.load(p, allow_pickle=True)["gbifID"].tolist()):
+                idx[g] = (p, r)
+        _RAW["daymet_idx"] = idx
+    loc = _RAW["daymet_idx"].get(gid)
+    return None if loc is None else np.load(loc[0], allow_pickle=True)["daymet"][loc[1]].astype(float)
+
+
+@app.get("/api/observation/<int:gid>/raw")
+def observation_raw(gid):
+    import math
+    r3 = lambda x: round(float(x), 3) if math.isfinite(float(x)) else None   # NaN is invalid JSON
+    out = {}
+    d = _daymet(gid)
+    if d is not None:
+        out["climate"] = {"cols": DAYMET_COLS, "rows": [[r3(v) for v in r] for r in d]}
+    for npz, key, names in [("gbif_soil_tokens.npz", "soil", SOIL_COLS),
+                            ("gbif_topo_tokens.npz", "topo", TOPO_COLS),
+                            ("gbif_hydro_tokens.npz", "hydro", None)]:
+        idx, arr = _kv(npz, key)
+        if (i := idx.get(gid)) is not None:
+            v = [r3(x) for x in arr[i]]
+            out[key] = dict(zip(names, v)) if names else v
+    return jsonify(out)
+
+
 @app.get("/api/species")
 def species():
     o = _obs()

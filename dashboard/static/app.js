@@ -178,6 +178,28 @@ function vData() {
     <div class="rows">${toks}</div>`;
 }
 
+/* compact climate strip: tmax/tmin lines (°C) + prcp bars (mm) over 180 days */
+function climateChart(c) {
+  const i = Object.fromEntries(c.cols.map((k, j) => [k, j]));
+  const rows = c.rows, W = 296, H = 110, P = 6;
+  const col = k => rows.map(r => r[i[k]]).map(v => v == null ? null : v);
+  const tmax = col("tmax"), tmin = col("tmin"), prcp = col("prcp");
+  const fin = vs => vs.filter(v => v != null);
+  const t0 = Math.min(...fin(tmin)), t1 = Math.max(...fin(tmax)), p1 = Math.max(...fin(prcp), 1);
+  const X = j => P + j / (rows.length - 1) * (W - 2 * P);
+  const Yt = v => 8 + (t1 - v) / (t1 - t0 || 1) * (H - 40);
+  const line = (vs, c) => `<polyline fill="none" stroke="${c}" stroke-width="1.6"
+    points="${vs.map((v, j) => v == null ? "" : `${X(j).toFixed(1)},${Yt(v).toFixed(1)}`).join(" ")}"/>`;
+  const bars = prcp.map((v, j) => v > 0 ? `<rect x="${(X(j) - .8).toFixed(1)}" width="1.6"
+    y="${(H - 4 - v / p1 * 26).toFixed(1)}" height="${(v / p1 * 26).toFixed(1)}" fill="var(--bench)" opacity=".55"/>` : "").join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%">${bars}
+      ${line(tmax, "var(--data)")}${line(tmin, "var(--code)")}</svg>
+    <div class="legend" style="margin-top:0;font-size:.75rem">
+      <span><span class="dot" style="background:var(--data)"></span>tmax ${t1.toFixed(0)}°C</span>
+      <span><span class="dot" style="background:var(--code)"></span>tmin ${t0.toFixed(0)}°C</span>
+      <span><span class="dot" style="background:var(--bench)"></span>prcp ≤${p1.toFixed(0)}mm</span></div>`;
+}
+
 /* ---- map (Leaflet + ESRI World Imagery) ---- */
 const mapState = { sp: null };
 async function initMap() {
@@ -213,7 +235,17 @@ async function initMap() {
         <dt>gbifID</dt><dd><a href="${d.source}" target="_blank" style="color:var(--code)">${d.gbifID} ↗</a></dd>
       </dl>
       <div>${d.modalities.map(m => `<span class="chip">${m}</span>`).join("")}</div>
-      <p class="sub" style="margin:.8rem 0 0;font-size:.8rem">Original photos and record at the GBIF link.</p>`;
+      <p class="sub" style="margin:.6rem 0 0;font-size:.8rem">Original photos and record at the GBIF link.</p>
+      <div id="rawrec"><p class="sub" style="font-size:.8rem">loading raw record…</p></div>`;
+    const raw = await api(`observation/${id}/raw`);
+    if (!raw) return $("#rawrec").remove();
+    const kv = obj => `<dl class="kv" style="font-size:.8rem">` +
+      Object.entries(obj).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v ?? "—"}</dd>`).join("") + "</dl>";
+    $("#rawrec").innerHTML =
+      (raw.climate ? `<h4>Daymet — 180 days to observation</h4>${climateChart(raw.climate)}` : "") +
+      (raw.soil ? `<h4>SSURGO soil</h4>${kv(raw.soil)}` : "") +
+      (raw.topo ? `<h4>3DEP terrain (1 m)</h4>${kv(raw.topo)}` : "") +
+      (raw.hydro ? `<h4>Hydrology</h4><code style="font-size:.78rem">[${raw.hydro.join(", ")}]</code>` : "");
   }
   $("#fsplit").onchange = draw;
   const inp = $("#fsp"), drop = $("#spdrop");
