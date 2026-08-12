@@ -22,7 +22,7 @@ PATTERNS = [
     ("transfer", re.compile(r"^held-out regions \(conditioning on (.*?)\): (.+)"),
      lambda m: {"given": m[1], "scores": {k: float(v) for k, v in
                 (p.rsplit(" ", 1) for p in m[2].split(" | "))}}),
-    ("bench", re.compile(r"^\s{2}(B\d\S*)\s+([\d.]+)\s*$"),
+    ("bench", re.compile(r"^\s{2}(B\d\S*)\s+([\d.]+)(?:\s+\(net contrib [\d.]+\))?\s*$"),
      lambda m: {"key": m[1], "score": float(m[2])}),
     ("net", re.compile(r"^NET SCORE.*: ([\d.]+)"), lambda m: {"net_score": float(m[1])}),
     ("arith", re.compile(r"^\s*\(arithmetic mean: ([\d.]+)\)"), lambda m: {"arithmetic": float(m[1])}),
