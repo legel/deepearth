@@ -150,28 +150,29 @@ def _reachability(reg, graph):
     for r in reg["rules"]:
         blocks = {e["src"] for e in graph["edges"]
                   if e["dst"] == f"R{r['id']}" and e["src"].split(":")[0].endswith(".py")}
-        cnt, gates, islands = {"live": 0, "gated": 0, "island": 0}, set(), []
-        for b in blocks:
+        cnt, gates, islands = {"live": 0, "gated": 0, "island": 0}, set(), set()
+        seen = set()
+        for b in blocks:                                 # every def contained in the linked code
             path, rng = b.rsplit(":", 1)
             s, e = map(int, rng.split("-"))
-            ds = [d for d in defs if d["path"] == path and d["start"] <= e and d["end"] >= s]
-            if not ds:
-                continue
-            best = min(ds, key=lambda d: REACH_ORD.index(d["reach"]))
-            if best["reach"] in cnt:
-                cnt[best["reach"]] += 1
-                if best["reach"] == "gated":
-                    gates.add(best.get("gate", "?"))
-                if best["reach"] == "island":
-                    islands.append(best["id"].split("::")[1])
-        out[r["id"]] = (cnt, sorted(gates), islands[:4])
+            for d in defs:
+                if d["path"] == path and d["start"] <= e and d["end"] >= s and d["id"] not in seen:
+                    seen.add(d["id"])
+                    if d["reach"] in cnt:
+                        cnt[d["reach"]] += 1
+                        if d["reach"] == "gated":
+                            gates.add(d.get("gate", "?"))
+                        if d["reach"] == "island":
+                            islands.add(d["id"].split("::")[1])
+        out[r["id"]] = (cnt, sorted(gates), sorted(islands)[:6])
     return out
 
 
 def _reach_lines(rules, reach):
     return "\n".join(
-        f"R{r['id']}: live {c['live']}, gated {c['gated']}{' (' + ','.join(g) + ')' if g else ''}, "
-        f"island {c['island']}{' (' + ','.join(i) + ')' if i else ''}"
+        f"R{r['id']}: {c['live']} live defs"
+        + (f", gated ({','.join(g)})" if g else "")
+        + (f", islands within linked code: {', '.join(i)}" if i else "")
         for r in rules if (v := reach.get(r["id"])) for c, g, i in [v]) or "no reachability data"
 
 
@@ -181,10 +182,10 @@ serious (major gap), critical (absent/broken), unknown (insufficient evidence).
 
 HARD CONSTRAINT — champion-path reachability (static call graph under the current config):
 {reach}
-Code that is "island" (never called) or "gated" (config flag off) is NOT implemented on the
-champion path. A rule whose only code is island => at best serious. A rule with ANY island or
-gated defs among its linked code is at best warning — it is partially implemented, and your
-"next" must name the dead/gated part. Only all-live rules may be good.
+"island" = never called; "gated" = behind a config flag that is off. Neither runs on the
+champion path. If a listed island/gated def IS a mechanism this rule mandates (judge by name
+and the rule text), the rule is at best warning — partially implemented — and your "next"
+must name that dead/gated def. A rule whose only implementation is island => at best serious.
 
 RULES OF THIS SYSTEM:
 {rules}
