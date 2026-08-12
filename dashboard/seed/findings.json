@@ -1,0 +1,20 @@
+{
+ "updated": "2026-08-11",
+ "findings": [
+  {"id": "F1", "sev": "serious", "title": "Committed config requires absent AlphaEarth data",
+   "detail": "deepcal.yaml sets task_niche_prior, family_alphaearth_expert, alphaearth_geo; task_niche_prior crashes (KeyError alphaearth) on the public data zip, and orthogonal_blank_hidden: 512 chains a second hard requirement. Runnable only after recipes/extract_alphaearth.py.",
+   "refs": ["autoresearch/train.py:66-69", "core/fusion.py:551", "autoresearch/recipes/README.md"]},
+  {"id": "F2", "sev": "serious", "title": "Prebuilt CUDA kernel stale vs source",
+   "detail": "The committed hashencoder_cuda.so forward-passes but crashes training: hash_encode_backward() signature mismatch with current bindings. Fresh clones cannot train until encoders/spacetime/install.sh rebuilds it.",
+   "refs": ["encoders/spacetime/hashencoder/backend.py:35-51", "encoders/spacetime/install.sh"]},
+  {"id": "F3", "sev": "warning", "title": "Package import requires parent-dir layout",
+   "detail": "All code imports deepearth.* absolutely with no pip packaging; the clone's parent directory must be on sys.path and the directory must be named deepearth. dashboard/tracker.py handles this for training runs.",
+   "refs": ["core/__init__.py:3", "dashboard/tracker.py"]},
+  {"id": "F4", "sev": "serious", "title": "R27 remediation loss ships disabled",
+   "detail": "Cross-tree plant-pollinator transfer fails (B55 0.038 vs 0.216 phylo-oracle; B59 gain ~5e-05) and the interaction loss intended to fix it is committed with weight 0.",
+   "refs": ["core/fusion.py:1158-1169", "autoresearch/champion_scores.json"]},
+  {"id": "F5", "sev": "warning", "title": "Dead and stale code in champion path",
+   "detail": "R15 memory bank (set_memory/experience) is never called; phylogenomic.py module self-test fails on a stale no-mask assertion; both mislead readers about live capability.",
+   "refs": ["core/fusion.py:392-398", "encoders/biological/phylogenomic.py:634"]}
+ ]
+}

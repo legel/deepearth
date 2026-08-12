@@ -60,6 +60,12 @@ def verification():
     return jsonify(_state("verification") or abort(404))
 
 
+@app.get("/api/findings")
+def findings():
+    p = ROOT / "seed" / "findings.json"
+    return jsonify(json.loads(p.read_text())) if p.exists() else abort(404)
+
+
 @app.get("/api/reconstructions")
 def reconstructions():
     return jsonify(_state("reconstructions") or abort(404))

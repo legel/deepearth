@@ -11,8 +11,8 @@ const api = async p => { const r = await fetch("/api/" + p); return r.ok ? r.jso
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function load() {
-  [state.reg, state.graph, state.status, state.verif] = await Promise.all(
-    [api("registry"), api("graph"), api("status"), api("verification")]);
+  [state.reg, state.graph, state.status, state.verif, state.findings] = await Promise.all(
+    [api("registry"), api("graph"), api("status"), api("verification"), api("findings")]);
   const meta = await api("meta");
   if (meta?.head) $("#meta").textContent = `${meta.head.sha} · ${meta.head.subject}` +
     (meta.audited ? ` · audited ${meta.audited}` : " · not yet audited");
@@ -55,9 +55,14 @@ function vStatus() {
     .sort((a, b) => (RANK[ruleStatus(a.id)?.status ?? "unknown"] - RANK[ruleStatus(b.id)?.status ?? "unknown"]) || a.id - b.id)
     .map(r => statusTile("#/rule/" + r.id, ruleStatus(r.id)?.status, `R${r.id} · ${r.title}`,
                          ruleStatus(r.id)?.headline, "", ruleStatus(r.id)?.verified)).join("");
+  const finds = (state.findings?.findings ?? []).map(f => `<div class="row">
+    <span class="s" style="color:var(--${f.sev === "serious" ? "serious" : "warning"})">${GLYPH[f.sev] ?? "!"} ${f.id}</span>
+    <span class="grow"><b>${esc(f.title)}</b> — <span style="color:var(--ink-2)">${esc(f.detail)}</span>
+      ${(f.refs ?? []).map(r => `<code style="font-size:.76rem">${esc(r)}</code>`).join(" ")}</span></div>`).join("");
   return `<h1>System status</h1>
     <p class="sub">Five systems, thirty-two principles. Every claim opens to its evidence.</p>
-    <div class="tiles">${sys}</div><h2>Principles — worst first</h2><div class="tiles">${rules}</div>`;
+    <div class="tiles">${sys}</div><h2>Principles — worst first</h2><div class="tiles">${rules}</div>
+    ${finds ? `<h2>Operational findings — from actually running the system</h2><div class="rows">${finds}</div>` : ""}`;
 }
 
 function vRule(id) {

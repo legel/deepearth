@@ -66,6 +66,23 @@ every PR merge.
 
 Traversal is the point: every entity links to every connected entity.
 
+## Two-tier audit operations
+
+Tier 1 runs continuously and cheaply: `audit.py --loop` (Gemini) re-maps changed
+files and refreshes status after every merge. Tier 2 runs periodically or before
+decisions: a fleet of stronger agents adversarially re-reads every non-good
+claim (refute-first, exhaustive search before accepting any absence claim) and
+hunts missed edges in core files. Its output is `state/verification.json`
+(`{verifications: [{id, claimed, verdict, status, note, key_evidence}], hunts}`);
+verified verdicts override tier-1 statuses in every view (✓✓ badge) and hunter
+edges merge into the graph (notes prefixed ✓✓). First run: tier 2 overturned a
+false critical (R24), cleared two false alarms (R16, R32), and hardened one real
+failure (R27). Operate both; trust neither alone.
+
+`seed/findings.json` records operational findings — defects discovered by
+actually running the system (missing data dependencies, stale binaries) that no
+static audit can see. They render on the Status wall. Append; don't rewrite.
+
 ## Extension points
 
 - New view: add a section to `static/app.js` + an endpoint reading state.
