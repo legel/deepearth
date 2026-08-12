@@ -38,6 +38,9 @@ def main():
         return r
     DeepEarth.load_state_dict = _tolerant
     config = yaml.safe_load(open(args.config))
+    cd = config["data"].get("cache_dir")
+    if cd and not Path(cd).is_absolute():                # mirror train.main: the prepared-cache tag
+        config["data"]["cache_dir"] = str(REPO / cd)     # hashes the ABSOLUTE dir
     config["_eval_ckpt"] = args.ckpt
     config["_tag"] = "reconstruct"
     model, scores = T.train_and_evaluate(config, args.device)   # builds model, loads ckpt, scores suite

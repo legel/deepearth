@@ -63,6 +63,9 @@ def main():
     DeepEarth.load_state_dict = lambda self, sd, strict=True: _load(self, sd, strict=False)
 
     config = yaml.safe_load(open(args.config))
+    cd = config["data"].get("cache_dir")
+    if cd and not Path(cd).is_absolute():                # mirror train.main: the prepared-cache tag
+        config["data"]["cache_dir"] = str(REPO / cd)     # hashes the ABSOLUTE dir
     config["_eval_ckpt"] = args.ckpt
     config["_tag"] = "trace"
     model, _ = T.train_and_evaluate(config, args.device)
