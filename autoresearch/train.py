@@ -137,6 +137,10 @@ def train_and_evaluate(config, device):
                       smooth_geo_per_scale=m.get("smooth_geo_per_scale", 32),
                       alphaearth_geo=m.get("alphaearth_geo", False),
                       n_pollinators=getattr(source, "n_pollinators", 0) if m.get("poll_weight", 0.0) > 0 else 0, **poll_kw,
+                      poll_species_idx=(source.poll_idx if m.get("poll_species_mixture", 0.0) > 0 else None),
+                      poll_species_frq=(source.poll_frq if m.get("poll_species_mixture", 0.0) > 0 else None),
+                      poll_species_mixture=m.get("poll_species_mixture", 0.0),
+                      poll_species_all_masked=m.get("poll_species_all_masked", False),
                       phylo_head_routing=m.get("phylo_head_routing", False),
                       species_trait_recon=m.get("species_trait_recon", False),
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
