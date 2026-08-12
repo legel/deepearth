@@ -7,7 +7,6 @@ checkpoint replays through the unchanged public evaluator.
 | Model | Seed | Steps | Harmonic | Arithmetic | Training VRAM |
 |---|---:|---:|---:|---:|---:|
 | Registered 797.1M reference | 1337 | 5,126 | 0.318693 | 0.570700 | 37,003.6 MB |
-| Prior PR compact mean (time-budget receipt) | 2 seeds | 2,282.5 mean | 0.364218 | 0.575520 | 17,971.6 MB |
 | Fixed-step 24.9M control | 1337 | 2,291 | 0.367661 | 0.578883 | 17,971.6 MB |
 | Fixed-step 24.9M control | 1338 | 2,291 | 0.365992 | 0.581475 | 17,971.6 MB |
 | Prior 25.4M niche fusion | 2 seeds | 2,291 | 0.373924 | 0.583204 | 19,100 MB observed |
@@ -16,7 +15,7 @@ checkpoint replays through the unchanged public evaluator.
 | **Candidate mean** | **2 seeds** | **2,291** | **0.376617** | **0.586926** | **19,100 MB observed** |
 | **Delta vs prior PR record** |  |  | **+0.002693 (+0.72%)** | **+0.003722** | **unchanged** |
 | **Delta vs fixed-step control** |  |  | **+0.009791 (+2.67%)** | **+0.006747** | **+1,128 MB** |
-| **Delta vs 797.1M reference** |  |  | **+0.057924 (+18.18%)** | **+0.016226** | **-48.4%** |
+| **Difference vs historical 797.1M reference** |  |  | **+0.057924 (+18.18%)** | **+0.016226** | **-48.4%** |
 
 ## Record criterion
 
@@ -24,6 +23,9 @@ A replacement record uses the unchanged public evaluator, data, and holdout; com
 reports every active benchmark; runs seeds 1337 and 1338; and requires each candidate seed to exceed its seed-matched
 control on both harmonic and arithmetic mean. Wall time is reported as a resource diagnostic, never converted into
 extra training steps. Both candidate seeds pass.
+
+Only the 2,291-step control-to-candidate comparison is a matched promotion claim. The registered 797.1M row is an
+older 5,126-step receipt: it is retained as historical replacement context, not treated as an equal-budget ablation.
 
 ## Capability scorecard
 

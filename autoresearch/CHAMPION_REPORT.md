@@ -4,7 +4,8 @@
 
 The compact model improves both public aggregates over a seed-matched 24.9M control at exactly 2,291 optimizer
 steps. It retains the PR's central result: the 797.1M default is unnecessary. The candidate is 96.8% smaller and
-uses 48.4% less training VRAM while improving harmonic by 18.2% over the registered reference.
+uses 48.4% less training VRAM. Its 2,291-step score is also 18.2% higher than the historical 797M receipt, which
+used 5,126 steps; that row is replacement context, not the matched promotion comparison.
 
 | Model | Seed | Steps | Harmonic | Arithmetic |
 |---|---:|---:|---:|---:|
@@ -17,7 +18,7 @@ uses 48.4% less training VRAM while improving harmonic by 18.2% over the registe
 | **Candidate mean** | **2 seeds** | **2,291** | **0.376617** | **0.586926** |
 | **Delta vs prior PR record** |  |  | **+0.002693 (+0.72%)** | **+0.003722** |
 | **Delta vs fixed-step control** |  |  | **+0.009791 (+2.67%)** | **+0.006747** |
-| **Delta vs registered reference** |  |  | **+0.057924 (+18.18%)** | **+0.016226** |
+| **Difference vs historical reference** |  |  | **+0.057924 (+18.18%)** | **+0.016226** |
 
 When plant identity is hidden, the model now composes its species posterior through the empirical
 species-to-pollinator table and blends that distribution with the learned pollinator decoder. This makes the
