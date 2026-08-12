@@ -178,8 +178,8 @@ class Analyzer:
                 for m in ("__init__", "forward", "__call__", "__len__", "__getitem__"):
                     if f"{q}.{m}" in self.mods[rel].defs:
                         self._add(did, f"{rel}::{q}.{m}", None)
-                if node.decorator_list:                  # decorator-registered (e.g. @register adapters)
-                    self.edges.setdefault(f"{rel}::(module)", set()).add((did, None))
+            if getattr(node, "decorator_list", None):    # decorator registration = framework-invoked
+                self.edges.setdefault(f"{rel}::(module)", set()).add((did, None))
         for rel, m in self.mods.items():                 # module top-level + __main__ pseudo-defs
             for pq, stmts in (("(module)", m.toplevel), ("(cli)", m.cli)):
                 pid = f"{rel}::{pq}"
