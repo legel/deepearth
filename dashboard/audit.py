@@ -103,6 +103,28 @@ def connect_file(reg, f):
     return edges
 
 
+def _latest_run():
+    for p in sorted((ROOT / "runs").glob("*.jsonl"), reverse=True):
+        events = [json.loads(l) for l in open(p) if l.strip()]
+        if fin := next((e for e in events if e.get("t") == "final" and e.get("scores", {}).get("benchmarks")), None):
+            return {"id": p.stem, "net_score": fin["scores"].get("net_score"),
+                    "arithmetic": fin["scores"].get("arithmetic"), "benchmarks": fin["scores"]["benchmarks"]}
+    return None
+
+
+def _run_context(reg):
+    run = _latest_run()
+    if not run:
+        return "none"
+    champ = {b["key"]: b["current_score"] for b in reg["benchmarks"]}
+    deltas = sorted(((k, v, v - champ[k]) for k, v in run["benchmarks"].items()
+                     if champ.get(k) is not None), key=lambda x: x[2])
+    movers = deltas[:6] + deltas[-6:]
+    return (f"{run['id']}: H {run['net_score']} A {run['arithmetic']} (champion H 0.374 A 0.583; "
+            f"local variant runs may lack optional channels — weigh deltas qualitatively)\n"
+            + "\n".join(f"  {k} {v:.3f} ({d:+.3f} vs champion)" for k, v, d in movers))
+
+
 STATUS = """You audit DeepEarth's "{system}" system. Judge each rule's implementation status from
 the evidence. Statuses: good (implemented + validated), warning (partial/untested),
 serious (major gap), critical (absent/broken), unknown (insufficient evidence).
@@ -115,6 +137,9 @@ CODE LINKED TO EACH RULE (block ids + connection notes):
 
 BENCHMARK SCORES (current champion; null = inactive):
 {scores}
+
+LATEST TRACKED RUN (biggest movers vs champion):
+{run}
 
 Return JSON: {{"rules": [{{"id": <int>, "status": "<status>", "headline": "<=15 words",
 "evidence": ["<block or benchmark ids>"], "next": "<=18 words, concrete next step"}}],
@@ -133,7 +158,7 @@ def status_system(reg, graph, system):
         system=system,
         rules="\n".join(f"R{r['id']} {r['title']}: {r['summary']}" for r in rules),
         evidence=json.dumps(ev, indent=0)[:40_000],
-        scores=json.dumps(scores))
+        scores=json.dumps(scores), run=_run_context(reg))
     key = system + graph["head"] + hashlib.sha256(prompt.encode()).hexdigest()[:8]
     out = cached(key, lambda: gemini(prompt))
     for r in out.get("rules", []):
