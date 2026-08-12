@@ -37,10 +37,8 @@ def main():
                   f"{sorted({k.split('.')[0] for k in r.missing_keys})}")
         return r
     DeepEarth.load_state_dict = _tolerant
-    config = yaml.safe_load(open(args.config))
-    cd = config["data"].get("cache_dir")
-    if cd and not Path(cd).is_absolute():                # mirror train.main: the prepared-cache tag
-        config["data"]["cache_dir"] = str(REPO / cd)     # hashes the ABSOLUTE dir
+    from dashboard._shared import normalize_config, prepared_path
+    config = normalize_config(yaml.safe_load(open(args.config)))
     config["_eval_ckpt"] = args.ckpt
     config["_tag"] = "reconstruct"
     model, scores = T.train_and_evaluate(config, args.device)   # builds model, loads ckpt, scores suite
@@ -55,7 +53,7 @@ def main():
                                device=args.device, holdout=d.get("holdout", "spatial"), subset=d.get("subset"),
                                time_axis=d.get("time_axis", False), meta_path=d.get("meta_path"),
                                time_km=d.get("time_km", 50.0),
-                               prepared=str(REPO / "data" / "deepcal" / f"prepared_{tag}.pt"))
+                               prepared=prepared_path(config))
 
     obs = np.load(ROOT / "state" / "observations.npz")
     species = json.loads((ROOT / "state" / "species.json").read_text())["binomial"]

@@ -199,6 +199,9 @@ BENCHMARK SCORES (current champion; null = inactive):
 LATEST TRACKED RUN (biggest movers vs champion):
 {run}
 
+OPERATIONAL FINDINGS (defects proven by actually running the system — weigh them):
+{findings}
+
 Return JSON: {{"rules": [{{"id": <int>, "status": "<status>", "headline": "<=15 words",
 "evidence": ["<block or benchmark ids>"], "next": "<=18 words, concrete next step"}}],
 "system": {{"status": "<worst-informed overall>", "headline": "<=15 words", "next": "<=18 words"}}}}
@@ -212,11 +215,14 @@ def status_system(reg, graph, system, reach):
         if e["dst"].startswith("R") and int(e["dst"][1:]) in {r["id"] for r in rules}:
             ev.setdefault(e["dst"], []).append(f"{e['src']} ({e['note']})")
     scores = {b["id"]: b["current_score"] for b in reg["benchmarks"]}
+    fp = ROOT / "seed" / "findings.json"
+    findings = "\n".join(f"{f['id']} [{f['sev']}] {f['title']}: {f['detail'][:220]}"
+                         for f in json.loads(fp.read_text())["findings"]) if fp.exists() else "none"
     prompt = STATUS.format(
         system=system, reach=_reach_lines(rules, reach),
         rules="\n".join(f"R{r['id']} {r['title']}: {r['summary']}" for r in rules),
         evidence=json.dumps(ev, indent=0)[:40_000],
-        scores=json.dumps(scores), run=_run_context(reg))
+        scores=json.dumps(scores), run=_run_context(reg), findings=findings)
     key = system + graph["head"] + hashlib.sha256(prompt.encode()).hexdigest()[:8]
     out = cached(key, lambda: gemini(prompt))
     for r in out.get("rules", []):
