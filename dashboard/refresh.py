@@ -13,12 +13,16 @@ REPO = Path(__file__).resolve().parent.parent
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--no-audit", action="store_true", help="skip the Gemini audit step")
+    ap.add_argument("--no-audit", action="store_true", help="skip the Gemini audit entirely")
+    ap.add_argument("--graph-only", action="store_true",
+                    help="audit connectivity only (cached; cheap per commit), skip status")
     args = ap.parse_args()
-    steps = ["registry", "callgraph", "flow"] + ([] if args.no_audit else ["audit"])
-    for s in steps:
+    steps = [("registry", []), ("callgraph", []), ("flow", [])]
+    if not args.no_audit:
+        steps.append(("audit", ["--graph-only"] if args.graph_only else []))
+    for s, extra in steps:
         print(f"== dashboard.{s}", flush=True)
-        r = subprocess.run([sys.executable, "-m", f"dashboard.{s}"], cwd=REPO)
+        r = subprocess.run([sys.executable, "-m", f"dashboard.{s}", *extra], cwd=REPO)
         if r.returncode:
             sys.exit(r.returncode)
 

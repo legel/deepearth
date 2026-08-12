@@ -8,7 +8,7 @@ cat > "$HOOK" <<'EOF'
 #!/usr/bin/env bash
 # dashboard state refresh (installed by dashboard/hooks/install.sh)
 REPO="$(git rev-parse --show-toplevel)"
-(cd "$REPO" && python3 -m dashboard.refresh --no-audit >> /tmp/dashboard-refresh.log 2>&1 &)
+(cd "$REPO" && python3 -m dashboard.refresh --graph-only >> /tmp/dashboard-refresh.log 2>&1 &)
 EOF
 chmod +x "$HOOK"
 echo "installed: $HOOK (runs dashboard.refresh --no-audit in background after each commit)"
