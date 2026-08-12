@@ -254,8 +254,15 @@ async function initMap() {
         <dt>gbifID</dt><dd><a href="${d.source}" target="_blank" style="color:var(--code)">${d.gbifID} ↗</a></dd>
       </dl>
       <div>${d.modalities.map(m => `<span class="chip">${m}</span>`).join("")}</div>
-      <p class="sub" style="margin:.6rem 0 0;font-size:.8rem">Original photos and record at the GBIF link.</p>
+      <div id="obsphoto"></div>
       <div id="rawrec"><p class="sub" style="font-size:.8rem">loading raw record…</p></div>`;
+    fetch(`https://api.gbif.org/v1/occurrence/${id}`).then(r => r.json()).then(g => {
+      const img = (g.media ?? []).find(m => m.identifier);
+      if (img) $("#obsphoto").innerHTML = `<img src="${img.identifier}" alt="${esc(d.species)}"
+        style="width:100%;border-radius:4px;margin-top:.6rem" loading="lazy">
+        <p class="sub" style="font-size:.74rem;margin:.15rem 0 0">${esc(img.rightsHolder ?? g.recordedBy ?? "")} ·
+        the actual observation photo (DINOv2/BioCLIP source)</p>`;
+    }).catch(() => {});
     const rec = state.recon?.rows?.[id];
     const recHtml = !rec ? "" : `<h4>Model reconstruction — each variable masked, predicted from the rest</h4>` +
       Object.entries(rec).map(([t, r]) => r.top ? `<div style="font-size:.82rem;margin:.3rem 0"><b>${esc(t)}</b>
