@@ -28,6 +28,15 @@ def main():
     args = ap.parse_args()
 
     from deepearth.autoresearch import train as T
+    from deepearth.core.fusion import DeepEarth
+    _load = DeepEarth.load_state_dict                    # checkpoints may lack aux-head keys
+    def _tolerant(self, sd, strict=True):                # (prepared-cache vs fresh-assembly asymmetry)
+        r = _load(self, sd, strict=False)
+        if r.missing_keys:
+            print(f"[reconstruct] {len(r.missing_keys)} keys left at init: "
+                  f"{sorted({k.split('.')[0] for k in r.missing_keys})}")
+        return r
+    DeepEarth.load_state_dict = _tolerant
     config = yaml.safe_load(open(args.config))
     config["_eval_ckpt"] = args.ckpt
     config["_tag"] = "reconstruct"
