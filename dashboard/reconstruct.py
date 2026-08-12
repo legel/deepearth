@@ -89,9 +89,12 @@ def main():
                 for j, g in enumerate(pick.tolist()):
                     out.setdefault(str(int(obs["gbifID"][g])), {})[t] = {"cos": round(float(cos[j]), 4)}
 
+    with torch.no_grad():                                # R23's own invariant: pluralism conserved iff
+        mf = model.marginal_fidelity(values, observed, ctx)   # marginals hold as coupling K rises
     (ROOT / "state" / "reconstructions.json").write_text(json.dumps(
         {"ckpt": args.ckpt, "net_score": scores.get("net_score"), "n": len(pick),
-         "targets": targets, "rows": out}) + "\n")
+         "targets": targets, "rows": out,
+         "marginal_fidelity": {k: {kk: round(v, 4) for kk, v in d.items()} for k, d in mf.items()}}) + "\n")
     print(f"reconstructions: {len(pick)} observations x {len(targets)} targets -> state/reconstructions.json")
 
 

@@ -193,9 +193,26 @@ function vRule(id) {
     ${st ? `<div class="tiles">${statusTile("#", st.status, st.headline ?? "", st.next, "sys")}</div>` : ""}
     ${vf ? `<p class="sub" style="margin-top:.8rem">✓✓ <b>${vf.verdict}</b> by adversarial review — ${esc(vf.note)}
       ${(vf.key_evidence ?? []).map(refLink).join(" ")}</p>` : ""}
+    ${r.id === 23 && state.recon?.marginal_fidelity ? r23Invariant() : ""}
     ${ruleBenches(r.id)}
     <h2>Connected code — ${edges.length} connections · click any row to read it</h2>
     ${edgeSections(edges)}`;
+}
+
+function r23Invariant() {                                 // measured, not asserted: fidelity at K=1 vs K=rounds
+  const mf = state.recon.marginal_fidelity;
+  const ks = Object.keys(Object.values(mf)[0]);
+  const rows = Object.entries(mf).map(([v, d]) => {
+    const delta = d[ks[ks.length - 1]] - d[ks[0]];
+    return `<div class="row"><b class="grow">${esc(v)}</b>
+      ${ks.map(k => `<span class="num">${k} ${d[k].toFixed(3)}</span>`).join("")}
+      <span class="num" style="min-width:5em;text-align:right;color:var(--${delta >= -0.01 ? "good" : "serious"})">
+        ${(delta >= 0 ? "+" : "") + delta.toFixed(3)}</span></div>`;
+  }).join("");
+  return `<h2>The rule's own invariant — measured on the real batch</h2>
+    <p class="sub">Each variable hidden alone, decoded at K=1 vs K=${ks[ks.length - 1].slice(1)} rounds:
+      pluralism is conserved iff the marginal does not degrade as coupling rises.</p>
+    <div class="rows">${rows}</div>`;
 }
 
 function ruleBenches(id) {                                // benchmarks joined through shared implementing blocks
@@ -254,6 +271,9 @@ function pillFor(dst, note = "") {                       // named, hoverable rul
 async function vFile(spec) {
   const m = spec.match(/^(.+?):(\d+)-(\d+)$/);
   const [path, hs, he] = m ? [m[1], +m[2], +m[3]] : [spec, 0, 0];
+  const probe = await fetch("/api/code/" + path);
+  if (!probe.ok) return `<h1><code>${esc(path)}</code></h1>` +
+    empty(`Not a repo file — nothing to show. (Torch builtins and external modules have no source here.)`);
   const hl = await hlLines(path);
   const blocks = state.reg.blocks.filter(b => b.path === path);
   const edges = blockEdges(path);
@@ -373,14 +393,17 @@ function modalityCensus() {
 const fmtS = s => (s && s[0] ? s[0].join("×") : "—");
 const fmtP = p => p >= 1e6 ? (p / 1e6).toFixed(1) + "M" : p >= 1e3 ? (p / 1e3).toFixed(1) + "k" : String(p);
 
+const srcLink = (e, inner) => e.file                      // torch builtins have no repo source
+  ? `<a href="#/file/${e.file}:${e.line}-${e.line}">${inner}</a>`
+  : `<span title="${esc(e.cls)} is a torch builtin — defined by PyTorch, not this repo">${inner}</span>`;
+
 function bandHtml(b) {
   const comp = b.events.find(e => e.name === b.top);
   const params = b.events.reduce((s, e) => s + e.params, 0);
   const out = comp ?? b.events[b.events.length - 1];
   return `<div class="fband">
     <div class="fband-h">
-      <a href="#/file/${out.file}:${out.line}-${out.line}"><b>${esc(b.top)}</b>
-        <span class="num">${esc(out.cls)}</span></a>
+      ${srcLink(out, `<b>${esc(b.top)}</b> <span class="num">${esc(out.cls)}${out.file ? "" : " · torch"}</span>`)}
       <span class="num">${fmtP(params)} params · out ${fmtS(out.out)}${out.sample
         ? ` · μ=${out.sample.mean} σ=${out.sample.std}` : ""}</span>
     </div>
@@ -395,13 +418,16 @@ function subGroups(evts, top) {
   }
   return Object.entries(subs).map(([s, es]) => {
     const head = es.find(e => e.name.endsWith("." + s) || e.name === s) ?? es[0];
-    return `<a class="fsub" href="#/file/${head.file}:${head.line}-${head.line}"
-        title="${esc(head.name)} · ${esc(head.cls)} · in ${fmtS(head.in)} → out ${fmtS(head.out)}${head.sample
-          ? `\nreal output values [${head.sample.first.join(", ")}…] μ=${head.sample.mean} σ=${head.sample.std}` : ""}">
-      <div class="fsub-h">${esc(s)} <span>${esc(head.cls)}</span></div>
+    const src = es.find(e => e.file) ?? head;             // prefer a repo-sourced member for the link
+    const body = `
+      <div class="fsub-h">${esc(s)} <span>${esc(head.cls)}${head.file || src.file ? "" : " · torch"}</span></div>
       <div class="num">${fmtS(head.in)} → ${fmtS(head.out)}</div>
-      <div class="num">${fmtP(es.reduce((x, e) => x + e.params, 0))} params · ${es.length} call${es.length > 1 ? "s" : ""}</div>
-    </a>`;
+      <div class="num">${fmtP(es.reduce((x, e) => x + e.params, 0))} params · ${es.length} call${es.length > 1 ? "s" : ""}</div>`;
+    const title = `${esc(head.name)} · ${esc(head.cls)} · in ${fmtS(head.in)} → out ${fmtS(head.out)}${head.sample
+      ? `\nreal output values [${head.sample.first.join(", ")}…] μ=${head.sample.mean} σ=${head.sample.std}` : ""}`;
+    return src.file
+      ? `<a class="fsub" href="#/file/${src.file}:${src.line}-${src.line}" title="${title}">${body}</a>`
+      : `<span class="fsub" title="${title}\n(torch builtin — no repo source)">${body}</span>`;
   }).join("");
 }
 
