@@ -11,7 +11,8 @@ const api = async p => { const r = await fetch("/api/" + p); return r.ok ? r.jso
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function load() {
-  [state.reg, state.graph, state.status] = await Promise.all([api("registry"), api("graph"), api("status")]);
+  [state.reg, state.graph, state.status, state.verif] = await Promise.all(
+    [api("registry"), api("graph"), api("status"), api("verification")]);
   const meta = await api("meta");
   if (meta?.head) $("#meta").textContent = `${meta.head.sha} · ${meta.head.subject}` +
     (meta.audited ? ` · audited ${meta.audited}` : " · not yet audited");
@@ -26,12 +27,17 @@ const edgesFor = pred => (state.graph?.edges ?? []).filter(pred);
 const ruleEdges = id => edgesFor(e => e.dst === "R" + id);
 const benchEdges = id => edgesFor(e => e.dst === id);
 const blockEdges = path => edgesFor(e => e.src.startsWith(path + ":"));
-const ruleStatus = id => state.status?.rules?.find(r => r.id === id);
+const verifOf = id => state.verif?.verifications?.find(v => v.id === id);
+const ruleStatus = id => {
+  const s = state.status?.rules?.find(r => r.id === id), v = verifOf(id);
+  return v ? { ...s, status: v.status, verified: v.verdict } : s;   // adversarial verdict wins
+};
 
-function statusTile(href, status, name, headline, cls = "") {
+function statusTile(href, status, name, headline, cls = "", verified = null) {
   const st = status ?? "unknown";
   return `<a class="tile ${cls}" href="${href}">
     <span class="s" style="color:var(--${st})"><span class="dot" style="background:var(--${st})"></span>${GLYPH[st]} ${st}</span>
+    ${verified ? `<span class="s" style="float:right;color:var(--muted)" title="adversarially verified: ${verified}">✓✓</span>` : ""}
     <h3>${esc(name)}</h3><p>${esc(headline ?? "no audit yet")}</p></a>`;
 }
 
@@ -45,7 +51,7 @@ function vStatus() {
   const rules = [...state.reg.rules]
     .sort((a, b) => (RANK[ruleStatus(a.id)?.status ?? "unknown"] - RANK[ruleStatus(b.id)?.status ?? "unknown"]) || a.id - b.id)
     .map(r => statusTile("#/rule/" + r.id, ruleStatus(r.id)?.status, `R${r.id} · ${r.title}`,
-                         ruleStatus(r.id)?.headline)).join("");
+                         ruleStatus(r.id)?.headline, "", ruleStatus(r.id)?.verified)).join("");
   return `<h1>System status</h1>
     <p class="sub">Five systems, thirty-two principles. Every claim opens to its evidence.</p>
     <div class="tiles">${sys}</div><h2>Principles — worst first</h2><div class="tiles">${rules}</div>`;
@@ -54,10 +60,12 @@ function vStatus() {
 function vRule(id) {
   const r = state.reg?.rules.find(x => x.id === +id);
   if (!r) return needReg();
-  const st = ruleStatus(r.id);
+  const st = ruleStatus(r.id), vf = verifOf(r.id);
   const edges = ruleEdges(r.id);
   return `<h1>R${r.id} · ${esc(r.title)}</h1><p class="sub">${esc(r.summary)}</p>
     ${st ? `<div class="tiles">${statusTile("#", st.status, st.headline ?? "", st.next, "sys")}</div>` : ""}
+    ${vf ? `<p class="sub" style="margin-top:.8rem">✓✓ <b>${vf.verdict}</b> by adversarial review — ${esc(vf.note)}
+      ${(vf.key_evidence ?? []).map(e => `<code>${esc(e)}</code>`).join(" ")}</p>` : ""}
     <h2>Implementing code — ${edges.length} connections</h2>
     <div class="rows">${edges.map(e => `<a class="row" href="#/file/${e.src.split(":")[0]}">
       <span class="id">s${e.s}</span><code class="grow">${esc(e.src)}</code>

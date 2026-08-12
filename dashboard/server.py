@@ -55,6 +55,16 @@ def status():
     return jsonify(_state("status") or abort(404))
 
 
+@app.get("/api/verification")
+def verification():
+    return jsonify(_state("verification") or abort(404))
+
+
+@app.get("/api/reconstructions")
+def reconstructions():
+    return jsonify(_state("reconstructions") or abort(404))
+
+
 @app.get("/api/code/<path:p>")
 def code(p):
     reg = _state("registry") or abort(404)
