@@ -168,6 +168,23 @@ def status_system(reg, graph, system):
     return out
 
 
+def _apply_verification(edges):
+    """Tier-2 verdicts outlive tier-1 rebuilds: re-add hunter edges, re-drop refuted ones."""
+    p = STATE / "verification.json"
+    if not p.exists():
+        return edges
+    v = json.loads(p.read_text())
+    wrong = {(w["src"], w["dst"]) for h in v.get("hunts", []) for w in h.get("wrong", [])}
+    have = {(e["src"], e["dst"]) for e in edges}
+    out = [e for e in edges if (e["src"], e["dst"]) not in wrong]
+    for h in v.get("hunts", []):
+        for m in h.get("missed", []):
+            if (m["block"], m["dst"]) not in have:
+                out.append({"src": m["block"], "dst": m["dst"], "s": m["s"],
+                            "note": ("✓✓ " + m["note"])[:90]})
+    return out
+
+
 def run(status_only=False, graph_only=False):
     reg = _reg()
     text_files = [f for f in reg["files"] if f["kind"] == "text"]
@@ -176,7 +193,7 @@ def run(status_only=False, graph_only=False):
     if not status_only:
         with ThreadPoolExecutor(8) as ex:
             results = list(ex.map(lambda f: connect_file(reg, f), text_files))
-        edges = [e for r in results for e in r]
+        edges = _apply_verification([e for r in results for e in r])
         graph = {"head": reg["head"], "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
                  "edges": edges}
         graph_p.write_text(json.dumps(graph) + "\n")
