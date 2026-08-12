@@ -306,13 +306,49 @@ def refresh_seed(name):
     print(f"seed/{name}.json refreshed")
 
 
+def triage_islands():
+    """One batched call: every model-codebase island -> wire-in | delete | keep, with a reason."""
+    cg = json.loads((STATE / "callgraph.json").read_text())
+    graph = json.loads((STATE / "graph.json").read_text())
+    islands = [d for d in cg["defs"] if d["reach"] == "island"
+               and d["path"].startswith(("core/", "encoders/", "autoresearch/"))
+               and "recipes/" not in d["path"]]
+    rows = []
+    for d in islands:
+        rules = sorted({e["dst"] for e in graph["edges"]
+                        if e["src"].rsplit(":", 1)[0] == d["path"] and e["dst"][0] == "R"
+                        and (lambda s, t: s[0] <= d["end"] and s[1] >= d["start"])(
+                            tuple(map(int, e["src"].rsplit(":", 1)[1].split("-"))), None)})
+        rows.append(f"{d['id']} ({d['path']}:{d['start']}-{d['end']}) linked rules: {','.join(rules) or 'none'}")
+    src = "\n".join(rows)
+    out = gemini(f"""These defs in the DeepEarth model codebase are ISLANDS — never called from any
+entry point under the champion config (static call graph). The project mandate: no code off the
+critical path — every island must be wired in, deleted, or kept with an explicit reason.
+Science rules R1-R32 are the charter; a def named in a rule's mechanism should usually be
+wired-in, a convenience helper deleted, a documented external API kept.
+
+ISLANDS:
+{src}
+
+Return JSON: {{"triage": [{{"id": "<def id>", "action": "wire-in|delete|keep",
+"reason": "<=14 words"}}]}} — one entry per island, decisive.""")
+    (STATE / "triage.json").write_text(json.dumps(
+        {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "triage": out.get("triage", [])}) + "\n")
+    from collections import Counter
+    print(f"triage: {len(out.get('triage', []))} islands -> "
+          f"{dict(Counter(t['action'] for t in out.get('triage', [])))}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--status-only", action="store_true")
     ap.add_argument("--graph-only", action="store_true")
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--refresh-seed", choices=[*SEEDS, "all"])
+    ap.add_argument("--triage-islands", action="store_true")
     args = ap.parse_args()
+    if args.triage_islands:
+        return triage_islands()
     if args.refresh_seed:
         for n in (SEEDS if args.refresh_seed == "all" else [args.refresh_seed]):
             refresh_seed(n)

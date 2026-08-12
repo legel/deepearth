@@ -65,6 +65,11 @@ def verification():
     return jsonify(_state("verification") or abort(404))
 
 
+@app.get("/api/triage")
+def triage():
+    return jsonify(_state("triage") or abort(404))
+
+
 @app.get("/api/callgraph")
 def callgraph():
     return jsonify(_state("callgraph") or abort(404))

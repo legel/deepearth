@@ -12,9 +12,10 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 
 async function load() {
   [state.reg, state.graph, state.status, state.verif, state.findings, state.recon, state.flow,
-   state.callg, state.trace] =
+   state.callg, state.trace, state.triage] =
     await Promise.all([api("registry"), api("graph"), api("status"), api("verification"),
-                       api("findings"), api("reconstructions"), api("flow"), api("callgraph"), api("trace")]);
+                       api("findings"), api("reconstructions"), api("flow"), api("callgraph"),
+                       api("trace"), api("triage")]);
   const meta = await api("meta");
   if (meta?.head) $("#meta").innerHTML = esc(`${meta.head.sha} · ${meta.head.subject}`) +
     esc(meta.audited ? ` · audited ${meta.audited}` : " · not yet audited") +
@@ -75,11 +76,15 @@ function vStatus() {
         <b style="color:var(--warning)">${gat.length} gated off</b> ·
         <b style="color:var(--critical)">${isl.length} never called</b>.
         Code that exists but does not run is capability, not implementation.</p>
-      <div class="rows">${[...isl.map(d => ["island", d]), ...gat.map(d => ["gated", d])].map(([k, d]) => `
-        <a class="row" href="#/file/${d.path}:${d.start}-${d.end}">
+      <div class="rows">${[...isl.map(d => ["island", d]), ...gat.map(d => ["gated", d])].map(([k, d]) => {
+        const t = state.triage?.triage?.find(x => x.id === d.id);
+        const tc = { "wire-in": "warning", delete: "critical", keep: "muted" }[t?.action] ?? "muted";
+        return `<a class="row" href="#/file/${d.path}:${d.start}-${d.end}">
           <span class="s" style="color:var(--${k === "island" ? "critical" : "warning"})">${k === "island" ? "✕ island" : "◐ " + esc(d.gate ?? "gated")}</span>
           <code class="grow">${esc(d.id)}</code>
-          <span class="num">${esc(d.path)}:${d.start}–${d.end}</span></a>`).join("")}</div>`;
+          ${t ? `<span class="s" style="color:var(--${tc})" title="${esc(t.reason)}">→ ${t.action}</span>` : ""}
+          <span class="num">${esc(d.path)}:${d.start}–${d.end}</span></a>`;
+      }).join("")}</div>`;
   }
   return `<h1>System status</h1>
     <p class="sub">Five systems, thirty-two principles. Every claim opens to its evidence.</p>
