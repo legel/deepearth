@@ -33,9 +33,27 @@ See `ARCHITECTURE.md`. Pipeline: `registry.py` (deterministic) -> `audit.py`
 (Gemini, cached) -> `state/*.json` -> `server.py` (thin Flask reader) ->
 `static/` (one-page app: Status, Code, Science, Benchmarks, Data).
 
+## Operating guide
+
+| artifact | command | when |
+|---|---|---|
+| `state/registry.json` | `python -m dashboard.registry` | after any commit |
+| `state/graph.json`, `state/status.json` | `python -m dashboard.audit` (`--loop` to daemonize) | after any merge; cached per file hash |
+| `state/observations.npz` | `python -m dashboard.observations` | after data cache changes |
+| `runs/<id>.jsonl` | `python -m dashboard.tracker <config> [--tag t]` | every training run |
+| `state/reconstructions.json` | `python -m dashboard.reconstruct <ckpt>` | after a run worth inspecting |
+| `state/verification.json` | periodic adversarial agent fleet (see ARCHITECTURE.md) | before decisions |
+
+`seed/*.json` are curated registries (benchmark semantics, rule structure, token
+architecture, operational findings). Refresh them when evaluate.py / science.md /
+fusion.py change shape; append findings as they are discovered.
+
 ## Handoff notes
 
-- Python 3.10+, Flask, numpy. No other dependencies. LLM calls are raw REST.
-- `GEMINI_MODEL` env overrides the default model.
-- All generated state is gitignored; regenerate with the three commands above.
+- Python 3.10+, Flask, numpy, torch (reconstruct/tracker only). LLM calls are raw REST.
+- `GEMINI_API_KEY` required for audit only; `GEMINI_MODEL` overrides the default model.
+- Known setup order for a fresh clone: parent dir named `deepearth` on sys.path,
+  `bash encoders/spacetime/install.sh` (the committed .so is ABI-stale — see F2),
+  AlphaEarth recipe before champion configs (F1). Details: Status wall findings.
+- All generated state is gitignored; regenerate with the commands above.
 - Do not edit `state/` by hand — it is overwritten on every audit.
