@@ -46,7 +46,10 @@ function vStatus() {
   if (!state.reg) return needReg();
   const sys = Object.entries(SYS_NAMES).map(([k, name]) => {
     const s = state.status?.systems?.[k];
-    return statusTile("#/science/" + k, s?.status, name, s?.headline, "sys");
+    const worst = state.reg.rules.filter(r => r.system === k)                 // verified verdicts win
+      .reduce((w, r) => Math.min(w, RANK[ruleStatus(r.id)?.status ?? "unknown"]), 4);
+    const st = state.verif ? Object.keys(RANK)[worst] : s?.status;
+    return statusTile("#/science/" + k, st, name, s?.headline, "sys");
   }).join("");
   const rules = [...state.reg.rules]
     .sort((a, b) => (RANK[ruleStatus(a.id)?.status ?? "unknown"] - RANK[ruleStatus(b.id)?.status ?? "unknown"]) || a.id - b.id)
