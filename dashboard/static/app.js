@@ -408,12 +408,11 @@ function vGraph() {
   if (!state.graph) return `<h1>Graph</h1>` + empty("No graph — run <code>python -m dashboard.audit</code>.");
   route.after = armGraph;
   return `<h1>Graph</h1>
-    <p class="sub"><b>Hover</b> to trace · <b>click once to pin</b> the tracing (rules light
-      their files <i>and</i> their benchmarks through shared blocks) · while pinned, hover
-      anything for a preview · <b>click the pinned node again to open it</b> · click empty
-      space to release. Color carries state: rules and files wear audit status, benchmarks
-      wear score bands.</p>
-    <div id="gpreview" class="gpreview">nothing pinned — hover the fabric to explore</div>
+    <p class="sub"><b>Click a node to pin it</b> — rules light their files on the left and their
+      benchmarks on the right · <b>click the pinned node again to open it</b> · click empty space
+      to release. Color carries state: rules and files wear audit status, benchmarks wear score
+      bands.</p>
+    <div id="gpreview" class="gpreview">click a node to explore its connections</div>
     <div id="graphbox" style="overflow-x:auto"></div>`;
 }
 
@@ -500,7 +499,7 @@ function armGraph() {
     <text x="${BX + 6}" y="${P - 6}" font-size="12" font-weight="650" fill="var(--bench)">BENCHMARKS</text>
     ${paths}${xpaths}${nodes}</svg>`;
   const box = $("#graphbox"), prev = $("#gpreview"), svg = box.querySelector("svg");
-  let locked = null, hoverKey = null, clearTimer = null, onEls = [];
+  let locked = null, onEls = [];
   const eF = {}, eD = {}, xRi = {}, xBi = {};            // element indexes: O(hits) focus, no full scans
   box.querySelectorAll(".ge").forEach(p => {
     (eF[p.dataset.f] ??= []).push(p); (eD[p.dataset.d] ??= []).push(p);
@@ -513,12 +512,12 @@ function armGraph() {
   function applyFocus(key) {
     for (const el of onEls) el.classList.remove("on", "focusnode");
     onEls = [];
-    svg.classList.toggle("dimmed", !!key);
-    if (!key) return;
-    const conn = new Set([key]);
-    const hits = /^R\d+$/.test(key) ? [...(eD[key] ?? []), ...(xRi[key] ?? [])]
+    const hits = !key ? [] : /^R\d+$/.test(key) ? [...(eD[key] ?? []), ...(xRi[key] ?? [])]
       : /^B\d+$/.test(key) ? [...(eD[key] ?? []), ...(xBi[key] ?? [])]
       : eF[key] ?? [];
+    svg.classList.toggle("dimmed", hits.length > 0);     // an unconnected node never blanks the fabric
+    if (!key) return;
+    const conn = new Set([key]);
     for (const p of hits) {
       p.classList.add("on"); onEls.push(p);
       conn.add(p.dataset.f ?? p.dataset.r); conn.add(p.dataset.d ?? p.dataset.b);
@@ -529,7 +528,7 @@ function armGraph() {
   }
   function preview(key) {
     if (!key) {
-      prev.innerHTML = "nothing pinned — hover the fabric to explore";
+      prev.innerHTML = "click a node to explore its connections";
       return;
     }
     let h;
@@ -553,24 +552,7 @@ function armGraph() {
     prev.innerHTML = h + (locked === key
       ? ` <span class="pill" style="border-color:var(--code)">pinned — click it again to open</span>` : "");
   }
-  box.onmouseover = e => {
-    const n = e.target.closest(".gn");
-    if (!n) return;
-    clearTimeout(clearTimer);
-    if (n.dataset.key === hoverKey) return;              // no rework while gliding within one label
-    hoverKey = n.dataset.key;
-    if (!locked) applyFocus(hoverKey);
-    preview(hoverKey);
-  };
-  box.onmouseout = e => {
-    if (!e.target.closest(".gn")) return;
-    clearTimeout(clearTimer);
-    clearTimer = setTimeout(() => {                      // debounced: crossing label gaps never strobes
-      hoverKey = null;
-      if (!locked) { applyFocus(null); preview(null); } else preview(locked);
-    }, 120);
-  };
-  box.onclick = e => {
+  box.onclick = e => {                                   // click-only: no hover state, nothing to glitch
     const n = e.target.closest(".gn");
     if (!n) { locked = null; applyFocus(null); preview(null); return; }
     if (locked === n.dataset.key) { location.hash = n.dataset.href; return; }
