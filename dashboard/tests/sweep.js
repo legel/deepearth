@@ -63,9 +63,11 @@ const BASE = "http://localhost:8321";
     const hasPosterior = document.body.textContent.includes("Posterior");
     return (bands > 10 && hasVals && hasPosterior) || { bands, hasVals, hasPosterior };
   }));
-  await check("flow: box links resolve", () => page.evaluate(() => {
-    const a = document.querySelector(".fsub");
-    return /#\/file\/.+:\d+-\d+$/.test(a?.getAttribute("href") ?? "") || a?.getAttribute("href");
+  await check("flow: repo boxes link, torch boxes don't", () => page.evaluate(() => {
+    const a = document.querySelector("a.fsub");
+    const linked = /#\/file\/.+:\d+-\d+$/.test(a?.getAttribute("href") ?? "");
+    const noNulls = ![...document.querySelectorAll("a")].some(x => (x.getAttribute("href") ?? "").includes("null"));
+    return (linked && noNulls) || { linked, noNulls };
   }));
 
   await go("/code", ".row");
