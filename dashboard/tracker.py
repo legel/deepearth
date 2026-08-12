@@ -5,7 +5,7 @@
 train.py is untouched: its stdout is already parseable by design (science.md 19).
 Every line passes through unchanged; matched lines also become logger events.
 """
-import re, subprocess, sys
+import os, re, subprocess, sys
 from pathlib import Path
 from dashboard.logger import RunLogger
 
@@ -43,7 +43,8 @@ def main():
     tag = args[args.index("--tag") + 1] if "--tag" in args else \
         next((Path(a).stem for a in args if a.endswith((".yaml", ".yml"))), "run")
     log = RunLogger(tag, config={"argv": args})
-    proc = subprocess.Popen([sys.executable, "autoresearch/train.py", *args], cwd=REPO,
+    env = {**os.environ, "PYTHONPATH": f"{REPO.parent}:{os.environ.get('PYTHONPATH', '')}"}
+    proc = subprocess.Popen([sys.executable, "autoresearch/train.py", *args], cwd=REPO, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     bench, final = {}, {}
     for line in proc.stdout:
