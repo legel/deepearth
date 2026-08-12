@@ -232,6 +232,82 @@ async function initMap() {
   draw();
 }
 
+/* ---- graph (tripartite: code | science | benchmarks) ---- */
+function vGraph() {
+  if (!state.reg) return needReg();
+  if (!state.graph) return `<h1>Graph</h1>` + empty("No graph — run <code>python -m dashboard.audit</code>.");
+  route.after = armGraph;
+  return `<h1>Graph</h1>
+    <p class="sub">Every file, every principle, every benchmark — one fabric. Hover to trace a
+      node's connections; click to open it. Line-level edges live inside each file view.</p>
+    <div id="graphbox" style="overflow-x:auto"></div>`;
+}
+
+function armGraph() {
+  const files = state.reg.files.filter(f => f.kind === "text").map(f => f.path).sort();
+  const rules = state.reg.rules, benches = state.reg.benchmarks;
+  const fEdges = {};                                     // file -> {R*:s, B*:s} aggregated from blocks
+  for (const e of state.graph.edges) {
+    const f = e.src.split(":")[0];
+    (fEdges[f] ??= {})[e.dst] = Math.max(fEdges[f][e.dst] ?? 0, e.s);
+  }
+  const RH = 15, P = 30, W = 1220, CX = [330, 610, 890];
+  const H = P * 2 + Math.max(files.length, rules.length * 2, benches.length) * RH + 20;
+  const fy = i => P + 14 + i * RH;
+  const ry = i => P + 14 + i * RH * 2 + (H - 2 * P - rules.length * RH * 2) / 2;
+  const by = i => P + 14 + i * RH * (files.length / benches.length > 1 ? files.length / benches.length : 1);
+  const fi = Object.fromEntries(files.map((f, i) => [f, i]));
+  const ri = Object.fromEntries(rules.map((r, i) => ["R" + r.id, i]));
+  const bi = Object.fromEntries(benches.map((b, i) => [b.id, i]));
+  let paths = "", nodes = "";
+  for (const [f, dsts] of Object.entries(fEdges)) {
+    if (!(f in fi)) continue;
+    for (const [d, s] of Object.entries(dsts)) {
+      const [x1, y1] = [CX[0], fy(fi[f])];
+      const [x2, y2, cls] = d.startsWith("R") ? [CX[1] - 150, ry(ri[d]), "science"]
+        : [CX[2] - 150, by(bi[d] ?? 0), "bench"];
+      if (d.startsWith("B") && !(d in bi)) continue;
+      paths += `<path d="M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2},${y2}"
+        fill="none" stroke="var(--${cls === "science" ? "science" : "bench"})" stroke-width="${s * .7}"
+        class="ge" data-f="${f}" data-d="${d}" opacity=".07"/>`;
+    }
+  }
+  const label = (x, y, txt, anchor, cls, href, extra = "") =>
+    `<text x="${x}" y="${y + 4}" text-anchor="${anchor}" font-size="10.5" class="gn ${cls}"
+       data-id="${txt}" data-href="${href}" style="cursor:pointer">${extra}${esc(txt.length > 44 ? "…" + txt.slice(-42) : txt)}</text>`;
+  files.forEach((f, i) => nodes += label(CX[0] - 8, fy(i), f, "end", "gf", "#/file/" + f));
+  rules.forEach((r, i) => {
+    const st = ruleStatus(r.id)?.status ?? "unknown";
+    nodes += `<circle cx="${CX[1] - 150 + 8}" cy="${ry(i)}" r="4" fill="var(--${st})"/>` +
+      label(CX[1] - 150 + 18, ry(i), `R${r.id} ${r.title}`, "start", "gr", "#/rule/" + r.id);
+  });
+  benches.forEach((b, i) => nodes += label(CX[2] - 150 + 8, by(i), b.id, "start", "gb", "#/bench/" + b.id));
+  $("#graphbox").innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="min-width:1100px;width:100%">
+    <text x="${CX[0] - 8}" y="${P - 6}" text-anchor="end" font-size="12" font-weight="650" fill="var(--code)">CODE</text>
+    <text x="${CX[1] - 142}" y="${P - 6}" font-size="12" font-weight="650" fill="var(--science)">SCIENCE</text>
+    <text x="${CX[2] - 142}" y="${P - 6}" font-size="12" font-weight="650" fill="var(--bench)">BENCHMARKS</text>
+    ${paths}${nodes}</svg>`;
+  const box = $("#graphbox");
+  box.onmouseover = e => {
+    const n = e.target.closest(".gn");
+    if (!n) return;
+    const id = n.dataset.id, isFile = n.classList.contains("gf");
+    const rid = id.startsWith("R") ? id.split(" ")[0] : id;
+    box.querySelectorAll(".ge").forEach(p => {
+      const hit = isFile ? p.dataset.f === id : p.dataset.d === rid;
+      p.setAttribute("opacity", hit ? ".85" : ".025");
+    });
+  };
+  box.onmouseout = e => {
+    if (e.target.closest(".gn")) return;
+    box.querySelectorAll(".ge").forEach(p => p.setAttribute("opacity", ".07"));
+  };
+  box.onclick = e => {
+    const n = e.target.closest(".gn");
+    if (n) location.hash = n.dataset.href;
+  };
+}
+
 /* ---- runs (live training, TensorBoard-style) ---- */
 async function vRuns() {
   const runs = await api("runs");
@@ -342,7 +418,8 @@ async function route() {
   const [_, p1, p2] = location.hash.split("/");
   document.querySelectorAll("nav a").forEach(a =>
     a.classList.toggle("active", a.hash === "#/" + (p1 || "status")));
-  const r = { status: vStatus, code: vCode, science: () => vScience(p2), benchmarks: vBench, data: vData };
+  const r = { status: vStatus, graph: vGraph, code: vCode, science: () => vScience(p2),
+              benchmarks: vBench, data: vData };
   route.after = null;
   clearInterval(window._poll);
   view.innerHTML = p1 === "file" ? await vFile(decodeURIComponent(location.hash.slice(7)))
