@@ -11,6 +11,7 @@ model:
   family_alphaearth_expert: true
   family_env_expert: true
   family_env_residual: true
+  ecological_family_map: true
   task_occupancy_experts: true
   task_niche_prior: true
   continuous_calibration: true

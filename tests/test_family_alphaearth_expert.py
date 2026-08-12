@@ -20,6 +20,19 @@ def test_family_factorization_preserves_species_ratios_and_matches_family_poster
     assert torch.allclose(after[:, 2] / after[:, 3], before[:, 2] / before[:, 3])
 
 
+def test_hierarchical_family_map_preserves_non_promoted_ranks():
+    model = object.__new__(DeepEarth)
+    torch.nn.Module.__init__(model)
+    model.register_buffer("species_family", torch.tensor([0, 0, 1, 1]))
+    model.family_count = 2
+
+    species = torch.tensor([[3.0, 2.0, 2.9, 2.8]])
+    mapped = model._hierarchical_family_map(species)
+
+    assert mapped.argmax(-1).item() == 2
+    assert torch.equal(mapped[0, [0, 1, 3]], species[0, [0, 1, 3]])
+
+
 def test_family_loss_does_not_update_alphaearth_features():
     model = object.__new__(DeepEarth)
     torch.nn.Module.__init__(model)

@@ -225,6 +225,7 @@ class DeepEarth(nn.Module):
         family_env_expert: bool = False,
         family_env_vars: Optional[Sequence[str]] = None,
         family_env_residual: bool = False,
+        ecological_family_map: bool = False,
         orthogonal_blank_hidden: int = 0,
         task_occupancy_experts: bool = False,
         task_niche_prior: bool = False,
@@ -365,6 +366,7 @@ class DeepEarth(nn.Module):
         self.register_buffer("species_family", species_family)
         self.family_env_vars = tuple(family_env_vars or ())
         self.family_env_residual = family_env_residual
+        self.ecological_family_map = ecological_family_map
         self.family_count = int(species_family.max()) + 1 if species_family is not None else 0
         if species_variable is not None and species_embedding is not None:
             if species_operator == "tree":
@@ -1046,6 +1048,18 @@ class DeepEarth(nn.Module):
         correction = F.log_softmax(family_logits.float(), -1) - mass.clamp_min(1e-8).log()
         return species_logits + correction[:, self.species_family].to(species_logits.dtype)
 
+    def _hierarchical_family_map(self, species_logits: torch.Tensor) -> torch.Tensor:
+        """Promote the best species from the family with the most posterior mass."""
+        logits = species_logits.float()
+        family = self.species_family.expand(len(logits), -1)
+        family_mass = logits.new_zeros(len(logits), self.family_count)
+        family_mass.scatter_add_(1, family, logits.softmax(-1))
+        winning = family_mass.argmax(-1)
+        eligible = self.species_family[None] == winning[:, None]
+        selected = logits.masked_fill(~eligible, -torch.inf).argmax(-1)
+        top = logits.amax(-1).to(species_logits.dtype)
+        return species_logits.scatter(1, selected[:, None], top[:, None] + 1e-4)
+
     def family_alphaearth_loss(self, values: Dict[str, torch.Tensor],
                                observed: Dict[str, torch.Tensor]) -> torch.Tensor:
         if self.family_ae_head is None:
@@ -1377,4 +1391,6 @@ class DeepEarth(nn.Module):
                     factored = self._factor_family_mass(out[t], family_logits)
                     out[t] = torch.where(family_valid[:, None], factored, out[t]) \
                         if family_valid is not None else factored
+                if t == self.species_variable and self.ecological_family_map and (not given or universal):
+                    out[t] = self._hierarchical_family_map(out[t])
         return out

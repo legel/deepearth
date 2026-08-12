@@ -89,6 +89,7 @@ def train_and_evaluate(config, device):
                    family_env_vars=m.get("family_env_vars", (
                        "climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro")),
                    family_env_residual=m.get("family_env_residual", False),
+                   ecological_family_map=m.get("ecological_family_map", False),
                    orthogonal_blank_hidden=m.get("orthogonal_blank_hidden", 0),
                    task_occupancy_experts=m.get("task_occupancy_experts", False),
                    task_niche_prior=m.get("task_niche_prior", False), **niche_stats) if sg else {}
