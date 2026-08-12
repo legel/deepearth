@@ -11,8 +11,8 @@ const api = async p => { const r = await fetch("/api/" + p); return r.ok ? r.jso
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function load() {
-  [state.reg, state.graph, state.status, state.verif, state.findings] = await Promise.all(
-    [api("registry"), api("graph"), api("status"), api("verification"), api("findings")]);
+  [state.reg, state.graph, state.status, state.verif, state.findings, state.recon] = await Promise.all(
+    [api("registry"), api("graph"), api("status"), api("verification"), api("findings"), api("reconstructions")]);
   const meta = await api("meta");
   if (meta?.head) $("#meta").textContent = `${meta.head.sha} · ${meta.head.subject}` +
     (meta.audited ? ` · audited ${meta.audited}` : " · not yet audited");
@@ -233,11 +233,14 @@ async function initMap() {
     if (!o) { $("#obscount").textContent = "no index — run dashboard.observations"; return; }
     $("#obscount").textContent = `${o.shown.toLocaleString()} of ${o.total.toLocaleString()} shown`;
     if (layer) layer.remove();
-    layer = L.layerGroup(o.id.map((id, i) =>
-      L.circleMarker([o.lat[i], o.lon[i]], {
-        radius: 3, weight: .7, color: "#fff", fillOpacity: .8,
+    const recIds = new Set(Object.keys(state.recon?.rows ?? {}));
+    layer = L.layerGroup(o.id.map((id, i) => {
+      const isRec = recIds.has(String(id));
+      return L.circleMarker([o.lat[i], o.lon[i]], {
+        radius: isRec ? 5 : 3, weight: isRec ? 2 : .7, color: "#fff", fillOpacity: .85,
         fillColor: o.test[i] ? "#eb6834" : "#3987e5",
-      }).on("click", () => showObs(id))), { pane: "markerPane" }).addTo(map);
+      }).on("click", () => showObs(id));
+    }), { pane: "markerPane" }).addTo(map);
   }
   async function showObs(id) {
     const d = await api("observation/" + id);
@@ -253,11 +256,21 @@ async function initMap() {
       <div>${d.modalities.map(m => `<span class="chip">${m}</span>`).join("")}</div>
       <p class="sub" style="margin:.6rem 0 0;font-size:.8rem">Original photos and record at the GBIF link.</p>
       <div id="rawrec"><p class="sub" style="font-size:.8rem">loading raw record…</p></div>`;
+    const rec = state.recon?.rows?.[id];
+    const recHtml = !rec ? "" : `<h4>Model reconstruction — each variable masked, predicted from the rest</h4>` +
+      Object.entries(rec).map(([t, r]) => r.top ? `<div style="font-size:.82rem;margin:.3rem 0"><b>${esc(t)}</b>
+          <span style="color:var(--${r.rank === 0 ? "good" : r.rank < 5 ? "warning" : "serious"})">rank ${r.rank}</span>
+          ${r.top.map(([n, p], i) => `<div style="display:flex;gap:.5rem;align-items:center">
+            <span class="bartrack" style="flex:0 0 90px"><span class="bar" style="width:${p * 100}%;${n === r.true ? "" : "opacity:.45"}"></span></span>
+            <i style="${n === r.true ? "font-weight:650" : "color:var(--ink-2)"}">${esc(n)}</i>
+            <span class="num">${(p * 100).toFixed(1)}%</span></div>`).join("")}
+          <span style="color:var(--muted);font-size:.78rem">truth: <i>${esc(r.true)}</i></span></div>`
+        : `<span class="chip" title="cosine to ground truth">${esc(t)} ${r.cos}</span>`).join("");
     const raw = await api(`observation/${id}/raw`);
-    if (!raw) return $("#rawrec").remove();
+    if (!raw) { $("#rawrec").outerHTML = recHtml; return; }
     const kv = obj => `<dl class="kv" style="font-size:.8rem">` +
       Object.entries(obj).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v ?? "—"}</dd>`).join("") + "</dl>";
-    $("#rawrec").innerHTML =
+    $("#rawrec").innerHTML = recHtml +
       (raw.climate ? `<h4>Daymet — 180 days to observation</h4>${climateChart(raw.climate)}` : "") +
       (raw.soil ? `<h4>SSURGO soil</h4>${kv(raw.soil)}` : "") +
       (raw.topo ? `<h4>3DEP terrain (1 m)</h4>${kv(raw.topo)}` : "") +
