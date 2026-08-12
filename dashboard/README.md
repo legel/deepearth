@@ -37,6 +37,7 @@ See `ARCHITECTURE.md`. Pipeline: `registry.py` (deterministic) -> `audit.py`
 
 | artifact | command | when |
 |---|---|---|
+| all of the below, coherently | `python -m dashboard.refresh` | after any commit — prevents state skew |
 | `state/registry.json` | `python -m dashboard.registry` | after any commit |
 | `state/graph.json`, `state/status.json` | `python -m dashboard.audit` (`--loop` to daemonize) | after any merge; cached per file hash |
 | `state/observations.npz` | `python -m dashboard.observations` | after data cache changes |

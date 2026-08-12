@@ -16,8 +16,10 @@ async function load() {
     await Promise.all([api("registry"), api("graph"), api("status"), api("verification"),
                        api("findings"), api("reconstructions"), api("flow"), api("callgraph"), api("trace")]);
   const meta = await api("meta");
-  if (meta?.head) $("#meta").textContent = `${meta.head.sha} · ${meta.head.subject}` +
-    (meta.audited ? ` · audited ${meta.audited}` : " · not yet audited");
+  if (meta?.head) $("#meta").innerHTML = esc(`${meta.head.sha} · ${meta.head.subject}`) +
+    esc(meta.audited ? ` · audited ${meta.audited}` : " · not yet audited") +
+    (meta.skew ? ` <span style="color:var(--serious)" title="state artifacts were built at different
+      commits — run python -m dashboard.refresh">▲ state skew</span>` : "");
   route();
 }
 

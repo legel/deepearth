@@ -32,11 +32,16 @@ def static_file(p):
 def meta():
     head = subprocess.run(["git", "-C", str(REPO), "log", "-1", "--format=%h|%s|%ci"],
                           capture_output=True, text=True).stdout.strip().split("|")
-    reg = _state("registry") or {}
+    reg, graph = _state("registry") or {}, _state("graph") or {}
+    heads = {"repo": head[0] if head else None,
+             "registry": (reg.get("head") or "")[:7] or None,
+             "graph": (graph.get("head") or "")[:7] or None}
     return jsonify({
         "head": {"sha": head[0], "subject": head[1], "date": head[2]} if len(head) == 3 else None,
         "counts": reg.get("counts"),
         "audited": (_state("status") or {}).get("audited"),
+        "heads": heads,
+        "skew": len({h for h in heads.values() if h}) > 1,   # artifacts built at different commits
     })
 
 
