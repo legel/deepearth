@@ -134,6 +134,8 @@ svg.dimmed .gn.on { opacity: 1; }
 .filterbar select, .filterbar input {
   font: inherit; color: var(--ink); background: var(--surface);
   border: 1px solid var(--line); border-radius: 4px; padding: .3rem .6rem; }
+select { cursor: pointer; }                              /* dropdowns read as clickable on hover */
+select:hover { border-color: var(--ink-2); }
 .filterbar input { width: 240px; }
 .filterbar .count { color: var(--muted); font-size: .82rem; margin-left: auto; }
 .spdrop { position: absolute; top: 2.4rem; left: 0; z-index: 1200; background: var(--surface);
