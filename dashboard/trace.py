@@ -122,7 +122,9 @@ def main():
         "coords": [[round(float(obs["lat"][i]), 5), round(float(obs["lon"][i]), 5),
                     round(float(obs["elev"][i]), 1), None] for i in pick],
         "variables": {k: {"shape": list(v.shape), "dtype": str(v.dtype).replace("torch.", ""),
-                          "sample": sample(v)} for k, v in values.items()},
+                          "sample": sample(v),
+                          "observed": round(float(observed[k].float().mean()), 3) if k in observed else None}
+                      for k, v in values.items()},
         "context_shape": list(ctx.shape) if torch.is_tensor(ctx) else shapes(ctx)[:2],
         "outputs": {"target": target,
                     "top3": [[[species[j] if target == "identity" else str(j), round(float(v), 4)]

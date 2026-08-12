@@ -401,6 +401,8 @@ function vFlow() {
       title="(x,y,z) = ${B.coords[i].slice(0, 3).join(", ")}"><i>${esc(B.species[i])}</i></a>`).join(" ");
   const varRows = Object.entries(B.variables).map(([k, v]) => `<div class="row">
       <b class="grow">${esc(k)}</b><code class="num">${v.shape.join("×")} ${esc(v.dtype)}</code>
+      ${v.observed != null ? `<span class="num" title="fraction of this batch where the variable is
+        observed (given) rather than masked">given ${(v.observed * 100).toFixed(0)}%</span>` : ""}
       <code class="num" title="first values of the real tensor">[${(v.sample?.first ?? []).join(", ")} …]</code></div>`).join("");
   const outRows = B.outputs.top3.map((t3, i) => `<div class="row">
       <i class="grow">${esc(B.species[i])}</i><span class="num">→</span>
