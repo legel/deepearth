@@ -65,19 +65,82 @@ function vStatus() {
     ${finds ? `<h2>Operational findings — from actually running the system</h2><div class="rows">${finds}</div>` : ""}`;
 }
 
+/* ---- code viewer: syntax-highlighted dark plates, everywhere code appears ---- */
+const codeCache = {};
+const LANG = { py: "python", js: "javascript", json: "json", yaml: "yaml", yml: "yaml",
+  md: "markdown", sh: "bash", css: "css", html: "xml", cu: "cpp", cpp: "cpp", h: "cpp",
+  R: "r", r: "r", cfg: "ini", toml: "ini", txt: "plaintext" };
+
+function splitHl(html) {                                 // split highlighted html by line, carrying open spans
+  const out = [], open = [];
+  for (const raw of html.split("\n")) {
+    const prefix = open.join("");
+    for (const t of raw.match(/<span[^>]*>|<\/span>/g) ?? [])
+      t === "</span>" ? open.pop() : open.push(t);
+    out.push(prefix + raw + "</span>".repeat(open.length));
+  }
+  return out;
+}
+
+async function hlLines(path) {                           // highlighted lines, cached per file
+  if (codeCache[path]) return codeCache[path];
+  const text = await (await fetch("/api/code/" + path)).text();
+  const lang = LANG[path.split(".").pop()];
+  const html = (typeof hljs !== "undefined" && lang && hljs.getLanguage(lang))
+    ? hljs.highlight(text, { language: lang, ignoreIllegals: true }).value
+    : esc(text);
+  return codeCache[path] = splitHl(html);
+}
+
+const codeLine = (n, html, cls = "", anno = "") =>
+  `<div class="cl${cls}" id="L${n}">${anno}<span class="ln">${n}</span><span class="lc">${html || " "}</span></div>`;
+
+async function snippet(ref) {
+  const m = ref.match(/^(.+?):(\d+)-(\d+)$/);
+  if (!m) return "";
+  const [, p, s, e] = m;
+  const lines = await hlLines(p);
+  const cap = Math.min(+e, +s + 59);                     // cap 60 lines inline
+  const body = lines.slice(+s - 1, cap).map((l, i) => codeLine(+s + i, l)).join("");
+  return `<div class="snip codeplate">${body}${+e > cap
+    ? `<div class="cl"><span class="ln">…</span><span class="lc">+${+e - cap} more — open the file</span></div>` : ""}</div>`;
+}
+
+function edgeRows(edges) {
+  if (!edges.length) return empty("No connections yet — run the audit.");
+  return `<div class="rows">` + edges.map(e => `
+    <div class="row erow" data-ref="${esc(e.src)}">
+      <span class="id">s${e.s}</span>
+      <code class="grow expand" title="show the code">▸ ${esc(e.src)}</code>
+      <span class="num">${esc(e.note)}</span>
+      <a class="pill" href="#/file/${e.src}">open ↗</a>
+    </div><div class="snipbox" hidden></div>`).join("") + "</div>";
+}
+
+function armRows() {
+  document.querySelectorAll(".erow .expand").forEach(el => el.onclick = async () => {
+    const row = el.closest(".erow"), box = row.nextElementSibling;
+    box.hidden = !box.hidden;
+    el.textContent = (box.hidden ? "▸ " : "▾ ") + row.dataset.ref;
+    if (!box.hidden && !box.innerHTML) box.innerHTML = await snippet(row.dataset.ref);
+  });
+}
+
+const refLink = t => /^[\w./-]+:\d+-\d+/.test(t)
+  ? `<a href="#/file/${t.split(" ")[0]}"><code>${esc(t)}</code></a>` : `<code>${esc(t)}</code>`;
+
 function vRule(id) {
   const r = state.reg?.rules.find(x => x.id === +id);
   if (!r) return needReg();
   const st = ruleStatus(r.id), vf = verifOf(r.id);
   const edges = ruleEdges(r.id);
+  route.after = armRows;
   return `<h1>R${r.id} · ${esc(r.title)}</h1><p class="sub">${esc(r.summary)}</p>
     ${st ? `<div class="tiles">${statusTile("#", st.status, st.headline ?? "", st.next, "sys")}</div>` : ""}
     ${vf ? `<p class="sub" style="margin-top:.8rem">✓✓ <b>${vf.verdict}</b> by adversarial review — ${esc(vf.note)}
-      ${(vf.key_evidence ?? []).map(e => `<code>${esc(e)}</code>`).join(" ")}</p>` : ""}
-    <h2>Implementing code — ${edges.length} connections</h2>
-    <div class="rows">${edges.map(e => `<a class="row" href="#/file/${e.src.split(":")[0]}">
-      <span class="id">s${e.s}</span><code class="grow">${esc(e.src)}</code>
-      <span class="num">${esc(e.note)}</span></a>`).join("") || empty("No connections yet — run the audit.")}</div>`;
+      ${(vf.key_evidence ?? []).map(refLink).join(" ")}</p>` : ""}
+    <h2>Implementing code — ${edges.length} connections · click any row to read it</h2>
+    ${edgeRows(edges)}`;
 }
 
 function vCode() {
@@ -98,8 +161,22 @@ function vCode() {
       }).join("") + "</div>").join("");
 }
 
-async function vFile(path) {
-  const text = await (await fetch("/api/code/" + path)).text();
+function pillFor(dst, note = "") {                       // named, hoverable rule/benchmark pill
+  if (dst.startsWith("R")) {
+    const r = state.reg.rules.find(x => "R" + x.id === dst);
+    return `<a class="pill science" href="#/rule/${dst.slice(1)}"
+      title="${esc((r?.summary ?? "") + (note ? "\n↳ " + note : ""))}">${dst} · ${esc(r?.title ?? "")}</a>`;
+  }
+  const b = state.reg.benchmarks.find(x => x.id === dst);
+  const label = (b?.measures ?? "").length > 38 ? b.measures.slice(0, 36) + "…" : b?.measures ?? "";
+  return `<a class="pill bench" href="#/bench/${dst}"
+    title="${esc((b?.measures ?? "") + (note ? "\n↳ " + note : ""))}">${dst} · ${esc(label)}</a>`;
+}
+
+async function vFile(spec) {
+  const m = spec.match(/^(.+?):(\d+)-(\d+)$/);
+  const [path, hs, he] = m ? [m[1], +m[2], +m[3]] : [spec, 0, 0];
+  const hl = await hlLines(path);
   const blocks = state.reg.blocks.filter(b => b.path === path);
   const edges = blockEdges(path);
   const perLine = {};
@@ -107,17 +184,20 @@ async function vFile(path) {
     const es = edges.filter(e => e.src === b.id);
     if (es.length) perLine[b.start] = es;
   }
-  const lines = text.split("\n").map((l, i) => {
-    const anno = (perLine[i + 1] ?? []).map(e =>
-      `<a class="pill ${e.dst.startsWith("R") ? "science" : "bench"}" href="#/${e.dst.startsWith("R") ? "rule/" + e.dst.slice(1) : "bench/" + e.dst}">${e.dst}</a>`).join(" ");
-    return `<div class="cl">${anno ? `<div class="anno">${anno}</div>` : ""}<span class="ln">${i + 1}</span>${esc(l) || " "}</div>`;
+  const lines = hl.map((l, i) => {
+    const n = i + 1;
+    const anno = (perLine[n] ?? []).map(e => pillFor(e.dst, e.note)).join(" ");
+    return codeLine(n, l, n >= hs && n <= he ? " hl" : "", anno ? `<div class="anno">${anno}</div>` : "");
   }).join("");
-  return `<h1><code>${path}</code></h1>
-    <p class="sub">${blocks.length} blocks · ${edges.length} connections</p>
-    <style>.cl{white-space:pre;font:12.5px/1.5 ui-monospace,Menlo,monospace}
-      .cl:hover{background:var(--surface)}.ln{color:var(--muted);display:inline-block;width:3.2em;text-align:right;margin-right:1.2em;user-select:none}
-      .anno{padding-left:4.4em}</style>
-    <div style="overflow-x:auto;border-top:1px solid var(--grid);padding-top:.6rem">${lines}</div>`;
+  route.after = () => {
+    if (!hs) return;
+    const go = () => document.getElementById("L" + hs)?.scrollIntoView({ block: "center" });
+    go(); setTimeout(go, 150);                           // again after late layout
+  };
+  return `<h1><code>${path}</code>${hs ? ` <span class="pill">lines ${hs}–${he}</span>` : ""}</h1>
+    <p class="sub">${blocks.length} blocks · ${edges.length} connections — pills name the principle
+      or benchmark each block implements; hover for the why, click to traverse.</p>
+    <div class="codeplate">${lines}</div>`;
 }
 
 function vScience(sys) {
@@ -152,13 +232,11 @@ function vBenchOne(id) {
   const b = state.reg?.benchmarks.find(x => x.id === id);
   if (!b) return needReg();
   const edges = benchEdges(id);
+  route.after = armRows;
   return `<h1>${b.id} · ${esc(b.measures)}</h1>
     <p class="sub">${esc(b.inputs)} → ${esc(b.target)} · family: ${esc(b.family)} ·
       score: <b>${b.current_score?.toFixed(4) ?? "inactive"}</b></p>
-    <h2>Implementing code</h2><div class="rows">${edges.map(e =>
-      `<a class="row" href="#/file/${e.src.split(":")[0]}"><span class="id">s${e.s}</span>
-       <code class="grow">${esc(e.src)}</code><span class="num">${esc(e.note)}</span></a>`).join("")
-      || empty("No connections yet — run the audit.")}</div>`;
+    <h2>Implementing code — click any row to read it</h2>${edgeRows(edges)}`;
 }
 
 function vData() {
@@ -342,16 +420,16 @@ function armGraph() {
         class="ge" data-f="${f}" data-d="${d}" opacity=".07"/>`;
     }
   }
-  const label = (x, y, txt, anchor, cls, href, extra = "") =>
+  const label = (x, y, txt, anchor, cls, href, tip = "") =>
     `<text x="${x}" y="${y + 4}" text-anchor="${anchor}" font-size="10.5" class="gn ${cls}"
-       data-id="${txt}" data-href="${href}" style="cursor:pointer">${extra}${esc(txt.length > 44 ? "…" + txt.slice(-42) : txt)}</text>`;
+       data-id="${txt}" data-href="${href}" style="cursor:pointer">${tip ? `<title>${esc(tip)}</title>` : ""}${esc(txt.length > 44 ? "…" + txt.slice(-42) : txt)}</text>`;
   files.forEach((f, i) => nodes += label(CX[0] - 8, fy(i), f, "end", "gf", "#/file/" + f));
   rules.forEach((r, i) => {
     const st = ruleStatus(r.id)?.status ?? "unknown";
     nodes += `<circle cx="${CX[1] - 150 + 8}" cy="${ry(i)}" r="4" fill="var(--${st})"/>` +
       label(CX[1] - 150 + 18, ry(i), `R${r.id} ${r.title}`, "start", "gr", "#/rule/" + r.id);
   });
-  benches.forEach((b, i) => nodes += label(CX[2] - 150 + 8, by(i), b.id, "start", "gb", "#/bench/" + b.id));
+  benches.forEach((b, i) => nodes += label(CX[2] - 150 + 8, by(i), b.id, "start", "gb", "#/bench/" + b.id, b.measures));
   $("#graphbox").innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="min-width:1100px;width:100%">
     <text x="${CX[0] - 8}" y="${P - 6}" text-anchor="end" font-size="12" font-weight="650" fill="var(--code)">CODE</text>
     <text x="${CX[1] - 142}" y="${P - 6}" font-size="12" font-weight="650" fill="var(--science)">SCIENCE</text>

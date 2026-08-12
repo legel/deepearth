@@ -69,6 +69,43 @@ code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .
 .pill.code { border-color: var(--code); } .pill.science { border-color: var(--science); }
 .pill.bench { border-color: var(--bench); } .pill.data { border-color: var(--data); }
 
+/* code viewer — dark editor plates framed on the gallery wall */
+.codeplate { background: #1a1a19; color: #e6e4dc; border-radius: 8px; padding: 1rem 0;
+             overflow-x: auto; box-shadow: 0 12px 36px rgba(11, 11, 11, .16); }
+.codeplate .cl { white-space: pre; font: 13px/1.7 ui-monospace, "SF Mono", "JetBrains Mono",
+                 Menlo, monospace; padding: 0 1.3rem; }
+.codeplate .cl:hover { background: rgba(255, 255, 255, .035); }
+.codeplate .cl.hl { background: rgba(57, 135, 229, .16); box-shadow: inset 3px 0 0 #3987e5; }
+.codeplate .ln { color: #5f5e56; display: inline-block; width: 3.4em; text-align: right;
+                 margin-right: 1.4em; user-select: none; }
+.codeplate .lc { white-space: pre; }
+.codeplate .anno { padding: .5rem 0 .15rem 4.8em; white-space: normal; }
+.codeplate .pill { background: #242423; border: 1px solid #3a3a38; color: #c3c2b7;
+                   font-size: .74rem; margin: 0 .3em .25em 0; }
+.codeplate .pill:hover { color: #fff; border-color: #6b6a62; }
+.codeplate .pill.science { border-color: #9085e9; }
+.codeplate .pill.bench { border-color: #2dbd8c; }
+.snip { margin: .3rem 0 1rem 3.4rem; padding: .6rem 0; }
+.erow .expand:hover { color: var(--code); }
+.sub a code { color: var(--code); }
+
+/* syntax tokens — Mariana-adjacent, palette hues */
+.hljs-keyword, .hljs-selector-tag { color: #9085e9; }
+.hljs-string, .hljs-doctag, .hljs-regexp { color: #58bd8b; }
+.hljs-number, .hljs-literal, .hljs-symbol { color: #ffb454; }
+.hljs-comment, .hljs-quote { color: #807e75; font-style: italic; }
+.hljs-title, .hljs-title.function_ { color: #6da7ec; }
+.hljs-title.class_, .hljs-type, .hljs-selector-class { color: #e8935a; }
+.hljs-built_in { color: #5fb3d0; }
+.hljs-meta { color: #d55181; }
+.hljs-attr, .hljs-property, .hljs-attribute, .hljs-variable, .hljs-template-variable { color: #9ec5f4; }
+.hljs-operator, .hljs-punctuation { color: #b3b2a8; }
+.hljs-section { color: #6da7ec; font-weight: 650; }
+.hljs-bullet { color: #eda100; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 650; }
+.hljs-params { color: #d5d3ca; }
+
 /* graph view */
 .gn { fill: var(--ink-2); }
 .gn:hover { fill: var(--ink); font-weight: 650; }
