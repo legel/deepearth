@@ -171,7 +171,7 @@ function vData() {
       <span style="color:var(--ink-2)"> ${esc(t.composed_of ?? "")}</span></span>
       <span class="num">${esc(String(t.count_per_example ?? ""))}</span>
       <code class="num">d=${esc(String(t.dim ?? "?"))}</code></div>`).join("");
-  route.after = initMap;
+  route.after = () => initMap(location.hash.split("/")[2]);
   return `<h1>Data</h1>
     <p class="sub">Every observation the model trains on — pinned to earth at (x,y,z,t),
       colored by the spatial holdout. Click a point for its full record.</p>
@@ -218,7 +218,7 @@ function climateChart(c) {
 
 /* ---- map (Leaflet + ESRI World Imagery) ---- */
 const mapState = { sp: null };
-async function initMap() {
+async function initMap(deepId) {
   if (typeof L === "undefined") { $("#map").textContent = "Leaflet unavailable (offline?)"; return; }
   const map = L.map("map", { renderer: L.canvas(), preferCanvas: true });
   L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -242,9 +242,10 @@ async function initMap() {
       }).on("click", () => showObs(id));
     }), { pane: "markerPane" }).addTo(map);
   }
-  async function showObs(id) {
+  async function showObs(id, pan = false) {
     const d = await api("observation/" + id);
     if (!d) return;
+    if (pan) map.setView([d.lat, d.lon], 11);
     $("#obspanel").innerHTML = `<div class="latin">${esc(d.species)}</div>
       <span class="chip" style="border-color:var(--${d.split === "test" ? "data" : "code"})">${d.split}</span>
       <dl class="kv">
@@ -283,6 +284,7 @@ async function initMap() {
       (raw.topo ? `<h4>3DEP terrain (1 m)</h4>${kv(raw.topo)}` : "") +
       (raw.hydro ? `<h4>Hydrology</h4><code style="font-size:.78rem">[${raw.hydro.join(", ")}]</code>` : "");
   }
+  if (deepId) showObs(deepId, true);
   $("#fsplit").onchange = draw;
   const inp = $("#fsp"), drop = $("#spdrop");
   inp.oninput = async () => {
