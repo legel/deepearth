@@ -451,7 +451,8 @@ class LatentCladeAttention(nn.Module):
         ``[n_species, d_model]``: in-tree rows from exact message passing, out-of-tree rows from clade cross-attention."""
         tree_mask = None if mask is None else mask[self.tip_row]
         tips, clades = self.tree(h0[self.tip_row], return_clades=True, mask=tree_mask)
-        clades = self.clade_norm(clades)                                    # bound the raw internal-node states (stability)
+        tips = tips.to(h0.dtype)
+        clades = self.clade_norm(clades).to(h0.dtype)                       # exact OU computes in fp32
         out = h0.index_copy(0, self.tip_row, tips)                          # refined tips -> their vocab rows
         if self.has_oot and clades.shape[0] > 0:
             q = h0[self.oot_row]                                            # [M,d] out-of-tree seeds (queries)
@@ -459,7 +460,8 @@ class LatentCladeAttention(nn.Module):
             qh = self.q(q).view(M, H, dh); kh = self.k(clades).view(C, H, dh); vh = self.v(clades).view(C, H, dh)
             a = torch.softmax(torch.einsum("mhd,chd->mhc", qh, kh) / math.sqrt(dh), dim=-1)   # [M,H,C]
             att = torch.einsum("mhc,chd->mhd", a, vh).reshape(M, -1)        # attend to shared clade latents
-            out = out.index_copy(0, self.oot_row, self.norm(q + self.o(att)))
+            attached = self.norm(q + self.o(att)).to(out.dtype)
+            out = out.index_copy(0, self.oot_row, attached)
         return out
 
 

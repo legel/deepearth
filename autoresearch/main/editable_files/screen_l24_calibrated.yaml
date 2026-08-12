@@ -21,6 +21,7 @@ model:
   family_alphaearth_expert: true
   family_env_expert: true
   family_env_residual: true
+  ecological_family_map: true
   task_occupancy_experts: true
   task_niche_prior: true
   orthogonal_blank_hidden: 512
@@ -49,6 +50,8 @@ model:
   n_layers: 2
   phylo_mask_weight: 0.1
   poll_weight: 0.1
+  poll_species_mixture: 0.5
+  poll_species_all_masked: true
   pollinator_top_k: 64
   relative_window:
   - 8000

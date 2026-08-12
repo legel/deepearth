@@ -95,6 +95,7 @@ def train_and_evaluate(config, device):
                        "climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro")),
                    family_alphaearth_expert=m.get("family_alphaearth_expert", False),
                    family_env_residual=m.get("family_env_residual", False),
+                   ecological_family_map=m.get("ecological_family_map", False),
                    orthogonal_blank_hidden=m.get("orthogonal_blank_hidden", 0),
                    task_occupancy_experts=m.get("task_occupancy_experts", False),
                    task_niche_prior=m.get("task_niche_prior", False), **niche_stats) if sg else {}
@@ -142,6 +143,10 @@ def train_and_evaluate(config, device):
                       smooth_geo_per_scale=m.get("smooth_geo_per_scale", 32),
                       alphaearth_geo=m.get("alphaearth_geo", False),
                       n_pollinators=getattr(source, "n_pollinators", 0) if m.get("poll_weight", 0.0) > 0 else 0, **poll_kw,
+                      poll_species_idx=(source.poll_idx if m.get("poll_species_mixture", 0.0) > 0 else None),
+                      poll_species_frq=(source.poll_frq if m.get("poll_species_mixture", 0.0) > 0 else None),
+                      poll_species_mixture=m.get("poll_species_mixture", 0.0),
+                      poll_species_all_masked=m.get("poll_species_all_masked", False),
                       phylo_head_routing=m.get("phylo_head_routing", False),
                       species_trait_recon=m.get("species_trait_recon", False),
                       continuous_calibration=m.get("continuous_calibration", False),
