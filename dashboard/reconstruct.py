@@ -75,7 +75,7 @@ def main():
             truth = values[t]
             if kinds[t] == "categorical":
                 p = preds.softmax(-1)
-                top = p.topk(5, dim=-1)
+                top = p.topk(min(5, p.shape[-1]), dim=-1)
                 rank = (p.argsort(-1, descending=True) == truth[:, None]).float().argmax(-1)
                 for j, g in enumerate(pick.tolist()):
                     r = out.setdefault(str(int(obs["gbifID"][g])), {})
