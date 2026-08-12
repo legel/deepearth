@@ -711,6 +711,11 @@ async function vRuns() {
   if (!runs?.length) return `<h1>Runs</h1>` + empty(
     `No runs yet. Launch one with <code>python -m dashboard.tracker autoresearch/deepcal.yaml</code> —
      train.py output passes through untouched and streams here live.`);
+  const done = runs.filter(r => r.last?.t === "final" && r.last.scores?.benchmarks
+    && Object.keys(r.last.scores.benchmarks).length);
+  const opts = sel => done.map((r, i) =>
+    `<option value="${esc(r.id)}" ${i === sel ? "selected" : ""}>${esc(r.id)}</option>`).join("");
+  route.after = () => armCompare(done);
   return `<h1>Runs</h1><p class="sub">Every tracked experiment. Live runs update in place.</p>
     <div class="rows">` + runs.map(r => {
       const fin = r.last?.t === "final", s = fin ? r.last.scores : null;
@@ -720,7 +725,37 @@ async function vRuns() {
                  <span class="num">A ${s.arithmetic?.toFixed(4) ?? "—"}</span>
                  <span class="num">${s.peak_vram_mb ? (s.peak_vram_mb / 1024).toFixed(1) + " GB" : ""}</span>`
               : `<span class="s" style="color:var(--good)">● live</span>`}</a>`;
-    }).join("") + "</div>";
+    }).join("") + `</div>
+    ${done.length >= 2 ? `<h2>Compare — every benchmark, A vs B</h2>
+      <div class="filterbar">
+        <select id="cmpA">${opts(done.length - 1)}</select><span class="num">vs</span>
+        <select id="cmpB">${opts(0)}</select>
+      </div><div id="cmpbox"></div>` : ""}`;
+}
+
+function armCompare(done) {
+  const box = $("#cmpbox");
+  if (!box) return;
+  const byId = Object.fromEntries(done.map(r => [r.id, r.last.scores]));
+  const draw = () => {
+    const A = byId[$("#cmpA").value], B = byId[$("#cmpB").value];
+    const keys = Object.keys(A.benchmarks).filter(k => k in B.benchmarks);
+    const rows = keys.map(k => [k, A.benchmarks[k], B.benchmarks[k], B.benchmarks[k] - A.benchmarks[k]])
+      .sort((a, b) => Math.abs(b[3]) - Math.abs(a[3]));
+    box.innerHTML = `<div class="rows">
+      <div class="row"><b class="grow">aggregate</b>
+        <span class="num">H ${A.net_score?.toFixed(4)} → ${B.net_score?.toFixed(4)}</span>
+        <span class="num" style="color:${bandColor(.5 + (B.net_score - A.net_score) * 5)}">
+          ${(B.net_score - A.net_score >= 0 ? "+" : "") + (B.net_score - A.net_score).toFixed(4)}</span>
+        <span class="num">A ${A.arithmetic?.toFixed(4)} → ${B.arithmetic?.toFixed(4)}</span></div>
+      ${rows.map(([k, a, b, d]) => `<div class="row"><code class="grow">${esc(k)}</code>
+        <span class="num">${a.toFixed(3)} → ${b.toFixed(3)}</span>
+        <span class="num" style="min-width:5em;text-align:right;color:${d > 0.005 ? "var(--good)" : d < -0.005 ? "var(--critical)" : "var(--muted)"}">
+          ${(d >= 0 ? "+" : "") + d.toFixed(3)}</span></div>`).join("")}</div>`;
+  };
+  $("#cmpA").onchange = draw;
+  $("#cmpB").onchange = draw;
+  draw();
 }
 
 function lossChart(steps) {
