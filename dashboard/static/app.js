@@ -427,24 +427,20 @@ function armGraph() {
   for (const e of state.graph.edges) {
     const f = e.src.split(":")[0];
     (fEdges[f] ??= {})[e.dst] = Math.max(fEdges[f][e.dst] ?? 0, e.s);
-    (blockDsts[e.src] ??= []).push(e.dst);
+    (blockDsts[e.src] ??= []).push([e.dst, e.s]);
   }
-  const cross = {};                                      // rule <-> benchmark joined through shared blocks
-  for (const [src, dsts] of Object.entries(blockDsts)) {
-    const f = src.split(":")[0];
-    for (const r of dsts.filter(d => d[0] === "R"))
-      for (const b of dsts.filter(d => d[0] === "B")) {
-        (cross[r] ??= new Set()).add(f + "|" + b);
-        (cross[b] ??= new Set()).add(f + "|" + r);
-      }
-  }
+  const cross = {};                                      // direct rule->benchmark links via shared blocks
+  for (const dsts of Object.values(blockDsts))
+    for (const [r, rs] of dsts.filter(d => d[0][0] === "R"))
+      for (const [b, bs] of dsts.filter(d => d[0][0] === "B"))
+        cross[r + "|" + b] = Math.max(cross[r + "|" + b] ?? 0, Math.min(rs, bs));
   const STATUS_NAMES = Object.keys(RANK);
   const fileStatus = f => {
     const rs = Object.keys(fEdges[f] ?? {}).filter(d => d[0] === "R");
     return rs.length ? STATUS_NAMES[rs.reduce((w, d) =>
       Math.min(w, RANK[ruleStatus(+d.slice(1))?.status ?? "unknown"]), 4)] : null;
   };
-  const RH = 15, P = 30, W = 1220, CX = [330, 610, 890];
+  const RH = 15, P = 30, W = 1380, CX = [330, 610], BX = 950, XR = 712;
   const H = P * 2 + Math.max(files.length, rules.length * 2, benches.length) * RH + 20;
   const fy = i => P + 14 + i * RH;
   const ry = i => P + 14 + i * RH * 2 + (H - 2 * P - rules.length * RH * 2) / 2;
@@ -458,12 +454,21 @@ function armGraph() {
     for (const [d, s] of Object.entries(dsts)) {
       const [x1, y1] = [CX[0], fy(fi[f])];
       const [x2, y2, cls] = d.startsWith("R") ? [CX[1] - 150, ry(ri[d]), "science"]
-        : [CX[2] - 150, by(bi[d] ?? 0), "bench"];
+        : [BX, by(bi[d] ?? 0), "bench"];
       if (d.startsWith("B") && !(d in bi)) continue;
       paths += `<path d="M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2},${y2}"
         fill="none" stroke="var(--${cls === "science" ? "science" : "bench"})" stroke-width="${s * .7}"
         class="ge" data-f="${f}" data-d="${d}" opacity=".07"/>`;
     }
+  }
+  let xpaths = "";                                      // the right span: rule -> benchmark
+  for (const [k, s] of Object.entries(cross)) {
+    const [r, b] = k.split("|");
+    if (!(r in ri) || !(b in bi)) continue;
+    const [y1, y2] = [ry(ri[r]), by(bi[b])];
+    xpaths += `<path d="M${XR},${y1} C${(XR + BX) / 2},${y1} ${(XR + BX) / 2},${y2} ${BX + 2},${y2}"
+      fill="none" stroke="var(--bench)" stroke-width="${s * .6}" class="gc"
+      data-r="${r}" data-b="${b}" opacity=".05"/>`;
   }
   const label = (x, y, key, txt, anchor, cls, href, tip = "", fill = "") =>
     `<text x="${x}" y="${y + 4}" text-anchor="${anchor}" font-size="10.5" class="gn ${cls}"
@@ -476,40 +481,51 @@ function armGraph() {
   });
   rules.forEach((r, i) => {
     const st = ruleStatus(r.id)?.status ?? "unknown";
+    const t = `R${r.id} ${r.title}`;
     nodes += `<circle cx="${CX[1] - 150 + 8}" cy="${ry(i)}" r="4.5" fill="var(--${st})"/>` +
-      label(CX[1] - 150 + 18, ry(i), "R" + r.id, `R${r.id} ${r.title}`, "start", "gr",
-        "#/rule/" + r.id, r.summary, st !== "good" ? `var(--${st})` : "");
+      label(CX[1] - 150 + 18, ry(i), "R" + r.id, t.length > 36 ? t.slice(0, 34) + "…" : t,
+        "start", "gr", "#/rule/" + r.id, r.summary, st !== "good" ? `var(--${st})` : "");
   });
   benches.forEach((b, i) => {
     const sc = b.current_score;
-    nodes += `<circle cx="${CX[2] - 150 + 8}" cy="${by(i)}" r="4" fill="${bandColor(sc)}"/>` +
-      label(CX[2] - 150 + 18, by(i), b.id,
-        `${b.id} · ${b.measures.length > 34 ? b.measures.slice(0, 32) + "…" : b.measures}`,
+    nodes += `<circle cx="${BX + 8}" cy="${by(i)}" r="4" fill="${bandColor(sc)}"/>` +
+      label(BX + 18, by(i), b.id,
+        `${b.id} · ${b.measures.length > 40 ? b.measures.slice(0, 38) + "…" : b.measures}`,
         "start", "gb", "#/bench/" + b.id, `${b.measures} — score ${sc?.toFixed(3) ?? "inactive"}`,
         sc != null && sc < .35 ? bandColor(sc) : "");
   });
-  $("#graphbox").innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="min-width:1100px;width:100%">
+  $("#graphbox").innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="min-width:1250px;width:100%">
     <text x="${CX[0] - 8}" y="${P - 6}" text-anchor="end" font-size="12" font-weight="650" fill="var(--code)">CODE</text>
     <text x="${CX[1] - 142}" y="${P - 6}" font-size="12" font-weight="650" fill="var(--science)">SCIENCE</text>
-    <text x="${CX[2] - 142}" y="${P - 6}" font-size="12" font-weight="650" fill="var(--bench)">BENCHMARKS</text>
-    ${paths}${nodes}</svg>`;
-  const box = $("#graphbox"), prev = $("#gpreview");
-  let locked = null;
-  const isRB = k => /^[RB]\d+$/.test(k);
+    <text x="${BX + 6}" y="${P - 6}" font-size="12" font-weight="650" fill="var(--bench)">BENCHMARKS</text>
+    ${paths}${xpaths}${nodes}</svg>`;
+  const box = $("#graphbox"), prev = $("#gpreview"), svg = box.querySelector("svg");
+  let locked = null, hoverKey = null, clearTimer = null, onEls = [];
+  const eF = {}, eD = {}, xRi = {}, xBi = {};            // element indexes: O(hits) focus, no full scans
+  box.querySelectorAll(".ge").forEach(p => {
+    (eF[p.dataset.f] ??= []).push(p); (eD[p.dataset.d] ??= []).push(p);
+  });
+  box.querySelectorAll(".gc").forEach(p => {
+    (xRi[p.dataset.r] ??= []).push(p); (xBi[p.dataset.b] ??= []).push(p);
+  });
+  const nodeEl = {};
+  box.querySelectorAll(".gn").forEach(n => nodeEl[n.dataset.key] = n);
   function applyFocus(key) {
-    const conn = new Set(key ? [key] : []);
-    box.querySelectorAll(".ge").forEach(p => {
-      let hit = false;
-      if (key) hit = isRB(key)
-        ? p.dataset.d === key || (cross[key]?.has(p.dataset.f + "|" + p.dataset.d) ?? false)
-        : p.dataset.f === key;
-      p.setAttribute("opacity", !key ? ".07" : hit ? ".9" : ".015");
-      if (hit) { conn.add(p.dataset.f); conn.add(p.dataset.d); }
-    });
-    box.querySelectorAll(".gn").forEach(n => {
-      n.classList.toggle("dim", !!key && !conn.has(n.dataset.key));
-      n.classList.toggle("focusnode", !!key && n.dataset.key === key);
-    });
+    for (const el of onEls) el.classList.remove("on", "focusnode");
+    onEls = [];
+    svg.classList.toggle("dimmed", !!key);
+    if (!key) return;
+    const conn = new Set([key]);
+    const hits = /^R\d+$/.test(key) ? [...(eD[key] ?? []), ...(xRi[key] ?? [])]
+      : /^B\d+$/.test(key) ? [...(eD[key] ?? []), ...(xBi[key] ?? [])]
+      : eF[key] ?? [];
+    for (const p of hits) {
+      p.classList.add("on"); onEls.push(p);
+      conn.add(p.dataset.f ?? p.dataset.r); conn.add(p.dataset.d ?? p.dataset.b);
+    }
+    conn.delete(undefined);
+    for (const k of conn) if (nodeEl[k]) { nodeEl[k].classList.add("on"); onEls.push(nodeEl[k]); }
+    nodeEl[key]?.classList.add("focusnode");
   }
   function preview(key) {
     if (!key) {
@@ -519,7 +535,7 @@ function armGraph() {
     let h;
     if (/^R\d+$/.test(key)) {
       const r = rules.find(x => "R" + x.id === key), st = ruleStatus(r.id);
-      const nb = cross[key] ? new Set([...cross[key]].map(x => x.split("|")[1])).size : 0;
+      const nb = Object.keys(cross).filter(k => k.startsWith(key + "|")).length;
       h = `<b>${key} · ${esc(r.title)}</b>
            <span class="s" style="color:var(--${st?.status ?? "unknown"})">${GLYPH[st?.status ?? "unknown"]} ${st?.status ?? "unknown"}</span>
            — <span style="color:var(--ink-2)">${esc(r.summary)}</span>
@@ -540,13 +556,19 @@ function armGraph() {
   box.onmouseover = e => {
     const n = e.target.closest(".gn");
     if (!n) return;
-    if (!locked) applyFocus(n.dataset.key);
-    preview(n.dataset.key);
+    clearTimeout(clearTimer);
+    if (n.dataset.key === hoverKey) return;              // no rework while gliding within one label
+    hoverKey = n.dataset.key;
+    if (!locked) applyFocus(hoverKey);
+    preview(hoverKey);
   };
   box.onmouseout = e => {
     if (!e.target.closest(".gn")) return;
-    if (!locked) { applyFocus(null); preview(null); }
-    else preview(locked);
+    clearTimeout(clearTimer);
+    clearTimer = setTimeout(() => {                      // debounced: crossing label gaps never strobes
+      hoverKey = null;
+      if (!locked) { applyFocus(null); preview(null); } else preview(locked);
+    }, 120);
   };
   box.onclick = e => {
     const n = e.target.closest(".gn");

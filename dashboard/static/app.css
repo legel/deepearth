@@ -107,13 +107,18 @@ code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .
 .hljs-params { color: #d5d3ca; }
 
 /* graph view */
-.gn { fill: var(--ink-2); }
-.gn:hover { fill: var(--ink); font-weight: 650; }
-.gn.dim { opacity: .18; }
-.gn.focusnode { font-weight: 750; text-decoration: underline; }
+.gn { fill: var(--ink-2); transition: opacity .18s ease, fill .18s ease; }
+.gn:hover { fill: var(--ink); }                          /* never change font-weight: text would shift */
+.gn.focusnode { text-decoration: underline; }
+.ge, .gc { transition: opacity .18s ease; }
+svg.dimmed .ge { opacity: .015; }
+svg.dimmed .gc { opacity: .008; }
+svg.dimmed .ge.on, svg.dimmed .gc.on { opacity: .92; }
+svg.dimmed .gn { opacity: .16; }
+svg.dimmed .gn.on { opacity: 1; }
 .gpreview { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
             padding: .65rem 1rem; margin-bottom: 12px; font-size: .87rem; color: var(--muted);
-            min-height: 2.4rem; }
+            height: 3.6rem; overflow: hidden; }          /* fixed height: the graph never shifts */
 .gpreview b { color: var(--ink); }
 .esec { font-size: .78rem; font-weight: 650; letter-spacing: .06em; text-transform: uppercase;
         color: var(--muted); margin: 1.4rem 0 .4rem; }
