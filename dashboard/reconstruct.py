@@ -65,7 +65,7 @@ def main():
 
     names = [v.name for v in model.variables]
     kinds = {v.name: v.kind for v in model.variables}
-    targets = [n for n in names if n in ("species", "family", "flower") or kinds[n] != "categorical"]
+    targets = [v.name for v in model.variables if v.reconstruct]   # every reconstructable variable
     out = {}
     lat_ok = np.allclose(obs["lat"][pick], coords[:, 0].cpu().numpy(), atol=1e-3)
     assert lat_ok, "observation index misaligned with adapter order"
@@ -79,7 +79,7 @@ def main():
                 rank = (p.argsort(-1, descending=True) == truth[:, None]).float().argmax(-1)
                 for j, g in enumerate(pick.tolist()):
                     r = out.setdefault(str(int(obs["gbifID"][g])), {})
-                    label = (lambda i: species[i] if t == "species" else str(i))
+                    label = (lambda i: species[i] if t in ("species", "identity") else str(i))
                     r[t] = {"top": [[label(int(i)), round(float(v), 4)] for i, v in
                                     zip(top.indices[j].tolist(), top.values[j].tolist())],
                             "true": label(int(truth[j])), "rank": int(rank[j])}
