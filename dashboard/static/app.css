@@ -109,6 +109,15 @@ code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .
 /* graph view */
 .gn { fill: var(--ink-2); }
 .gn:hover { fill: var(--ink); font-weight: 650; }
+.gn.dim { opacity: .18; }
+.gn.focusnode { font-weight: 750; text-decoration: underline; }
+.gpreview { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+            padding: .65rem 1rem; margin-bottom: 12px; font-size: .87rem; color: var(--muted);
+            min-height: 2.4rem; }
+.gpreview b { color: var(--ink); }
+.esec { font-size: .78rem; font-weight: 650; letter-spacing: .06em; text-transform: uppercase;
+        color: var(--muted); margin: 1.4rem 0 .4rem; }
+.row .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; align-self: center; }
 
 /* data view — map + observation panel */
 .maprow { display: grid; grid-template-columns: 1fr 340px; gap: 12px; }

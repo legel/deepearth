@@ -106,15 +106,27 @@ async function snippet(ref) {
     ? `<div class="cl"><span class="ln">…</span><span class="lc">+${+e - cap} more — open the file</span></div>` : ""}</div>`;
 }
 
-function edgeRows(edges) {
-  if (!edges.length) return empty("No connections yet — run the audit.");
-  return `<div class="rows">` + edges.map(e => `
-    <div class="row erow" data-ref="${esc(e.src)}">
-      <span class="id">s${e.s}</span>
-      <code class="grow expand" title="show the code">▸ ${esc(e.src)}</code>
-      <span class="num">${esc(e.note)}</span>
-      <a class="pill" href="#/file/${e.src}">open ↗</a>
-    </div><div class="snipbox" hidden></div>`).join("") + "</div>";
+const mkRow = (ref, s, note) => `
+    <div class="row erow" data-ref="${esc(ref)}">
+      <span class="id">${s}</span>
+      <code class="grow expand" title="show the code">▸ ${esc(ref)}</code>
+      <span class="num">${esc(note)}</span>
+      <a class="pill" href="#/file/${ref}">open ↗</a>
+    </div><div class="snipbox" hidden></div>`;
+
+const edgeRows = edges => edges.length
+  ? `<div class="rows">${edges.map(e => mkRow(e.src, "s" + e.s, e.note)).join("")}</div>` : "";
+
+const ROLE = p => /\.(py|cu|cpp|h|js|R)$/.test(p) ? 0 : /\.(ya?ml|toml|cfg|ini)$/.test(p) ? 1 : 2;
+
+function edgeSections(edges, extraImpl = "") {           // implementation ≠ configuration ≠ documentation
+  const groups = [[], [], []];
+  for (const e of edges) groups[ROLE(e.src.split(":")[0])].push(e);
+  groups.forEach(g => g.sort((a, b) => b.s - a.s));
+  if (!edges.length && !extraImpl) return empty("No connections yet — run the audit.");
+  const names = ["Implementation", "Configuration", "Documentation & records"];
+  return groups.map((g, i) => (g.length || (i === 0 && extraImpl))
+    ? `<h3 class="esec">${names[i]}</h3>${i === 0 ? extraImpl : ""}${edgeRows(g)}` : "").join("");
 }
 
 function armRows() {
@@ -139,8 +151,8 @@ function vRule(id) {
     ${st ? `<div class="tiles">${statusTile("#", st.status, st.headline ?? "", st.next, "sys")}</div>` : ""}
     ${vf ? `<p class="sub" style="margin-top:.8rem">✓✓ <b>${vf.verdict}</b> by adversarial review — ${esc(vf.note)}
       ${(vf.key_evidence ?? []).map(refLink).join(" ")}</p>` : ""}
-    <h2>Implementing code — ${edges.length} connections · click any row to read it</h2>
-    ${edgeRows(edges)}`;
+    <h2>Connected code — ${edges.length} connections · click any row to read it</h2>
+    ${edgeSections(edges)}`;
 }
 
 function vCode() {
@@ -154,10 +166,16 @@ function vCode() {
       Bare rows have no connection to any principle or benchmark.</p>` +
     Object.entries(byDir).map(([d, fs]) => `<h2>${d}/</h2><div class="rows">` +
       fs.map(f => {
-        const n = blockEdges(f.path).length;
-        return `<a class="row" href="#/file/${f.path}"><code class="grow">${f.path}</code>
+        const es = blockEdges(f.path);
+        const rs = es.filter(e => e.dst[0] === "R").map(e => +e.dst.slice(1));
+        const st = rs.length ? Object.keys(RANK)[rs.reduce((w, id) =>
+          Math.min(w, RANK[ruleStatus(id)?.status ?? "unknown"]), 4)] : null;
+        return `<a class="row" href="#/file/${f.path}">
+          <span class="dot" style="background:${st ? `var(--${st})` : "var(--grid)"}"
+            title="${st ? "worst linked principle: " + st : "no principle links"}"></span>
+          <code class="grow">${f.path}</code>
           <span class="num">${f.lines} ln</span>
-          <span class="num" style="${n ? "" : "color:var(--serious)"}">${n || "—"} edges</span></a>`;
+          <span class="num" style="${es.length ? "" : "color:var(--serious)"}">${es.length || "—"} edges</span></a>`;
       }).join("") + "</div>").join("");
 }
 
@@ -207,9 +225,11 @@ function vScience(sys) {
     <p class="sub">The 32 binding principles of science.md, with their implementations and proofs.</p>
     <div class="rows">` + rules.map(r => {
       const st = ruleStatus(r.id), n = ruleEdges(r.id).length;
-      return `<a class="row" href="#/rule/${r.id}"><span class="id">R${r.id}</span>
+      const sst = st?.status ?? "unknown";
+      return `<a class="row" href="#/rule/${r.id}" style="box-shadow:inset 3px 0 0 var(--${sst})">
+        <span class="id">R${r.id}</span>
         <span class="grow"><b>${esc(r.title)}</b> — <span style="color:var(--ink-2)">${esc(r.summary)}</span></span>
-        <span class="s" style="color:var(--${st?.status ?? "unknown"})">${GLYPH[st?.status ?? "unknown"]}</span>
+        <span class="s" style="color:var(--${sst})">${GLYPH[sst]} ${sst}${st?.verified ? " ✓✓" : ""}</span>
         <span class="num">${n} code</span></a>`;
     }).join("") + "</div>";
 }
@@ -223,8 +243,8 @@ function vBench() {
       return `<a class="row" href="#/bench/${b.id}"><span class="id">${b.id}</span>
         <span class="grow">${esc(b.measures)} <span class="pill">${esc(b.family)}</span></span>
         <span class="num">${n} code</span>
-        <span class="bartrack"><span class="bar" style="width:${(s ?? 0) * 100}%"></span></span>
-        <span class="num" style="min-width:4.5em;text-align:right">${s == null ? "—" : s.toFixed(3)}</span></a>`;
+        <span class="bartrack"><span class="bar" style="width:${(s ?? 0) * 100}%;background:${bandColor(s)}"></span></span>
+        <span class="num" style="min-width:4.5em;text-align:right;color:${bandColor(s)}">${s == null ? "—" : s.toFixed(3)}</span></a>`;
     }).join("") + "</div>";
 }
 
@@ -232,11 +252,13 @@ function vBenchOne(id) {
   const b = state.reg?.benchmarks.find(x => x.id === id);
   if (!b) return needReg();
   const edges = benchEdges(id);
+  const evb = state.reg.blocks.find(x => x.path === "autoresearch/evaluate.py" && x.name === "evaluate_benchmarks");
+  const scorer = evb ? `<div class="rows">${mkRow(evb.id, "⚖", "the frozen evaluator — computes and scores every benchmark")}</div>` : "";
   route.after = armRows;
   return `<h1>${b.id} · ${esc(b.measures)}</h1>
     <p class="sub">${esc(b.inputs)} → ${esc(b.target)} · family: ${esc(b.family)} ·
-      score: <b>${b.current_score?.toFixed(4) ?? "inactive"}</b></p>
-    <h2>Implementing code — click any row to read it</h2>${edgeRows(edges)}`;
+      score: <b style="color:${bandColor(b.current_score)}">${b.current_score?.toFixed(4) ?? "inactive"}</b></p>
+    <h2>Connected code — click any row to read it</h2>${edgeSections(edges, scorer)}`;
 }
 
 function vData() {
@@ -386,19 +408,42 @@ function vGraph() {
   if (!state.graph) return `<h1>Graph</h1>` + empty("No graph — run <code>python -m dashboard.audit</code>.");
   route.after = armGraph;
   return `<h1>Graph</h1>
-    <p class="sub">Every file, every principle, every benchmark — one fabric. Hover to trace a
-      node's connections; click to open it. Line-level edges live inside each file view.</p>
+    <p class="sub"><b>Hover</b> to trace · <b>click once to pin</b> the tracing (rules light
+      their files <i>and</i> their benchmarks through shared blocks) · while pinned, hover
+      anything for a preview · <b>click the pinned node again to open it</b> · click empty
+      space to release. Color carries state: rules and files wear audit status, benchmarks
+      wear score bands.</p>
+    <div id="gpreview" class="gpreview">nothing pinned — hover the fabric to explore</div>
     <div id="graphbox" style="overflow-x:auto"></div>`;
 }
+
+const bandColor = s => s == null ? "var(--muted)"
+  : s >= .7 ? "var(--good)" : s >= .35 ? "var(--warning)" : s > 0 ? "var(--serious)" : "var(--critical)";
 
 function armGraph() {
   const files = state.reg.files.filter(f => f.kind === "text").map(f => f.path).sort();
   const rules = state.reg.rules, benches = state.reg.benchmarks;
-  const fEdges = {};                                     // file -> {R*:s, B*:s} aggregated from blocks
+  const fEdges = {}, blockDsts = {};
   for (const e of state.graph.edges) {
     const f = e.src.split(":")[0];
     (fEdges[f] ??= {})[e.dst] = Math.max(fEdges[f][e.dst] ?? 0, e.s);
+    (blockDsts[e.src] ??= []).push(e.dst);
   }
+  const cross = {};                                      // rule <-> benchmark joined through shared blocks
+  for (const [src, dsts] of Object.entries(blockDsts)) {
+    const f = src.split(":")[0];
+    for (const r of dsts.filter(d => d[0] === "R"))
+      for (const b of dsts.filter(d => d[0] === "B")) {
+        (cross[r] ??= new Set()).add(f + "|" + b);
+        (cross[b] ??= new Set()).add(f + "|" + r);
+      }
+  }
+  const STATUS_NAMES = Object.keys(RANK);
+  const fileStatus = f => {
+    const rs = Object.keys(fEdges[f] ?? {}).filter(d => d[0] === "R");
+    return rs.length ? STATUS_NAMES[rs.reduce((w, d) =>
+      Math.min(w, RANK[ruleStatus(+d.slice(1))?.status ?? "unknown"]), 4)] : null;
+  };
   const RH = 15, P = 30, W = 1220, CX = [330, 610, 890];
   const H = P * 2 + Math.max(files.length, rules.length * 2, benches.length) * RH + 20;
   const fy = i => P + 14 + i * RH;
@@ -420,39 +465,95 @@ function armGraph() {
         class="ge" data-f="${f}" data-d="${d}" opacity=".07"/>`;
     }
   }
-  const label = (x, y, txt, anchor, cls, href, tip = "") =>
+  const label = (x, y, key, txt, anchor, cls, href, tip = "", fill = "") =>
     `<text x="${x}" y="${y + 4}" text-anchor="${anchor}" font-size="10.5" class="gn ${cls}"
-       data-id="${txt}" data-href="${href}" style="cursor:pointer">${tip ? `<title>${esc(tip)}</title>` : ""}${esc(txt.length > 44 ? "…" + txt.slice(-42) : txt)}</text>`;
-  files.forEach((f, i) => nodes += label(CX[0] - 8, fy(i), f, "end", "gf", "#/file/" + f));
+       data-key="${esc(key)}" data-href="${href}" style="cursor:pointer${fill ? `;fill:${fill}` : ""}">${
+       tip ? `<title>${esc(tip)}</title>` : ""}${esc(txt)}</text>`;
+  files.forEach((f, i) => {
+    const st = fileStatus(f);
+    nodes += label(CX[0] - 8, fy(i), f, f.length > 44 ? "…" + f.slice(-42) : f, "end", "gf",
+      "#/file/" + f, "", st && st !== "good" ? `var(--${st})` : "");
+  });
   rules.forEach((r, i) => {
     const st = ruleStatus(r.id)?.status ?? "unknown";
-    nodes += `<circle cx="${CX[1] - 150 + 8}" cy="${ry(i)}" r="4" fill="var(--${st})"/>` +
-      label(CX[1] - 150 + 18, ry(i), `R${r.id} ${r.title}`, "start", "gr", "#/rule/" + r.id);
+    nodes += `<circle cx="${CX[1] - 150 + 8}" cy="${ry(i)}" r="4.5" fill="var(--${st})"/>` +
+      label(CX[1] - 150 + 18, ry(i), "R" + r.id, `R${r.id} ${r.title}`, "start", "gr",
+        "#/rule/" + r.id, r.summary, st !== "good" ? `var(--${st})` : "");
   });
-  benches.forEach((b, i) => nodes += label(CX[2] - 150 + 8, by(i), b.id, "start", "gb", "#/bench/" + b.id, b.measures));
+  benches.forEach((b, i) => {
+    const sc = b.current_score;
+    nodes += `<circle cx="${CX[2] - 150 + 8}" cy="${by(i)}" r="4" fill="${bandColor(sc)}"/>` +
+      label(CX[2] - 150 + 18, by(i), b.id,
+        `${b.id} · ${b.measures.length > 34 ? b.measures.slice(0, 32) + "…" : b.measures}`,
+        "start", "gb", "#/bench/" + b.id, `${b.measures} — score ${sc?.toFixed(3) ?? "inactive"}`,
+        sc != null && sc < .35 ? bandColor(sc) : "");
+  });
   $("#graphbox").innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="min-width:1100px;width:100%">
     <text x="${CX[0] - 8}" y="${P - 6}" text-anchor="end" font-size="12" font-weight="650" fill="var(--code)">CODE</text>
     <text x="${CX[1] - 142}" y="${P - 6}" font-size="12" font-weight="650" fill="var(--science)">SCIENCE</text>
     <text x="${CX[2] - 142}" y="${P - 6}" font-size="12" font-weight="650" fill="var(--bench)">BENCHMARKS</text>
     ${paths}${nodes}</svg>`;
-  const box = $("#graphbox");
+  const box = $("#graphbox"), prev = $("#gpreview");
+  let locked = null;
+  const isRB = k => /^[RB]\d+$/.test(k);
+  function applyFocus(key) {
+    const conn = new Set(key ? [key] : []);
+    box.querySelectorAll(".ge").forEach(p => {
+      let hit = false;
+      if (key) hit = isRB(key)
+        ? p.dataset.d === key || (cross[key]?.has(p.dataset.f + "|" + p.dataset.d) ?? false)
+        : p.dataset.f === key;
+      p.setAttribute("opacity", !key ? ".07" : hit ? ".9" : ".015");
+      if (hit) { conn.add(p.dataset.f); conn.add(p.dataset.d); }
+    });
+    box.querySelectorAll(".gn").forEach(n => {
+      n.classList.toggle("dim", !!key && !conn.has(n.dataset.key));
+      n.classList.toggle("focusnode", !!key && n.dataset.key === key);
+    });
+  }
+  function preview(key) {
+    if (!key) {
+      prev.innerHTML = "nothing pinned — hover the fabric to explore";
+      return;
+    }
+    let h;
+    if (/^R\d+$/.test(key)) {
+      const r = rules.find(x => "R" + x.id === key), st = ruleStatus(r.id);
+      const nb = cross[key] ? new Set([...cross[key]].map(x => x.split("|")[1])).size : 0;
+      h = `<b>${key} · ${esc(r.title)}</b>
+           <span class="s" style="color:var(--${st?.status ?? "unknown"})">${GLYPH[st?.status ?? "unknown"]} ${st?.status ?? "unknown"}</span>
+           — <span style="color:var(--ink-2)">${esc(r.summary)}</span>
+           <span class="num">· ${ruleEdges(r.id).length} code links · ${nb} benchmarks</span>`;
+    } else if (/^B\d+$/.test(key)) {
+      const b = benches.find(x => x.id === key);
+      h = `<b>${key} · ${esc(b.measures)}</b> <span class="pill">${esc(b.family)}</span>
+           — <span style="color:var(--ink-2)">${esc(b.inputs)} → ${esc(b.target)}</span>
+           <span class="s" style="color:${bandColor(b.current_score)}">● ${b.current_score?.toFixed(3) ?? "inactive"}</span>`;
+    } else {
+      const f = state.reg.files.find(x => x.path === key), st = fileStatus(key);
+      h = `<b>${esc(key)}</b> <span class="num">· ${f?.lines ?? "?"} lines · ${blockEdges(key).length} connections</span>
+           ${st ? `<span class="s" style="color:var(--${st})">${GLYPH[st]} worst linked rule: ${st}</span>` : ""}`;
+    }
+    prev.innerHTML = h + (locked === key
+      ? ` <span class="pill" style="border-color:var(--code)">pinned — click it again to open</span>` : "");
+  }
   box.onmouseover = e => {
     const n = e.target.closest(".gn");
     if (!n) return;
-    const id = n.dataset.id, isFile = n.classList.contains("gf");
-    const rid = id.startsWith("R") ? id.split(" ")[0] : id;
-    box.querySelectorAll(".ge").forEach(p => {
-      const hit = isFile ? p.dataset.f === id : p.dataset.d === rid;
-      p.setAttribute("opacity", hit ? ".85" : ".025");
-    });
+    if (!locked) applyFocus(n.dataset.key);
+    preview(n.dataset.key);
   };
   box.onmouseout = e => {
-    if (e.target.closest(".gn")) return;
-    box.querySelectorAll(".ge").forEach(p => p.setAttribute("opacity", ".07"));
+    if (!e.target.closest(".gn")) return;
+    if (!locked) { applyFocus(null); preview(null); }
+    else preview(locked);
   };
   box.onclick = e => {
     const n = e.target.closest(".gn");
-    if (n) location.hash = n.dataset.href;
+    if (!n) { locked = null; applyFocus(null); preview(null); return; }
+    if (locked === n.dataset.key) { location.hash = n.dataset.href; return; }
+    locked = n.dataset.key;
+    applyFocus(locked); preview(locked);
   };
 }
 
