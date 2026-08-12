@@ -775,9 +775,15 @@ async function vRun(rid) {
     const transfer = evs.filter(e => e.t === "transfer").at(-1);
     const bench = fin?.scores?.benchmarks ?? {};
     const champ = Object.fromEntries((state.reg?.benchmarks ?? []).map(b => [b.key, b.current_score]));
+    const done = evs.find(e => e.t === "trained");
+    const bsz = state.flow?.arch?.dims?.batch;
+    const exposure = done && start && bsz
+      ? ` · data exposure: ${done.steps.toLocaleString()} steps × ${bsz} = ${(done.steps * bsz).toLocaleString()}
+         samples ≈ ${(done.steps * bsz / start.train).toFixed(1)}× the training split — the
+         ${start.test.toLocaleString()} held-out rows are never sampled` : "";
     return `<h1>${esc(rid)} ${fin ? "" : '<span class="s" style="color:var(--good);font-size:1rem">● live</span>'}</h1>
       <p class="sub">${start ? `${start.observations.toLocaleString()} observations · ${start.params_m}M parameters ·
-        ${start.train.toLocaleString()} train / ${start.test.toLocaleString()} test` : "starting…"}</p>
+        ${start.train.toLocaleString()} train / ${start.test.toLocaleString()} test${exposure}` : "starting…"}</p>
       <h2>Loss</h2>${lossChart(steps)}
       ${transfer ? `<h2>Held-out transfer</h2><div class="rows">` +
         Object.entries(transfer.scores).map(([k, v]) => `<div class="row"><span class="grow">${esc(k)}</span>
