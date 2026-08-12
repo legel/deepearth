@@ -188,8 +188,26 @@ function vRule(id) {
     ${st ? `<div class="tiles">${statusTile("#", st.status, st.headline ?? "", st.next, "sys")}</div>` : ""}
     ${vf ? `<p class="sub" style="margin-top:.8rem">✓✓ <b>${vf.verdict}</b> by adversarial review — ${esc(vf.note)}
       ${(vf.key_evidence ?? []).map(refLink).join(" ")}</p>` : ""}
+    ${ruleBenches(r.id)}
     <h2>Connected code — ${edges.length} connections · click any row to read it</h2>
     ${edgeSections(edges)}`;
+}
+
+function ruleBenches(id) {                                // benchmarks joined through shared implementing blocks
+  const span = s => { const m = s.match(/:(\d+)-(\d+)$/); return m ? m[2] - m[1] : 0; };
+  const all = ruleEdges(id).map(e => e.src)
+    .filter(s => !s.startsWith("autoresearch/evaluate.py"));   // the evaluator touches every benchmark by definition
+  const specific = all.filter(s => span(s) < 600);        // prefer precise blocks over module-spanning giants
+  const blocks = new Set(specific.length ? specific : all);
+  const bids = [...new Set((state.graph?.edges ?? [])
+    .filter(e => e.dst[0] === "B" && blocks.has(e.src)).map(e => e.dst))];
+  if (!bids.length) return "";
+  const bs = bids.map(i => state.reg.benchmarks.find(b => b.id === i)).filter(Boolean)
+    .sort((a, b) => (a.current_score ?? 2) - (b.current_score ?? 2));
+  return `<h2>Benchmarks that exercise this principle — ${bs.length}</h2>
+    <div style="margin-bottom:.4rem">${bs.map(b => `<a class="chip" href="#/bench/${b.id}"
+      title="${esc(b.measures)}" style="border-color:${bandColor(b.current_score)}">${b.id}
+      ${b.current_score?.toFixed(2) ?? "—"}</a>`).join(" ")}</div>`;
 }
 
 function vCode() {
