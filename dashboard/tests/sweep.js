@@ -42,7 +42,7 @@ const BASE = "http://localhost:8321";
     document.body.textContent.includes("Operational findings") || "no findings section"));
   await check("status: island triage chips", () => page.evaluate(() => {
     const t = document.body.textContent;
-    return (t.includes("wire-in") && t.includes("→ delete") && t.includes("→ keep")) || "no triage chips";
+    return /→ (wire-in|delete|keep)/.test(t) || "no triage chips";   // dispositions present (mix varies as cleanup proceeds)
   }));
 
   await go("/graph", ".gn");
