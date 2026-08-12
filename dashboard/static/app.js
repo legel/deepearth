@@ -232,6 +232,111 @@ async function initMap() {
   draw();
 }
 
+/* ---- runs (live training, TensorBoard-style) ---- */
+async function vRuns() {
+  const runs = await api("runs");
+  if (!runs?.length) return `<h1>Runs</h1>` + empty(
+    `No runs yet. Launch one with <code>python -m dashboard.tracker autoresearch/deepcal.yaml</code> —
+     train.py output passes through untouched and streams here live.`);
+  return `<h1>Runs</h1><p class="sub">Every tracked experiment. Live runs update in place.</p>
+    <div class="rows">` + runs.map(r => {
+      const fin = r.last?.t === "final", s = fin ? r.last.scores : null;
+      return `<a class="row" href="#/run/${r.id}">
+        <span class="grow"><b>${esc(r.id)}</b></span>
+        ${fin ? `<span class="num">H ${s.net_score?.toFixed(4) ?? "—"}</span>
+                 <span class="num">A ${s.arithmetic?.toFixed(4) ?? "—"}</span>
+                 <span class="num">${s.peak_vram_mb ? (s.peak_vram_mb / 1024).toFixed(1) + " GB" : ""}</span>`
+              : `<span class="s" style="color:var(--good)">● live</span>`}</a>`;
+    }).join("") + "</div>";
+}
+
+function lossChart(steps) {
+  if (steps.length < 2) return `<div class="empty">waiting for step events…</div>`;
+  const W = 860, H = 260, P = 42;
+  const xs = steps.map(d => d.step), ys = steps.map(d => d.loss);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const X = v => P + (v - x0) / (x1 - x0 || 1) * (W - 2 * P);
+  const Yv = v => (H - P) - (v - y0) / (y1 - y0 || 1) * (H - 2 * P);
+  const pts = steps.map(d => `${X(d.step).toFixed(1)},${Yv(d.loss).toFixed(1)}`).join(" ");
+  const ticksY = [y0, (y0 + y1) / 2, y1], ticksX = [x0, Math.round((x0 + x1) / 2), x1];
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px" id="losschart"
+       data-pts='${JSON.stringify(steps.map(d => [d.step, d.loss]))}'>
+    ${ticksY.map(v => `<line x1="${P}" x2="${W - P}" y1="${Yv(v)}" y2="${Yv(v)}" stroke="var(--grid)"/>
+      <text x="${P - 6}" y="${Yv(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${v.toFixed(2)}</text>`).join("")}
+    ${ticksX.map(v => `<text x="${X(v)}" y="${H - P + 16}" text-anchor="middle" font-size="11" fill="var(--muted)">${v}</text>`).join("")}
+    <line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" stroke="var(--line)"/>
+    <polyline points="${pts}" fill="none" stroke="var(--seq)" stroke-width="2"/>
+    <line id="xh" y1="${P}" y2="${H - P}" stroke="var(--line)" stroke-dasharray="3 3" visibility="hidden"/>
+    <circle id="xhc" r="4" fill="var(--seq)" stroke="#fff" stroke-width="1.5" visibility="hidden"/>
+    <text id="xht" font-size="11.5" fill="var(--ink)" visibility="hidden"></text></svg>`;
+}
+
+function armChart() {
+  const svg = $("#losschart");
+  if (!svg) return;
+  const pts = JSON.parse(svg.dataset.pts), W = 860, P = 42;
+  const x0 = pts[0][0], x1 = pts[pts.length - 1][0];
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect();
+    const step = x0 + (e.clientX - r.left) / r.width * W > 0 ?
+      x0 + ((e.clientX - r.left) / r.width * W - P) / (W - 2 * P) * (x1 - x0) : x0;
+    const near = pts.reduce((a, b) => Math.abs(b[0] - step) < Math.abs(a[0] - step) ? b : a);
+    const ys = pts.map(p => p[1]), yMin = Math.min(...ys), yMax = Math.max(...ys);
+    const X = P + (near[0] - x0) / (x1 - x0 || 1) * (W - 2 * P);
+    const Y = (260 - P) - (near[1] - yMin) / (yMax - yMin || 1) * (260 - 2 * P);
+    $("#xh").setAttribute("x1", X); $("#xh").setAttribute("x2", X);
+    $("#xhc").setAttribute("cx", X); $("#xhc").setAttribute("cy", Y);
+    const t = $("#xht");
+    t.setAttribute("x", Math.min(X + 8, W - 150)); t.setAttribute("y", P + 12);
+    t.textContent = `step ${near[0]} · loss ${near[1].toFixed(3)}`;
+    for (const id of ["xh", "xhc", "xht"]) $("#" + id).setAttribute("visibility", "visible");
+  };
+  svg.onmouseleave = () => { for (const id of ["xh", "xhc", "xht"]) $("#" + id)?.setAttribute("visibility", "hidden"); };
+}
+
+async function vRun(rid) {
+  const r = await api(`runs/${rid}`);
+  if (!r) return empty("run not found");
+  const ev = r.events;
+  const render = evs => {
+    const steps = evs.filter(e => e.t === "step");
+    const start = evs.find(e => e.t === "startup"), fin = evs.find(e => e.t === "final");
+    const transfer = evs.filter(e => e.t === "transfer").at(-1);
+    const bench = fin?.scores?.benchmarks ?? {};
+    const champ = Object.fromEntries((state.reg?.benchmarks ?? []).map(b => [b.key, b.current_score]));
+    return `<h1>${esc(rid)} ${fin ? "" : '<span class="s" style="color:var(--good);font-size:1rem">● live</span>'}</h1>
+      <p class="sub">${start ? `${start.observations.toLocaleString()} observations · ${start.params_m}M parameters ·
+        ${start.train.toLocaleString()} train / ${start.test.toLocaleString()} test` : "starting…"}</p>
+      <h2>Loss</h2>${lossChart(steps)}
+      ${transfer ? `<h2>Held-out transfer</h2><div class="rows">` +
+        Object.entries(transfer.scores).map(([k, v]) => `<div class="row"><span class="grow">${esc(k)}</span>
+          <span class="bartrack"><span class="bar" style="width:${v * 100}%"></span></span>
+          <span class="num" style="min-width:4em;text-align:right">${v.toFixed(3)}</span></div>`).join("") + "</div>" : ""}
+      ${fin ? `<h2>Final — H ${fin.scores.net_score?.toFixed(4) ?? "—"} · A ${fin.scores.arithmetic?.toFixed(4) ?? "—"} ·
+          ${((fin.scores.peak_vram_mb ?? 0) / 1024).toFixed(1)} GB VRAM</h2>
+        <div class="rows">` + Object.entries(bench).sort((a, b) => a[1] - b[1]).map(([k, v]) => {
+          const d = champ[k] != null ? v - champ[k] : null;
+          return `<div class="row"><code class="grow">${esc(k)}</code>
+            <span class="num">${v.toFixed(3)}</span>
+            <span class="num" style="min-width:5em;text-align:right;color:${d > 0 ? "var(--good)" : d < 0 ? "var(--critical)" : "var(--muted)"}">
+              ${d == null ? "new" : (d >= 0 ? "+" : "") + d.toFixed(3)}</span></div>`;
+        }).join("") + `</div><p class="sub" style="margin-top:.6rem">Delta vs committed champion.</p>` : ""}`;
+  };
+  route.after = () => {
+    armChart();
+    if (ev.some(e => e.t === "final")) return;
+    let offset = r.offset, events = ev;
+    window._poll = setInterval(async () => {
+      const nxt = await api(`runs/${rid}?offset=${offset}`);
+      if (!nxt?.events.length) return;
+      offset = nxt.offset; events = events.concat(nxt.events);
+      view.innerHTML = render(events); armChart();
+      if (events.some(e => e.t === "final")) clearInterval(window._poll);
+    }, 3000);
+  };
+  return render(ev);
+}
+
 /* ---- router ---- */
 async function route() {
   const [_, p1, p2] = location.hash.split("/");
@@ -239,9 +344,12 @@ async function route() {
     a.classList.toggle("active", a.hash === "#/" + (p1 || "status")));
   const r = { status: vStatus, code: vCode, science: () => vScience(p2), benchmarks: vBench, data: vData };
   route.after = null;
+  clearInterval(window._poll);
   view.innerHTML = p1 === "file" ? await vFile(decodeURIComponent(location.hash.slice(7)))
     : p1 === "rule" ? vRule(p2)
     : p1 === "bench" ? vBenchOne(p2)
+    : p1 === "runs" ? await vRuns()
+    : p1 === "run" ? await vRun(p2)
     : (r[p1] ?? vStatus)();
   route.after?.();
   window.scrollTo(0, 0);

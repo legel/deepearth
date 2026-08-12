@@ -18,15 +18,14 @@ HEAD and re-audits changed files only.
 
 ## Live training
 
-```python
-from dashboard.logger import RunLogger
-log = RunLogger("my-experiment")
-log.event("step", step=i, loss=loss)
-log.event("eval", scores=scores)
-log.final(scores)
+```bash
+python -m dashboard.tracker autoresearch/deepcal.yaml   # wraps train.py, zero code change
 ```
 
-Events stream to `dashboard/runs/<id>.jsonl`; the Data view tails them live.
+train.py output passes through unchanged; parsed events (steps, losses, eval,
+final benchmark suite) stream to `dashboard/runs/<id>.jsonl` and the Runs view
+tails them live — loss curve, held-out transfer, per-benchmark champion deltas.
+For custom scripts, `dashboard.logger.RunLogger` emits the same events directly.
 
 ## Layout
 
