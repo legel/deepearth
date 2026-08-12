@@ -195,12 +195,46 @@ def run(status_only=False, graph_only=False):
         print(f"status: {len(rules_out)} rules, {len(sys_out)} systems")
 
 
+SEEDS = {
+    "science": (["autoresearch/science.md"],
+                """From science.md, return JSON {"rules": [{"id": <int>, "title": "<3-6 words>",
+"summary": "<=20 words", "system": "<earth4d|phylo|fusion|method|data>",
+"keywords": [<3-5 grep-able code terms>]}] for all 32 numbered rules,
+"foundations": [{"name", "role": "<=10 words"}]}."""),
+    "benchmarks": (["autoresearch/evaluate.py", "autoresearch/champion_scores.json"],
+                   """From evaluate.py's BENCHMARKS registry and champion_scores.json, return JSON
+{"benchmarks": [{"id": "B<n>", "key": "<exact score key>", "family": "<grouping>",
+"measures": "<=12 words", "inputs": "<=8 words", "target": "<=8 words",
+"current_score": <float|null>}], "scoring": {"net_score": {...}, "arithmetic_net": {...}},
+"registry_location": "<where the registry lives>"}. Cover every benchmark."""),
+    "tokens": (["core/fusion.py", "autoresearch/champion.yaml"],
+               """Trace the ACTUAL token structure of one training example through DeepEarth.encode/
+forward. Return JSON {"tokens": [{"token_type", "count_per_example", "dim",
+"composed_of", "origin"}], "context_window": {"formula_round0": "..."},
+"masking": {...}, "champion_dims": {...}}. Precision over prose."""),
+}
+
+
+def refresh_seed(name):
+    files, instr = SEEDS[name]
+    content = "\n\n".join(f"=== {f} ===\n" + (REPO / f).read_text(errors="replace")[:150_000]
+                          for f in files)
+    out = gemini(f"{instr}\n\nSOURCE FILES:\n{content}")
+    (ROOT / "seed" / f"{name}.json").write_text(json.dumps(out, indent=1) + "\n")
+    print(f"seed/{name}.json refreshed")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--status-only", action="store_true")
     ap.add_argument("--graph-only", action="store_true")
     ap.add_argument("--loop", action="store_true")
+    ap.add_argument("--refresh-seed", choices=[*SEEDS, "all"])
     args = ap.parse_args()
+    if args.refresh_seed:
+        for n in (SEEDS if args.refresh_seed == "all" else [args.refresh_seed]):
+            refresh_seed(n)
+        return
     if not args.loop:
         return run(args.status_only, args.graph_only)
     last = None

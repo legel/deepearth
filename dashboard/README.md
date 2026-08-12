@@ -45,8 +45,11 @@ See `ARCHITECTURE.md`. Pipeline: `registry.py` (deterministic) -> `audit.py`
 | `state/verification.json` | periodic adversarial agent fleet (see ARCHITECTURE.md) | before decisions |
 
 `seed/*.json` are curated registries (benchmark semantics, rule structure, token
-architecture, operational findings). Refresh them when evaluate.py / science.md /
-fusion.py change shape; append findings as they are discovered.
+architecture, operational findings). `python -m dashboard.audit --refresh-seed
+<science|benchmarks|tokens|all>` regenerates them from source via Gemini when
+evaluate.py / science.md / fusion.py change shape; review the diff before
+committing. `findings.json` and `data_schema.json` stay hand-curated — append
+findings as they are discovered.
 
 ## Handoff notes
 
