@@ -321,7 +321,6 @@ def main():
         return run(args.status_only, args.graph_only)
     last = None
     while True:                                        # after-every-PR autonomy
-        head = json.loads((STATE / "registry.json").read_text())["head"] if last else None
         import subprocess
         cur = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"],
                              capture_output=True, text=True).stdout.strip()

@@ -56,7 +56,8 @@ findings as they are discovered.
 
 ## Handoff notes
 
-- Python 3.10+, Flask, numpy, torch (reconstruct/tracker only). LLM calls are raw REST.
+- Python 3.10+, Flask, numpy, pyyaml; torch only for trace/reconstruct/tracker runs.
+  LLM calls are raw REST — no SDK.
 - `GEMINI_API_KEY` required for audit only; `GEMINI_MODEL` overrides the default model.
 - Known setup order for a fresh clone: parent dir named `deepearth` on sys.path,
   `bash encoders/spacetime/install.sh` (the committed .so is ABI-stale — see F2),
