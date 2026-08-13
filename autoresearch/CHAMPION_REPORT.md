@@ -4,7 +4,7 @@
 
 The compact model improves both public aggregates over a seed-matched 24.9M control at exactly 2,291 optimizer
 steps. It retains the PR's central result: the 797.1M default is unnecessary. The candidate is 96.8% smaller and
-uses 48.4% less training VRAM. Its 2,291-step score is also 18.2% higher than the historical 797M receipt, which
+uses 48.4% less training VRAM. Its 2,291-step score is also 18.7% higher than the historical 797M receipt, which
 used 5,126 steps; that row is replacement context, not the matched promotion comparison.
 
 | Model | Seed | Steps | Harmonic | Arithmetic |
