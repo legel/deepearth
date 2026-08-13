@@ -137,11 +137,9 @@ def ensure_kernel() -> None:
 
 def ensure_prepared(config: dict, data_dir: Path, device: str) -> str:
     """Build the assembled-dataset cache (the slow glob + KD-tree) once, so runs spin up instantly."""
-    import hashlib, json
     from deepearth.autoresearch.main.editable_files.lib import data as data_module
     d = dict(config["data"]); d["cache_dir"] = str(data_dir)
-    keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km")}
-    tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
+    tag = data_module.prepared_tag(d)
     prepared = str(DATA_DIR / f"prepared_{tag}.pt")
     if Path(prepared).exists():
         print(f"[prepared] cache present: {prepared}")

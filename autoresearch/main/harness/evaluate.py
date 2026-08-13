@@ -23,7 +23,7 @@ import torch.nn.functional as F
 # Increment whenever a benchmark definition, split, control, or suite membership changes.  Champion
 # records and graduation crossings carry this value so an old instrument can never be compared with a
 # new one merely because the benchmark names happen to overlap.
-BENCHMARK_PROTOCOL = "v5-conditional-phylo-transfer"
+BENCHMARK_PROTOCOL = "v6-canonical-family-identity"
 
 
 def _tie_aware_binary_auc(scores, target) -> float:

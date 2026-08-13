@@ -6,7 +6,7 @@ to held-out regions when conditioned on the config's widely-available variables.
 Usage:  python train.py configs/deepcal.yaml [--device cuda] [--steps N]
 """
 from __future__ import annotations
-import argparse, math, os, time
+import argparse, json, math, os, time
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")   # reduce fragmentation for large models
 from pathlib import Path
 import numpy as np
@@ -50,12 +50,7 @@ def train_and_evaluate(config, device):
         return all(p.grad is None or torch.isfinite(p.grad).all() for p in parameters)
     d = config["data"]
     # Prepared-dataset cache: run the glob + KD-tree neighbor build once, reused across runs; keyed by the data settings that change the assembled set.
-    import hashlib, json
-    # clay_v2 belongs in the key: the prepared blob stores `extra` (clay included) and its fast path skips
-    # _load_modalities, so without it here a clay-source change would be silently ignored.
-    keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis",
-                                      "time_km", "clay_v2")}
-    tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
+    tag = data_module.prepared_tag(d)
     prepared = str(Path(__file__).resolve().parents[1] / "data" / "deepcal" / f"prepared_{tag}.pt")
     source = data_module.build(d["adapter"], cache_dir=d["cache_dir"], n_neighbors=d.get("n_neighbors", 24),
                                device=device, holdout=d.get("holdout", "spatial"), subset=d.get("subset"),

@@ -1,6 +1,6 @@
 # Scorecard — how science is measured
 
-Protocol `v5-conditional-phylo-transfer` makes the human-interpretable benchmark suite the promotion
+Protocol `v6-canonical-family-identity` makes the human-interpretable benchmark suite the promotion
 instrument. `val_bpb` remains a reconstruction diagnostic and never decides promotion.
 
 ## Promotion gate
@@ -54,8 +54,8 @@ floor, never raw bits.
 
 ## Migration
 
-Earlier protocol scores and v5 scores are incomparable. Promotion is frozen until one fresh two-seed
-v5 baseline is published explicitly as the new baseline. Historical runs are not replayed. Thereafter
+Earlier protocol scores and v6 scores are incomparable. Promotion is frozen until one fresh two-seed
+v6 baseline is published explicitly as the new baseline. Historical runs are not replayed. Thereafter
 the coordinator mechanically rejects protocol or capability-suite mismatches.
 
 ## What a run reports

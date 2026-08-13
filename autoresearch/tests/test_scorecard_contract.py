@@ -31,7 +31,7 @@ def _card(**over):
         decomposition={"climate": 2.0004, "identity": 6.1, "clay": 5.2},
         revealed_dims={"climate": 17_762_000, "identity": 1, "clay": 1},
         benchmark_runs=[benchmarks, benchmarks],
-        benchmark_protocol="v5-conditional-phylo-transfer",
+        benchmark_protocol="v6-canonical-family-identity",
         capability_suite=("B01_climate", "B08_species"),
         training_seeds=(1337, 1338), noise_floor=0.0167,
         params=24_000_000, steps=1000, config="screen.yaml", agent="test",
@@ -48,7 +48,7 @@ def test_the_front_end_can_rely_on_the_shape():
                       "benchmarks", "benchmark_runs", "evidence", "delivery", "previous"}
     assert set(c["headline"]) == {"harmonic", "arithmetic"}
     assert c["diagnostics"] == {"val_bpb": 2.0356, "macro": 3.08}
-    assert c["evidence"]["benchmark_protocol"] == "v5-conditional-phylo-transfer"
+    assert c["evidence"]["benchmark_protocol"] == "v6-canonical-family-identity"
     assert c["evidence"]["hardware"] == {"gpu": "RTX PRO 6000", "gpus": 2}
     assert c["model"]["params"] == 24_000_000 and c["model"]["params_m"] == 24.0
     assert json.loads(json.dumps(c)) == c, "must survive a JSON round trip"

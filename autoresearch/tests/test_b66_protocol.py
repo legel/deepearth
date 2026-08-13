@@ -1,4 +1,4 @@
-"""Protocol-v5 correctness checks for conditional phylogenetic community transfer."""
+"""Protocol-v6 correctness checks for conditional phylogenetic community transfer."""
 
 from __future__ import annotations
 
@@ -71,10 +71,10 @@ def test_paired_arms_share_rng_and_consume_one_call():
     assert torch.equal(following, expected_following)
 
 
-def test_v5_suite_promotes_conditional_auc_not_contextual_recall():
+def test_v6_suite_promotes_conditional_auc_not_contextual_recall():
     active = "B66_community_phylo_conditional_auc"
     diagnostic = "B66_contextual_masked_community_recall"
-    assert BENCHMARK_PROTOCOL == "v5-conditional-phylo-transfer"
+    assert BENCHMARK_PROTOCOL == "v6-canonical-family-identity"
     assert active in BENCHMARKS and diagnostic in BENCHMARKS
     assert active in capability_suite({active: 0.5, diagnostic: 0.9})
     assert diagnostic not in capability_suite({active: 0.5, diagnostic: 0.9})

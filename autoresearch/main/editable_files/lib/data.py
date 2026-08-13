@@ -12,6 +12,8 @@ import torch
 from scipy.spatial import cKDTree
 
 _REGISTRY: Dict[str, Callable] = {}
+PREPARED_SCHEMA = 2
+_PREPARED_FIELDS = ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km", "clay_v2")
 
 
 def register(name: str):
@@ -27,6 +29,25 @@ def build(name: str, **kwargs):
 
 def _normalize(a):
     return a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-9)
+
+
+def prepared_tag(settings):
+    """Hash data settings with the assembled-cache schema."""
+    import hashlib, json
+    key = {k: settings.get(k) for k in _PREPARED_FIELDS}
+    key["schema"] = PREPARED_SCHEMA
+    return hashlib.md5(json.dumps(key, sort_keys=True, default=str).encode()).hexdigest()[:10]
+
+
+def _canonical_family(name: str) -> str:
+    """Remove the terminal provenance marker from legacy family labels."""
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"invalid family label: {name!r}")
+    if "*" not in name:
+        return name
+    if name.count("*") != 1 or not name.endswith("*") or len(name) == 1:
+        raise ValueError(f"invalid legacy family label: {name!r}")
+    return name[:-1]
 
 
 @register("california")
@@ -84,7 +105,7 @@ class California:
             elev = np.array([em.get(int(g), 0.0) for g in gid], np.float32)
         rows = list(csv.DictReader(open(cache / "derived/species_index.csv")))
         self._tip_labels = [rows[i]["tip_label"] for i in vocab["global_idx"]]   # Newick leaf label per species
-        groups = np.array([rows[i]["family"] for i in vocab["global_idx"]])
+        groups = np.array([_canonical_family(rows[i]["family"]) for i in vocab["global_idx"]])
         self.group_names = sorted(set(groups.tolist())); gmap = {g: i for i, g in enumerate(self.group_names)}
         self.class_group = torch.tensor([gmap[g] for g in groups], device=dev)
         z = np.load(cache / "derived/traits_syn.npz", allow_pickle=True)
