@@ -44,6 +44,83 @@ planetary state, canonical fusion capabilities improve with it.** Better hash
 occupancy, training loss, ablation dependence, or private-head performance without
 better human capabilities is not a breakthrough.
 
+## Representation boundary
+
+Mesh construction and mesh reading are separate scientific problems with one hard
+interface between them:
+
+```text
+coordinates + time + observations
+              -> addressed, composed mesh state
+              -> one query-conditioned world latent
+              -> scientific predictions
+```
+
+The mesh builder owns addressing, modality writes, spatial and temporal exchange,
+and cross-scale composition. Reading and fusion are the same operation: given a
+physical and semantic query, they reduce the structured mesh to one aggregate world
+latent for that query. Fusion must not receive raw modalities through side paths.
+Different questions may produce different reads, but every answer must come from the
+same shared mesh and the task head may only decode the resulting latent.
+
+The hash-addressed mesh is the model's shared residual stream. Its trainable tables
+accumulate reusable structure about the ecological region across optimization, and
+every modality contributes an addressed residual update in the same state language.
+Space, time, resolution, and relative-position hashes provide the coordinates of
+that stream; they are not auxiliary features appended after representation learning.
+The long-term direction is a regional world model whose mesh can retain increasingly
+rich ecological state. In the present implementation the learned hash tables persist
+across examples, while observation-conditioned writes exist only for the current
+forward pass. Durable observation memory must be introduced and evaluated as an
+explicit future mechanism rather than assumed to exist already.
+
+Each addressed cell is a structured fiber, not one undifferentiated feature blob.
+Hash levels describe geometric resolution; lenses describe what kind of information
+is stored at that address. Keep those axes distinct:
+
+```text
+cell[space, time, resolution]
+    ├── abiotic lens       climate, soil, terrain, water
+    ├── visual lens        ground and aerial observations
+    ├── biological lens    identity, traits, phylogeny
+    └── ecological lens    phenology, community and changing state
+```
+
+Phylogenetic structure is not itself a space-time coordinate. A biological
+observation binds its graph-derived representation into the biological lens of the
+addressed cell. Do not sum unlike modality adapters into one vector and ask the
+reader to disentangle the collision later. Compose information within each lens,
+then exchange information across lenses with an explicit learned operation. Fusion
+reads that common fibered mesh with a query and returns one aggregate representation
+for the requested inference. This lens boundary should remain visible to ablation
+and information-retention measurements.
+
+This boundary makes the central claim testable in both directions:
+
+- hold the reader fixed while comparing mesh checkpoints to test mesh quality;
+- hold a mesh checkpoint fixed while comparing readers to test fusion quality;
+- require improvements in fixed-reader mesh quality to predict improvements in
+  canonical fusion rather than merely improving an internal mesh diagnostic.
+
+Mesh quality means held-out information recoverable from the mesh alone. Measure it
+as a vector rather than inventing an unvalidated internal composite:
+
+- masked reconstruction of observations through a fixed reader;
+- held-out scientific capabilities through the same fixed, low-capacity probe;
+- physical locality and consistency across nearby space, time, and scale;
+- sensitivity to removing a relevant modality write or mesh component;
+- information retained by query-conditioned world latents without modality bypasses.
+
+Across matched seeds and training checkpoints, report the association between these
+mesh measurements and canonical fusion harmonic and arithmetic. The architecture
+claim is supported only when better mesh measurements predict better fusion output.
+A utilization statistic that rises without that relationship remains a diagnostic,
+not evidence that the mesh represents the world more accurately.
+
+The evidence interface is singular, but aggregation must not destroy structure
+prematurely. Spatial, temporal, neighborhood, resolution, and lens relationships
+should compose inside the mesh before a query is reduced to its final world latent.
+
 ## Select the target
 
 1. Read the latest complete scorecard produced by `evaluate.py` on the current
@@ -85,8 +162,10 @@ Follow this loop exactly:
    ```
 
 6. **SCORE.** Print and read the entire canonical human-capability scorecard first.
-   Then inspect `val_bpb`, runtime, parameter count, training loss, and relevant
-   mesh ablations as mechanism diagnostics.
+   Then inspect the fixed mesh receipt, signed Earth4D gains, `val_bpb`, runtime,
+   parameter count, and training loss as mechanism diagnostics. The receipt's
+   spatial locality, temporal locality, and write rank may support or falsify the
+   stated mechanism; they never replace a human-capability result.
 7. **DECIDE.** A screen advances only when all three statements hold:
    - the named target improves over its matched control;
    - capability harmonic improves;
@@ -137,8 +216,17 @@ The fixed evaluator is authoritative:
 - the named target is the causal check on the hypothesis;
 - every individual capability must remain visible;
 - `val_bpb` is a lower-is-better reconstruction diagnostic and never gates;
+- spatial locality, temporal locality, write rank, state rank, collisions, and
+  signed Earth4D gains are shadow diagnostics and never gate;
 - loss, runtime, parameters, occupancy, attention, and ablation deltas diagnose a
   mechanism but are not capability claims.
+
+The mesh census deliberately has no promotion composite. Across the fixed
+two-seed trajectory, locality and write diversity tracked fusion breadth while
+raw state effective rank moved in the opposite direction. Do not optimize any
+one internal statistic or reinterpret lower state rank as either success or
+failure. A diagnostic advance without improvement in the named human capability
+and harmonic is evidence about the bottleneck, not a promotable result.
 
 After every run, report:
 
@@ -148,7 +236,8 @@ named target:  control -> candidate (delta)
 harmonic:      control -> candidate (delta)
 arithmetic:    control -> candidate (delta)
 verdict:       advance | reject | invalid
-diagnostics:   val_bpb, runtime, parameters, relevant mesh ablations
+diagnostics:   space/time locality, write rank, signed Earth4D gains,
+               val_bpb, runtime, parameters
 ```
 
 ## Standing rules

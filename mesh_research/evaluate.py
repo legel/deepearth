@@ -20,6 +20,8 @@ EVAL_BATCH = 1280
 VAL_BATCHES = 48
 EVAL_SEED = 20260806
 HIDE_PROBABILITY = 0.5
+CENSUS_SAMPLES = 512
+CENSUS_SEED = 20260814
 
 
 @torch.no_grad()
@@ -91,6 +93,31 @@ def main():
     print(f"val_bpb: {val_bpb:.6f}", flush=True)
     for name in sorted(decomposition, key=decomposition.get, reverse=True):
         print(f"  val_bpb.{name:<22} {decomposition[name]:.6f}", flush=True)
+
+    from census import measure as measure_mesh
+    census, _ = measure_mesh(model, source, CENSUS_SAMPLES, CENSUS_SEED)
+    field = census["persistent_field"]
+    writes = census["writes"]
+    diagnostics = {
+        "protocol": census["protocol"],
+        "samples": census["samples"],
+        "sample_seed": census["sample_seed"],
+        "spatial_locality_margin": field["spatial_near_vs_shuffled_margin"],
+        "temporal_locality_margin": field["temporal_near_vs_shuffled_margin"],
+        "write_effective_rank": writes["write_effective_rank_mean"],
+        "state_effective_rank": field["state_effective_rank_mean"],
+        "sampled_collision_free": census["addresses"]["sampled_collision_free_mean"],
+    }
+    print(
+        "MESH DIAGNOSTICS: "
+        f"space_margin={diagnostics['spatial_locality_margin']:.6f}  "
+        f"time_margin={diagnostics['temporal_locality_margin']:.6f}  "
+        f"write_rank={diagnostics['write_effective_rank']:.6f}  "
+        f"state_rank={diagnostics['state_effective_rank']:.6f}  "
+        f"collision_free={diagnostics['sampled_collision_free']:.6f}",
+        flush=True,
+    )
+    print("MESH DIAGNOSTIC RECEIPT: " + json.dumps(diagnostics, sort_keys=True), flush=True)
 
 
 if __name__ == "__main__":

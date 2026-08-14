@@ -429,6 +429,12 @@ class MeshModel(nn.Module):
                                                         values["_flower"].float(), reduction="none")
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
         loss = torch.stack(terms).mean()
+        devices = [torch.cuda.current_device()] if loss.is_cuda else []
+        with torch.random.fork_rng(devices=devices):
+            mask = torch.rand(self._refined_species.shape[0], device=loss.device) < 0.15
+            loss = loss + 0.1 * self.species_graph.masked_reconstruction_loss(
+                mask, self._refined_species.detach(), metric="mse"
+            )
         neighbor_identity = context["neighbor_values"].get("identity")
         if neighbor_identity is not None:
             query = self.community_metric(pooled.detach())
@@ -455,13 +461,26 @@ def build_model(source, variable_specs, always_dims, device: str, design: Experi
     ).to(device)
 
 
-def train(cache: str, device: str, design: Experiment = EXPERIMENT):
+def train(
+    cache: str,
+    device: str,
+    design: Experiment = EXPERIMENT,
+    *,
+    checkpoint_steps: frozenset[int] = frozenset(),
+    checkpoint_dir: Path | None = None,
+):
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(design.seed)
     if device.startswith("cuda"):
         torch.cuda.manual_seed_all(design.seed)
     source, variable_specs, always_dims = load_data(cache, device)
     model = build_model(source, variable_specs, always_dims, device, design)
+    if checkpoint_steps:
+        if checkpoint_dir is None:
+            raise ValueError("checkpoint_dir is required when checkpoint_steps are requested")
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        if 0 in checkpoint_steps:
+            torch.save(model.state_dict(), checkpoint_dir / "step_000000.pt")
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=design.learning_rate,
@@ -486,6 +505,9 @@ def train(cache: str, device: str, design: Experiment = EXPERIMENT):
         for module in model.modules():
             if hasattr(module, "clamp_per_level_scale"):
                 module.clamp_per_level_scale()
+        completed = step + 1
+        if completed in checkpoint_steps:
+            torch.save(model.state_dict(), checkpoint_dir / f"step_{completed:06d}.pt")
         if step % 100 == 0 or step + 1 == design.steps:
             print(f"step {step:>5}  loss {float(loss):.4f}  elapsed {time.time() - started:.1f}s", flush=True)
 
