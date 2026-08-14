@@ -264,6 +264,9 @@ class MeshModel(nn.Module):
         self.myco_head = nn.Linear(d_model, 5) if hasattr(source, "myco") else None
         self.flower_head = nn.Linear(d_model, 1) if hasattr(source, "flower") else None
         self.species_myco_head = None
+        self.community_metric = nn.Sequential(
+            nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)
+        )
 
     def _species(self) -> torch.Tensor:
         refined = self.species_graph._seed() if self._ablate_species else self.species_graph()
@@ -367,7 +370,7 @@ class MeshModel(nn.Module):
         out = {}
         for name in targets:
             if name == "community":
-                out[name] = self.community_head(pooled)
+                out[name] = self.community_metric(pooled) @ self._refined_species.t()
             elif name == "pollinator":
                 out[name] = self.poll_head(pooled)
             elif name == "lfmc":
@@ -425,7 +428,18 @@ class MeshModel(nn.Module):
             error = F.binary_cross_entropy_with_logits(self.flower_head(pooled).squeeze(-1),
                                                         values["_flower"].float(), reduction="none")
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
-        return torch.stack(terms).mean()
+        loss = torch.stack(terms).mean()
+        neighbor_identity = context["neighbor_values"].get("identity")
+        if neighbor_identity is not None:
+            query = self.community_metric(pooled.detach())
+            logits = query @ self._refined_species.detach().t()
+            target = torch.zeros_like(logits)
+            target.scatter_(1, neighbor_identity.long(), 1.0)
+            target.scatter_(1, values[self.species_variable].long().unsqueeze(1), 1.0)
+            target = target / target.sum(-1, keepdim=True).clamp_min(1.0)
+            community = -(target * F.log_softmax(logits, -1)).sum(-1) / math.log(logits.shape[-1])
+            loss = loss + 0.5 * community.mean()
+        return loss
 
 def build_model(source, variable_specs, always_dims, device: str, design: Experiment = EXPERIMENT) -> MeshModel:
     variables = [Variable(**spec) for spec in variable_specs]
