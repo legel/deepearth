@@ -234,6 +234,12 @@ class MeshModel(nn.Module):
                               top_k=min(128, source.n_classes), species_text=source.species_text)
         self.species_graph = SpeciesGraph(**graph_args)
         self._refined_species = None
+        self.register_buffer("species_family", source.class_group)
+        self.family_count = len(source.group_names)
+        self.environment_names = tuple(
+            name for name in ("climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro")
+            if name in self.names
+        )
 
         write_names = [*self.names, *self.always_names]
         self.write_type = nn.ParameterDict({n: nn.Parameter(torch.randn(d_model) * 0.02) for n in write_names})
@@ -320,8 +326,16 @@ class MeshModel(nn.Module):
             "neighbor_values": neighbor_values or {},
         }
 
-    def encode(self, values: Dict[str, torch.Tensor], present: Dict[str, torch.Tensor], context: dict):
+    def encode(
+        self,
+        values: Dict[str, torch.Tensor],
+        present: Dict[str, torch.Tensor],
+        context: dict,
+        detach_species: bool = False,
+    ):
         species = self._species()
+        if detach_species:
+            species = species.detach()
         write_mask = dict(present)
         for name in self.always_names:
             if name in values:
@@ -429,6 +443,24 @@ class MeshModel(nn.Module):
                                                         values["_flower"].float(), reduction="none")
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
         loss = torch.stack(terms).mean()
+        environment_present = {
+            name: observed[name] if name in self.environment_names else torch.zeros_like(observed[name])
+            for name in self.names
+        }
+        environment_latent = self.encode(values, environment_present, context, detach_species=True)
+        family_logits = self._pool(environment_latent, self.species_variable).float() \
+                        @ self._refined_species.detach().float().t()
+        probability = family_logits.softmax(-1)
+        family_probability = probability.new_zeros(batch, self.family_count)
+        family_probability.scatter_add_(1, self.species_family.expand(batch, -1), probability)
+        target_family = self.species_family[values[self.species_variable].long()]
+        family_error = -family_probability.gather(
+            1, target_family[:, None]
+        ).squeeze(1).clamp_min(1e-8).log()
+        family_valid = observed[self.species_variable]
+        family_term = (family_error * family_valid).sum() / family_valid.sum().clamp_min(1) \
+                      / math.log(max(self.family_count, 2))
+        loss = loss + 0.1 * family_term
         devices = [torch.cuda.current_device()] if loss.is_cuda else []
         with torch.random.fork_rng(devices=devices):
             mask = torch.rand(self._refined_species.shape[0], device=loss.device) < 0.15
