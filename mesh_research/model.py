@@ -10,6 +10,7 @@ file: architecture, writes, fusion, objectives, optimization, and training live 
 from __future__ import annotations
 
 import math
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -48,7 +49,7 @@ class Experiment:
     and training procedure. It is kept here only so one experiment is legible.
     """
 
-    seed: int = 1337
+    seed: int = int(os.environ.get("MESH_SEED", "1337"))
     steps: int = 1000
     batch: int = 256
     width: int = 128

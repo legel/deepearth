@@ -77,10 +77,11 @@ Follow this loop exactly:
    benchmark code, splits, prepared data, and scoring are read-only.
 4. **COMMIT.** Commit the candidate before measurement. The commit is the
    reproducible experiment; do not score an unidentified dirty diff.
-5. **RUN.** Execute the fixed 1,000-step screen:
+5. **RUN.** Execute the fixed 1,000-step screen on the fixed seed pair:
 
    ```bash
-   python mesh_research/evaluate.py --cache /path/to/deepcal-cache --device cuda
+   MESH_SEED=1337 python mesh_research/evaluate.py --cache /path/to/deepcal-cache --device cuda
+   MESH_SEED=1338 python mesh_research/evaluate.py --cache /path/to/deepcal-cache --device cuda
    ```
 
 6. **SCORE.** Print and read the entire canonical human-capability scorecard first.
@@ -101,9 +102,9 @@ spatial holdout, hardware class, step budget, evaluation protocol, and seed. The
 committed hypothesis must be the only difference. Never compare a 1,000-step result
 with a longer-trained model.
 
-The 1,000-step result is a fast screen, not a record. A survivor must be reproduced
-with the fixed second seed and then compared with a matched longer-step control
-before it may be called a confirmed breakthrough.
+The two-seed 1,000-step result is a fast screen, not a record. A survivor must then
+be compared with a matched longer-step control before it may be called a confirmed
+breakthrough.
 
 ## Research surface
 
