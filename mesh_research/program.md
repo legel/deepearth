@@ -104,7 +104,8 @@ with a longer-trained model.
 
 The two-seed 1,000-step result is a fast screen, not a record. A survivor must then
 be compared with a matched longer-step control before it may be called a confirmed
-breakthrough.
+breakthrough. Set that fixed budget explicitly, for example
+`MESH_STEPS=8000 MESH_SEED=1337 ...`; candidate and control must use the same value.
 
 ## Research surface
 

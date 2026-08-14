@@ -50,7 +50,7 @@ class Experiment:
     """
 
     seed: int = int(os.environ.get("MESH_SEED", "1337"))
-    steps: int = 1000
+    steps: int = int(os.environ.get("MESH_STEPS", "1000"))
     batch: int = 256
     width: int = 128
     levels: int = 12
