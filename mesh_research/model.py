@@ -334,7 +334,12 @@ class MeshModel(nn.Module):
             name: nn.Parameter(torch.tensor(0.05))
             for name in self.mesh_read_names
         })
+        self.mesh_scale_read_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.mesh_read_names
+        })
         self.mesh_task_norm = nn.LayerNorm(d_model)
+        self.mesh_scale_task_norm = nn.LayerNorm(d_model)
         self.fiber_read_norm = nn.LayerNorm(d_model)
         self.fiber_read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.fiber_fuse_norm = nn.LayerNorm(d_model)
@@ -346,6 +351,7 @@ class MeshModel(nn.Module):
         self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
         torch.random.set_rng_state(sidecar_rng)
         self._fiber_summary = None
+        self._fiber_mesh = None
 
     def _species(self) -> torch.Tensor:
         refined = self.species_graph._seed() if self._ablate_species else self.species_graph()
@@ -476,6 +482,7 @@ class MeshModel(nn.Module):
         for block in self.blocks:
             latent = block(latent)
         fiber_mesh = torch.cat((query_fibers.unsqueeze(1), neighbor_fibers), 1)
+        self._fiber_mesh = fiber_mesh
         fiber_tokens = fiber_mesh.permute(0, 3, 1, 2, 4).flatten(2, 3).flatten(0, 1)
         fiber_query = self.fiber_query.unsqueeze(0).expand(latent.shape[0], -1, -1, -1).flatten(0, 1)
         normalized = self.fiber_read_norm(fiber_tokens)
@@ -509,7 +516,21 @@ class MeshModel(nn.Module):
         mesh_read = torch.einsum(
             "bk,bkd->bd", selected_score.softmax(-1), selected_fibers
         )
-        return pooled + torch.tanh(self.mesh_read_gate[name]) * self.mesh_task_norm(mesh_read)
+        pooled = pooled + torch.tanh(self.mesh_read_gate[name]) * self.mesh_task_norm(mesh_read)
+        if self._fiber_mesh is None:
+            return pooled
+        scale_fibers = self._fiber_mesh.flatten(1, 3)
+        scale_score = (scale_fibers @ mesh_query) / math.sqrt(self.d_model)
+        scale_score, scale_index = scale_score.topk(min(8, scale_score.shape[-1]), dim=-1)
+        selected_scale = scale_fibers.gather(
+            1, scale_index[..., None].expand(-1, -1, self.d_model)
+        )
+        scale_read = torch.einsum(
+            "bk,bkd->bd", scale_score.softmax(-1), selected_scale
+        )
+        return pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
+            scale_read
+        )
 
     def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
         if name == self.species_variable:
