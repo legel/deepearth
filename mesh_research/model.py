@@ -339,7 +339,7 @@ class MeshModel(nn.Module):
             for name in self.mesh_read_names
         })
         self.mesh_prior_read_gate = nn.ParameterDict({
-            name: nn.Parameter(torch.tensor(0.05))
+            name: nn.Parameter(torch.zeros(()))
             for name in self.mesh_read_names
         })
         conditioned_reads = [name for name in ("pollinator",) if name in self.mesh_read_names]
