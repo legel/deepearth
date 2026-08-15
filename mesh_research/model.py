@@ -407,7 +407,6 @@ class MeshModel(nn.Module):
         present: Dict[str, torch.Tensor],
         species: torch.Tensor,
     ) -> torch.Tensor:
-        state = state.detach()
         priors = torch.stack([
             prior(state) for prior in self.fiber_prior
         ], -2)
