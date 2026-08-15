@@ -316,6 +316,25 @@ class MeshModel(nn.Module):
             torch.randn(len(LENSES), self.fiber_latents, d_model) * 0.02
         )
         self.fiber_decode_query = nn.Parameter(torch.randn(len(variables), d_model) * 0.02)
+        scientific_reads = ["community"]
+        if self.poll_head is not None:
+            scientific_reads.append("pollinator")
+        if self.lfmc_head is not None:
+            scientific_reads.append("lfmc")
+        if self.myco_head is not None:
+            scientific_reads.append("myco")
+        if self.flower_head is not None:
+            scientific_reads.append("flower")
+        self.mesh_read_names = (*self.names, *scientific_reads)
+        self.mesh_read_query = nn.ParameterDict({
+            name: nn.Parameter(torch.randn(d_model) * 0.02)
+            for name in self.mesh_read_names
+        })
+        self.mesh_read_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.mesh_read_names
+        })
+        self.mesh_task_norm = nn.LayerNorm(d_model)
         self.fiber_read_norm = nn.LayerNorm(d_model)
         self.fiber_read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.fiber_fuse_norm = nn.LayerNorm(d_model)
@@ -474,9 +493,23 @@ class MeshModel(nn.Module):
         return latent
 
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
-        query = self.decode_query[self.names.index(name)]
+        base_name = name if name in self.names else self.species_variable
+        query = self.decode_query[self.names.index(base_name)]
         weight = torch.softmax((latent @ query) / math.sqrt(self.d_model), -1)
-        return torch.einsum("bl,bld->bd", weight, latent)
+        pooled = torch.einsum("bl,bld->bd", weight, latent)
+        if self._fiber_summary is None or name not in self.mesh_read_query:
+            return pooled
+        fibers = self._fiber_summary.flatten(1, 2)
+        mesh_query = self.mesh_read_query[name]
+        score = (fibers @ mesh_query) / math.sqrt(self.d_model)
+        selected_score, selected = score.topk(min(4, score.shape[-1]), dim=-1)
+        selected_fibers = fibers.gather(
+            1, selected[..., None].expand(-1, -1, self.d_model)
+        )
+        mesh_read = torch.einsum(
+            "bk,bkd->bd", selected_score.softmax(-1), selected_fibers
+        )
+        return pooled + torch.tanh(self.mesh_read_gate[name]) * self.mesh_task_norm(mesh_read)
 
     def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
         if name == self.species_variable:
@@ -502,18 +535,22 @@ class MeshModel(nn.Module):
             if name in present:
                 present[name] = observed.get(name, torch.ones_like(present[name]))
         latent = self.encode(values, present, context)
-        pooled = self._pool(latent, self.species_variable)
         out = {}
         for name in targets:
             if name == "community":
+                pooled = self._pool(latent, "community")
                 out[name] = self.community_metric(pooled) @ self._refined_species.t()
             elif name == "pollinator":
+                pooled = self._pool(latent, "pollinator")
                 out[name] = self.poll_head(pooled)
             elif name == "lfmc":
+                pooled = self._pool(latent, "lfmc")
                 out[name] = self.lfmc_head(pooled).squeeze(-1).exp()
             elif name == "myco":
+                pooled = self._pool(latent, "myco")
                 out[name] = self.myco_head(pooled)
             elif name == "flower":
+                pooled = self._pool(latent, "flower")
                 out[name] = torch.sigmoid(self.flower_head(pooled).squeeze(-1))
             else:
                 out[name] = self.decode(latent, name)
@@ -553,9 +590,8 @@ class MeshModel(nn.Module):
             fiber_error = 1.0 - F.cosine_similarity(fiber_prediction, fiber_target, dim=-1)
             fiber_terms.append((fiber_error * hidden).sum() / hidden.sum().clamp_min(1))
 
-        pooled = self._pool(latent, self.species_variable)
         if self.poll_head is not None and "_poll_idx" in values:
-            logits = self.poll_head(pooled)
+            logits = self.poll_head(self._pool(latent, "pollinator"))
             target = torch.zeros_like(logits).scatter_add_(1, values["_poll_idx"].clamp_min(0),
                                                            values["_poll_frq"].float())
             valid = values["_poll_valid"].float()
@@ -563,15 +599,18 @@ class MeshModel(nn.Module):
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
         if self.lfmc_head is not None and "_lfmc" in values:
             valid = values["_lfmc_valid"].float()
-            error = (self.lfmc_head(pooled).squeeze(-1) - torch.log(values["_lfmc"].clamp_min(1.0))).square()
+            error = (self.lfmc_head(self._pool(latent, "lfmc")).squeeze(-1)
+                     - torch.log(values["_lfmc"].clamp_min(1.0))).square()
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
         if self.myco_head is not None and "_myco" in values:
             valid = values["_myco_valid"].float()
-            error = F.cross_entropy(self.myco_head(pooled), values["_myco"].long().clamp_min(0), reduction="none")
+            error = F.cross_entropy(self.myco_head(self._pool(latent, "myco")),
+                                    values["_myco"].long().clamp_min(0), reduction="none")
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
         if self.flower_head is not None and "_flower" in values:
             valid = values["_flower_valid"].float()
-            error = F.binary_cross_entropy_with_logits(self.flower_head(pooled).squeeze(-1),
+            error = F.binary_cross_entropy_with_logits(
+                                                        self.flower_head(self._pool(latent, "flower")).squeeze(-1),
                                                         values["_flower"].float(), reduction="none")
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
         loss = torch.stack(terms).mean() + 0.05 * torch.stack(fiber_terms).mean()
@@ -601,7 +640,7 @@ class MeshModel(nn.Module):
             )
         neighbor_identity = context["neighbor_values"].get("identity")
         if neighbor_identity is not None:
-            query = self.community_metric(pooled.detach())
+            query = self.community_metric(self._pool(latent, "community").detach())
             logits = query @ self._refined_species.detach().t()
             target = torch.zeros_like(logits)
             target.scatter_(1, neighbor_identity.long(), 1.0)
