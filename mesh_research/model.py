@@ -355,6 +355,7 @@ class MeshModel(nn.Module):
         self.coarse_scale_exchange = nn.Linear(d_model, d_model, bias=False)
         self.fine_scale_exchange = nn.Linear(d_model, d_model, bias=False)
         self.scale_exchange_gate = nn.Parameter(torch.full((len(LENSES),), 0.05))
+        self.scale_message_norm = nn.LayerNorm(d_model)
         torch.random.set_rng_state(sidecar_rng)
         self._fiber_summary = None
         self._fiber_mesh = None
@@ -443,7 +444,7 @@ class MeshModel(nn.Module):
         gate = torch.tanh(self.scale_exchange_gate).view(
             *([1] * (fibers.dim() - 2)), len(LENSES), 1
         )
-        return fibers + gate * exchange
+        return fibers + gate * self.scale_message_norm(exchange)
 
     def context(self, query_coords, neighbor_coords, manifold_positions=None, neighbor_values=None):
         spatial, temporal = self.mesh.raw(query_coords)
