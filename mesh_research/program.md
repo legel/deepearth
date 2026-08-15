@@ -137,11 +137,12 @@ validated by held-out capability, not imposed as a fixed modality shortcut.
 
 Use the information boundary receipt to localize failure. `position` measures the
 coordinate-conditioned state before observation writes, `written` measures masked
-target information accessible from the composed mesh, and `latent` measures the
-same information after fusion. A builder advance raises `written` over `position`;
-a reader advance raises `latent` without reducing `written`; both must continue to
-predict canonical capability. These are diagnostics, not an alternative promotion
-score.
+target information accessible from the composed mesh, `latent` measures retention
+after shared fusion, and `readout` measures accessibility after the task query. A
+builder advance raises `written` over `position`; a fusion advance retains that gain
+in `latent`; a reader advance exposes it in `readout`. Canonical capabilities remain
+the final check that the deployed head uses the readout correctly. These are
+diagnostics, not an alternative promotion score.
 
 ## Select the target
 
