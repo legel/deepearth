@@ -626,9 +626,10 @@ class MeshModel(nn.Module):
         pooled = pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
             scale_read
         )
-        prior_fibers = self._fiber_prior_mesh.flatten(1, 3)
+        prior_mesh = self._fiber_prior_mesh.detach()
+        prior_fibers = prior_mesh.flatten(1, 3)
         prior_keys = (
-            self._fiber_prior_mesh
+            prior_mesh
             + cell_key.view(1, cells, 1, 1, self.d_model)
             + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
             + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
