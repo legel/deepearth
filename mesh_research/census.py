@@ -25,7 +25,8 @@ REPO = HERE.parent
 sys.path.insert(0, str(REPO.parent))
 sys.path.insert(0, str(HERE))
 
-PROTOCOL = "mesh-census-v1"
+PROTOCOL = "mesh-census-v2"
+INFORMATION_PROTOCOL = "mesh-information-v2"
 DEFAULT_STEPS = (0, 250, 500, 1000, 2000, 4000, 8000)
 ORDERING_EPSILON = 1e-5
 
@@ -191,6 +192,277 @@ def _harmonic(values: list[float]) -> float:
     return len(values) / sum(1.0 / max(value, 1e-8) for value in values)
 
 
+def _sample_indices(source, split: str, count: int, seed: int) -> np.ndarray:
+    population = np.asarray(getattr(source, split))
+    generator = np.random.default_rng(seed)
+    return population[generator.permutation(len(population))[:min(count, len(population))]]
+
+
+@torch.no_grad()
+def _stage_batch(model, source, selected: np.ndarray, mask_seed: int) -> dict:
+    """Expose coordinate state, written mesh, and the final fusion latent."""
+    index = torch.as_tensor(selected, device=source.device)
+    values, observed, coords, neighbors, manifolds, neighbor_values = source.batch(index)
+    generator = torch.Generator(device=coords.device).manual_seed(mask_seed)
+    present = {
+        name: (torch.rand(observed[name].shape, device=coords.device, generator=generator) > 0.5)
+              & observed[name]
+        for name in model.names
+    }
+    blank = torch.rand(len(selected), device=coords.device, generator=generator) < 0.15
+    for name in present:
+        present[name] &= ~blank
+
+    context = model.context(coords, neighbors, manifolds, neighbor_values)
+    species = model._species()
+    write_mask = dict(present)
+    for name in model.always_names:
+        if name in values:
+            write_mask[name] = values[name].isfinite().all(-1) \
+                               & (values[name].norm(dim=-1) > 1e-6)
+
+    query_fibers = model._fiber_write(context["query_state"], values, write_mask, species)
+    query_written = model._write(context["query_state"], values, write_mask, species)
+    neighbor_state = context["neighbor_state"]
+    masks = {
+        name: torch.ones(
+            value.shape[:-1] if value.dim() > 2 else value.shape,
+            dtype=torch.bool,
+            device=value.device,
+        )
+        for name, value in context["neighbor_values"].items()
+    }
+    neighbor_fibers = model._fiber_write(
+        neighbor_state, context["neighbor_values"], masks, species
+    )
+    neighbor_written = model._write(
+        neighbor_state, context["neighbor_values"], masks, species
+    ) if masks else neighbor_state
+
+    latent = model.encode(values, present, context)
+    position = torch.cat((
+        context["query_state"].flatten(1),
+        context["neighbor_state"].mean(1).flatten(1),
+    ), -1)
+    written = torch.cat((
+        query_written.flatten(1),
+        neighbor_written.mean(1).flatten(1),
+        query_fibers.flatten(1),
+        neighbor_fibers.mean(1).flatten(1),
+    ), -1)
+    lens_features = {}
+    for lens_index, lens_name in enumerate(getattr(model, "write_lens", {}) and (
+            "abiotic", "visual", "biological", "ecological")):
+        lens_features[f"lens.{lens_name}"] = torch.cat((
+            query_fibers[..., lens_index, :].flatten(1),
+            neighbor_fibers[..., lens_index, :].mean(1).flatten(1),
+        ), -1)
+
+    return {
+        "features": {
+            "position": position.float().cpu(),
+            "written": written.float().cpu(),
+            "latent": latent.flatten(1).float().cpu(),
+            **{name: value.float().cpu() for name, value in lens_features.items()},
+        },
+        "targets": {name: values[name].detach().cpu() for name in model.names},
+        "hidden": {
+            name: ((~present[name]) & observed[name]).detach().cpu()
+            for name in model.names
+        },
+    }
+
+
+@torch.no_grad()
+def _collect_probe_data(model, source, indices: np.ndarray, seed: int, batch: int) -> dict:
+    chunks = [
+        _stage_batch(model, source, indices[start:start + batch], seed + start)
+        for start in range(0, len(indices), batch)
+    ]
+    return {
+        group: {
+            name: torch.cat([chunk[group][name] for chunk in chunks])
+            for name in chunks[0][group]
+        }
+        for group in ("features", "targets", "hidden")
+    }
+
+
+def _probe_features(features: torch.Tensor, device: str) -> torch.Tensor:
+    features = features.to(device=device, dtype=torch.float32)
+    features = F.layer_norm(features, (features.shape[-1],)) / math.sqrt(features.shape[-1])
+    return torch.cat((features, torch.ones_like(features[:, :1])), -1)
+
+
+def _ridge_predict(
+    train: torch.Tensor,
+    target: torch.Tensor,
+    test: torch.Tensor,
+    ridge: float,
+) -> torch.Tensor:
+    gram = train @ train.t()
+    gram.diagonal().add_(ridge)
+    weights = torch.linalg.solve(gram, target)
+    return (test @ train.t()) @ weights
+
+
+def _probe_target(
+    variable,
+    train_features: torch.Tensor,
+    test_features: torch.Tensor,
+    train_target: torch.Tensor,
+    test_target: torch.Tensor,
+    train_mask: torch.Tensor,
+    test_mask: torch.Tensor,
+    ridge: float,
+) -> dict | None:
+    train_rows = train_mask.nonzero(as_tuple=False).flatten()
+    test_rows = test_mask.nonzero(as_tuple=False).flatten()
+    if len(train_rows) < 16 or len(test_rows) < 16:
+        return None
+    x_train = train_features[train_rows]
+    x_test = test_features[test_rows]
+    if variable.kind == "categorical":
+        y_train = train_target[train_rows].long()
+        y_test = test_target[test_rows].long()
+        classes = variable.num_classes
+        prediction = _ridge_predict(
+            x_train, F.one_hot(y_train, classes).float(), x_test, ridge
+        ).argmax(-1)
+        raw = float((prediction == y_test).float().mean())
+        majority = torch.bincount(y_train, minlength=classes).argmax()
+        null = float((y_test == majority).float().mean())
+        skill = (raw - null) / max(1.0 - null, 1e-8)
+        metric = "top1_skill_above_train_majority"
+    else:
+        y_train = train_target[train_rows].float().flatten(1)
+        y_test = test_target[test_rows].float().flatten(1)
+        prediction = _ridge_predict(x_train, y_train, x_test, ridge)
+        center = y_train.mean(0, keepdim=True)
+        error = float((prediction - y_test).square().mean())
+        null_error = float((center - y_test).square().mean())
+        raw = 1.0 - error / max(null_error, 1e-12)
+        null = 0.0
+        skill = raw
+        metric = "variance_explained_over_train_mean"
+    return {
+        "metric": metric,
+        "raw": raw,
+        "null": null,
+        "normalized_skill": skill,
+        "train_examples": len(train_rows),
+        "test_examples": len(test_rows),
+    }
+
+
+@torch.no_grad()
+def measure_information(
+    model,
+    source,
+    *,
+    train_samples: int,
+    test_samples: int,
+    sample_seed: int,
+    batch: int,
+    ridge: float,
+    device: str,
+) -> dict:
+    """Measure held-out linear accessibility at S0, S1, and Z."""
+    model.eval()
+    train_indices = _sample_indices(source, "train", train_samples, sample_seed)
+    test_indices = _sample_indices(source, "test", test_samples, sample_seed + 1)
+    train = _collect_probe_data(model, source, train_indices, sample_seed + 10, batch)
+    test = _collect_probe_data(model, source, test_indices, sample_seed + 20, batch)
+    train_features = {
+        name: _probe_features(value, device) for name, value in train["features"].items()
+    }
+    test_features = {
+        name: _probe_features(value, device) for name, value in test["features"].items()
+    }
+    variables = {variable.name: variable for variable in model.variables}
+    targets = {}
+    for name, variable in variables.items():
+        stages = {}
+        for stage in train_features:
+            result = _probe_target(
+                variable,
+                train_features[stage],
+                test_features[stage],
+                train["targets"][name].to(device),
+                test["targets"][name].to(device),
+                train["hidden"][name].to(device),
+                test["hidden"][name].to(device),
+                ridge,
+            )
+            if result is not None:
+                stages[stage] = result
+        if all(stage in stages for stage in ("position", "written", "latent")):
+            position = stages["position"]["normalized_skill"]
+            written = stages["written"]["normalized_skill"]
+            latent = stages["latent"]["normalized_skill"]
+            written_gain = written - position
+            reader_gap = written - latent
+            targets[name] = {
+                "kind": variable.kind,
+                "stages": stages,
+                "written_gain_over_position": written_gain,
+                "reader_gap_written_minus_latent": reader_gap,
+                "linear_retention": (latent - position) / written_gain
+                                    if written_gain >= 0.01 else None,
+            }
+
+    stage_names = ("position", "written", "latent")
+    stage_summary = {}
+    for stage in stage_names:
+        values = [target["stages"][stage]["normalized_skill"] for target in targets.values()]
+        ordered = sorted(values)
+        quartile = max(1, math.ceil(len(ordered) / 4))
+        stage_summary[stage] = {
+            "mean_normalized_skill": _mean(values),
+            "worst_quartile_mean": _mean(ordered[:quartile]),
+            "at_or_below_null": sum(value <= 0.0 for value in values),
+            "targets": len(values),
+        }
+    lens_summary = {}
+    lens_names = sorted(
+        stage for stage in train_features if stage.startswith("lens.")
+    )
+    for lens in lens_names:
+        values = [
+            target["stages"][lens]["normalized_skill"]
+            for target in targets.values()
+            if lens in target["stages"]
+        ]
+        lens_summary[lens.removeprefix("lens.")] = {
+            "mean_normalized_skill": _mean(values),
+            "at_or_below_null": sum(value <= 0.0 for value in values),
+            "targets": len(values),
+        }
+    written_gains = [target["written_gain_over_position"] for target in targets.values()]
+    reader_gaps = [target["reader_gap_written_minus_latent"] for target in targets.values()]
+    retention = [
+        target["linear_retention"] for target in targets.values()
+        if target["linear_retention"] is not None
+    ]
+    return {
+        "protocol": INFORMATION_PROTOCOL,
+        "interpretation": "Fixed-protocol linear accessibility diagnostic; not a promotion score.",
+        "train_samples": len(train_indices),
+        "test_samples": len(test_indices),
+        "sample_seed": sample_seed,
+        "mask_probability": 0.5,
+        "blank_probability": 0.15,
+        "ridge": ridge,
+        "stages": stage_summary,
+        "mean_written_gain_over_position": _mean(written_gains),
+        "mean_reader_gap_written_minus_latent": _mean(reader_gaps),
+        "mean_linear_retention": _mean(retention),
+        "retention_targets": len(retention),
+        "lenses": lens_summary,
+        "targets": targets,
+    }
+
+
 @torch.no_grad()
 def measure(model, source, sample_count: int, seed: int) -> tuple[dict, dict]:
     model.eval()
@@ -295,6 +567,19 @@ def _print_scorecard(report: dict, step: int | None = None) -> None:
         f"write/base={report['writes']['write_to_base_norm_ratio']:.4f}",
         flush=True,
     )
+    if "information" in report:
+        information = report["information"]
+        stages = information["stages"]
+        print(
+            "  information  "
+            f"position={stages['position']['mean_normalized_skill']:+.4f}  "
+            f"written={stages['written']['mean_normalized_skill']:+.4f}  "
+            f"latent={stages['latent']['mean_normalized_skill']:+.4f}  "
+            f"write_gain={information['mean_written_gain_over_position']:+.4f}  "
+            f"reader_gap={information['mean_reader_gap_written_minus_latent']:+.4f}  "
+            f"retention={information['mean_linear_retention']:+.4f}",
+            flush=True,
+        )
 
 
 def _save_report(report: dict, output: Path) -> None:
@@ -361,6 +646,15 @@ def _monotonic_summary(rows: list[tuple[int, dict]]) -> dict:
             "fusion_harmonic": lambda report: report["fusion"]["harmonic"],
             "fusion_arithmetic": lambda report: report["fusion"]["arithmetic"],
         })
+    if rows and all("information" in report for _, report in rows):
+        paths.update({
+            "position_mean_skill": lambda report: report["information"]["stages"]["position"]["mean_normalized_skill"],
+            "written_mean_skill": lambda report: report["information"]["stages"]["written"]["mean_normalized_skill"],
+            "latent_mean_skill": lambda report: report["information"]["stages"]["latent"]["mean_normalized_skill"],
+            "written_gain": lambda report: report["information"]["mean_written_gain_over_position"],
+            "reader_gap": lambda report: report["information"]["mean_reader_gap_written_minus_latent"],
+            "linear_retention": lambda report: report["information"]["mean_linear_retention"],
+        })
     result = {"protocol": PROTOCOL, "steps": [step for step, _ in rows], "metrics": {}}
     for name, get in paths.items():
         values = [float(get(report)) for _, report in rows]
@@ -396,6 +690,17 @@ def _measure_command(args) -> None:
     if args.fusion:
         report["fusion"], formatted = _fusion_scorecard(model, source, args.device, args.fusion_batch)
         print(formatted, flush=True)
+    if args.information:
+        report["information"] = measure_information(
+            model,
+            source,
+            train_samples=args.probe_train_samples,
+            test_samples=args.probe_test_samples,
+            sample_seed=args.probe_seed,
+            batch=args.probe_batch,
+            ridge=args.probe_ridge,
+            device=args.device,
+        )
     _save_report(report, args.output)
     if args.atlas:
         args.atlas.parent.mkdir(parents=True, exist_ok=True)
@@ -435,6 +740,22 @@ def _trajectory_command(args) -> None:
             "checkpoint": str(checkpoint.resolve()),
             "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
         })
+        if args.information:
+            report["information"] = measure_information(
+                model,
+                source,
+                train_samples=args.probe_train_samples,
+                test_samples=args.probe_test_samples,
+                sample_seed=args.probe_seed,
+                batch=args.probe_batch,
+                ridge=args.probe_ridge,
+                device=args.device,
+            )
+        if args.fusion:
+            report["fusion"], formatted = _fusion_scorecard(
+                model, source, args.device, args.fusion_batch
+            )
+            print(formatted, flush=True)
         _save_report(report, args.output_dir / f"census_{step:06d}.json")
         torch.save(atlas, args.output_dir / f"atlas_{step:06d}.pt")
         rows.append((step, report))
@@ -471,6 +792,12 @@ def main() -> None:
     single.add_argument("--atlas", type=Path)
     single.add_argument("--fusion", action="store_true", help="also run the immutable human-capability suite")
     single.add_argument("--fusion-batch", type=int, default=1280)
+    single.add_argument("--information", action="store_true", help="measure S0 -> S1 -> Z accessibility")
+    single.add_argument("--probe-train-samples", type=int, default=1024)
+    single.add_argument("--probe-test-samples", type=int, default=512)
+    single.add_argument("--probe-seed", type=int, default=20260815)
+    single.add_argument("--probe-batch", type=int, default=128)
+    single.add_argument("--probe-ridge", type=float, default=1.0)
     single.set_defaults(run=_measure_command)
 
     trajectory = commands.add_parser("trajectory", help="train once and census intermediate checkpoints")
@@ -482,6 +809,14 @@ def main() -> None:
     trajectory.add_argument("--samples", type=int, default=512)
     trajectory.add_argument("--sample-seed", type=int, default=20260814)
     trajectory.add_argument("--output-dir", type=Path, required=True)
+    trajectory.add_argument("--fusion", action="store_true", help="run canonical capabilities at each checkpoint")
+    trajectory.add_argument("--fusion-batch", type=int, default=1280)
+    trajectory.add_argument("--information", action="store_true", help="measure S0 -> S1 -> Z accessibility")
+    trajectory.add_argument("--probe-train-samples", type=int, default=1024)
+    trajectory.add_argument("--probe-test-samples", type=int, default=512)
+    trajectory.add_argument("--probe-seed", type=int, default=20260815)
+    trajectory.add_argument("--probe-batch", type=int, default=128)
+    trajectory.add_argument("--probe-ridge", type=float, default=1.0)
     trajectory.set_defaults(run=_trajectory_command)
 
     args = parser.parse_args()
