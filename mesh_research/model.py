@@ -352,6 +352,10 @@ class MeshModel(nn.Module):
             for name in write_names
         })
         self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
+        self.coarse_scale_exchange = nn.Linear(d_model, d_model, bias=False)
+        self.fine_scale_exchange = nn.Linear(d_model, d_model, bias=False)
+        self.scale_exchange_gate = nn.Parameter(torch.full((len(LENSES),), 0.05))
+        self.scale_exchange_norm = nn.LayerNorm(d_model)
         torch.random.set_rng_state(sidecar_rng)
         self._fiber_summary = None
         self._fiber_mesh = None
@@ -424,10 +428,23 @@ class MeshModel(nn.Module):
             weight = valid * gate
             updates[lens] = updates[lens] + weight * innovation
             precision[lens] = precision[lens] + weight
-        return self.fiber_norm(torch.stack([
+        fibers = self.fiber_norm(torch.stack([
             updates[index] / (1.0 + precision[index])
             for index in range(len(LENSES))
         ], -2))
+        coarse = torch.cat((
+            torch.zeros_like(fibers[..., :1, :, :]),
+            fibers[..., :-1, :, :],
+        ), -3)
+        fine = torch.cat((
+            fibers[..., 1:, :, :],
+            torch.zeros_like(fibers[..., :1, :, :]),
+        ), -3)
+        exchange = self.coarse_scale_exchange(coarse) + self.fine_scale_exchange(fine)
+        gate = torch.tanh(self.scale_exchange_gate).view(
+            *([1] * (fibers.dim() - 2)), len(LENSES), 1
+        )
+        return self.scale_exchange_norm(fibers + gate * exchange)
 
     def context(self, query_coords, neighbor_coords, manifold_positions=None, neighbor_values=None):
         spatial, temporal = self.mesh.raw(query_coords)
