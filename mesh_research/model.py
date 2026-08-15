@@ -342,6 +342,14 @@ class MeshModel(nn.Module):
             name: nn.Parameter(torch.zeros(()))
             for name in self.mesh_read_names
         })
+        information_rng = torch.random.get_rng_state()
+        self.mesh_prior_information_gate = nn.Sequential(
+            nn.LayerNorm(4 * d_model),
+            nn.Linear(4 * d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, 1),
+        )
+        torch.random.set_rng_state(information_rng)
         conditioned_reads = [name for name in ("pollinator",) if name in self.mesh_read_names]
         self.mesh_condition_gate = nn.ParameterDict({
             name: nn.Parameter(torch.tensor(0.05)) for name in conditioned_reads
@@ -636,9 +644,11 @@ class MeshModel(nn.Module):
             selected_score.softmax(-1),
             prior_fibers.gather(1, selected[..., None].expand(-1, -1, self.d_model)),
         )
-        return pooled + torch.tanh(self.mesh_prior_read_gate[name]) * self.mesh_prior_task_norm(
-            prior_read
-        )
+        confidence = torch.sigmoid(self.mesh_prior_information_gate(torch.cat((
+            pooled, prior_read, pooled * prior_read, (pooled - prior_read).abs(),
+        ), -1)))
+        return pooled + torch.tanh(self.mesh_prior_read_gate[name]) * confidence \
+                        * self.mesh_prior_task_norm(prior_read)
 
     def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
         if name == self.species_variable:
