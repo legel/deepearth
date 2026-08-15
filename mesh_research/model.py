@@ -356,6 +356,9 @@ class MeshModel(nn.Module):
         self.fine_scale_exchange = nn.Linear(d_model, d_model, bias=False)
         self.scale_exchange_gate = nn.Parameter(torch.full((len(LENSES),), 0.05))
         self.scale_message_norm = nn.LayerNorm(d_model)
+        self.mesh_linear_reconstruct = nn.ModuleDict({
+            name: nn.Linear(d_model, d_model, bias=False) for name in write_names
+        })
         torch.random.set_rng_state(sidecar_rng)
         self._fiber_summary = None
         self._fiber_mesh = None
@@ -621,6 +624,7 @@ class MeshModel(nn.Module):
         latent = self.encode(values, present, context)
         terms = []
         fiber_terms = []
+        mesh_terms = []
         for variable in self.variables:
             hidden = (~present[variable.name]) & observed[variable.name]
             if not hidden.any():
@@ -644,6 +648,10 @@ class MeshModel(nn.Module):
             ).detach()
             fiber_error = 1.0 - F.cosine_similarity(fiber_prediction, fiber_target, dim=-1)
             fiber_terms.append((fiber_error * hidden).sum() / hidden.sum().clamp_min(1))
+            mesh_state = self._fiber_mesh[:, 0, :, lens, :].mean(1)
+            mesh_prediction = self.mesh_linear_reconstruct[variable.name](mesh_state)
+            mesh_error = 1.0 - F.cosine_similarity(mesh_prediction, fiber_target, dim=-1)
+            mesh_terms.append((mesh_error * hidden).sum() / hidden.sum().clamp_min(1))
 
         if self.poll_head is not None and "_poll_idx" in values:
             logits = self.poll_head(self._pool(latent, "pollinator"))
@@ -668,7 +676,9 @@ class MeshModel(nn.Module):
                                                         self.flower_head(self._pool(latent, "flower")).squeeze(-1),
                                                         values["_flower"].float(), reduction="none")
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
-        loss = torch.stack(terms).mean() + 0.05 * torch.stack(fiber_terms).mean()
+        loss = torch.stack(terms).mean() \
+               + 0.05 * torch.stack(fiber_terms).mean() \
+               + 0.05 * torch.stack(mesh_terms).mean()
         environment_present = {
             name: observed[name] if name in self.environment_names else torch.zeros_like(observed[name])
             for name in self.names
