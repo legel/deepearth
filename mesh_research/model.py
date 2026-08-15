@@ -311,7 +311,11 @@ class MeshModel(nn.Module):
             nn.Linear(d_model, 1),
         )
         self.fiber_norm = nn.LayerNorm(d_model)
-        self.fiber_query = nn.Parameter(torch.randn(len(LENSES), 1, d_model) * 0.02)
+        self.fiber_latents = 4
+        self.fiber_query = nn.Parameter(
+            torch.randn(len(LENSES), self.fiber_latents, d_model) * 0.02
+        )
+        self.fiber_decode_query = nn.Parameter(torch.randn(len(variables), d_model) * 0.02)
         self.fiber_read_norm = nn.LayerNorm(d_model)
         self.fiber_read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.fiber_fuse_norm = nn.LayerNorm(d_model)
@@ -459,9 +463,11 @@ class MeshModel(nn.Module):
         fiber_summary = fiber_query + self.fiber_read(
             fiber_query, normalized, normalized, need_weights=False
         )[0]
-        fiber_summary = fiber_summary.reshape(latent.shape[0], len(LENSES), self.d_model)
+        fiber_summary = fiber_summary.reshape(
+            latent.shape[0], len(LENSES), self.fiber_latents, self.d_model
+        )
         self._fiber_summary = fiber_summary
-        normalized = self.fiber_fuse_norm(fiber_summary)
+        normalized = self.fiber_fuse_norm(fiber_summary.flatten(1, 2))
         latent = latent + torch.tanh(self.fiber_fusion_gate) * self.fiber_fuse(
             latent.detach(), normalized, normalized, need_weights=False
         )[0]
@@ -476,6 +482,11 @@ class MeshModel(nn.Module):
         if name == self.species_variable:
             return pooled @ self._refined_species.t()
         return self.decoders[name](pooled)
+
+    def _pool_fiber(self, fiber: torch.Tensor, name: str) -> torch.Tensor:
+        query = self.fiber_decode_query[self.names.index(name)]
+        weight = torch.softmax((fiber @ query) / math.sqrt(self.d_model), -1)
+        return torch.einsum("bl,bld->bd", weight, fiber)
 
     def decode(self, latent: torch.Tensor, name: str) -> torch.Tensor:
         return self._decode_pooled(self._pool(latent, name), name)
@@ -533,7 +544,9 @@ class MeshModel(nn.Module):
                 error = 1.0 - F.cosine_similarity(prediction - mean, target - mean, dim=-1)
             terms.append((error * hidden).sum() / hidden.sum().clamp_min(1))
             lens = self.write_lens[variable.name]
-            fiber_prediction = self.fiber_reconstruct[variable.name](self._fiber_summary[:, lens])
+            fiber_prediction = self.fiber_reconstruct[variable.name](
+                self._pool_fiber(self._fiber_summary[:, lens], variable.name)
+            )
             fiber_target = self._adapt(
                 variable.name, values[variable.name], self._refined_species
             ).detach()
