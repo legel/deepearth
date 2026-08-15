@@ -534,12 +534,16 @@ class MeshModel(nn.Module):
         scale_fibers = self._fiber_mesh.flatten(1, 3)
         scale_keys = scale_keys.flatten(1, 3)
         scale_score = (scale_keys @ mesh_query) / math.sqrt(self.d_model)
-        scale_score, scale_index = scale_score.topk(min(8, scale_score.shape[-1]), dim=-1)
-        selected_scale = scale_fibers.gather(
-            1, scale_index[..., None].expand(-1, -1, self.d_model)
+        dense_weight = scale_score.softmax(-1)
+        selected_score, scale_index = scale_score.topk(
+            min(8, scale_score.shape[-1]), dim=-1
         )
+        sparse_weight = torch.zeros_like(scale_score).scatter(
+            -1, scale_index, selected_score.softmax(-1)
+        )
+        route = sparse_weight.detach() + dense_weight - dense_weight.detach()
         scale_read = torch.einsum(
-            "bk,bkd->bd", scale_score.softmax(-1), selected_scale
+            "bk,bkd->bd", route, scale_fibers
         )
         return pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
             scale_read
