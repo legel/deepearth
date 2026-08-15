@@ -352,6 +352,7 @@ class MeshModel(nn.Module):
             for name in write_names
         })
         self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
+        self.sparse_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.coarse_scale_exchange = nn.Linear(d_model, d_model, bias=False)
         self.fine_scale_exchange = nn.Linear(d_model, d_model, bias=False)
         self.scale_exchange_gate = nn.Parameter(torch.full((len(LENSES),), 0.05))
@@ -520,6 +521,19 @@ class MeshModel(nn.Module):
         latent = latent + torch.tanh(self.fiber_fusion_gate) * self.fiber_fuse(
             latent.detach(), normalized, normalized, need_weights=False
         )[0]
+        mesh_tokens = fiber_mesh.flatten(1, 3)
+        normalized = self.fiber_fuse_norm(mesh_tokens)
+        score = torch.einsum(
+            "bld,bkd->blk", latent.detach(), normalized
+        ) / math.sqrt(self.d_model)
+        dense_weight = score.softmax(-1)
+        selected_score, selected = score.topk(min(16, score.shape[-1]), dim=-1)
+        sparse_weight = torch.zeros_like(score).scatter(
+            -1, selected, selected_score.softmax(-1)
+        )
+        route = sparse_weight.detach() + dense_weight - dense_weight.detach()
+        mesh_read = torch.einsum("blk,bkd->bld", route, mesh_tokens)
+        latent = latent + torch.tanh(self.sparse_fusion_gate) * mesh_read
         return latent
 
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
