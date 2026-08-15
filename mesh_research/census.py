@@ -28,6 +28,7 @@ sys.path.insert(0, str(HERE))
 
 PROTOCOL = "mesh-census-v2"
 INFORMATION_PROTOCOL = "mesh-information-v3-task-readout"
+CAUSAL_READ_PROTOCOL = "mesh-causal-read-v1-zero-gate"
 DEFAULT_STEPS = (0, 250, 500, 1000, 2000, 4000, 8000)
 ORDERING_EPSILON = 1e-5
 
@@ -656,6 +657,24 @@ def _print_scorecard(report: dict, step: int | None = None) -> None:
             f"retention={information['mean_linear_retention']:+.4f}",
             flush=True,
         )
+        focus = report.get("focus_target")
+        if focus:
+            stages = information["targets"][focus]["stages"]
+            print(
+                f"  focus {focus:<16} "
+                f"position={stages['position']['normalized_skill']:+.4f}  "
+                f"written={stages['written']['normalized_skill']:+.4f}  "
+                f"latent={stages['latent']['normalized_skill']:+.4f}  "
+                f"readout={stages['readout']['normalized_skill']:+.4f}",
+                flush=True,
+            )
+    if "causal_read" in report:
+        delta = report["causal_read"]["delta"]
+        print(
+            f"  causal {report['causal_read']['task']:<15} "
+            f"harmonic={delta['harmonic']:+.6f}  arithmetic={delta['arithmetic']:+.6f}",
+            flush=True,
+        )
 
 
 def _save_report(report: dict, output: Path) -> None:
@@ -675,6 +694,39 @@ def _fusion_scorecard(model, source, device: str, batch: int) -> tuple[dict, str
         "scores": raw,
     }
     return scorecard, canonical.format_benchmarks(raw)
+
+
+@torch.no_grad()
+def measure_causal_read(model, source, task: str, device: str, batch: int,
+                        learned: dict | None = None) -> dict:
+    """Measure a learned query condition by removing its residual coefficient."""
+    gates = getattr(model, "mesh_condition_gate", None)
+    if gates is None or task not in gates:
+        raise ValueError(f"no query-conditioned mesh read for {task!r}")
+    if learned is None:
+        learned, _ = _fusion_scorecard(model, source, device, batch)
+    gate = gates[task]
+    saved = gate.detach().clone()
+    gate.zero_()
+    try:
+        ablated, _ = _fusion_scorecard(model, source, device, batch)
+    finally:
+        gate.copy_(saved)
+    return {
+        "protocol": CAUSAL_READ_PROTOCOL,
+        "task": task,
+        "intervention": "tanh(mesh_condition_gate) = 0",
+        "learned": learned,
+        "ablated": ablated,
+        "delta": {
+            "harmonic": learned["harmonic"] - ablated["harmonic"],
+            "arithmetic": learned["arithmetic"] - ablated["arithmetic"],
+            "scores": {
+                name: score - ablated["scores"][name]
+                for name, score in learned["scores"].items()
+            },
+        },
+    }
 
 
 def _load_model(cache: str, device: str, checkpoint: Path):
@@ -733,6 +785,13 @@ def _monotonic_summary(rows: list[tuple[int, dict]]) -> dict:
             "task_read_gain": lambda report: report["information"]["mean_task_read_gain_over_latent"],
             "linear_retention": lambda report: report["information"]["mean_linear_retention"],
         })
+        focus = rows[0][1].get("focus_target")
+        if focus and all(report.get("focus_target") == focus for _, report in rows):
+            for stage in ("position", "written", "latent", "readout"):
+                paths[f"{focus}_{stage}_skill"] = (
+                    lambda report, stage=stage: report["information"]["targets"][focus]
+                    ["stages"][stage]["normalized_skill"]
+                )
     result = {"protocol": PROTOCOL, "steps": [step for step, _ in rows], "metrics": {}}
     for name, get in paths.items():
         values = [float(get(report)) for _, report in rows]
@@ -761,13 +820,19 @@ def _monotonic_summary(rows: list[tuple[int, dict]]) -> dict:
 
 
 def _measure_command(args) -> None:
+    if args.focus_target and not args.information:
+        raise ValueError("--focus-target requires --information")
     model, source = _load_model(args.cache, args.device, args.checkpoint)
     report, atlas = measure(model, source, args.samples, args.sample_seed)
     report["checkpoint"] = str(args.checkpoint.resolve())
     report["checkpoint_sha256"] = hashlib.sha256(args.checkpoint.read_bytes()).hexdigest()
-    if args.fusion:
+    if args.fusion or args.causal_read:
         report["fusion"], formatted = _fusion_scorecard(model, source, args.device, args.fusion_batch)
         print(formatted, flush=True)
+    if args.causal_read:
+        report["causal_read"] = measure_causal_read(
+            model, source, args.causal_read, args.device, args.fusion_batch, report["fusion"]
+        )
     if args.information:
         report["information"] = measure_information(
             model,
@@ -779,6 +844,10 @@ def _measure_command(args) -> None:
             ridge=args.probe_ridge,
             device=args.device,
         )
+        if args.focus_target:
+            if args.focus_target not in report["information"]["targets"]:
+                raise ValueError(f"unknown information target {args.focus_target!r}")
+            report["focus_target"] = args.focus_target
     _save_report(report, args.output)
     if args.atlas:
         args.atlas.parent.mkdir(parents=True, exist_ok=True)
@@ -789,6 +858,9 @@ def _measure_command(args) -> None:
 
 def _trajectory_command(args) -> None:
     import model as experiment
+
+    if args.focus_target and not args.information:
+        raise ValueError("--focus-target requires --information")
 
     steps = tuple(sorted(set(args.checkpoints)))
     if not steps or steps[0] < 0 or steps[-1] > args.steps:
@@ -829,11 +901,19 @@ def _trajectory_command(args) -> None:
                 ridge=args.probe_ridge,
                 device=args.device,
             )
-        if args.fusion:
+            if args.focus_target:
+                if args.focus_target not in report["information"]["targets"]:
+                    raise ValueError(f"unknown information target {args.focus_target!r}")
+                report["focus_target"] = args.focus_target
+        if args.fusion or args.causal_read:
             report["fusion"], formatted = _fusion_scorecard(
                 model, source, args.device, args.fusion_batch
             )
             print(formatted, flush=True)
+        if args.causal_read:
+            report["causal_read"] = measure_causal_read(
+                model, source, args.causal_read, args.device, args.fusion_batch, report["fusion"]
+            )
         _save_report(report, args.output_dir / f"census_{step:06d}.json")
         torch.save(atlas, args.output_dir / f"atlas_{step:06d}.pt")
         rows.append((step, report))
@@ -870,7 +950,9 @@ def main() -> None:
     single.add_argument("--atlas", type=Path)
     single.add_argument("--fusion", action="store_true", help="also run the immutable human-capability suite")
     single.add_argument("--fusion-batch", type=int, default=1280)
+    single.add_argument("--causal-read", metavar="TASK", help="zero one learned query condition and rescore")
     single.add_argument("--information", action="store_true", help="measure S0 -> S1 -> Z accessibility")
+    single.add_argument("--focus-target", help="print one target's position -> written -> latent -> readout path")
     single.add_argument("--probe-train-samples", type=int, default=1024)
     single.add_argument("--probe-test-samples", type=int, default=512)
     single.add_argument("--probe-seed", type=int, default=20260815)
@@ -889,7 +971,9 @@ def main() -> None:
     trajectory.add_argument("--output-dir", type=Path, required=True)
     trajectory.add_argument("--fusion", action="store_true", help="run canonical capabilities at each checkpoint")
     trajectory.add_argument("--fusion-batch", type=int, default=1280)
+    trajectory.add_argument("--causal-read", metavar="TASK", help="zero one learned query condition at each checkpoint")
     trajectory.add_argument("--information", action="store_true", help="measure S0 -> S1 -> Z accessibility")
+    trajectory.add_argument("--focus-target", help="track one target's information path")
     trajectory.add_argument("--probe-train-samples", type=int, default=1024)
     trajectory.add_argument("--probe-test-samples", type=int, default=512)
     trajectory.add_argument("--probe-seed", type=int, default=20260815)

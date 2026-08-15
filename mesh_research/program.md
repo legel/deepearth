@@ -111,6 +111,11 @@ as a vector rather than inventing an unvalidated internal composite:
 - sensitivity to removing a relevant modality write or mesh component;
 - information retained by query-conditioned world latents without modality bypasses.
 
+For a learned query condition, also report the paired canonical delta after setting
+only its residual coefficient to zero in the same checkpoint. This causal receipt
+measures whether fusion uses that mesh path; it does not by itself prove that the
+stored mesh became richer. Never invert a gate or retrain the model for this test.
+
 Across matched seeds and training checkpoints, report the association between these
 mesh measurements and canonical fusion harmonic and arithmetic. The architecture
 claim is supported only when better mesh measurements predict better fusion output.
