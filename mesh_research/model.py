@@ -340,6 +340,9 @@ class MeshModel(nn.Module):
         })
         self.mesh_task_norm = nn.LayerNorm(d_model)
         self.mesh_scale_task_norm = nn.LayerNorm(d_model)
+        self.mesh_cell_key = nn.Parameter(torch.zeros(2, d_model))
+        self.mesh_level_key = nn.Parameter(torch.zeros(levels, d_model))
+        self.mesh_lens_key = nn.Parameter(torch.zeros(len(LENSES), d_model))
         self.fiber_read_norm = nn.LayerNorm(d_model)
         self.fiber_read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.fiber_fuse_norm = nn.LayerNorm(d_model)
@@ -519,8 +522,18 @@ class MeshModel(nn.Module):
         pooled = pooled + torch.tanh(self.mesh_read_gate[name]) * self.mesh_task_norm(mesh_read)
         if self._fiber_mesh is None:
             return pooled
+        cells = self._fiber_mesh.shape[1]
+        cell_key = torch.cat((
+            self.mesh_cell_key[:1],
+            self.mesh_cell_key[1:].expand(cells - 1, -1),
+        ))
+        scale_keys = self._fiber_mesh \
+            + cell_key.view(1, cells, 1, 1, self.d_model) \
+            + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model) \
+            + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
         scale_fibers = self._fiber_mesh.flatten(1, 3)
-        scale_score = (scale_fibers @ mesh_query) / math.sqrt(self.d_model)
+        scale_keys = scale_keys.flatten(1, 3)
+        scale_score = (scale_keys @ mesh_query) / math.sqrt(self.d_model)
         scale_score, scale_index = scale_score.topk(min(8, scale_score.shape[-1]), dim=-1)
         selected_scale = scale_fibers.gather(
             1, scale_index[..., None].expand(-1, -1, self.d_model)
