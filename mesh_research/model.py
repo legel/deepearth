@@ -71,6 +71,7 @@ READER_PARAMETERS = (
     "latents", "read.", "read_norm.", "blocks.",
     "fiber_query", "fiber_read", "fiber_fuse", "fiber_fusion_gate",
     "sparse_fusion_gate", "decode_query", "decoders.", "community_metric.",
+    "species_graph.",
     "poll_head.", "lfmc_head.", "myco_head.", "flower_head.",
     "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
     "mesh_prior_read_gate.", "mesh_prior_information_gate.",
