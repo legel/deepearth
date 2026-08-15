@@ -409,8 +409,8 @@ class MeshModel(nn.Module):
         self._fiber_prior_mesh = None
         self._latest_fiber_prior = None
 
-    def _species(self) -> torch.Tensor:
-        refined = self.species_graph._seed() if self._ablate_species else self.species_graph()
+    def _species(self, mask: torch.Tensor | None = None) -> torch.Tensor:
+        refined = self.species_graph._seed() if self._ablate_species else self.species_graph(mask)
         self._refined_species = refined
         return refined
 
@@ -522,8 +522,9 @@ class MeshModel(nn.Module):
         present: Dict[str, torch.Tensor],
         context: dict,
         detach_species: bool = False,
+        species_mask: torch.Tensor | None = None,
     ):
-        species = self._species()
+        species = self._species(species_mask)
         if detach_species:
             species = species.detach()
         write_mask = dict(present)
@@ -829,6 +830,34 @@ class MeshModel(nn.Module):
             target = target / target.sum(-1, keepdim=True).clamp_min(1.0)
             community = -(target * F.log_softmax(logits, -1)).sum(-1) / math.log(logits.shape[-1])
             loss = loss + 0.5 * community.mean()
+
+            if getattr(self, "reader_phase", False):
+                masked_valid = family_valid * mask[values[self.species_variable].long()]
+                empty_present = {
+                    name: torch.zeros_like(observed[name]) for name in self.names
+                }
+                with torch.no_grad():
+                    empty_latent = self.encode(
+                        values, empty_present, context, detach_species=True, species_mask=mask
+                    )
+                    baseline = self.community_metric(self._pool(empty_latent, "community"))
+                identity_present = dict(empty_present)
+                identity_present[self.species_variable] = observed[self.species_variable]
+                identity_latent = self.encode(
+                    values, identity_present, context, detach_species=True, species_mask=mask
+                )
+                identity_query = self.community_metric(self._pool(identity_latent, "community"))
+                conditional_logits = (identity_query - baseline) @ self._refined_species.detach().t()
+                conditional_target = torch.zeros_like(conditional_logits)
+                conditional_target.scatter_(1, neighbor_identity.long(), 1.0)
+                conditional_target = conditional_target / conditional_target.sum(
+                    -1, keepdim=True
+                ).clamp_min(1.0)
+                conditional = -(conditional_target * F.log_softmax(
+                    conditional_logits, -1
+                )).sum(-1) / math.log(conditional_logits.shape[-1])
+                loss = loss + 0.1 * (conditional * masked_valid).sum() \
+                       / family_valid.sum().clamp_min(1)
         return loss
 
 def build_model(source, variable_specs, always_dims, device: str, design: Experiment = EXPERIMENT) -> MeshModel:
@@ -879,6 +908,7 @@ def train(
     started = time.time()
     for step in range(design.steps):
         if design.reader_steps and step == reader_start:
+            model.reader_phase = True
             for name, parameter in model.named_parameters():
                 parameter.requires_grad_(name.startswith(READER_PARAMETERS))
             graph_parameters = [
