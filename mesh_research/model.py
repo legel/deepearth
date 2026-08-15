@@ -61,6 +61,7 @@ class Experiment:
     learning_rate: float = 5e-4
     weight_decay: float = 1e-3
     reader_steps: int = int(os.environ.get("MESH_READER_STEPS", "100"))
+    graph_learning_rate_scale: float = float(os.environ.get("MESH_GRAPH_LR_SCALE", "0.02"))
 
 
 EXPERIMENT = Experiment()
@@ -860,9 +861,21 @@ def train(
         if design.reader_steps and step == reader_start:
             for name, parameter in model.named_parameters():
                 parameter.requires_grad_(name.startswith(READER_PARAMETERS))
-            reader_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+            graph_parameters = [
+                parameter for name, parameter in model.named_parameters()
+                if name.startswith("species_graph.")
+            ]
+            graph_ids = {id(parameter) for parameter in graph_parameters}
+            reader_parameters = [
+                parameter for parameter in model.parameters()
+                if parameter.requires_grad and id(parameter) not in graph_ids
+            ]
             optimizer = torch.optim.AdamW(
-                reader_parameters,
+                (
+                    {"params": reader_parameters, "lr": design.learning_rate * 0.2},
+                    {"params": graph_parameters,
+                     "lr": design.learning_rate * design.graph_learning_rate_scale},
+                ),
                 lr=design.learning_rate * 0.2,
                 weight_decay=design.weight_decay,
                 fused=device.startswith("cuda"),
@@ -872,7 +885,9 @@ def train(
             )
             print(
                 f"reader phase {design.reader_steps} steps  "
-                f"parameters {sum(parameter.numel() for parameter in reader_parameters):,}",
+                f"parameters {sum(parameter.numel() for parameter in reader_parameters):,}  "
+                f"graph parameters {sum(parameter.numel() for parameter in graph_parameters):,}  "
+                f"graph lr scale {design.graph_learning_rate_scale:g}",
                 flush=True,
             )
         index = source.train_index[torch.randint(len(source.train_index), (design.batch,), device=device)]
