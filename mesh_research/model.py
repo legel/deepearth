@@ -338,8 +338,13 @@ class MeshModel(nn.Module):
             name: nn.Parameter(torch.tensor(0.05))
             for name in self.mesh_read_names
         })
+        conditioned_reads = [name for name in ("pollinator",) if name in self.mesh_read_names]
+        self.mesh_condition_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05)) for name in conditioned_reads
+        })
         self.mesh_task_norm = nn.LayerNorm(d_model)
         self.mesh_scale_task_norm = nn.LayerNorm(d_model)
+        self.mesh_condition_norm = nn.LayerNorm(d_model)
         self.mesh_cell_key = nn.Parameter(torch.zeros(2, d_model))
         self.mesh_level_key = nn.Parameter(torch.zeros(levels, d_model))
         self.mesh_lens_key = nn.Parameter(torch.zeros(len(LENSES), d_model))
@@ -544,8 +549,19 @@ class MeshModel(nn.Module):
         if self._fiber_summary is None or name not in self.mesh_read_query:
             return pooled
         fibers = self._fiber_summary.flatten(1, 2)
-        mesh_query = self.mesh_read_query[name]
-        score = (fibers @ mesh_query) / math.sqrt(self.d_model)
+        mesh_query = self.mesh_read_query[name].unsqueeze(0).expand(fibers.shape[0], -1)
+        if self._fiber_mesh is not None and name in self.mesh_condition_gate:
+            query_lenses = self._fiber_mesh[:, 0].mean(1)
+            lens_score = torch.einsum(
+                "bld,bd->bl", query_lenses, mesh_query
+            ) / math.sqrt(self.d_model)
+            condition = torch.einsum(
+                "bl,bld->bd", lens_score.softmax(-1), query_lenses
+            )
+            mesh_query = mesh_query + torch.tanh(
+                self.mesh_condition_gate[name]
+            ) * self.mesh_condition_norm(condition)
+        score = torch.einsum("bkd,bd->bk", fibers, mesh_query) / math.sqrt(self.d_model)
         selected_score, selected = score.topk(min(4, score.shape[-1]), dim=-1)
         selected_fibers = fibers.gather(
             1, selected[..., None].expand(-1, -1, self.d_model)
@@ -567,7 +583,9 @@ class MeshModel(nn.Module):
             + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
         scale_fibers = self._fiber_mesh.flatten(1, 3)
         scale_keys = scale_keys.flatten(1, 3)
-        scale_score = (scale_keys @ mesh_query) / math.sqrt(self.d_model)
+        scale_score = torch.einsum(
+            "bkd,bd->bk", scale_keys, mesh_query
+        ) / math.sqrt(self.d_model)
         dense_weight = scale_score.softmax(-1)
         selected_score, scale_index = scale_score.topk(
             min(8, scale_score.shape[-1]), dim=-1
