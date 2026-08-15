@@ -14,6 +14,7 @@ import math
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -26,7 +27,7 @@ sys.path.insert(0, str(REPO.parent))
 sys.path.insert(0, str(HERE))
 
 PROTOCOL = "mesh-census-v2"
-INFORMATION_PROTOCOL = "mesh-information-v2"
+INFORMATION_PROTOCOL = "mesh-information-v3-task-readout"
 DEFAULT_STEPS = (0, 250, 500, 1000, 2000, 4000, 8000)
 ORDERING_EPSILON = 1e-5
 
@@ -200,7 +201,7 @@ def _sample_indices(source, split: str, count: int, seed: int) -> np.ndarray:
 
 @torch.no_grad()
 def _stage_batch(model, source, selected: np.ndarray, mask_seed: int) -> dict:
-    """Expose coordinate state, written mesh, and the final fusion latent."""
+    """Expose coordinate, written, fused, and task-read states."""
     index = torch.as_tensor(selected, device=source.device)
     values, observed, coords, neighbors, manifolds, neighbor_values = source.batch(index)
     generator = torch.Generator(device=coords.device).manual_seed(mask_seed)
@@ -258,6 +259,38 @@ def _stage_batch(model, source, selected: np.ndarray, mask_seed: int) -> dict:
             neighbor_fibers[..., lens_index, :].mean(1).flatten(1),
         ), -1)
 
+    read_names = list(model.names)
+    special_targets = {}
+    special_hidden = {}
+    for name, target_key, valid_key, kind in (
+        ("lfmc", "_lfmc", "_lfmc_valid", "continuous"),
+        ("myco", "_myco", "_myco_valid", "categorical"),
+        ("flower", "_flower", "_flower_valid", "categorical"),
+    ):
+        if target_key not in values:
+            continue
+        target = values[target_key]
+        if kind == "continuous":
+            target = target.float().clamp_min(1.0).log().unsqueeze(-1)
+        special_targets[name] = target.detach().cpu()
+        special_hidden[name] = values[valid_key].bool().detach().cpu()
+        read_names.append(name)
+    if "_poll_idx" in values and getattr(model, "poll_head", None) is not None:
+        pollinator = values["_poll_frq"].new_zeros((len(selected), model.poll_head.out_features))
+        pollinator.scatter_add_(
+            1,
+            values["_poll_idx"].clamp(0, model.poll_head.out_features - 1),
+            values["_poll_frq"].float(),
+        )
+        special_targets["pollinator"] = pollinator.detach().cpu()
+        special_hidden["pollinator"] = values["_poll_valid"].bool().detach().cpu()
+        read_names.append("pollinator")
+    readouts = {}
+    task_queries = getattr(model, "mesh_read_query", {})
+    for name in read_names:
+        pool_name = name if name in model.names or name in task_queries else model.species_variable
+        readouts[name] = model._pool(latent, pool_name).float().cpu()
+
     return {
         "features": {
             "position": position.float().cpu(),
@@ -265,10 +298,17 @@ def _stage_batch(model, source, selected: np.ndarray, mask_seed: int) -> dict:
             "latent": latent.flatten(1).float().cpu(),
             **{name: value.float().cpu() for name, value in lens_features.items()},
         },
-        "targets": {name: values[name].detach().cpu() for name in model.names},
+        "readouts": readouts,
+        "targets": {
+            **{name: values[name].detach().cpu() for name in model.names},
+            **special_targets,
+        },
         "hidden": {
-            name: ((~present[name]) & observed[name]).detach().cpu()
-            for name in model.names
+            **{
+                name: ((~present[name]) & observed[name]).detach().cpu()
+                for name in model.names
+            },
+            **special_hidden,
         },
     }
 
@@ -284,7 +324,7 @@ def _collect_probe_data(model, source, indices: np.ndarray, seed: int, batch: in
             name: torch.cat([chunk[group][name] for chunk in chunks])
             for name in chunks[0][group]
         }
-        for group in ("features", "targets", "hidden")
+        for group in ("features", "readouts", "targets", "hidden")
     }
 
 
@@ -367,7 +407,7 @@ def measure_information(
     ridge: float,
     device: str,
 ) -> dict:
-    """Measure held-out linear accessibility at S0, S1, and Z."""
+    """Measure held-out linear accessibility through the task reader."""
     model.eval()
     train_indices = _sample_indices(source, "train", train_samples, sample_seed)
     test_indices = _sample_indices(source, "test", test_samples, sample_seed + 1)
@@ -380,6 +420,20 @@ def measure_information(
         name: _probe_features(value, device) for name, value in test["features"].items()
     }
     variables = {variable.name: variable for variable in model.variables}
+    if "pollinator" in train["targets"]:
+        variables["pollinator"] = SimpleNamespace(kind="continuous", num_classes=0)
+    if "lfmc" in train["targets"]:
+        variables["lfmc"] = SimpleNamespace(kind="continuous", num_classes=0)
+    if "myco" in train["targets"]:
+        variables["myco"] = SimpleNamespace(kind="categorical", num_classes=5)
+    if "flower" in train["targets"]:
+        variables["flower"] = SimpleNamespace(kind="categorical", num_classes=2)
+    train_readouts = {
+        name: _probe_features(value, device) for name, value in train["readouts"].items()
+    }
+    test_readouts = {
+        name: _probe_features(value, device) for name, value in test["readouts"].items()
+    }
     targets = {}
     for name, variable in variables.items():
         stages = {}
@@ -396,10 +450,24 @@ def measure_information(
             )
             if result is not None:
                 stages[stage] = result
-        if all(stage in stages for stage in ("position", "written", "latent")):
+        if name in train_readouts:
+            result = _probe_target(
+                variable,
+                train_readouts[name],
+                test_readouts[name],
+                train["targets"][name].to(device),
+                test["targets"][name].to(device),
+                train["hidden"][name].to(device),
+                test["hidden"][name].to(device),
+                ridge,
+            )
+            if result is not None:
+                stages["readout"] = result
+        if all(stage in stages for stage in ("position", "written", "latent", "readout")):
             position = stages["position"]["normalized_skill"]
             written = stages["written"]["normalized_skill"]
             latent = stages["latent"]["normalized_skill"]
+            readout = stages["readout"]["normalized_skill"]
             written_gain = written - position
             reader_gap = written - latent
             targets[name] = {
@@ -407,11 +475,13 @@ def measure_information(
                 "stages": stages,
                 "written_gain_over_position": written_gain,
                 "reader_gap_written_minus_latent": reader_gap,
+                "task_read_gain_over_latent": readout - latent,
+                "task_reader_gap_written_minus_readout": written - readout,
                 "linear_retention": (latent - position) / written_gain
                                     if written_gain >= 0.01 else None,
             }
 
-    stage_names = ("position", "written", "latent")
+    stage_names = ("position", "written", "latent", "readout")
     stage_summary = {}
     for stage in stage_names:
         values = [target["stages"][stage]["normalized_skill"] for target in targets.values()]
@@ -440,6 +510,8 @@ def measure_information(
         }
     written_gains = [target["written_gain_over_position"] for target in targets.values()]
     reader_gaps = [target["reader_gap_written_minus_latent"] for target in targets.values()]
+    task_read_gains = [target["task_read_gain_over_latent"] for target in targets.values()]
+    task_reader_gaps = [target["task_reader_gap_written_minus_readout"] for target in targets.values()]
     retention = [
         target["linear_retention"] for target in targets.values()
         if target["linear_retention"] is not None
@@ -456,6 +528,8 @@ def measure_information(
         "stages": stage_summary,
         "mean_written_gain_over_position": _mean(written_gains),
         "mean_reader_gap_written_minus_latent": _mean(reader_gaps),
+        "mean_task_read_gain_over_latent": _mean(task_read_gains),
+        "mean_task_reader_gap_written_minus_readout": _mean(task_reader_gaps),
         "mean_linear_retention": _mean(retention),
         "retention_targets": len(retention),
         "lenses": lens_summary,
@@ -575,8 +649,10 @@ def _print_scorecard(report: dict, step: int | None = None) -> None:
             f"position={stages['position']['mean_normalized_skill']:+.4f}  "
             f"written={stages['written']['mean_normalized_skill']:+.4f}  "
             f"latent={stages['latent']['mean_normalized_skill']:+.4f}  "
+            f"readout={stages['readout']['mean_normalized_skill']:+.4f}  "
             f"write_gain={information['mean_written_gain_over_position']:+.4f}  "
             f"reader_gap={information['mean_reader_gap_written_minus_latent']:+.4f}  "
+            f"task_gain={information['mean_task_read_gain_over_latent']:+.4f}  "
             f"retention={information['mean_linear_retention']:+.4f}",
             flush=True,
         )
@@ -651,8 +727,10 @@ def _monotonic_summary(rows: list[tuple[int, dict]]) -> dict:
             "position_mean_skill": lambda report: report["information"]["stages"]["position"]["mean_normalized_skill"],
             "written_mean_skill": lambda report: report["information"]["stages"]["written"]["mean_normalized_skill"],
             "latent_mean_skill": lambda report: report["information"]["stages"]["latent"]["mean_normalized_skill"],
+            "readout_mean_skill": lambda report: report["information"]["stages"]["readout"]["mean_normalized_skill"],
             "written_gain": lambda report: report["information"]["mean_written_gain_over_position"],
             "reader_gap": lambda report: report["information"]["mean_reader_gap_written_minus_latent"],
+            "task_read_gain": lambda report: report["information"]["mean_task_read_gain_over_latent"],
             "linear_retention": lambda report: report["information"]["mean_linear_retention"],
         })
     result = {"protocol": PROTOCOL, "steps": [step for step, _ in rows], "metrics": {}}
