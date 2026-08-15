@@ -121,6 +121,23 @@ The evidence interface is singular, but aggregation must not destroy structure
 prematurely. Spatial, temporal, neighborhood, resolution, and lens relationships
 should compose inside the mesh before a query is reduced to its final world latent.
 
+The scaling law is **dense mesh, sparse fusion**. Adding observations, modalities,
+regions, and resolutions should enrich the addressed mesh rather than widen one
+prematurely collapsed vector. Fusion scales by becoming a more selective reader:
+each scientific query should retrieve and compose the small subset of cells, levels,
+lenses, and relationships relevant to that question. Dense storage preserves world
+state; sparse query-conditioned reading prevents reader cost and interference from
+growing linearly with every new signal. Sparsity must be learned from the query and
+validated by held-out capability, not imposed as a fixed modality shortcut.
+
+Use the information boundary receipt to localize failure. `position` measures the
+coordinate-conditioned state before observation writes, `written` measures masked
+target information accessible from the composed mesh, and `latent` measures the
+same information after fusion. A builder advance raises `written` over `position`;
+a reader advance raises `latent` without reducing `written`; both must continue to
+predict canonical capability. These are diagnostics, not an alternative promotion
+score.
+
 ## Select the target
 
 1. Read the latest complete scorecard produced by `evaluate.py` on the current
