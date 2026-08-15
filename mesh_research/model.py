@@ -338,12 +338,17 @@ class MeshModel(nn.Module):
             name: nn.Parameter(torch.tensor(0.05))
             for name in self.mesh_read_names
         })
+        self.mesh_prior_read_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.mesh_read_names
+        })
         conditioned_reads = [name for name in ("pollinator",) if name in self.mesh_read_names]
         self.mesh_condition_gate = nn.ParameterDict({
             name: nn.Parameter(torch.tensor(0.05)) for name in conditioned_reads
         })
         self.mesh_task_norm = nn.LayerNorm(d_model)
         self.mesh_scale_task_norm = nn.LayerNorm(d_model)
+        self.mesh_prior_task_norm = nn.LayerNorm(d_model)
         self.mesh_condition_norm = nn.LayerNorm(d_model)
         self.mesh_cell_key = nn.Parameter(torch.zeros(2, d_model))
         self.mesh_level_key = nn.Parameter(torch.zeros(levels, d_model))
@@ -368,6 +373,8 @@ class MeshModel(nn.Module):
         torch.random.set_rng_state(sidecar_rng)
         self._fiber_summary = None
         self._fiber_mesh = None
+        self._fiber_prior_mesh = None
+        self._latest_fiber_prior = None
 
     def _species(self) -> torch.Tensor:
         refined = self.species_graph._seed() if self._ablate_species else self.species_graph()
@@ -414,6 +421,7 @@ class MeshModel(nn.Module):
             *([1] * (priors.dim() - 2)), len(LENSES), self.d_model
         )
         priors = priors + fiber_type
+        self._latest_fiber_prior = self.fiber_norm(priors)
         updates = [torch.zeros_like(state) for _ in LENSES]
         precision = [state.new_zeros((*state.shape[:-1], 1)) for _ in LENSES]
         for name, mask in present.items():
@@ -490,6 +498,7 @@ class MeshModel(nn.Module):
             if name in values:
                 write_mask[name] = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
         query_fibers = self._fiber_write(context["query_state"], values, write_mask, species)
+        query_priors = self._latest_fiber_prior
         query = self._write(context["query_state"], values, write_mask, species)
 
         neighbor = context["neighbor_state"]
@@ -500,6 +509,7 @@ class MeshModel(nn.Module):
                                       dtype=torch.bool, device=value.device)
                      for name, value in neighbor_values.items()}
         neighbor_fibers = self._fiber_write(neighbor, neighbor_values, masks, species)
+        neighbor_priors = self._latest_fiber_prior
         if neighbor_values:
             neighbor = self._write(neighbor, neighbor_values, masks, species)
         neighbor = self.neighbor_norm(neighbor).flatten(1, 2)
@@ -511,6 +521,7 @@ class MeshModel(nn.Module):
             latent = block(latent)
         fiber_mesh = torch.cat((query_fibers.unsqueeze(1), neighbor_fibers), 1)
         self._fiber_mesh = fiber_mesh
+        self._fiber_prior_mesh = torch.cat((query_priors.unsqueeze(1), neighbor_priors), 1)
         fiber_tokens = fiber_mesh.permute(0, 3, 1, 2, 4).flatten(2, 3).flatten(0, 1)
         fiber_query = self.fiber_query.unsqueeze(0).expand(latent.shape[0], -1, -1, -1).flatten(0, 1)
         normalized = self.fiber_read_norm(fiber_tokens)
@@ -604,8 +615,29 @@ class MeshModel(nn.Module):
         scale_read = torch.einsum(
             "bk,bkd->bd", route, scale_fibers
         )
-        return pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
+        pooled = pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
             scale_read
+        )
+        prior_fibers = self._fiber_prior_mesh.flatten(1, 3)
+        prior_keys = (
+            self._fiber_prior_mesh
+            + cell_key.view(1, cells, 1, 1, self.d_model)
+            + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+            + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+        ).flatten(1, 3)
+        if mesh_query.dim() == 2:
+            prior_score = torch.einsum("bkd,bd->bk", prior_keys, mesh_query)
+        else:
+            prior_score = prior_keys @ mesh_query
+        prior_score = prior_score / math.sqrt(self.d_model)
+        selected_score, selected = prior_score.topk(min(16, prior_score.shape[-1]), dim=-1)
+        prior_read = torch.einsum(
+            "bk,bkd->bd",
+            selected_score.softmax(-1),
+            prior_fibers.gather(1, selected[..., None].expand(-1, -1, self.d_model)),
+        )
+        return pooled + torch.tanh(self.mesh_prior_read_gate[name]) * self.mesh_prior_task_norm(
+            prior_read
         )
 
     def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
