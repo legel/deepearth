@@ -60,12 +60,24 @@ class Experiment:
     hide_probability: float = 0.5
     learning_rate: float = 5e-4
     weight_decay: float = 1e-3
+    reader_steps: int = int(os.environ.get("MESH_READER_STEPS", "100"))
 
 
 EXPERIMENT = Experiment()
 
 LENSES = ("abiotic", "visual", "biological", "ecological")
 LENS_INDEX = {name: index for index, name in enumerate(LENSES)}
+READER_PARAMETERS = (
+    "latents", "read.", "read_norm.", "blocks.",
+    "fiber_query", "fiber_read", "fiber_fuse", "fiber_fusion_gate",
+    "sparse_fusion_gate", "decode_query", "decoders.", "community_metric.",
+    "poll_head.", "lfmc_head.", "myco_head.", "flower_head.",
+    "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
+    "mesh_prior_read_gate.", "mesh_prior_information_gate.",
+    "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
+    "mesh_condition_gate.", "mesh_condition_norm.",
+    "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
+)
 
 
 def signal_lens(name: str, kind: str | None = None) -> str:
@@ -819,6 +831,8 @@ def train(
     checkpoint_steps: frozenset[int] = frozenset(),
     checkpoint_dir: Path | None = None,
 ):
+    if not 0 <= design.reader_steps < design.steps:
+        raise ValueError("reader_steps must fall between 0 and total steps")
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(design.seed)
     if device.startswith("cuda"):
@@ -838,9 +852,28 @@ def train(
         fused=device.startswith("cuda"),
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, design.steps)
+    reader_start = design.steps - design.reader_steps
     model.train()
     started = time.time()
     for step in range(design.steps):
+        if design.reader_steps and step == reader_start:
+            for name, parameter in model.named_parameters():
+                parameter.requires_grad_(name.startswith(READER_PARAMETERS))
+            reader_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+            optimizer = torch.optim.AdamW(
+                reader_parameters,
+                lr=design.learning_rate * 0.2,
+                weight_decay=design.weight_decay,
+                fused=device.startswith("cuda"),
+            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, design.reader_steps
+            )
+            print(
+                f"reader phase {design.reader_steps} steps  "
+                f"parameters {sum(parameter.numel() for parameter in reader_parameters):,}",
+                flush=True,
+            )
         index = source.train_index[torch.randint(len(source.train_index), (design.batch,), device=device)]
         values, observed, coords, neighbors, manifolds, neighbor_values = source.batch(index)
         context = model.context(coords, neighbors, manifolds, neighbor_values)
