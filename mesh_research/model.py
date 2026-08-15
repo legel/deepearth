@@ -64,6 +64,19 @@ class Experiment:
 
 EXPERIMENT = Experiment()
 
+LENSES = ("abiotic", "visual", "biological", "ecological")
+LENS_INDEX = {name: index for index, name in enumerate(LENSES)}
+
+
+def signal_lens(name: str, kind: str | None = None) -> str:
+    if name in {"climate", "soil", "clay", "topo", "hydro", "water", "soil_drainage"}:
+        return "abiotic"
+    if name in {"vision_dino", "naip_rgb", "naip_ir", "alphaearth"}:
+        return "visual"
+    if name in {"identity", "phylo", "vision_bio"} or kind == "categorical":
+        return "biological"
+    return "ecological"
+
 
 class Projection(nn.Module):
     """Named boundary used by the canonical Earth4D ablation."""
@@ -274,6 +287,43 @@ class MeshModel(nn.Module):
             nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)
         )
 
+        variable_kind = {v.name: v.kind for v in variables}
+        self.write_lens = {
+            name: LENS_INDEX[signal_lens(name, variable_kind.get(name))]
+            for name in write_names
+        }
+        sidecar_rng = torch.random.get_rng_state()
+        self.fiber_level_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(levels)) for name in write_names
+        })
+        self.fiber_reliability = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(())) for name in write_names
+        })
+        self.fiber_type = nn.Parameter(torch.randn(len(LENSES), d_model) * 0.02)
+        self.fiber_prior = nn.ModuleList([
+            nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, d_model))
+            for _ in LENSES
+        ])
+        self.fiber_information_gate = nn.Sequential(
+            nn.LayerNorm(4 * d_model),
+            nn.Linear(4 * d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, 1),
+        )
+        self.fiber_norm = nn.LayerNorm(d_model)
+        self.fiber_query = nn.Parameter(torch.randn(len(LENSES), 1, d_model) * 0.02)
+        self.fiber_read_norm = nn.LayerNorm(d_model)
+        self.fiber_read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.fiber_fuse_norm = nn.LayerNorm(d_model)
+        self.fiber_fuse = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.fiber_reconstruct = nn.ModuleDict({
+            name: nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, d_model))
+            for name in write_names
+        })
+        self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
+        torch.random.set_rng_state(sidecar_rng)
+        self._fiber_summary = None
+
     def _species(self) -> torch.Tensor:
         refined = self.species_graph._seed() if self._ablate_species else self.species_graph()
         self._refined_species = refined
@@ -304,6 +354,48 @@ class MeshModel(nn.Module):
             updates = updates + valid * gate * edit.unsqueeze(-2)
             count = count + valid
         return self.write_norm(state + updates / count.clamp_min(1.0).sqrt())
+
+    def _fiber_write(
+        self,
+        state: torch.Tensor,
+        values: Dict[str, torch.Tensor],
+        present: Dict[str, torch.Tensor],
+        species: torch.Tensor,
+    ) -> torch.Tensor:
+        state = state.detach()
+        priors = torch.stack([
+            prior(state) for prior in self.fiber_prior
+        ], -2)
+        fiber_type = self.fiber_type.view(
+            *([1] * (priors.dim() - 2)), len(LENSES), self.d_model
+        )
+        priors = priors + fiber_type
+        updates = [torch.zeros_like(state) for _ in LENSES]
+        precision = [state.new_zeros((*state.shape[:-1], 1)) for _ in LENSES]
+        for name, mask in present.items():
+            if name not in values or name not in self.fiber_level_gate:
+                continue
+            lens = self.write_lens[name]
+            prior = priors[..., lens, :]
+            evidence = (
+                self._adapt(name, values[name], species) + self.write_type[name]
+            ).detach().unsqueeze(-2)
+            evidence = evidence.expand_as(prior)
+            innovation = evidence - prior
+            features = torch.cat((prior, evidence, prior * evidence, innovation.abs()), -1)
+            gate = self.fiber_information_gate(features)
+            level_gate = self.fiber_level_gate[name].view(
+                *([1] * (prior.dim() - 2)), self.levels, 1
+            )
+            gate = torch.sigmoid(gate + level_gate + self.fiber_reliability[name])
+            valid = mask.to(state.dtype).view(*mask.shape, 1, 1)
+            weight = valid * gate
+            updates[lens] = updates[lens] + weight * innovation
+            precision[lens] = precision[lens] + weight
+        return self.fiber_norm(torch.stack([
+            updates[index] / (1.0 + precision[index])
+            for index in range(len(LENSES))
+        ], -2))
 
     def context(self, query_coords, neighbor_coords, manifold_positions=None, neighbor_values=None):
         spatial, temporal = self.mesh.raw(query_coords)
@@ -340,14 +432,18 @@ class MeshModel(nn.Module):
         for name in self.always_names:
             if name in values:
                 write_mask[name] = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
+        query_fibers = self._fiber_write(context["query_state"], values, write_mask, species)
         query = self._write(context["query_state"], values, write_mask, species)
 
         neighbor = context["neighbor_state"]
         neighbor_values = context["neighbor_values"]
+        masks = {}
         if neighbor_values:
             masks = {name: torch.ones(value.shape[:-1] if value.dim() > 2 else value.shape,
                                       dtype=torch.bool, device=value.device)
                      for name, value in neighbor_values.items()}
+        neighbor_fibers = self._fiber_write(neighbor, neighbor_values, masks, species)
+        if neighbor_values:
             neighbor = self._write(neighbor, neighbor_values, masks, species)
         neighbor = self.neighbor_norm(neighbor).flatten(1, 2)
         tokens = torch.cat((query, neighbor), 1)
@@ -356,6 +452,19 @@ class MeshModel(nn.Module):
         latent = latent + self.read(latent, self.read_norm(tokens), self.read_norm(tokens), need_weights=False)[0]
         for block in self.blocks:
             latent = block(latent)
+        fiber_mesh = torch.cat((query_fibers.unsqueeze(1), neighbor_fibers), 1)
+        fiber_tokens = fiber_mesh.permute(0, 3, 1, 2, 4).flatten(2, 3).flatten(0, 1)
+        fiber_query = self.fiber_query.unsqueeze(0).expand(latent.shape[0], -1, -1, -1).flatten(0, 1)
+        normalized = self.fiber_read_norm(fiber_tokens)
+        fiber_summary = fiber_query + self.fiber_read(
+            fiber_query, normalized, normalized, need_weights=False
+        )[0]
+        fiber_summary = fiber_summary.reshape(latent.shape[0], len(LENSES), self.d_model)
+        self._fiber_summary = fiber_summary
+        normalized = self.fiber_fuse_norm(fiber_summary)
+        latent = latent + torch.tanh(self.fiber_fusion_gate) * self.fiber_fuse(
+            latent.detach(), normalized, normalized, need_weights=False
+        )[0]
         return latent
 
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
@@ -363,11 +472,13 @@ class MeshModel(nn.Module):
         weight = torch.softmax((latent @ query) / math.sqrt(self.d_model), -1)
         return torch.einsum("bl,bld->bd", weight, latent)
 
-    def decode(self, latent: torch.Tensor, name: str) -> torch.Tensor:
-        pooled = self._pool(latent, name)
+    def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
         if name == self.species_variable:
             return pooled @ self._refined_species.t()
         return self.decoders[name](pooled)
+
+    def decode(self, latent: torch.Tensor, name: str) -> torch.Tensor:
+        return self._decode_pooled(self._pool(latent, name), name)
 
     @torch.no_grad()
     def infer(self, values, given, targets, context, observed=None):
@@ -406,6 +517,7 @@ class MeshModel(nn.Module):
             present[name] &= ~blank
         latent = self.encode(values, present, context)
         terms = []
+        fiber_terms = []
         for variable in self.variables:
             hidden = (~present[variable.name]) & observed[variable.name]
             if not hidden.any():
@@ -420,6 +532,13 @@ class MeshModel(nn.Module):
                 mean = target[valid].mean(0, keepdim=True).detach() if valid.any() else target.mean(0, keepdim=True)
                 error = 1.0 - F.cosine_similarity(prediction - mean, target - mean, dim=-1)
             terms.append((error * hidden).sum() / hidden.sum().clamp_min(1))
+            lens = self.write_lens[variable.name]
+            fiber_prediction = self.fiber_reconstruct[variable.name](self._fiber_summary[:, lens])
+            fiber_target = self._adapt(
+                variable.name, values[variable.name], self._refined_species
+            ).detach()
+            fiber_error = 1.0 - F.cosine_similarity(fiber_prediction, fiber_target, dim=-1)
+            fiber_terms.append((fiber_error * hidden).sum() / hidden.sum().clamp_min(1))
 
         pooled = self._pool(latent, self.species_variable)
         if self.poll_head is not None and "_poll_idx" in values:
@@ -442,7 +561,7 @@ class MeshModel(nn.Module):
             error = F.binary_cross_entropy_with_logits(self.flower_head(pooled).squeeze(-1),
                                                         values["_flower"].float(), reduction="none")
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
-        loss = torch.stack(terms).mean()
+        loss = torch.stack(terms).mean() + 0.05 * torch.stack(fiber_terms).mean()
         environment_present = {
             name: observed[name] if name in self.environment_names else torch.zeros_like(observed[name])
             for name in self.names
