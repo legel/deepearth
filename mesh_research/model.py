@@ -75,6 +75,8 @@ READER_PARAMETERS = (
     "species_graph.",
     "poll_head.", "lfmc_head.", "myco_head.", "flower_head.",
     "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
+    "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
+    "task_mesh_reader_output_norm.",
     "mesh_prior_read_gate.", "mesh_prior_information_gate.",
     "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
     "mesh_condition_gate.", "mesh_condition_norm.",
@@ -352,6 +354,15 @@ class MeshModel(nn.Module):
             name: nn.Parameter(torch.tensor(0.05))
             for name in self.mesh_read_names
         })
+        task_reader_rng = torch.random.get_rng_state()
+        self.task_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        torch.random.set_rng_state(task_reader_rng)
+        self.task_mesh_reader_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(()))
+            for name in self.mesh_read_names
+        })
+        self.task_mesh_reader_norm = nn.LayerNorm(d_model)
+        self.task_mesh_reader_output_norm = nn.LayerNorm(d_model)
         self.mesh_prior_read_gate = nn.ParameterDict({
             name: nn.Parameter(torch.zeros(()))
             for name in self.mesh_read_names
@@ -599,6 +610,15 @@ class MeshModel(nn.Module):
             ) / math.sqrt(self.d_model)
         else:
             score = (fibers @ mesh_query) / math.sqrt(self.d_model)
+        task_query = mesh_query if mesh_query.dim() == 2 else mesh_query.unsqueeze(0).expand(
+            fibers.shape[0], -1
+        )
+        task_tokens = self.task_mesh_reader_norm(fibers)
+        task_read = self.task_mesh_reader(
+            task_query.unsqueeze(1), task_tokens, task_tokens, need_weights=False
+        )[0].squeeze(1)
+        pooled = pooled + torch.tanh(self.task_mesh_reader_gate[name]) \
+                 * self.task_mesh_reader_output_norm(task_read)
         selected_score, selected = score.topk(min(4, score.shape[-1]), dim=-1)
         selected_fibers = fibers.gather(
             1, selected[..., None].expand(-1, -1, self.d_model)
