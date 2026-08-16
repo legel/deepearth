@@ -73,7 +73,9 @@ READER_PARAMETERS = (
     "fiber_query", "fiber_read", "fiber_fuse", "fiber_fusion_gate",
     "sparse_fusion_gate", "decode_query", "decoders.", "community_metric.",
     "species_graph.",
-    "poll_head.", "lfmc_head.", "myco_head.", "flower_head.",
+    "poll_head.", "pollinator_reader_query", "pollinator_reader.",
+    "pollinator_reader_norm.", "pollinator_reader_output_norm.",
+    "pollinator_reader_gate", "lfmc_head.", "myco_head.", "flower_head.",
     "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
     "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
     "task_mesh_reader_output_norm.",
@@ -295,6 +297,17 @@ class MeshModel(nn.Module):
 
         self.community_head = nn.Linear(d_model, source.n_classes)
         self.poll_head = nn.Linear(d_model, source.n_pollinators) if hasattr(source, "n_pollinators") else None
+        self.pollinator_reader = None
+        if self.poll_head is not None:
+            interaction_rng = torch.random.get_rng_state()
+            self.pollinator_reader_query = nn.Parameter(torch.randn(2, d_model) * 0.02)
+            self.pollinator_reader_norm = nn.LayerNorm(d_model)
+            self.pollinator_reader = nn.MultiheadAttention(
+                d_model, n_heads, batch_first=True
+            )
+            self.pollinator_reader_output_norm = nn.LayerNorm(d_model)
+            self.pollinator_reader_gate = nn.Parameter(torch.tensor(0.05))
+            torch.random.set_rng_state(interaction_rng)
         self.lfmc_head = nn.Linear(d_model, 1) if hasattr(source, "lfmc") else None
         self.myco_head = nn.Linear(d_model, 5) if hasattr(source, "myco") else None
         self.flower_head = nn.Linear(d_model, 1) if hasattr(source, "flower") else None
@@ -686,6 +699,25 @@ class MeshModel(nn.Module):
         return pooled + torch.tanh(self.mesh_prior_read_gate[name]) * confidence \
                         * self.mesh_prior_task_norm(prior_read)
 
+    def _pollinator_pool(self, latent: torch.Tensor, *, isolated: bool = False) -> torch.Tensor:
+        pooled = self._pool(latent, "pollinator")
+        if self.pollinator_reader is None or self._fiber_mesh is None:
+            return pooled
+        fibers = self._fiber_mesh.flatten(1, 3)
+        if isolated:
+            pooled = pooled.detach()
+            fibers = fibers.detach()
+        keys = self.pollinator_reader_norm(fibers)
+        score = torch.einsum("bkd,bd->bk", keys, pooled) / math.sqrt(self.d_model)
+        selected = score.topk(min(16, score.shape[-1]), dim=-1).indices
+        selected = keys.gather(
+            1, selected[..., None].expand(-1, -1, self.d_model)
+        )
+        query = self.pollinator_reader_query.unsqueeze(0) + pooled.unsqueeze(1)
+        read = self.pollinator_reader(query, selected, selected, need_weights=False)[0].mean(1)
+        return pooled + torch.tanh(self.pollinator_reader_gate) \
+                        * self.pollinator_reader_output_norm(read)
+
     def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
         if name == self.species_variable:
             return pooled @ self._refined_species.t()
@@ -716,7 +748,7 @@ class MeshModel(nn.Module):
                 pooled = self._pool(latent, "community")
                 out[name] = self.community_metric(pooled) @ self._refined_species.t()
             elif name == "pollinator":
-                pooled = self._pool(latent, "pollinator")
+                pooled = self._pollinator_pool(latent)
                 out[name] = self.poll_head(pooled)
             elif name == "lfmc":
                 pooled = self._pool(latent, "lfmc")
@@ -742,6 +774,8 @@ class MeshModel(nn.Module):
         terms = []
         fiber_terms = []
         mesh_terms = []
+        pollinator_target = None
+        pollinator_valid = None
         for variable in self.variables:
             hidden = (~present[variable.name]) & observed[variable.name]
             if not hidden.any():
@@ -771,12 +805,16 @@ class MeshModel(nn.Module):
             mesh_terms.append((mesh_error * hidden).sum() / hidden.sum().clamp_min(1))
 
         if self.poll_head is not None and "_poll_idx" in values:
-            logits = self.poll_head(self._pool(latent, "pollinator"))
-            target = torch.zeros_like(logits).scatter_add_(1, values["_poll_idx"].clamp_min(0),
-                                                           values["_poll_frq"].float())
-            valid = values["_poll_valid"].float()
-            error = -(target * F.log_softmax(logits, -1)).sum(-1)
-            terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
+            logits = self.poll_head(self._pollinator_pool(latent))
+            pollinator_target = torch.zeros_like(logits).scatter_add_(
+                1, values["_poll_idx"].clamp_min(0), values["_poll_frq"].float()
+            )
+            pollinator_valid = values["_poll_valid"].float()
+            error = -(pollinator_target * F.log_softmax(logits, -1)).sum(-1)
+            terms.append(
+                0.1 * (error * pollinator_valid).sum()
+                / pollinator_valid.sum().clamp_min(1)
+            )
         if self.lfmc_head is not None and "_lfmc" in values:
             valid = values["_lfmc_valid"].float()
             error = (self.lfmc_head(self._pool(latent, "lfmc")).squeeze(-1)
@@ -858,6 +896,22 @@ class MeshModel(nn.Module):
                 )).sum(-1) / math.log(conditional_logits.shape[-1])
                 loss = loss + 0.1 * (conditional * masked_valid).sum() \
                        / family_valid.sum().clamp_min(1)
+        if getattr(self, "reader_phase", False) and pollinator_target is not None:
+            pollinator_present = {
+                name: observed[name]
+                if name == self.species_variable or name in self.environment_names
+                else torch.zeros_like(observed[name])
+                for name in self.names
+            }
+            pollinator_latent = self.encode(values, pollinator_present, context)
+            pollinator_logits = self.poll_head(
+                self._pollinator_pool(pollinator_latent, isolated=True)
+            )
+            interaction = -(
+                pollinator_target * F.log_softmax(pollinator_logits, -1)
+            ).sum(-1) / math.log(self.poll_head.out_features)
+            loss = loss + 0.25 * (interaction * pollinator_valid).sum() \
+                   / pollinator_valid.sum().clamp_min(1)
         return loss
 
 def build_model(source, variable_specs, always_dims, device: str, design: Experiment = EXPERIMENT) -> MeshModel:
