@@ -90,6 +90,7 @@ READER_PARAMETERS = (
     "mesh_condition_gate.", "mesh_condition_norm.",
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
 )
+IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 
 
 def signal_lens(name: str, kind: str | None = None) -> str:
@@ -1089,6 +1090,9 @@ def train(
         fused=device.startswith("cuda"),
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, design.steps)
+    detail_optimizer = None
+    detail_scheduler = None
+    base_parameters = list(model.parameters())
     reader_start = design.steps - design.reader_steps
     model.train()
     started = time.time()
@@ -1102,9 +1106,20 @@ def train(
                 if name.startswith("species_graph.")
             ]
             graph_ids = {id(parameter) for parameter in graph_parameters}
+            detail_parameters = [
+                parameter for name, parameter in model.named_parameters()
+                if name.startswith(IDENTITY_DETAIL_PARAMETERS)
+            ]
+            detail_ids = {id(parameter) for parameter in detail_parameters}
             reader_parameters = [
                 parameter for parameter in model.parameters()
-                if parameter.requires_grad and id(parameter) not in graph_ids
+                if parameter.requires_grad
+                and id(parameter) not in graph_ids
+                and id(parameter) not in detail_ids
+            ]
+            base_parameters = [
+                parameter for parameter in model.parameters()
+                if parameter.requires_grad and id(parameter) not in detail_ids
             ]
             optimizer = torch.optim.AdamW(
                 (
@@ -1119,10 +1134,20 @@ def train(
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, design.reader_steps
             )
+            detail_optimizer = torch.optim.AdamW(
+                detail_parameters,
+                lr=design.learning_rate * 0.2,
+                weight_decay=design.weight_decay,
+                fused=device.startswith("cuda"),
+            )
+            detail_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                detail_optimizer, design.reader_steps
+            )
             print(
                 f"reader phase {design.reader_steps} steps  "
                 f"parameters {sum(parameter.numel() for parameter in reader_parameters):,}  "
                 f"graph parameters {sum(parameter.numel() for parameter in graph_parameters):,}  "
+                f"detail parameters {sum(parameter.numel() for parameter in detail_parameters):,}  "
                 f"graph lr scale {design.graph_learning_rate_scale:g}",
                 flush=True,
             )
@@ -1133,10 +1158,17 @@ def train(
         if not torch.isfinite(loss):
             raise FloatingPointError(f"non-finite loss at step {step}")
         optimizer.zero_grad(set_to_none=True)
+        if detail_optimizer is not None:
+            detail_optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+        torch.nn.utils.clip_grad_norm_(base_parameters, 5.0)
+        if detail_optimizer is not None:
+            torch.nn.utils.clip_grad_norm_(detail_parameters, 5.0)
         optimizer.step()
         scheduler.step()
+        if detail_optimizer is not None:
+            detail_optimizer.step()
+            detail_scheduler.step()
         for module in model.modules():
             if hasattr(module, "clamp_per_level_scale"):
                 module.clamp_per_level_scale()
