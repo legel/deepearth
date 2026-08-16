@@ -81,7 +81,8 @@ READER_PARAMETERS = (
     "identity_detail_norm.", "identity_detail_output_norm.",
     "identity_detail_gate", "identity_detail_cell_key",
     "identity_detail_level_key", "identity_detail_lens_key",
-    "lfmc_head.", "myco_head.", "flower_head.",
+    "lfmc_head.", "myco_head.", "species_myco_head.", "myco_relation_gate",
+    "flower_head.",
     "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
     "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
     "task_mesh_reader_output_norm.",
@@ -91,6 +92,7 @@ READER_PARAMETERS = (
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
 )
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
+RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
 
 
 def signal_lens(name: str, kind: str | None = None) -> str:
@@ -348,6 +350,26 @@ class MeshModel(nn.Module):
         self.myco_head = nn.Linear(d_model, 5) if hasattr(source, "myco") else None
         self.flower_head = nn.Linear(d_model, 1) if hasattr(source, "flower") else None
         self.species_myco_head = None
+        if self.myco_head is not None:
+            myco_rng = torch.random.get_rng_state()
+            self.species_myco_head = nn.Sequential(
+                nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5)
+            )
+            self.myco_relation_gate = nn.Parameter(torch.tensor(math.atanh(0.75)))
+            torch.random.set_rng_state(myco_rng)
+            train_species = torch.zeros(
+                source.n_classes, dtype=torch.bool, device=source.cls.device
+            )
+            train_species[source.cls[source.train]] = True
+            valid = source.myco_valid.bool() & train_species
+            counts = torch.bincount(
+                source.myco[valid].long(), minlength=5
+            ).to(torch.float32)
+            self.register_buffer("species_myco", source.myco.long())
+            self.register_buffer("species_myco_valid", valid)
+            self.register_buffer(
+                "species_myco_prior", counts / counts.sum().clamp_min(1.0)
+            )
         self.community_metric = nn.Sequential(
             nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)
         )
@@ -856,6 +878,19 @@ class MeshModel(nn.Module):
         family_mean = family_sum / family_size
         return logits - family_mean.gather(1, family)
 
+    def _myco_logits(self, latent: torch.Tensor) -> torch.Tensor:
+        base = self.myco_head(self._pool(latent, "myco"))
+        if self.species_myco_head is None or self.training:
+            return base
+        species_logits = self.decode(latent, self.species_variable)
+        species_to_myco = self.species_myco_head(
+            self._refined_species.detach()
+        ).softmax(-1)
+        myco = species_logits.softmax(-1) @ species_to_myco
+        evidence = myco.clamp_min(1e-8).log() \
+                   - self.species_myco_prior.clamp_min(1e-8).log()
+        return base + torch.tanh(self.myco_relation_gate) * evidence
+
     def _pool_fiber(self, fiber: torch.Tensor, name: str) -> torch.Tensor:
         query = self.fiber_decode_query[self.names.index(name)]
         weight = torch.softmax((fiber @ query) / math.sqrt(self.d_model), -1)
@@ -905,8 +940,7 @@ class MeshModel(nn.Module):
                 pooled = self._pool(latent, "lfmc")
                 out[name] = self.lfmc_head(pooled).squeeze(-1).exp()
             elif name == "myco":
-                pooled = self._pool(latent, "myco")
-                out[name] = self.myco_head(pooled)
+                out[name] = self._myco_logits(latent)
             elif name == "flower":
                 pooled = self._pool(latent, "flower")
                 out[name] = torch.sigmoid(self.flower_head(pooled).squeeze(-1))
@@ -991,7 +1025,7 @@ class MeshModel(nn.Module):
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
         if self.myco_head is not None and "_myco" in values:
             valid = values["_myco_valid"].float()
-            error = F.cross_entropy(self.myco_head(self._pool(latent, "myco")),
+            error = F.cross_entropy(self._myco_logits(latent),
                                     values["_myco"].long().clamp_min(0), reduction="none")
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
         if self.flower_head is not None and "_flower" in values:
@@ -1003,6 +1037,13 @@ class MeshModel(nn.Module):
         loss = torch.stack(terms).mean() \
                + 0.05 * torch.stack(fiber_terms).mean() \
                + 0.05 * torch.stack(mesh_terms).mean()
+        if self.species_myco_head is not None and self.species_myco_valid.any():
+            species_myco = self.species_myco_head(
+                self._refined_species.detach()[self.species_myco_valid]
+            )
+            loss = loss + 0.1 * F.cross_entropy(
+                species_myco, self.species_myco[self.species_myco_valid]
+            )
         if pollinator_structured_term is not None:
             loss = loss + 0.1 * pollinator_structured_term
         environment_present = {
@@ -1137,16 +1178,39 @@ def train(
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         if 0 in checkpoint_steps:
             torch.save(model.state_dict(), checkpoint_dir / "step_000000.pt")
+    relation_parameters = [
+        parameter for name, parameter in model.named_parameters()
+        if name.startswith("species_myco_head.")
+    ]
+    relation_ids = {
+        id(parameter) for name, parameter in model.named_parameters()
+        if name.startswith(RELATION_PARAMETERS)
+    }
+    base_parameters = [
+        parameter for parameter in model.parameters()
+        if id(parameter) not in relation_ids
+    ]
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        base_parameters,
         lr=design.learning_rate,
         weight_decay=design.weight_decay,
         fused=device.startswith("cuda"),
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, design.steps)
+    relation_optimizer = None
+    relation_scheduler = None
+    if relation_parameters:
+        relation_optimizer = torch.optim.AdamW(
+            relation_parameters,
+            lr=design.learning_rate,
+            weight_decay=design.weight_decay,
+            fused=device.startswith("cuda"),
+        )
+        relation_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            relation_optimizer, design.steps
+        )
     detail_optimizer = None
     detail_scheduler = None
-    base_parameters = list(model.parameters())
     reader_start = design.steps - design.reader_steps
     model.train()
     started = time.time()
@@ -1170,10 +1234,13 @@ def train(
                 if parameter.requires_grad
                 and id(parameter) not in graph_ids
                 and id(parameter) not in detail_ids
+                and id(parameter) not in relation_ids
             ]
             base_parameters = [
                 parameter for parameter in model.parameters()
-                if parameter.requires_grad and id(parameter) not in detail_ids
+                if parameter.requires_grad
+                and id(parameter) not in detail_ids
+                and id(parameter) not in relation_ids
             ]
             optimizer = torch.optim.AdamW(
                 (
@@ -1212,14 +1279,21 @@ def train(
         if not torch.isfinite(loss):
             raise FloatingPointError(f"non-finite loss at step {step}")
         optimizer.zero_grad(set_to_none=True)
+        if relation_optimizer is not None:
+            relation_optimizer.zero_grad(set_to_none=True)
         if detail_optimizer is not None:
             detail_optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(base_parameters, 5.0)
+        if relation_optimizer is not None:
+            torch.nn.utils.clip_grad_norm_(relation_parameters, 5.0)
         if detail_optimizer is not None:
             torch.nn.utils.clip_grad_norm_(detail_parameters, 5.0)
         optimizer.step()
         scheduler.step()
+        if relation_optimizer is not None:
+            relation_optimizer.step()
+            relation_scheduler.step()
         if detail_optimizer is not None:
             detail_optimizer.step()
             detail_scheduler.step()
