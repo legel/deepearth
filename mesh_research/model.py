@@ -1068,15 +1068,24 @@ class MeshModel(nn.Module):
         if getattr(self, "reader_phase", False):
             relation_logits = self._identity_detail_logits(environment_pool)
             target_species = values[self.species_variable].long()
+            calibrated_logits = family_logits.detach() + relation_logits
             target_family = self.species_family[target_species]
             same_family = self.species_family.unsqueeze(0) == target_family.unsqueeze(1)
-            within_family = (family_logits.detach() + relation_logits).masked_fill(
+            within_family = calibrated_logits.masked_fill(
                 ~same_family, -1e4
             )
             relation_error = F.cross_entropy(
                 within_family, target_species, reduction="none"
             ) / math.log(max(self._refined_species.shape[0], 2))
             loss = loss + 0.25 * (relation_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
+            target_score = calibrated_logits.gather(1, target_species[:, None])
+            soft_rank = 0.5 + torch.sigmoid(
+                (calibrated_logits - target_score) / 0.25
+            ).sum(-1)
+            rank_error = soft_rank.clamp_min(1.0).log() \
+                         / math.log(max(self._refined_species.shape[0], 2))
+            loss = loss + 0.25 * (rank_error * family_valid).sum() \
                           / family_valid.sum().clamp_min(1)
         devices = [torch.cuda.current_device()] if loss.is_cuda else []
         with torch.random.fork_rng(devices=devices):
