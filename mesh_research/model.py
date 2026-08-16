@@ -77,6 +77,10 @@ READER_PARAMETERS = (
     "pollinator_reader_norm.", "pollinator_reader_output_norm.",
     "pollinator_reader_gate", "pollinator_reader_cell_key",
     "pollinator_reader_level_key", "pollinator_reader_lens_key",
+    "identity_detail_query", "identity_detail_reader.",
+    "identity_detail_norm.", "identity_detail_output_norm.",
+    "identity_detail_gate", "identity_detail_cell_key",
+    "identity_detail_level_key", "identity_detail_lens_key",
     "lfmc_head.", "myco_head.", "flower_head.",
     "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
     "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
@@ -315,6 +319,20 @@ class MeshModel(nn.Module):
                 torch.zeros(len(LENSES), d_model)
             )
             torch.random.set_rng_state(interaction_rng)
+        identity_reader_rng = torch.random.get_rng_state()
+        self.identity_detail_query = nn.Parameter(torch.randn(2, d_model) * 0.02)
+        self.identity_detail_norm = nn.LayerNorm(d_model)
+        self.identity_detail_reader = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.identity_detail_output_norm = nn.LayerNorm(d_model)
+        self.identity_detail_gate = nn.Parameter(torch.tensor(0.05))
+        self.identity_detail_cell_key = nn.Parameter(torch.zeros(2, d_model))
+        self.identity_detail_level_key = nn.Parameter(torch.zeros(levels, d_model))
+        self.identity_detail_lens_key = nn.Parameter(
+            torch.zeros(len(LENSES), d_model)
+        )
+        torch.random.set_rng_state(identity_reader_rng)
         self.lfmc_head = nn.Linear(d_model, 1) if hasattr(source, "lfmc") else None
         self.myco_head = nn.Linear(d_model, 5) if hasattr(source, "myco") else None
         self.flower_head = nn.Linear(d_model, 1) if hasattr(source, "flower") else None
@@ -753,13 +771,66 @@ class MeshModel(nn.Module):
             return pooled @ self._refined_species.t()
         return self.decoders[name](pooled)
 
+    def _identity_detail_logits(self, pooled: torch.Tensor) -> torch.Tensor:
+        cells = self._fiber_mesh.shape[1]
+        fibers = self._fiber_mesh.flatten(1, 3).detach()
+        keys = self.identity_detail_norm(fibers)
+        cell_key = torch.cat((
+            self.identity_detail_cell_key[:1],
+            self.identity_detail_cell_key[1:].expand(cells - 1, -1),
+        ))
+        route_keys = (
+            keys.reshape(-1, cells, self.levels, len(LENSES), self.d_model)
+            + cell_key.view(1, cells, 1, 1, self.d_model)
+            + self.identity_detail_level_key.view(
+                1, 1, self.levels, 1, self.d_model
+            )
+            + self.identity_detail_lens_key.view(
+                1, 1, 1, len(LENSES), self.d_model
+            )
+        ).flatten(1, 3)
+        pooled = pooled.detach()
+        score = torch.einsum(
+            "bkd,bd->bk", route_keys, pooled
+        ) / math.sqrt(self.d_model)
+        selected_score, selected_index = score.topk(
+            min(16, score.shape[-1]), dim=-1
+        )
+        selected = keys.gather(
+            1, selected_index[..., None].expand(-1, -1, self.d_model)
+        )
+        routed = torch.einsum(
+            "bk,bkd->bd", selected_score.softmax(-1), selected
+        )
+        query = self.identity_detail_query.unsqueeze(0) \
+                + pooled.unsqueeze(1) + routed.unsqueeze(1)
+        read = self.identity_detail_reader(
+            query, selected, selected, need_weights=False
+        )[0].mean(1)
+        read = torch.tanh(self.identity_detail_gate) \
+               * self.identity_detail_output_norm(read)
+        logits = read @ self._refined_species.detach().t()
+        family = self.species_family.expand(logits.shape[0], -1)
+        family_sum = logits.new_zeros(logits.shape[0], self.family_count)
+        family_sum.scatter_add_(1, family, logits)
+        family_size = torch.bincount(
+            self.species_family, minlength=self.family_count
+        ).clamp_min(1).to(logits.dtype)
+        family_mean = family_sum / family_size
+        return logits - family_mean.gather(1, family)
+
     def _pool_fiber(self, fiber: torch.Tensor, name: str) -> torch.Tensor:
         query = self.fiber_decode_query[self.names.index(name)]
         weight = torch.softmax((fiber @ query) / math.sqrt(self.d_model), -1)
         return torch.einsum("bl,bld->bd", weight, fiber)
 
     def decode(self, latent: torch.Tensor, name: str) -> torch.Tensor:
-        return self._decode_pooled(self._pool(latent, name), name)
+        pooled = self._pool(latent, name)
+        logits = self._decode_pooled(pooled, name)
+        if name == self.species_variable and not self.training \
+                and self._fiber_mesh is not None:
+            logits = logits + self._identity_detail_logits(pooled)
+        return logits
 
     @torch.no_grad()
     def infer(self, values, given, targets, context, observed=None):
@@ -884,7 +955,8 @@ class MeshModel(nn.Module):
             for name in self.names
         }
         environment_latent = self.encode(values, environment_present, context, detach_species=True)
-        family_logits = self._pool(environment_latent, self.species_variable).float() \
+        environment_pool = self._pool(environment_latent, self.species_variable)
+        family_logits = environment_pool.float() \
                         @ self._refined_species.detach().float().t()
         probability = family_logits.softmax(-1)
         family_probability = probability.new_zeros(batch, self.family_count)
@@ -897,6 +969,19 @@ class MeshModel(nn.Module):
         family_term = (family_error * family_valid).sum() / family_valid.sum().clamp_min(1) \
                       / math.log(max(self.family_count, 2))
         loss = loss + 0.1 * family_term
+        if getattr(self, "reader_phase", False):
+            relation_logits = self._identity_detail_logits(environment_pool)
+            target_species = values[self.species_variable].long()
+            target_family = self.species_family[target_species]
+            same_family = self.species_family.unsqueeze(0) == target_family.unsqueeze(1)
+            within_family = (family_logits.detach() + relation_logits).masked_fill(
+                ~same_family, -1e4
+            )
+            relation_error = F.cross_entropy(
+                within_family, target_species, reduction="none"
+            ) / math.log(max(self._refined_species.shape[0], 2))
+            loss = loss + 0.25 * (relation_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
         devices = [torch.cuda.current_device()] if loss.is_cuda else []
         with torch.random.fork_rng(devices=devices):
             mask = torch.rand(self._refined_species.shape[0], device=loss.device) < 0.15
