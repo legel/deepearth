@@ -781,6 +781,18 @@ class MeshModel(nn.Module):
             return pooled @ self._refined_species.t()
         return self.decoders[name](pooled)
 
+    def _hierarchical_family_read(self, species_logits: torch.Tensor) -> torch.Tensor:
+        """Read the strongest species inside the mesh posterior's strongest family."""
+        logits = species_logits.float()
+        family = self.species_family.expand(logits.shape[0], -1)
+        family_mass = logits.new_zeros(logits.shape[0], self.family_count)
+        family_mass.scatter_add_(1, family, logits.softmax(-1))
+        winning_family = family_mass.argmax(-1)
+        eligible = self.species_family.unsqueeze(0) == winning_family.unsqueeze(1)
+        selected = logits.masked_fill(~eligible, -torch.inf).argmax(-1)
+        top = species_logits.amax(-1)
+        return species_logits.scatter(1, selected.unsqueeze(1), top.unsqueeze(1) + 1e-4)
+
     def _identity_detail_logits(self, pooled: torch.Tensor) -> torch.Tensor:
         cells = self._fiber_mesh.shape[1]
         fibers = self._fiber_mesh.flatten(1, 3).detach()
@@ -871,7 +883,12 @@ class MeshModel(nn.Module):
                 pooled = self._pool(latent, "flower")
                 out[name] = torch.sigmoid(self.flower_head(pooled).squeeze(-1))
             else:
-                out[name] = self.decode(latent, name)
+                prediction = self.decode(latent, name)
+                if name == self.species_variable and (
+                    not given or tuple(given) == self.environment_names
+                ):
+                    prediction = self._hierarchical_family_read(prediction)
+                out[name] = prediction
         return out
 
     def reconstruction_loss(self, values, observed, context, hide_probability: float = 0.5):
