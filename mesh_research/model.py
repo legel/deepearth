@@ -281,6 +281,14 @@ class MeshModel(nn.Module):
 
         write_names = [*self.names, *self.always_names]
         self.write_type = nn.ParameterDict({n: nn.Parameter(torch.randn(d_model) * 0.02) for n in write_names})
+        residual_rng = torch.random.get_rng_state()
+        self.fiber_residual = nn.ModuleDict({
+            name: nn.Linear(d_model, d_model, bias=False)
+            for name in write_names
+        })
+        for residual in self.fiber_residual.values():
+            nn.init.zeros_(residual.weight)
+        torch.random.set_rng_state(residual_rng)
         self.write_gate = nn.ParameterDict({n: nn.Parameter(torch.zeros(levels)) for n in write_names})
         self.write_norm = nn.LayerNorm(d_model)
         self.neighbor_norm = nn.LayerNorm(d_model)
@@ -501,9 +509,10 @@ class MeshModel(nn.Module):
                 continue
             lens = self.write_lens[name]
             prior = priors[..., lens, :]
+            adapted = self._adapt(name, values[name], species).detach()
             evidence = (
-                self._adapt(name, values[name], species) + self.write_type[name]
-            ).detach().unsqueeze(-2)
+                adapted + self.fiber_residual[name](adapted) + self.write_type[name]
+            ).unsqueeze(-2)
             evidence = evidence.expand_as(prior)
             innovation = evidence - prior
             features = torch.cat((prior, evidence, prior * evidence, innovation.abs()), -1)
