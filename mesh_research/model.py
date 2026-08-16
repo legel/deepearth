@@ -573,9 +573,16 @@ class MeshModel(nn.Module):
         off_diagonal = 1.0 - torch.eye(
             len(LENSES), device=fibers.device, dtype=fibers.dtype
         )
-        lens_exchange = torch.tanh(self.lens_exchange) * off_diagonal
+        normalized_lenses = self.lens_exchange_norm(fibers)
+        availability = normalized_lenses.square().mean(-1).clamp(0.0, 1.0)
+        agreement = torch.einsum(
+            "...lid,...ljd->...lij", normalized_lenses, normalized_lenses
+        ) / self.d_model
+        evidence_gate = availability.unsqueeze(-1) * availability.unsqueeze(-2) \
+                        * torch.sigmoid(4.0 * agreement)
+        lens_exchange = torch.tanh(self.lens_exchange) * off_diagonal * evidence_gate
         lens_message = torch.einsum(
-            "...lid,lij->...ljd", self.lens_exchange_norm(fibers), lens_exchange
+            "...lid,...lij->...ljd", normalized_lenses, lens_exchange
         )
         return fibers + lens_message
 
