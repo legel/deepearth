@@ -314,6 +314,8 @@ class MeshModel(nn.Module):
         self.poll_head = nn.Linear(d_model, source.n_pollinators) if hasattr(source, "n_pollinators") else None
         self.pollinator_reader = None
         if self.poll_head is not None:
+            self.register_buffer("poll_species_idx", source.poll_idx.long(), persistent=False)
+            self.register_buffer("poll_species_frq", source.poll_frq.float(), persistent=False)
             interaction_rng = torch.random.get_rng_state()
             self.pollinator_reader_query = nn.Parameter(torch.randn(2, d_model) * 0.02)
             self.pollinator_reader_norm = nn.LayerNorm(d_model)
@@ -793,6 +795,19 @@ class MeshModel(nn.Module):
         top = species_logits.amax(-1)
         return species_logits.scatter(1, selected.unsqueeze(1), top.unsqueeze(1) + 1e-4)
 
+    def _pollinator_species_posterior(self, species_logits: torch.Tensor) -> torch.Tensor:
+        """Marginalize uncertain plant identity through known pollinator relations."""
+        k = min(64, species_logits.shape[-1])
+        weight, species = species_logits.float().softmax(-1).topk(k, -1)
+        index = self.poll_species_idx[species].clamp(0, self.poll_head.out_features - 1)
+        mass = weight.unsqueeze(-1) * self.poll_species_frq[species]
+        mixture = species_logits.new_zeros(
+            species_logits.shape[0], self.poll_head.out_features, dtype=torch.float32
+        )
+        mixture.scatter_add_(1, index.flatten(1), mass.flatten(1))
+        mixture = mixture / mixture.sum(-1, keepdim=True).clamp_min(1e-8)
+        return mixture.clamp_min(1e-8).log()
+
     def _identity_detail_logits(self, pooled: torch.Tensor) -> torch.Tensor:
         cells = self._fiber_mesh.shape[1]
         fibers = self._fiber_mesh.flatten(1, 3).detach()
@@ -865,6 +880,13 @@ class MeshModel(nn.Module):
             if name in present:
                 present[name] = observed.get(name, torch.ones_like(present[name]))
         latent = self.encode(values, present, context)
+        pollinator_species = None
+        if self.poll_head is not None and "pollinator" in targets \
+                and self.species_variable not in given:
+            species_logits = self.decode(latent, self.species_variable)
+            if not given or tuple(given) == self.environment_names:
+                species_logits = self._hierarchical_family_read(species_logits)
+            pollinator_species = self._pollinator_species_posterior(species_logits)
         out = {}
         for name in targets:
             if name == "community":
@@ -872,7 +894,13 @@ class MeshModel(nn.Module):
                 out[name] = self.community_metric(pooled) @ self._refined_species.t()
             elif name == "pollinator":
                 pooled = self._pollinator_pool(latent)
-                out[name] = self.poll_head(pooled)
+                prediction = self.poll_head(pooled)
+                if pollinator_species is not None:
+                    prediction = torch.logaddexp(
+                        F.log_softmax(prediction.float(), -1) + math.log(0.5),
+                        pollinator_species + math.log(0.5),
+                    )
+                out[name] = prediction
             elif name == "lfmc":
                 pooled = self._pool(latent, "lfmc")
                 out[name] = self.lfmc_head(pooled).squeeze(-1).exp()
