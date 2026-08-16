@@ -474,6 +474,10 @@ class MeshModel(nn.Module):
         self.mesh_linear_reconstruct = nn.ModuleDict({
             name: nn.Linear(d_model, d_model, bias=False) for name in write_names
         })
+        self.lens_exchange_norm = nn.LayerNorm(d_model)
+        self.lens_exchange = nn.Parameter(
+            torch.zeros(levels, len(LENSES), len(LENSES))
+        )
         torch.random.set_rng_state(sidecar_rng)
         self._fiber_summary = None
         self._fiber_mesh = None
@@ -565,7 +569,15 @@ class MeshModel(nn.Module):
         gate = torch.tanh(self.scale_exchange_gate).view(
             *([1] * (fibers.dim() - 2)), len(LENSES), 1
         )
-        return fibers + gate * self.scale_message_norm(exchange)
+        fibers = fibers + gate * self.scale_message_norm(exchange)
+        off_diagonal = 1.0 - torch.eye(
+            len(LENSES), device=fibers.device, dtype=fibers.dtype
+        )
+        lens_exchange = torch.tanh(self.lens_exchange) * off_diagonal
+        lens_message = torch.einsum(
+            "...lid,lij->...ljd", self.lens_exchange_norm(fibers), lens_exchange
+        )
+        return fibers + lens_message
 
     def context(self, query_coords, neighbor_coords, manifold_positions=None, neighbor_values=None):
         spatial, temporal = self.mesh.raw(query_coords)
