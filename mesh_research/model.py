@@ -75,7 +75,9 @@ READER_PARAMETERS = (
     "species_graph.",
     "poll_head.", "pollinator_reader_query", "pollinator_reader.",
     "pollinator_reader_norm.", "pollinator_reader_output_norm.",
-    "pollinator_reader_gate", "lfmc_head.", "myco_head.", "flower_head.",
+    "pollinator_reader_gate", "pollinator_reader_cell_key",
+    "pollinator_reader_level_key", "pollinator_reader_lens_key",
+    "lfmc_head.", "myco_head.", "flower_head.",
     "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
     "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
     "task_mesh_reader_output_norm.",
@@ -307,6 +309,11 @@ class MeshModel(nn.Module):
             )
             self.pollinator_reader_output_norm = nn.LayerNorm(d_model)
             self.pollinator_reader_gate = nn.Parameter(torch.tensor(0.05))
+            self.pollinator_reader_cell_key = nn.Parameter(torch.zeros(2, d_model))
+            self.pollinator_reader_level_key = nn.Parameter(torch.zeros(levels, d_model))
+            self.pollinator_reader_lens_key = nn.Parameter(
+                torch.zeros(len(LENSES), d_model)
+            )
             torch.random.set_rng_state(interaction_rng)
         self.lfmc_head = nn.Linear(d_model, 1) if hasattr(source, "lfmc") else None
         self.myco_head = nn.Linear(d_model, 5) if hasattr(source, "myco") else None
@@ -703,17 +710,40 @@ class MeshModel(nn.Module):
         pooled = self._pool(latent, "pollinator")
         if self.pollinator_reader is None or self._fiber_mesh is None:
             return pooled
+        cells = self._fiber_mesh.shape[1]
         fibers = self._fiber_mesh.flatten(1, 3)
         if isolated:
             pooled = pooled.detach()
             fibers = fibers.detach()
         keys = self.pollinator_reader_norm(fibers)
-        score = torch.einsum("bkd,bd->bk", keys, pooled) / math.sqrt(self.d_model)
-        selected = score.topk(min(16, score.shape[-1]), dim=-1).indices
-        selected = keys.gather(
-            1, selected[..., None].expand(-1, -1, self.d_model)
+        cell_key = torch.cat((
+            self.pollinator_reader_cell_key[:1],
+            self.pollinator_reader_cell_key[1:].expand(cells - 1, -1),
+        ))
+        route_keys = (
+            keys.reshape(-1, cells, self.levels, len(LENSES), self.d_model)
+            + cell_key.view(1, cells, 1, 1, self.d_model)
+            + self.pollinator_reader_level_key.view(
+                1, 1, self.levels, 1, self.d_model
+            )
+            + self.pollinator_reader_lens_key.view(
+                1, 1, 1, len(LENSES), self.d_model
+            )
+        ).flatten(1, 3)
+        score = torch.einsum(
+            "bkd,bd->bk", route_keys, pooled
+        ) / math.sqrt(self.d_model)
+        selected_score, selected_index = score.topk(
+            min(16, score.shape[-1]), dim=-1
         )
-        query = self.pollinator_reader_query.unsqueeze(0) + pooled.unsqueeze(1)
+        selected = keys.gather(
+            1, selected_index[..., None].expand(-1, -1, self.d_model)
+        )
+        routed = torch.einsum(
+            "bk,bkd->bd", selected_score.softmax(-1), selected
+        )
+        query = self.pollinator_reader_query.unsqueeze(0) \
+                + pooled.unsqueeze(1) + routed.unsqueeze(1)
         read = self.pollinator_reader(query, selected, selected, need_weights=False)[0].mean(1)
         return pooled + torch.tanh(self.pollinator_reader_gate) \
                         * self.pollinator_reader_output_norm(read)
