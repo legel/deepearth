@@ -776,6 +776,7 @@ class MeshModel(nn.Module):
         mesh_terms = []
         pollinator_target = None
         pollinator_valid = None
+        pollinator_structured_term = None
         for variable in self.variables:
             hidden = (~present[variable.name]) & observed[variable.name]
             if not hidden.any():
@@ -805,7 +806,8 @@ class MeshModel(nn.Module):
             mesh_terms.append((mesh_error * hidden).sum() / hidden.sum().clamp_min(1))
 
         if self.poll_head is not None and "_poll_idx" in values:
-            logits = self.poll_head(self._pollinator_pool(latent))
+            pooled = self._pool(latent, "pollinator")
+            logits = self.poll_head(pooled)
             pollinator_target = torch.zeros_like(logits).scatter_add_(
                 1, values["_poll_idx"].clamp_min(0), values["_poll_frq"].float()
             )
@@ -814,6 +816,17 @@ class MeshModel(nn.Module):
             terms.append(
                 0.1 * (error * pollinator_valid).sum()
                 / pollinator_valid.sum().clamp_min(1)
+            )
+            structured = self.poll_head(
+                self._pollinator_pool(latent, isolated=True)
+            )
+            structured_error = -(
+                pollinator_target * F.log_softmax(structured, -1)
+            ).sum(-1)
+            pollinator_structured_term = (
+                (structured_error * pollinator_valid).sum()
+                / pollinator_valid.sum().clamp_min(1)
+                / math.log(self.poll_head.out_features)
             )
         if self.lfmc_head is not None and "_lfmc" in values:
             valid = values["_lfmc_valid"].float()
@@ -834,6 +847,8 @@ class MeshModel(nn.Module):
         loss = torch.stack(terms).mean() \
                + 0.05 * torch.stack(fiber_terms).mean() \
                + 0.05 * torch.stack(mesh_terms).mean()
+        if pollinator_structured_term is not None:
+            loss = loss + 0.1 * pollinator_structured_term
         environment_present = {
             name: observed[name] if name in self.environment_names else torch.zeros_like(observed[name])
             for name in self.names
@@ -903,7 +918,9 @@ class MeshModel(nn.Module):
                 else torch.zeros_like(observed[name])
                 for name in self.names
             }
-            pollinator_latent = self.encode(values, pollinator_present, context)
+            devices = [torch.cuda.current_device()] if loss.is_cuda else []
+            with torch.random.fork_rng(devices=devices), torch.no_grad():
+                pollinator_latent = self.encode(values, pollinator_present, context)
             pollinator_logits = self.poll_head(
                 self._pollinator_pool(pollinator_latent, isolated=True)
             )
