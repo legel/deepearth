@@ -926,7 +926,6 @@ class MeshModel(nn.Module):
                 1, 1, 1, len(LENSES), self.d_model
             )
         ).flatten(1, 3)
-        pooled = pooled.detach()
         score = torch.einsum(
             "bkd,bd->bk", route_keys, pooled
         ) / math.sqrt(self.d_model)
