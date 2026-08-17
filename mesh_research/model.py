@@ -1109,9 +1109,28 @@ class MeshModel(nn.Module):
         devices = [torch.cuda.current_device()] if loss.is_cuda else []
         with torch.random.fork_rng(devices=devices):
             mask = torch.rand(self._refined_species.shape[0], device=loss.device) < 0.15
+            reconstructed = self.species_graph(mask)
             loss = loss + 0.1 * self.species_graph.masked_reconstruction_loss(
-                mask, self._refined_species.detach(), metric="mse"
+                mask, self._refined_species.detach(), metric="mse",
+                reconstructed=reconstructed,
             )
+            reference = self._refined_species.detach()[~mask]
+            reference_family = self.species_family[~mask]
+            prototypes = reference.new_zeros(self.family_count, self.d_model)
+            prototypes.index_add_(0, reference_family, reference)
+            counts = torch.bincount(
+                reference_family, minlength=self.family_count
+            ).to(reference.dtype)
+            prototypes = prototypes / counts[:, None].clamp_min(1.0)
+            logits = F.normalize(reconstructed[mask], dim=-1) \
+                     @ F.normalize(prototypes, dim=-1).t() / 0.1
+            logits = logits.masked_fill((counts == 0).unsqueeze(0), -1e4)
+            target_family = self.species_family[mask]
+            valid = counts[target_family] > 0
+            if valid.any():
+                family_loss = F.cross_entropy(logits[valid], target_family[valid]) \
+                              / math.log(max(self.family_count, 2))
+                loss = loss + 0.03 * family_loss
         neighbor_identity = context["neighbor_values"].get("identity")
         if neighbor_identity is not None:
             query = self.community_metric(self._pool(latent, "community").detach())
