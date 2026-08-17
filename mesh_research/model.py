@@ -84,6 +84,7 @@ READER_PARAMETERS = (
     "lfmc_head.", "myco_head.", "species_myco_head.", "myco_relation_gate",
     "flower_head.",
     "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
+    "mesh_scale_attention_gate.",
     "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
     "task_mesh_reader_output_norm.",
     "mesh_prior_read_gate.", "mesh_prior_information_gate.",
@@ -425,6 +426,10 @@ class MeshModel(nn.Module):
             name: nn.Parameter(torch.tensor(0.05))
             for name in self.mesh_read_names
         })
+        self.mesh_scale_attention_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(()))
+            for name in self.mesh_read_names
+        })
         task_reader_rng = torch.random.get_rng_state()
         self.task_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         torch.random.set_rng_state(task_reader_rng)
@@ -752,6 +757,21 @@ class MeshModel(nn.Module):
         pooled = pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
             scale_read
         )
+        selected_keys = scale_keys.gather(
+            1, scale_index[..., None].expand(-1, -1, self.d_model)
+        )
+        selected_fibers = scale_fibers.gather(
+            1, scale_index[..., None].expand(-1, -1, self.d_model)
+        )
+        scale_query = task_query + self.task_mesh_reader_output_norm(task_read)
+        scale_attention = self.task_mesh_reader(
+            scale_query.unsqueeze(1),
+            self.task_mesh_reader_norm(selected_keys),
+            self.task_mesh_reader_norm(selected_fibers),
+            need_weights=False,
+        )[0].squeeze(1)
+        pooled = pooled + torch.tanh(self.mesh_scale_attention_gate[name]) \
+                 * self.mesh_scale_task_norm(scale_attention)
         prior_mesh = self._fiber_prior_mesh.detach()
         prior_fibers = prior_mesh.flatten(1, 3)
         prior_keys = (
