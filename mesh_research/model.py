@@ -87,7 +87,7 @@ READER_PARAMETERS = (
     "mesh_scale_attention_gate.",
     "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
     "task_mesh_reader_output_norm.", "scale_mesh_reader.",
-    "scale_mesh_reader_mix.",
+    "scale_mesh_reader_mix.", "scale_mesh_reader_router.",
     "mesh_prior_read_gate.", "mesh_prior_information_gate.",
     "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
     "mesh_condition_gate.", "mesh_condition_norm.",
@@ -441,6 +441,13 @@ class MeshModel(nn.Module):
             name: nn.Parameter(torch.zeros(()))
             for name in self.mesh_read_names
         })
+        router_rng = torch.random.get_rng_state()
+        self.scale_mesh_reader_router = nn.Sequential(
+            nn.LayerNorm(4 * d_model), nn.Linear(4 * d_model, 1)
+        )
+        nn.init.zeros_(self.scale_mesh_reader_router[-1].weight)
+        nn.init.zeros_(self.scale_mesh_reader_router[-1].bias)
+        torch.random.set_rng_state(router_rng)
         self.task_mesh_reader_gate = nn.ParameterDict({
             name: nn.Parameter(torch.zeros(()))
             for name in self.mesh_read_names
@@ -787,7 +794,16 @@ class MeshModel(nn.Module):
             self.task_mesh_reader_norm(selected_fibers),
             need_weights=False,
         )[0].squeeze(1)
-        reader_mix = torch.sigmoid(self.scale_mesh_reader_mix[name])
+        reader_features = torch.cat((
+            task_query,
+            shared_scale_attention,
+            dedicated_scale_attention,
+            (shared_scale_attention - dedicated_scale_attention).abs(),
+        ), -1)
+        reader_mix = torch.sigmoid(
+            self.scale_mesh_reader_mix[name]
+            + self.scale_mesh_reader_router(reader_features).squeeze(-1)
+        ).unsqueeze(-1)
         scale_attention = torch.lerp(
             shared_scale_attention, dedicated_scale_attention, reader_mix
         )
