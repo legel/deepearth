@@ -87,6 +87,7 @@ READER_PARAMETERS = (
     "mesh_scale_attention_gate.",
     "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
     "task_mesh_reader_output_norm.", "scale_mesh_reader.",
+    "scale_mesh_reader_mix.",
     "mesh_prior_read_gate.", "mesh_prior_information_gate.",
     "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
     "mesh_condition_gate.", "mesh_condition_norm.",
@@ -436,6 +437,10 @@ class MeshModel(nn.Module):
         scale_reader_rng = torch.random.get_rng_state()
         self.scale_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         torch.random.set_rng_state(scale_reader_rng)
+        self.scale_mesh_reader_mix = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(()))
+            for name in self.mesh_read_names
+        })
         self.task_mesh_reader_gate = nn.ParameterDict({
             name: nn.Parameter(torch.zeros(()))
             for name in self.mesh_read_names
@@ -770,12 +775,22 @@ class MeshModel(nn.Module):
             1, attention_index[..., None].expand(-1, -1, self.d_model)
         )
         scale_query = task_query + self.task_mesh_reader_output_norm(task_read)
-        scale_attention = self.scale_mesh_reader(
+        shared_scale_attention = self.task_mesh_reader(
             scale_query.unsqueeze(1),
             self.task_mesh_reader_norm(selected_keys),
             self.task_mesh_reader_norm(selected_fibers),
             need_weights=False,
         )[0].squeeze(1)
+        dedicated_scale_attention = self.scale_mesh_reader(
+            scale_query.unsqueeze(1),
+            self.task_mesh_reader_norm(selected_keys),
+            self.task_mesh_reader_norm(selected_fibers),
+            need_weights=False,
+        )[0].squeeze(1)
+        reader_mix = torch.sigmoid(self.scale_mesh_reader_mix[name])
+        scale_attention = torch.lerp(
+            shared_scale_attention, dedicated_scale_attention, reader_mix
+        )
         pooled = pooled + torch.tanh(self.mesh_scale_attention_gate[name]) \
                  * self.mesh_scale_task_norm(scale_attention)
         prior_mesh = self._fiber_prior_mesh.detach()
