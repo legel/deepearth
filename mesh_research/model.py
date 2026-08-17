@@ -760,11 +760,14 @@ class MeshModel(nn.Module):
         pooled = pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
             scale_read
         )
+        _, attention_index = scale_score.topk(
+            min(4, scale_score.shape[-1]), dim=-1
+        )
         selected_keys = scale_keys.gather(
-            1, scale_index[..., None].expand(-1, -1, self.d_model)
+            1, attention_index[..., None].expand(-1, -1, self.d_model)
         )
         selected_fibers = scale_fibers.gather(
-            1, scale_index[..., None].expand(-1, -1, self.d_model)
+            1, attention_index[..., None].expand(-1, -1, self.d_model)
         )
         scale_query = task_query + self.task_mesh_reader_output_norm(task_read)
         scale_attention = self.scale_mesh_reader(
