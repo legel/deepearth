@@ -438,7 +438,9 @@ class MeshModel(nn.Module):
         self.scale_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         torch.random.set_rng_state(scale_reader_rng)
         self.scale_mesh_reader_mix = nn.ParameterDict({
-            name: nn.Parameter(torch.zeros(()))
+            name: nn.Parameter(torch.tensor(
+                -2.0 if name == self.species_variable else 0.0
+            ))
             for name in self.mesh_read_names
         })
         router_rng = torch.random.get_rng_state()
