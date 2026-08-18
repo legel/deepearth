@@ -92,6 +92,7 @@ READER_PARAMETERS = (
     "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
     "mesh_condition_gate.", "mesh_condition_norm.",
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
+    "species_niche_key",
 )
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
@@ -276,6 +277,9 @@ class MeshModel(nn.Module):
                               top_k=min(128, source.n_classes), species_text=source.species_text)
         self.species_graph = SpeciesGraph(**graph_args)
         self._refined_species = None
+        self.species_niche_key = nn.Parameter(
+            torch.zeros(source.n_classes, d_model)
+        )
         self.register_buffer("species_family", source.class_group)
         self.family_count = len(source.group_names)
         self.environment_names = tuple(
@@ -883,6 +887,11 @@ class MeshModel(nn.Module):
             return pooled @ self._refined_species.t()
         return self.decoders[name](pooled)
 
+    def _niche_species_logits(self, pooled: torch.Tensor) -> torch.Tensor:
+        key = self._refined_species.detach().float() \
+              + self.species_niche_key.float()
+        return pooled.float() @ key.t()
+
     def _hierarchical_family_read(self, species_logits: torch.Tensor) -> torch.Tensor:
         """Read the strongest species inside the mesh posterior's strongest family."""
         logits = species_logits.float()
@@ -992,6 +1001,15 @@ class MeshModel(nn.Module):
             if name in present:
                 present[name] = observed.get(name, torch.ones_like(present[name]))
         latent = self.encode(values, present, context)
+        environment_species = None
+        if tuple(given) == self.environment_names \
+                and self.species_variable in targets:
+            pooled = self._pool(latent, self.species_variable)
+            environment_species = self._niche_species_logits(pooled) \
+                                  + self._identity_detail_logits(pooled)
+            environment_species = self._hierarchical_family_read(
+                environment_species
+            )
         pollinator_species = None
         if self.poll_head is not None and "pollinator" in targets \
                 and self.species_variable not in given:
@@ -1022,10 +1040,11 @@ class MeshModel(nn.Module):
                 pooled = self._pool(latent, "flower")
                 out[name] = torch.sigmoid(self.flower_head(pooled).squeeze(-1))
             else:
-                prediction = self.decode(latent, name)
-                if name == self.species_variable and (
-                    not given or tuple(given) == self.environment_names
-                ):
+                prediction = environment_species \
+                    if name == self.species_variable \
+                    and environment_species is not None \
+                    else self.decode(latent, name)
+                if name == self.species_variable and not given:
                     prediction = self._hierarchical_family_read(prediction)
                 out[name] = prediction
         return out
@@ -1131,20 +1150,26 @@ class MeshModel(nn.Module):
         environment_pool = self._pool(environment_latent, self.species_variable)
         family_logits = environment_pool.float() \
                         @ self._refined_species.detach().float().t()
+        target_species = values[self.species_variable].long()
+        family_valid = observed[self.species_variable]
+        niche_logits = self._niche_species_logits(environment_pool.detach())
+        species_error = F.cross_entropy(
+            niche_logits, target_species, reduction="none"
+        ) / math.log(max(self._refined_species.shape[0], 2))
+        loss = loss + 0.1 * (species_error * family_valid).sum() \
+                      / family_valid.sum().clamp_min(1)
         probability = family_logits.softmax(-1)
         family_probability = probability.new_zeros(batch, self.family_count)
         family_probability.scatter_add_(1, self.species_family.expand(batch, -1), probability)
-        target_family = self.species_family[values[self.species_variable].long()]
+        target_family = self.species_family[target_species]
         family_error = -family_probability.gather(
             1, target_family[:, None]
         ).squeeze(1).clamp_min(1e-8).log()
-        family_valid = observed[self.species_variable]
         family_term = (family_error * family_valid).sum() / family_valid.sum().clamp_min(1) \
                       / math.log(max(self.family_count, 2))
         loss = loss + 0.1 * family_term
         if getattr(self, "reader_phase", False):
             relation_logits = self._identity_detail_logits(environment_pool)
-            target_species = values[self.species_variable].long()
             calibrated_logits = family_logits.detach() + relation_logits
             target_family = self.species_family[target_species]
             same_family = self.species_family.unsqueeze(0) == target_family.unsqueeze(1)
