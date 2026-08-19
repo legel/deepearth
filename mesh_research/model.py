@@ -13,6 +13,7 @@ import math
 import os
 import sys
 import time
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Sequence
@@ -1694,3 +1695,23 @@ def train(
     torch.save(model.state_dict(), checkpoint)
     print(f"checkpoint: {checkpoint}", flush=True)
     return model, source
+
+
+def reader_screen(cache: str, device: str = "cuda", batch: int = 512):
+    """Cheap, non-promotional capability screen for a frozen-mesh reader."""
+    from deepearth.autoresearch.main.harness import evaluate as canonical
+
+    model, source = train(cache, device)
+    model.eval()
+    raw = canonical._evaluate_benchmarks_once(model, source, device, batch=batch)
+    harmonic = canonical.net_score(raw)
+    arithmetic = canonical.arithmetic_net(raw)
+    print(canonical.format_benchmarks(raw), flush=True)
+    print("READER SCREEN RECEIPT: " + json.dumps({
+        "protocol": f"{canonical.BENCHMARK_PROTOCOL}+reader-screen-v1",
+        "batch": batch,
+        "scores": raw,
+        "harmonic": harmonic,
+        "arithmetic": arithmetic,
+    }, sort_keys=True), flush=True)
+    return model, source, raw
