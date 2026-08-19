@@ -778,9 +778,21 @@ class MeshModel(nn.Module):
         pooled = pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
             scale_read
         )
-        _, attention_index = scale_score.topk(
-            min(4, scale_score.shape[-1]), dim=-1
+        score_grid = scale_score.reshape(
+            -1, cells, self.levels, len(LENSES)
         )
+        lens = torch.arange(len(LENSES), device=scale_score.device)
+        query_level = score_grid[:, 0].argmax(1)
+        query_index = query_level * len(LENSES) + lens
+        neighbor_position = score_grid[:, 1:].reshape(
+            scale_score.shape[0], -1, len(LENSES)
+        ).argmax(1)
+        neighbor_cell = neighbor_position.div(self.levels, rounding_mode="floor") + 1
+        neighbor_level = neighbor_position.remainder(self.levels)
+        neighbor_index = (
+            neighbor_cell * self.levels + neighbor_level
+        ) * len(LENSES) + lens
+        attention_index = torch.cat((query_index, neighbor_index), -1)
         selected_keys = scale_keys.gather(
             1, attention_index[..., None].expand(-1, -1, self.d_model)
         )
