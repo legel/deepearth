@@ -62,6 +62,8 @@ class Experiment:
     weight_decay: float = 1e-3
     reader_steps: int = int(os.environ.get("MESH_READER_STEPS", "100"))
     graph_learning_rate_scale: float = float(os.environ.get("MESH_GRAPH_LR_SCALE", "0.02"))
+    init_checkpoint: str = os.environ.get("MESH_INIT_CHECKPOINT", "")
+    reader_only: bool = os.environ.get("MESH_READER_ONLY", "0") == "1"
 
 
 EXPERIMENT = Experiment()
@@ -1529,14 +1531,26 @@ def train(
     checkpoint_steps: frozenset[int] = frozenset(),
     checkpoint_dir: Path | None = None,
 ):
-    if not 0 <= design.reader_steps < design.steps:
+    if not design.reader_only and not 0 <= design.reader_steps < design.steps:
         raise ValueError("reader_steps must fall between 0 and total steps")
+    if design.reader_only and not design.init_checkpoint:
+        raise ValueError("MESH_READER_ONLY requires MESH_INIT_CHECKPOINT")
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(design.seed)
     if device.startswith("cuda"):
         torch.cuda.manual_seed_all(design.seed)
     source, variable_specs, always_dims = load_data(cache, device)
     model = build_model(source, variable_specs, always_dims, device, design)
+    if design.init_checkpoint:
+        checkpoint = Path(design.init_checkpoint).expanduser()
+        state = torch.load(checkpoint, map_location=device, weights_only=True)
+        incompatible = model.load_state_dict(state, strict=False)
+        print(
+            f"initialized from {checkpoint}  "
+            f"missing={len(incompatible.missing_keys)}  "
+            f"unexpected={len(incompatible.unexpected_keys)}",
+            flush=True,
+        )
     if checkpoint_steps:
         if checkpoint_dir is None:
             raise ValueError("checkpoint_dir is required when checkpoint_steps are requested")
@@ -1576,17 +1590,21 @@ def train(
         )
     detail_optimizer = None
     detail_scheduler = None
-    reader_start = design.steps - design.reader_steps
+    reader_budget = design.steps if design.reader_only else design.reader_steps
+    reader_start = 0 if design.reader_only else design.steps - design.reader_steps
     model.train()
     started = time.time()
     for step in range(design.steps):
         if design.reader_steps and step == reader_start:
             model.reader_phase = True
             for name, parameter in model.named_parameters():
-                parameter.requires_grad_(name.startswith(READER_PARAMETERS))
+                is_reader = name.startswith(READER_PARAMETERS)
+                if design.reader_only and name.startswith("species_graph."):
+                    is_reader = False
+                parameter.requires_grad_(is_reader)
             graph_parameters = [
                 parameter for name, parameter in model.named_parameters()
-                if name.startswith("species_graph.")
+                if name.startswith("species_graph.") and parameter.requires_grad
             ]
             graph_ids = {id(parameter) for parameter in graph_parameters}
             detail_parameters = [
@@ -1618,7 +1636,7 @@ def train(
                 fused=device.startswith("cuda"),
             )
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, design.reader_steps
+                optimizer, reader_budget
             )
             detail_optimizer = torch.optim.AdamW(
                 detail_parameters,
@@ -1627,10 +1645,10 @@ def train(
                 fused=device.startswith("cuda"),
             )
             detail_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                detail_optimizer, design.reader_steps
+                detail_optimizer, reader_budget
             )
             print(
-                f"reader phase {design.reader_steps} steps  "
+                f"reader phase {reader_budget} steps  "
                 f"parameters {sum(parameter.numel() for parameter in reader_parameters):,}  "
                 f"graph parameters {sum(parameter.numel() for parameter in graph_parameters):,}  "
                 f"detail parameters {sum(parameter.numel() for parameter in detail_parameters):,}  "
