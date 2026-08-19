@@ -167,7 +167,7 @@ class California:
             v = getattr(self, k, None)
             blob[k] = v.detach().cpu() if torch.is_tensor(v) else v
         blob["extra"] = {n: (t.cpu(), h.cpu(), d) for n, (t, h, d) in self.extra.items()}
-        for k in ("poll_idx", "poll_frq", "poll_valid", "n_pollinators"):               # pollinator distribution (restored generically on load)
+        for k in ("poll_idx", "poll_frq", "poll_valid", "n_pollinators", "pollinator_text"):   # pollinator distribution + BioCLIP prior (pollinator_text gates the R27 pollinator_graph — dropping it silently disabled the graph on every prepared-cache run)
             if hasattr(self, k):
                 v = getattr(self, k); blob[k] = v.cpu() if torch.is_tensor(v) else v
         blob["tree"] = self.tree

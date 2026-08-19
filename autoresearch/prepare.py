@@ -32,8 +32,6 @@ DATA_ZIPS = ["deepcal_data.zip"]                                 # the pre-proce
 REQUIRED = ["gbif_vocab.npz", "ca_subtree.dated.nwk", "derived/species_index.csv", "derived/patristic_ref.npy"]
 
 
-def _has_required(d: Path) -> bool:
-    return d.exists() and all((d / r).exists() for r in REQUIRED)
 
 
 def resolve_data_dir(cache_dir_cfg: str) -> Path:

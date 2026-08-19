@@ -66,9 +66,6 @@ class AdaptiveRange:
         z_norm = 2.0 * (z - z_min) / (z_max - z_min) - 1.0; t_norm = (time - t_min) / (t_max - t_min)
         return x_norm, y_norm, z_norm, t_norm
 
-    def get_coordinate_coverage(self) -> Dict[str, float]:
-        gr = 6400000.0 * 2
-        return {'x': (self.x_max - self.x_min) / gr, 'y': (self.y_max - self.y_min) / gr, 'z': (self.z_max - self.z_min) / gr}
 
     def to_dict(self) -> dict: return asdict(self)
     @classmethod
@@ -98,22 +95,6 @@ class GeoAdaptiveRange:
                    buffer_fraction=0.0, mode='global')
 
     @classmethod
-    def from_coordinates(cls, coords: torch.Tensor, buffer_fraction: float = 0.25,
-                        clip_to_globe: bool = True) -> 'GeoAdaptiveRange':
-        """Fit range to data extent with buffer for generalization."""
-        c = coords.view(-1, 4); lat, lon, elev, time = c[:, 0], c[:, 1], c[:, 2], c[:, 3]
-        lat_dmin, lat_dmax = lat.min().item(), lat.max().item(); lon_dmin, lon_dmax = lon.min().item(), lon.max().item()
-        elev_dmin, elev_dmax = elev.min().item(), elev.max().item(); time_dmin, time_dmax = time.min().item(), time.max().item()
-        lat_buf = max(lat_dmax - lat_dmin, 1.0) * buffer_fraction; lon_buf = max(lon_dmax - lon_dmin, 1.0) * buffer_fraction
-        elev_buf = max(elev_dmax - elev_dmin, 100.0) * buffer_fraction; time_buf = max(time_dmax - time_dmin, 0.01) * buffer_fraction
-        lat_min, lat_max = lat_dmin - lat_buf, lat_dmax + lat_buf; lon_min, lon_max = lon_dmin - lon_buf, lon_dmax + lon_buf
-        elev_min, elev_max = elev_dmin - elev_buf, elev_dmax + elev_buf
-        time_min, time_max = max(0.0, time_dmin - time_buf), min(1.0, time_dmax + time_buf)
-        if clip_to_globe:
-            lat_min, lat_max = max(-90.0, lat_min), min(90.0, lat_max); lon_min, lon_max = max(-180.0, lon_min), min(180.0, lon_max)
-        return cls(lat_min=lat_min, lat_max=lat_max, lon_min=lon_min, lon_max=lon_max,
-                   elev_min=elev_min, elev_max=elev_max, time_min=time_min, time_max=time_max,
-                   buffer_fraction=buffer_fraction, mode='adaptive')
 
     @classmethod
     def balanced_regional(cls, coords: torch.Tensor, target_lat_coverage: float = 0.35,
@@ -134,14 +115,6 @@ class GeoAdaptiveRange:
                    buffer_fraction=0.0, mode='balanced', time_output_scale=target_time_coverage)
 
     @classmethod
-    def cosine_corrected(cls, coords: torch.Tensor, target_lat_coverage: float = 0.35,
-                         target_lon_coverage: float = 0.20, target_elev_coverage: float = 0.15) -> 'GeoAdaptiveRange':
-        """balanced_regional plus per-sample cos(lat) longitude correction for physical accuracy."""
-        import math
-        gr = cls.balanced_regional(coords, target_lat_coverage, target_lon_coverage, target_elev_coverage)
-        mid_lat = (gr.lat_min + gr.lat_max) / 2.0
-        gr.use_cos_correction = True; gr.cos_correction_factor = math.cos(math.radians(mid_lat)); gr.mode = 'cosine_corrected'
-        return gr
 
     def get_effective_range(self, dim: str) -> Tuple[float, float]:
         ranges = {'lat': (self.lat_min, self.lat_max), 'lon': (self.lon_min, self.lon_max),
@@ -182,16 +155,7 @@ class GeoAdaptiveRange:
             warnings.warn("Coordinates outside fitted range:\n  " + "\n  ".join(msgs) +
                           "\nConsider re-fitting range with fit_range() including all data.", UserWarning)
 
-    def get_resolution_in_units(self, grid_resolution: int) -> Dict[str, float]:
-        """Physical resolution per grid cell at a given resolution."""
-        lat_deg = (self.lat_max - self.lat_min) / grid_resolution
-        return {'lat_deg': lat_deg, 'lat_km': lat_deg * 111.0,
-                'lon_deg': (self.lon_max - self.lon_min) / grid_resolution,
-                'elev_m': (self.elev_max - self.elev_min) / grid_resolution}
 
-    def get_coordinate_coverage(self) -> Dict[str, float]:
-        return {'lat': (self.lat_max - self.lat_min) / 180.0, 'lon': (self.lon_max - self.lon_min) / 360.0,
-                'elev': (self.elev_max - self.elev_min) / 9500.0}
 
     def to_dict(self) -> dict: return asdict(self)
     @classmethod
