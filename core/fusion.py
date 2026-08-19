@@ -225,6 +225,7 @@ class DeepEarth(nn.Module):
         family_env_expert: bool = False,
         family_env_vars: Optional[Sequence[str]] = None,
         family_env_residual: bool = False,
+        ecological_family_map: bool = False,
         orthogonal_blank_hidden: int = 0,
         task_occupancy_experts: bool = False,
         task_niche_prior: bool = False,
@@ -264,6 +265,10 @@ class DeepEarth(nn.Module):
         pollinator_distance: Optional[torch.Tensor] = None,
         pollinator_text: Optional[torch.Tensor] = None,
         pollinator_top_k: Optional[int] = None,
+        poll_species_idx: Optional[torch.Tensor] = None,
+        poll_species_frq: Optional[torch.Tensor] = None,
+        poll_species_mixture: float = 0.0,
+        poll_species_all_masked: bool = False,
         phylo_head_routing: bool = False,
         species_trait_recon: bool = False,
     ) -> None:
@@ -361,6 +366,7 @@ class DeepEarth(nn.Module):
         self.register_buffer("species_family", species_family)
         self.family_env_vars = tuple(family_env_vars or ())
         self.family_env_residual = family_env_residual
+        self.ecological_family_map = ecological_family_map
         self.family_count = int(species_family.max()) + 1 if species_family is not None else 0
         if species_variable is not None and species_embedding is not None:
             if species_operator == "tree":
@@ -473,6 +479,16 @@ class DeepEarth(nn.Module):
         self.pollinator_graph = SpeciesGraph(n_pollinators, d_model, pollinator_distance, top_k=pollinator_top_k,
                                              species_text=pollinator_text) \
             if (n_pollinators > 0 and pollinator_distance is not None) else None
+        self.poll_species_mixture = float(poll_species_mixture)
+        self.poll_species_all_masked = bool(poll_species_all_masked)
+        if self.poll_species_mixture > 0:
+            if poll_species_idx is None or poll_species_frq is None:
+                raise ValueError("poll_species_mixture requires the species-pollinator table")
+            self.register_buffer("poll_species_idx", poll_species_idx.long(), persistent=False)
+            self.register_buffer("poll_species_frq", poll_species_frq.float(), persistent=False)
+        else:
+            self.poll_species_idx = None
+            self.poll_species_frq = None
         # Phylo-conserved trait heads (B34/B42/B26) on a DETACHED latent. With phylo_head_routing the head reads the
         # pooled latent CONCATENATED with the expected phylo-refined species embedding, so the species graph's
         # conserved signal (relatives' trait values) reaches the head -- and its graph-gain (B57/B58/B62) is real.
@@ -1032,6 +1048,18 @@ class DeepEarth(nn.Module):
         correction = F.log_softmax(family_logits.float(), -1) - mass.clamp_min(1e-8).log()
         return species_logits + correction[:, self.species_family].to(species_logits.dtype)
 
+    def _hierarchical_family_map(self, species_logits: torch.Tensor) -> torch.Tensor:
+        """Promote the best species from the family with the most posterior mass."""
+        logits = species_logits.float()
+        family = self.species_family.expand(len(logits), -1)
+        family_mass = logits.new_zeros(len(logits), self.family_count)
+        family_mass.scatter_add_(1, family, logits.softmax(-1))
+        winning = family_mass.argmax(-1)
+        eligible = self.species_family[None] == winning[:, None]
+        selected = logits.masked_fill(~eligible, -torch.inf).argmax(-1)
+        top = logits.amax(-1).to(species_logits.dtype)
+        return species_logits.scatter(1, selected[:, None], top[:, None] + 1e-4)
+
     def family_alphaearth_loss(self, values: Dict[str, torch.Tensor],
                                observed: Dict[str, torch.Tensor]) -> torch.Tensor:
         if self.family_ae_head is None:
@@ -1255,6 +1283,16 @@ class DeepEarth(nn.Module):
         rp = getattr(self, "_refined_pollinators", None)
         return rp if rp is not None else self.poll_emb
 
+    def _pollinator_species_posterior(self, species_logits: torch.Tensor) -> torch.Tensor:
+        k = min(64, species_logits.shape[-1])
+        weight, species = F.softmax(species_logits.float(), -1).topk(k, -1)
+        idx = self.poll_species_idx[species].clamp(0, self.poll_emb.shape[0] - 1)
+        mass = weight[:, :, None] * self.poll_species_frq[species]
+        mixture = species_logits.new_zeros(species_logits.shape[0], self.poll_emb.shape[0], dtype=torch.float32)
+        mixture.scatter_add_(1, idx.flatten(1), mass.flatten(1))
+        mixture = mixture / mixture.sum(-1, keepdim=True).clamp_min(1e-8)
+        return mixture.clamp_min(1e-8).log()
+
     @torch.no_grad()
     def infer(self, values: Dict[str, torch.Tensor], given: Sequence[str], targets: Sequence[str],
               context: dict, observed: Optional[Dict[str, torch.Tensor]] = None) -> Dict[str, torch.Tensor]:
@@ -1295,6 +1333,19 @@ class DeepEarth(nn.Module):
         blank_species = self._blank_species(z) if self.blank_adapters and not given else None
         if blank_species is not None and family_logits is not None:
             family_logits = family_logits + blank_species[2]
+        poll_species = None
+        if self.poll_species_idx is not None and (
+                not given or universal or (self.poll_species_all_masked and self.species_variable not in given)):
+            species_logits = blank_species[1] if blank_species is not None else self.decode(z, self.species_variable)
+            if occupancy is not None:
+                species_logits = species_logits + self.occupancy_experts["identity"](occupancy) @ self._refined_species.t()
+            if niche is not None:
+                species_logits = species_logits + self.niche_experts["identity"](niche) @ self._refined_species.t()
+            if family_logits is not None:
+                factored = self._factor_family_mass(species_logits, family_logits)
+                species_logits = torch.where(family_valid[:, None], factored, species_logits) \
+                    if family_valid is not None else factored
+            poll_species = self._pollinator_species_posterior(species_logits)
         out = {}
         for t in targets:
             if t == "community":                                                 # env-conditioned community distribution
@@ -1318,6 +1369,11 @@ class DeepEarth(nn.Module):
                     out[t] = out[t] + self.occupancy_experts["pollinator"](occupancy) @ self._pollinator_basis().t()
                 if niche is not None and "pollinator" in self.niche_experts:
                     out[t] = out[t] + self.niche_experts["pollinator"](niche) @ self._pollinator_basis().t()
+                if poll_species is not None:
+                    alpha = self.poll_species_mixture
+                    out[t] = poll_species if alpha >= 1.0 else torch.logaddexp(
+                        F.log_softmax(out[t].float(), -1) + math.log1p(-alpha),
+                        poll_species + math.log(alpha))
             elif t == "lfmc":                                                    # species -> live fuel moisture (B34)
                 out[t] = self.lfmc_head(self._head_in(z, self.species_variable)).squeeze(-1).exp()
             elif t == "myco":                                                    # species -> mycorrhizal type logits (B42)
@@ -1335,4 +1391,6 @@ class DeepEarth(nn.Module):
                     factored = self._factor_family_mass(out[t], family_logits)
                     out[t] = torch.where(family_valid[:, None], factored, out[t]) \
                         if family_valid is not None else factored
+                if t == self.species_variable and self.ecological_family_map and (not given or universal):
+                    out[t] = self._hierarchical_family_map(out[t])
         return out

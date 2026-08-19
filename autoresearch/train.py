@@ -89,6 +89,7 @@ def train_and_evaluate(config, device):
                    family_env_vars=m.get("family_env_vars", (
                        "climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro")),
                    family_env_residual=m.get("family_env_residual", False),
+                   ecological_family_map=m.get("ecological_family_map", False),
                    orthogonal_blank_hidden=m.get("orthogonal_blank_hidden", 0),
                    task_occupancy_experts=m.get("task_occupancy_experts", False),
                    task_niche_prior=m.get("task_niche_prior", False), **niche_stats) if sg else {}
@@ -137,6 +138,10 @@ def train_and_evaluate(config, device):
                       smooth_geo_per_scale=m.get("smooth_geo_per_scale", 32),
                       alphaearth_geo=m.get("alphaearth_geo", False),
                       n_pollinators=getattr(source, "n_pollinators", 0) if m.get("poll_weight", 0.0) > 0 else 0, **poll_kw,
+                      poll_species_idx=(source.poll_idx if m.get("poll_species_mixture", 0.0) > 0 else None),
+                      poll_species_frq=(source.poll_frq if m.get("poll_species_mixture", 0.0) > 0 else None),
+                      poll_species_mixture=m.get("poll_species_mixture", 0.0),
+                      poll_species_all_masked=m.get("poll_species_all_masked", False),
                       phylo_head_routing=m.get("phylo_head_routing", False),
                       species_trait_recon=m.get("species_trait_recon", False),
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
@@ -267,7 +272,7 @@ def train_and_evaluate(config, device):
     # Optional profiling cutoff. Comparable research runs omit it and complete the fixed step budget.
     time_budget = t.get("time_budget_s")
     t_budget_start = None
-    steps_done = steps                                   # actual steps run (the budget usually stops us well short of `steps`)
+    steps_done = steps                                   # actual steps run; comparable runs complete all configured steps
     # [Ensue rule 18] weighted sampling: down-weight occurrence-only (vision-masked) obs so full-modality obs keep
     # champion-level exposure while densify obs still add community/spatial coverage. densify_weight=1.0 -> uniform.
     _dw = float(m.get("densify_weight", 1.0)); _sw = None
@@ -452,7 +457,8 @@ def main():
     ap.add_argument("--device", default="cuda"); ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--cache_dir", default=None)
     ap.add_argument("--eval_ckpt", default=None, help="score an existing checkpoint (skip training)")
-    ap.add_argument("--time_budget", type=float, default=None, help="stop training after N seconds (experiment budget)")
+    ap.add_argument("--time_budget", type=float, default=None,
+                    help="profiling-only cutoff in seconds; results are not promotion-comparable")
     ap.add_argument("--tag", default=None, help="a label for this run (recorded, e.g. the experiment id)")
     ap.add_argument("--save", action="store_true", help="save the checkpoint (off by default; on only for champion runs)")
     a = ap.parse_args()
