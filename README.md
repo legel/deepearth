@@ -11,6 +11,9 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 ## Exciting News:
 
+- _July 16, 2026_  
+  **NASA award.** [NASA's Commercial Satellite Data Acquisition](https://science.nasa.gov/earth-science/csda/) has awarded DeepEarth investigators at UC Berkeley 5 million km**2 of [Planet](https://www.planet.com/) data, approximately $200,000 in value.
+
 - _March 7, 2026_  
   **Paper on arXiv.** [_"Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding"_](https://arxiv.org/pdf/2603.07039), following peer-review through the [2026 World Modeling Workshop](https://world-model-mila.github.io/), is now on arXiv. See [_paper_](https://arxiv.org/abs/2603.07039).
 
