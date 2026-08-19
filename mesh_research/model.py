@@ -509,6 +509,8 @@ class MeshModel(nn.Module):
         self._fiber_mesh = None
         self._fiber_prior_mesh = None
         self._latest_fiber_prior = None
+        self._pool_cache = {}
+        self._mesh_reader_cache = None
 
     def _species(self, mask: torch.Tensor | None = None) -> torch.Tensor:
         refined = self.species_graph._seed() if self._ablate_species else self.species_graph(mask)
@@ -683,6 +685,8 @@ class MeshModel(nn.Module):
             latent.shape[0], len(LENSES), self.fiber_latents, self.d_model
         )
         self._fiber_summary = fiber_summary
+        self._pool_cache = {}
+        self._mesh_reader_cache = None
         normalized = self.fiber_fuse_norm(fiber_summary.flatten(1, 2))
         latent = latent + torch.tanh(self.fiber_fusion_gate) * self.fiber_fuse(
             latent.detach(), normalized, normalized, need_weights=False
@@ -703,13 +707,46 @@ class MeshModel(nn.Module):
         return latent
 
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
+        if name in self._pool_cache:
+            return self._pool_cache[name]
         base_name = name if name in self.names else self.species_variable
         query = self.decode_query[self.names.index(base_name)]
         weight = torch.softmax((latent @ query) / math.sqrt(self.d_model), -1)
         pooled = torch.einsum("bl,bld->bd", weight, latent)
         if self._fiber_summary is None or name not in self.mesh_read_query:
+            self._pool_cache[name] = pooled
             return pooled
-        fibers = self._fiber_summary.flatten(1, 2)
+        if self._mesh_reader_cache is None:
+            fibers = self._fiber_summary.flatten(1, 2)
+            cells = self._fiber_mesh.shape[1]
+            cell_key = torch.cat((
+                self.mesh_cell_key[:1],
+                self.mesh_cell_key[1:].expand(cells - 1, -1),
+            ))
+            scale_fibers = self._fiber_mesh.flatten(1, 3)
+            scale_keys = (
+                self._fiber_mesh
+                + cell_key.view(1, cells, 1, 1, self.d_model)
+                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+            ).flatten(1, 3)
+            prior_mesh = self._fiber_prior_mesh.detach()
+            prior_fibers = prior_mesh.flatten(1, 3)
+            prior_keys = (
+                prior_mesh
+                + cell_key.view(1, cells, 1, 1, self.d_model)
+                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+            ).flatten(1, 3)
+            self._mesh_reader_cache = {
+                "fibers": fibers,
+                "task_tokens": self.task_mesh_reader_norm(fibers),
+                "scale_fibers": scale_fibers,
+                "scale_keys": scale_keys,
+                "prior_fibers": prior_fibers,
+                "prior_keys": prior_keys,
+            }
+        fibers = self._mesh_reader_cache["fibers"]
         mesh_query = self.mesh_read_query[name]
         if self._fiber_mesh is not None and name in self.mesh_condition_gate:
             mesh_query = mesh_query.unsqueeze(0).expand(fibers.shape[0], -1)
@@ -731,7 +768,7 @@ class MeshModel(nn.Module):
         task_query = mesh_query if mesh_query.dim() == 2 else mesh_query.unsqueeze(0).expand(
             fibers.shape[0], -1
         )
-        task_tokens = self.task_mesh_reader_norm(fibers)
+        task_tokens = self._mesh_reader_cache["task_tokens"]
         task_read = self.task_mesh_reader(
             task_query.unsqueeze(1), task_tokens, task_tokens, need_weights=False
         )[0].squeeze(1)
@@ -746,18 +783,11 @@ class MeshModel(nn.Module):
         )
         pooled = pooled + torch.tanh(self.mesh_read_gate[name]) * self.mesh_task_norm(mesh_read)
         if self._fiber_mesh is None:
+            self._pool_cache[name] = pooled
             return pooled
         cells = self._fiber_mesh.shape[1]
-        cell_key = torch.cat((
-            self.mesh_cell_key[:1],
-            self.mesh_cell_key[1:].expand(cells - 1, -1),
-        ))
-        scale_keys = self._fiber_mesh \
-            + cell_key.view(1, cells, 1, 1, self.d_model) \
-            + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model) \
-            + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-        scale_fibers = self._fiber_mesh.flatten(1, 3)
-        scale_keys = scale_keys.flatten(1, 3)
+        scale_fibers = self._mesh_reader_cache["scale_fibers"]
+        scale_keys = self._mesh_reader_cache["scale_keys"]
         if mesh_query.dim() == 2:
             scale_score = torch.einsum(
                 "bkd,bd->bk", scale_keys, mesh_query
@@ -827,14 +857,8 @@ class MeshModel(nn.Module):
         )
         pooled = pooled + torch.tanh(self.mesh_scale_attention_gate[name]) \
                  * self.mesh_scale_task_norm(scale_attention)
-        prior_mesh = self._fiber_prior_mesh.detach()
-        prior_fibers = prior_mesh.flatten(1, 3)
-        prior_keys = (
-            prior_mesh
-            + cell_key.view(1, cells, 1, 1, self.d_model)
-            + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
-            + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-        ).flatten(1, 3)
+        prior_fibers = self._mesh_reader_cache["prior_fibers"]
+        prior_keys = self._mesh_reader_cache["prior_keys"]
         if mesh_query.dim() == 2:
             prior_score = torch.einsum("bkd,bd->bk", prior_keys, mesh_query)
         else:
@@ -849,8 +873,206 @@ class MeshModel(nn.Module):
         confidence = torch.sigmoid(self.mesh_prior_information_gate(torch.cat((
             pooled, prior_read, pooled * prior_read, (pooled - prior_read).abs(),
         ), -1)))
-        return pooled + torch.tanh(self.mesh_prior_read_gate[name]) * confidence \
-                        * self.mesh_prior_task_norm(prior_read)
+        pooled = pooled + torch.tanh(self.mesh_prior_read_gate[name]) * confidence \
+                          * self.mesh_prior_task_norm(prior_read)
+        self._pool_cache[name] = pooled
+        return pooled
+
+    def _prime_pool_cache(self, latent: torch.Tensor) -> None:
+        names = tuple(
+            name for name in self.mesh_read_names
+            if name not in self.mesh_condition_gate and name != "community"
+        )
+        if not names or self._fiber_summary is None or self._fiber_mesh is None:
+            return
+        batch = latent.shape[0]
+        tasks = len(names)
+        queries = torch.stack([
+            self.decode_query[self.names.index(
+                name if name in self.names else self.species_variable
+            )]
+            for name in names
+        ])
+        weight = torch.einsum("bld,td->btl", latent, queries) \
+                 .div(math.sqrt(self.d_model)).softmax(-1)
+        pooled = torch.einsum("btl,bld->btd", weight, latent)
+
+        if self._mesh_reader_cache is None:
+            fibers = self._fiber_summary.flatten(1, 2)
+            cells = self._fiber_mesh.shape[1]
+            cell_key = torch.cat((
+                self.mesh_cell_key[:1],
+                self.mesh_cell_key[1:].expand(cells - 1, -1),
+            ))
+            scale_fibers = self._fiber_mesh.flatten(1, 3)
+            scale_keys = (
+                self._fiber_mesh
+                + cell_key.view(1, cells, 1, 1, self.d_model)
+                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+            ).flatten(1, 3)
+            prior_mesh = self._fiber_prior_mesh.detach()
+            prior_fibers = prior_mesh.flatten(1, 3)
+            prior_keys = (
+                prior_mesh
+                + cell_key.view(1, cells, 1, 1, self.d_model)
+                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+            ).flatten(1, 3)
+            self._mesh_reader_cache = {
+                "fibers": fibers,
+                "task_tokens": self.task_mesh_reader_norm(fibers),
+                "scale_fibers": scale_fibers,
+                "scale_keys": scale_keys,
+                "prior_fibers": prior_fibers,
+                "prior_keys": prior_keys,
+            }
+        fibers = self._mesh_reader_cache["fibers"]
+        mesh_queries = torch.stack([self.mesh_read_query[name] for name in names])
+        task_query = mesh_queries.unsqueeze(0).expand(batch, -1, -1)
+        task_tokens = self._mesh_reader_cache["task_tokens"]
+        task_tokens = task_tokens.unsqueeze(1).expand(-1, tasks, -1, -1) \
+            .reshape(batch * tasks, task_tokens.shape[1], self.d_model)
+        task_read = self.task_mesh_reader(
+            task_query.reshape(batch * tasks, 1, self.d_model),
+            task_tokens,
+            task_tokens,
+            need_weights=False,
+        )[0].reshape(batch, tasks, self.d_model)
+        task_gates = torch.stack([
+            self.task_mesh_reader_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(task_gates) \
+                 * self.task_mesh_reader_output_norm(task_read)
+
+        fiber_score = torch.einsum(
+            "bfd,td->btf", fibers, mesh_queries
+        ) / math.sqrt(self.d_model)
+        selected_score, selected = fiber_score.topk(
+            min(4, fiber_score.shape[-1]), dim=-1
+        )
+        selected_fibers = fibers.unsqueeze(1).expand(-1, tasks, -1, -1).gather(
+            2, selected[..., None].expand(-1, -1, -1, self.d_model)
+        )
+        mesh_read = torch.einsum(
+            "btk,btkd->btd", selected_score.softmax(-1), selected_fibers
+        )
+        read_gates = torch.stack([
+            self.mesh_read_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(read_gates) * self.mesh_task_norm(mesh_read)
+
+        scale_fibers = self._mesh_reader_cache["scale_fibers"]
+        scale_keys = self._mesh_reader_cache["scale_keys"]
+        scale_score = torch.einsum(
+            "bkd,td->btk", scale_keys, mesh_queries
+        ) / math.sqrt(self.d_model)
+        dense_weight = scale_score.softmax(-1)
+        selected_score, scale_index = scale_score.topk(
+            min(8, scale_score.shape[-1]), dim=-1
+        )
+        sparse_weight = torch.zeros_like(scale_score).scatter(
+            -1, scale_index, selected_score.softmax(-1)
+        )
+        route = sparse_weight.detach() + dense_weight - dense_weight.detach()
+        scale_read = torch.einsum(
+            "btk,bkd->btd", route, scale_fibers
+        )
+        scale_gates = torch.stack([
+            self.mesh_scale_read_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(scale_gates) \
+                 * self.mesh_scale_task_norm(scale_read)
+
+        cells = self._fiber_mesh.shape[1]
+        score_grid = scale_score.reshape(
+            batch, tasks, cells, self.levels, len(LENSES)
+        )
+        lens = torch.arange(len(LENSES), device=scale_score.device)
+        query_level = score_grid[:, :, 0].argmax(2)
+        query_index = query_level * len(LENSES) + lens
+        neighbor_position = score_grid[:, :, 1:].reshape(
+            batch, tasks, -1, len(LENSES)
+        ).argmax(2)
+        neighbor_cell = neighbor_position.div(
+            self.levels, rounding_mode="floor"
+        ) + 1
+        neighbor_level = neighbor_position.remainder(self.levels)
+        neighbor_index = (
+            neighbor_cell * self.levels + neighbor_level
+        ) * len(LENSES) + lens
+        attention_index = torch.cat((query_index, neighbor_index), -1)
+        expanded_scale_keys = scale_keys.unsqueeze(1).expand(-1, tasks, -1, -1)
+        expanded_scale_fibers = scale_fibers.unsqueeze(1).expand(-1, tasks, -1, -1)
+        selected_keys = expanded_scale_keys.gather(
+            2, attention_index[..., None].expand(-1, -1, -1, self.d_model)
+        )
+        selected_fibers = expanded_scale_fibers.gather(
+            2, attention_index[..., None].expand(-1, -1, -1, self.d_model)
+        )
+        scale_query = task_query + self.task_mesh_reader_output_norm(task_read)
+        selected_keys = self.task_mesh_reader_norm(selected_keys).reshape(
+            batch * tasks, -1, self.d_model
+        )
+        selected_fibers = self.task_mesh_reader_norm(selected_fibers).reshape(
+            batch * tasks, -1, self.d_model
+        )
+        flat_query = scale_query.reshape(batch * tasks, 1, self.d_model)
+        shared_attention = self.task_mesh_reader(
+            flat_query, selected_keys, selected_fibers, need_weights=False
+        )[0].reshape(batch, tasks, self.d_model)
+        dedicated_attention = self.scale_mesh_reader(
+            flat_query, selected_keys, selected_fibers, need_weights=False
+        )[0].reshape(batch, tasks, self.d_model)
+        reader_features = torch.cat((
+            task_query,
+            shared_attention,
+            dedicated_attention,
+            (shared_attention - dedicated_attention).abs(),
+        ), -1)
+        reader_bias = torch.stack([
+            self.scale_mesh_reader_mix[name] for name in names
+        ]).view(1, tasks)
+        reader_mix = torch.sigmoid(
+            reader_bias + self.scale_mesh_reader_router(reader_features).squeeze(-1)
+        ).unsqueeze(-1)
+        scale_attention = torch.lerp(
+            shared_attention, dedicated_attention, reader_mix
+        )
+        attention_gates = torch.stack([
+            self.mesh_scale_attention_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(attention_gates) \
+                 * self.mesh_scale_task_norm(scale_attention)
+
+        prior_fibers = self._mesh_reader_cache["prior_fibers"]
+        prior_keys = self._mesh_reader_cache["prior_keys"]
+        prior_score = torch.einsum(
+            "bkd,td->btk", prior_keys, mesh_queries
+        ) / math.sqrt(self.d_model)
+        selected_score, selected = prior_score.topk(
+            min(16, prior_score.shape[-1]), dim=-1
+        )
+        selected_prior = prior_fibers.unsqueeze(1).expand(
+            -1, tasks, -1, -1
+        ).gather(2, selected[..., None].expand(-1, -1, -1, self.d_model))
+        prior_read = torch.einsum(
+            "btk,btkd->btd", selected_score.softmax(-1), selected_prior
+        )
+        confidence = torch.sigmoid(self.mesh_prior_information_gate(torch.cat((
+            pooled,
+            prior_read,
+            pooled * prior_read,
+            (pooled - prior_read).abs(),
+        ), -1)))
+        prior_gates = torch.stack([
+            self.mesh_prior_read_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(prior_gates) * confidence \
+                 * self.mesh_prior_task_norm(prior_read)
+        self._pool_cache.update({
+            name: pooled[:, index] for index, name in enumerate(names)
+        })
 
     def _pollinator_pool(self, latent: torch.Tensor, *, isolated: bool = False) -> torch.Tensor:
         pooled = self._pool(latent, "pollinator")
@@ -1069,6 +1291,7 @@ class MeshModel(nn.Module):
         for name in present:
             present[name] &= ~blank
         latent = self.encode(values, present, context)
+        self._prime_pool_cache(latent)
         terms = []
         fiber_terms = []
         mesh_terms = []
