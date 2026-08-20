@@ -341,7 +341,6 @@ class MeshModel(nn.Module):
                 nn.LayerNorm(d_model), nn.Linear(d_model, 2 * d_model), nn.GELU(), nn.Linear(2 * d_model, width)
             )
 
-        self.community_head = nn.Linear(d_model, source.n_classes)
         self.poll_head = nn.Linear(d_model, source.n_pollinators) if hasattr(source, "n_pollinators") else None
         self.pollinator_reader = None
         if self.poll_head is not None:
