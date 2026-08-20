@@ -97,6 +97,9 @@ READER_PARAMETERS = (
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
     "species_niche_key", "species_niche_adapter.",
 )
+SPECIES_LENS_PARAMETERS = (
+    "species_lens_reader.", "species_lens_reader_norm."
+)
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
 
@@ -293,6 +296,14 @@ class MeshModel(nn.Module):
         nn.init.zeros_(self.species_niche_adapter[-1].weight)
         nn.init.zeros_(self.species_niche_adapter[-1].bias)
         torch.random.set_rng_state(niche_rng)
+        lens_rng = torch.random.get_rng_state()
+        self.species_lens_reader_norm = nn.LayerNorm(d_model)
+        self.species_lens_reader = nn.MultiheadAttention(
+            d_model, 4, batch_first=True
+        )
+        nn.init.zeros_(self.species_lens_reader.out_proj.weight)
+        nn.init.zeros_(self.species_lens_reader.out_proj.bias)
+        torch.random.set_rng_state(lens_rng)
         self.register_buffer("species_family", source.class_group)
         self.family_count = len(source.group_names)
         self.environment_names = tuple(
@@ -1134,7 +1145,34 @@ class MeshModel(nn.Module):
             return pooled @ self._refined_species.t()
         return self.decoders[name](pooled)
 
-    def _niche_species_logits(self, pooled: torch.Tensor) -> torch.Tensor:
+    def _species_lens_residual(
+        self, pooled: torch.Tensor, key: torch.Tensor
+    ) -> torch.Tensor:
+        query = self.species_lens_reader_norm(
+            pooled.detach().float()
+        ).unsqueeze(1)
+        lenses = self.species_lens_reader_norm(
+            self._fiber_mesh[:, 0].mean(1).detach().float()
+        )
+        read = self.species_lens_reader(
+            query, lenses, lenses, need_weights=False
+        )[0].squeeze(1)
+        residual = read @ key.detach().t()
+        family_sum = residual.new_zeros(residual.shape[0], self.family_count)
+        family_sum.scatter_add_(
+            1, self.species_family.expand(residual.shape[0], -1), residual
+        )
+        family_size = torch.bincount(
+            self.species_family, minlength=self.family_count
+        ).clamp_min(1).to(residual.dtype)
+        family_mean = family_sum / family_size
+        return residual - family_mean.gather(
+            1, self.species_family.expand(residual.shape[0], -1)
+        )
+
+    def _niche_species_logits(
+        self, pooled: torch.Tensor, include_lens: bool = True
+    ) -> torch.Tensor:
         key = self._refined_species.detach().float() \
               + self.species_niche_key.float()
         pooled = pooled.float()
@@ -1151,7 +1189,10 @@ class MeshModel(nn.Module):
         residual = residual - family_mean.gather(
             1, self.species_family.expand(residual.shape[0], -1)
         )
-        return base + residual
+        logits = base + residual
+        if include_lens:
+            logits = logits + self._species_lens_residual(pooled, key)
+        return logits
 
     def _hierarchical_family_read(self, species_logits: torch.Tensor) -> torch.Tensor:
         """Read the strongest species inside the mesh posterior's strongest family."""
@@ -1414,7 +1455,9 @@ class MeshModel(nn.Module):
                         @ self._refined_species.detach().float().t()
         target_species = values[self.species_variable].long()
         family_valid = observed[self.species_variable]
-        niche_logits = self._niche_species_logits(environment_pool.detach())
+        niche_logits = self._niche_species_logits(
+            environment_pool.detach(), include_lens=False
+        )
         species_error = F.cross_entropy(
             niche_logits, target_species, reduction="none"
         ) / math.log(max(self._refined_species.shape[0], 2))
@@ -1428,6 +1471,25 @@ class MeshModel(nn.Module):
             rank_error = soft_rank.clamp_min(1.0).log() \
                          / math.log(max(niche_logits.shape[-1], 2))
             loss = loss + 0.25 * (rank_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
+            key = self._refined_species.detach().float() \
+                  + self.species_niche_key.detach().float()
+            lens_logits = niche_logits.detach() \
+                          + self._species_lens_residual(
+                              environment_pool.detach(), key
+                          )
+            lens_error = F.cross_entropy(
+                lens_logits, target_species, reduction="none"
+            ) / math.log(max(lens_logits.shape[-1], 2))
+            loss = loss + 0.1 * (lens_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
+            lens_target = lens_logits.gather(1, target_species[:, None])
+            lens_rank = 0.5 + torch.sigmoid(
+                (lens_logits - lens_target) / 0.25
+            ).sum(-1)
+            lens_rank = lens_rank.clamp_min(1.0).log() \
+                        / math.log(max(lens_logits.shape[-1], 2))
+            loss = loss + 0.25 * (lens_rank * family_valid).sum() \
                           / family_valid.sum().clamp_min(1)
         probability = family_logits.softmax(-1)
         family_probability = probability.new_zeros(batch, self.family_count)
@@ -1662,9 +1724,15 @@ def train(
         id(parameter) for name, parameter in model.named_parameters()
         if name.startswith(RELATION_PARAMETERS)
     }
+    lens_parameters = [
+        parameter for name, parameter in model.named_parameters()
+        if name.startswith(SPECIES_LENS_PARAMETERS)
+    ]
+    lens_ids = {id(parameter) for parameter in lens_parameters}
     base_parameters = [
         parameter for parameter in model.parameters()
         if id(parameter) not in relation_ids
+        and id(parameter) not in lens_ids
     ]
     optimizer = torch.optim.AdamW(
         base_parameters,
@@ -1687,6 +1755,8 @@ def train(
         )
     detail_optimizer = None
     detail_scheduler = None
+    lens_optimizer = None
+    lens_scheduler = None
     reader_budget = design.steps if design.reader_only else design.reader_steps
     reader_start = 0 if design.reader_only else design.steps - design.reader_steps
     model.train()
@@ -1695,7 +1765,8 @@ def train(
         if design.reader_steps and step == reader_start:
             model.reader_phase = True
             for name, parameter in model.named_parameters():
-                is_reader = name.startswith(READER_PARAMETERS)
+                is_reader = name.startswith(READER_PARAMETERS) \
+                            or name.startswith(SPECIES_LENS_PARAMETERS)
                 if design.reader_only and name.startswith("species_graph."):
                     is_reader = False
                 parameter.requires_grad_(is_reader)
@@ -1715,12 +1786,14 @@ def train(
                 and id(parameter) not in graph_ids
                 and id(parameter) not in detail_ids
                 and id(parameter) not in relation_ids
+                and id(parameter) not in lens_ids
             ]
             base_parameters = [
                 parameter for parameter in model.parameters()
                 if parameter.requires_grad
                 and id(parameter) not in detail_ids
                 and id(parameter) not in relation_ids
+                and id(parameter) not in lens_ids
             ]
             optimizer = torch.optim.AdamW(
                 (
@@ -1744,11 +1817,21 @@ def train(
             detail_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 detail_optimizer, reader_budget
             )
+            lens_optimizer = torch.optim.AdamW(
+                lens_parameters,
+                lr=design.learning_rate * 0.2,
+                weight_decay=design.weight_decay,
+                fused=device.startswith("cuda"),
+            )
+            lens_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                lens_optimizer, reader_budget
+            )
             print(
                 f"reader phase {reader_budget} steps  "
                 f"parameters {sum(parameter.numel() for parameter in reader_parameters):,}  "
                 f"graph parameters {sum(parameter.numel() for parameter in graph_parameters):,}  "
                 f"detail parameters {sum(parameter.numel() for parameter in detail_parameters):,}  "
+                f"lens parameters {sum(parameter.numel() for parameter in lens_parameters):,}  "
                 f"graph lr scale {design.graph_learning_rate_scale:g}",
                 flush=True,
             )
@@ -1770,6 +1853,8 @@ def train(
             relation_optimizer.zero_grad(set_to_none=True)
         if detail_optimizer is not None:
             detail_optimizer.zero_grad(set_to_none=True)
+        if lens_optimizer is not None:
+            lens_optimizer.zero_grad(set_to_none=True)
         gradient_cosine = None
         if structured_loss is None:
             loss.backward()
@@ -1788,6 +1873,8 @@ def train(
                 relation_optimizer.zero_grad(set_to_none=True)
             if detail_optimizer is not None:
                 detail_optimizer.zero_grad(set_to_none=True)
+            if lens_optimizer is not None:
+                lens_optimizer.zero_grad(set_to_none=True)
             structured_loss.backward()
             shared = [
                 parameter for parameter in trainable
@@ -1822,6 +1909,8 @@ def train(
             torch.nn.utils.clip_grad_norm_(relation_parameters, 5.0)
         if detail_optimizer is not None:
             torch.nn.utils.clip_grad_norm_(detail_parameters, 5.0)
+        if lens_optimizer is not None:
+            torch.nn.utils.clip_grad_norm_(lens_parameters, 5.0)
         optimizer.step()
         scheduler.step()
         if relation_optimizer is not None:
@@ -1830,6 +1919,9 @@ def train(
         if detail_optimizer is not None:
             detail_optimizer.step()
             detail_scheduler.step()
+        if lens_optimizer is not None:
+            lens_optimizer.step()
+            lens_scheduler.step()
         for module in model.modules():
             if hasattr(module, "clamp_per_level_scale"):
                 module.clamp_per_level_scale()
