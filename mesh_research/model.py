@@ -1396,6 +1396,15 @@ class MeshModel(nn.Module):
         ) / math.log(max(self._refined_species.shape[0], 2))
         loss = loss + 0.1 * (species_error * family_valid).sum() \
                       / family_valid.sum().clamp_min(1)
+        if getattr(self, "reader_phase", False):
+            target_score = niche_logits.gather(1, target_species[:, None])
+            soft_rank = 0.5 + torch.sigmoid(
+                (niche_logits - target_score) / 0.25
+            ).sum(-1)
+            rank_error = soft_rank.clamp_min(1.0).log() \
+                         / math.log(max(niche_logits.shape[-1], 2))
+            loss = loss + 0.25 * (rank_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
         probability = family_logits.softmax(-1)
         family_probability = probability.new_zeros(batch, self.family_count)
         family_probability.scatter_add_(1, self.species_family.expand(batch, -1), probability)
@@ -1508,6 +1517,68 @@ class MeshModel(nn.Module):
             ).sum(-1) / math.log(self.poll_head.out_features)
             loss = loss + 0.25 * (interaction * pollinator_valid).sum() \
                    / pollinator_valid.sum().clamp_min(1)
+        if getattr(self, "reader_phase", False):
+            photo_row = torch.arange(batch, device=loss.device).remainder(2).bool()
+            structured_present = {
+                name: observed[name] & photo_row
+                if name in {"vision_dino", "vision_bio"}
+                else torch.zeros_like(observed[name])
+                for name in self.names
+            }
+            structured_latent = self.encode(
+                values, structured_present, context, detach_species=True
+            )
+            identity_pool = self._pool(structured_latent, self.species_variable)
+            identity_logits = self._decode_pooled(
+                identity_pool, self.species_variable
+            ) + self._identity_detail_logits(identity_pool)
+            identity_error = F.cross_entropy(
+                identity_logits, target_species, reduction="none"
+            ) / math.log(max(identity_logits.shape[-1], 2))
+            structured_terms = [
+                (identity_error * family_valid).sum()
+                / family_valid.sum().clamp_min(1)
+            ]
+            probability = identity_logits.softmax(-1)
+            family_probability = probability.new_zeros(batch, self.family_count)
+            family_probability.scatter_add_(
+                1, self.species_family.expand(batch, -1), probability
+            )
+            family_error = -family_probability.gather(
+                1, self.species_family[target_species, None]
+            ).squeeze(1).clamp_min(1e-8).log() / math.log(max(self.family_count, 2))
+            structured_terms.append(
+                (family_error * family_valid).sum()
+                / family_valid.sum().clamp_min(1)
+            )
+            trait_names = {
+                "seasonality", "water", "soil_drainage", "form",
+                "plant_type", "growth_rate", "sun", "ease_of_care",
+            }
+            for variable in self.variables:
+                if variable.name not in trait_names:
+                    continue
+                valid = observed[variable.name] & photo_row
+                if valid.any():
+                    error = F.cross_entropy(
+                        self.decode(structured_latent, variable.name),
+                        values[variable.name].long(), reduction="none"
+                    ) / math.log(max(variable.num_classes, 2))
+                    structured_terms.append(
+                        (error * valid).sum() / valid.sum().clamp_min(1)
+                    )
+            if pollinator_target is not None:
+                pollinator_logits = self.poll_head(
+                    self._pollinator_pool(structured_latent)
+                )
+                error = -(pollinator_target * F.log_softmax(
+                    pollinator_logits, -1
+                )).sum(-1) / math.log(self.poll_head.out_features)
+                structured_terms.append(
+                    (error * pollinator_valid).sum()
+                    / pollinator_valid.sum().clamp_min(1)
+                )
+            loss = loss + 0.25 * torch.stack(structured_terms).mean()
         return loss
 
 def build_model(source, variable_specs, always_dims, device: str, design: Experiment = EXPERIMENT) -> MeshModel:
