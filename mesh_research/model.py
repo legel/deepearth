@@ -102,6 +102,7 @@ SPECIES_LENS_PARAMETERS = (
 )
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
+CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
 
 
 def signal_lens(name: str, kind: str | None = None) -> str:
@@ -346,6 +347,9 @@ class MeshModel(nn.Module):
         self.poll_head = nn.Linear(d_model, source.n_pollinators) if hasattr(source, "n_pollinators") else None
         self.pollinator_reader = None
         if self.poll_head is not None:
+            self.pollinator_log_temperature = nn.Parameter(
+                torch.zeros(()), requires_grad=False
+            )
             self.register_buffer("poll_species_idx", source.poll_idx.long(), persistent=False)
             self.register_buffer("poll_species_frq", source.poll_frq.float(), persistent=False)
             interaction_rng = torch.random.get_rng_state()
@@ -1140,6 +1144,10 @@ class MeshModel(nn.Module):
         return pooled + torch.tanh(self.pollinator_reader_gate) \
                         * self.pollinator_reader_output_norm(read)
 
+    def _calibrate_pollinator_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        temperature = self.pollinator_log_temperature.clamp(-2.0, 2.0).exp()
+        return logits / temperature
+
     def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
         if name == self.species_variable:
             return pooled @ self._refined_species.t()
@@ -1327,7 +1335,9 @@ class MeshModel(nn.Module):
             elif name == "pollinator":
                 pooled = self._pollinator_pool(latent)
                 prediction = self.poll_head(pooled)
-                if pollinator_species is not None:
+                if pollinator_species is None:
+                    prediction = self._calibrate_pollinator_logits(prediction)
+                else:
                     prediction = torch.logaddexp(
                         F.log_softmax(prediction.float(), -1) + math.log(0.5),
                         pollinator_species + math.log(0.5),
@@ -1366,6 +1376,7 @@ class MeshModel(nn.Module):
         pollinator_target = None
         pollinator_valid = None
         pollinator_structured_term = None
+        pollinator_calibration_term = None
         for variable in self.variables:
             hidden = (~present[variable.name]) & observed[variable.name]
             if not hidden.any():
@@ -1406,6 +1417,14 @@ class MeshModel(nn.Module):
                 0.1 * (error * pollinator_valid).sum()
                 / pollinator_valid.sum().clamp_min(1)
             )
+            if getattr(self, "reader_phase", False):
+                calibrated = self._calibrate_pollinator_logits(logits.detach())
+                calibration_error = -(
+                    pollinator_target * F.log_softmax(calibrated, -1)
+                ).sum(-1)
+                pollinator_calibration_term = (
+                    calibration_error * pollinator_valid
+                ).sum() / pollinator_valid.sum().clamp_min(1)
             structured = self.poll_head(
                 self._pollinator_pool(latent, isolated=True)
             )
@@ -1436,6 +1455,8 @@ class MeshModel(nn.Module):
         loss = torch.stack(terms).mean() \
                + 0.05 * torch.stack(fiber_terms).mean() \
                + 0.05 * torch.stack(mesh_terms).mean()
+        if pollinator_calibration_term is not None:
+            loss = loss + pollinator_calibration_term
         if self.species_myco_head is not None and self.species_myco_valid.any():
             species_myco = self.species_myco_head(
                 self._refined_species.detach()[self.species_myco_valid]
@@ -1745,10 +1766,16 @@ def train(
         if name.startswith(SPECIES_LENS_PARAMETERS)
     ]
     lens_ids = {id(parameter) for parameter in lens_parameters}
+    calibration_parameters = [
+        parameter for name, parameter in model.named_parameters()
+        if name.startswith(CALIBRATION_PARAMETERS)
+    ]
+    calibration_ids = {id(parameter) for parameter in calibration_parameters}
     base_parameters = [
         parameter for parameter in model.parameters()
         if id(parameter) not in relation_ids
         and id(parameter) not in lens_ids
+        and id(parameter) not in calibration_ids
     ]
     optimizer = torch.optim.AdamW(
         base_parameters,
@@ -1773,6 +1800,8 @@ def train(
     detail_scheduler = None
     lens_optimizer = None
     lens_scheduler = None
+    calibration_optimizer = None
+    calibration_scheduler = None
     reader_budget = design.steps if design.reader_only else design.reader_steps
     reader_start = 0 if design.reader_only else design.steps - design.reader_steps
     model.train()
@@ -1782,7 +1811,8 @@ def train(
             model.reader_phase = True
             for name, parameter in model.named_parameters():
                 is_reader = name.startswith(READER_PARAMETERS) \
-                            or name.startswith(SPECIES_LENS_PARAMETERS)
+                            or name.startswith(SPECIES_LENS_PARAMETERS) \
+                            or name.startswith(CALIBRATION_PARAMETERS)
                 if design.reader_only and name.startswith("species_graph."):
                     is_reader = False
                 parameter.requires_grad_(is_reader)
@@ -1803,6 +1833,7 @@ def train(
                 and id(parameter) not in detail_ids
                 and id(parameter) not in relation_ids
                 and id(parameter) not in lens_ids
+                and id(parameter) not in calibration_ids
             ]
             base_parameters = [
                 parameter for parameter in model.parameters()
@@ -1810,6 +1841,7 @@ def train(
                 and id(parameter) not in detail_ids
                 and id(parameter) not in relation_ids
                 and id(parameter) not in lens_ids
+                and id(parameter) not in calibration_ids
             ]
             optimizer = torch.optim.AdamW(
                 (
@@ -1842,6 +1874,15 @@ def train(
             lens_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 lens_optimizer, reader_budget
             )
+            calibration_optimizer = torch.optim.AdamW(
+                calibration_parameters,
+                lr=design.learning_rate * 10.0,
+                weight_decay=0.0,
+                fused=device.startswith("cuda"),
+            )
+            calibration_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                calibration_optimizer, reader_budget
+            )
             print(
                 f"reader phase {reader_budget} steps  "
                 f"parameters {sum(parameter.numel() for parameter in reader_parameters):,}  "
@@ -1871,6 +1912,8 @@ def train(
             detail_optimizer.zero_grad(set_to_none=True)
         if lens_optimizer is not None:
             lens_optimizer.zero_grad(set_to_none=True)
+        if calibration_optimizer is not None:
+            calibration_optimizer.zero_grad(set_to_none=True)
         gradient_cosine = None
         if structured_loss is None:
             loss.backward()
@@ -1891,6 +1934,8 @@ def train(
                 detail_optimizer.zero_grad(set_to_none=True)
             if lens_optimizer is not None:
                 lens_optimizer.zero_grad(set_to_none=True)
+            if calibration_optimizer is not None:
+                calibration_optimizer.zero_grad(set_to_none=True)
             structured_loss.backward()
             shared = [
                 parameter for parameter in trainable
@@ -1927,6 +1972,8 @@ def train(
             torch.nn.utils.clip_grad_norm_(detail_parameters, 5.0)
         if lens_optimizer is not None:
             torch.nn.utils.clip_grad_norm_(lens_parameters, 5.0)
+        if calibration_optimizer is not None:
+            torch.nn.utils.clip_grad_norm_(calibration_parameters, 5.0)
         optimizer.step()
         scheduler.step()
         if relation_optimizer is not None:
@@ -1938,6 +1985,9 @@ def train(
         if lens_optimizer is not None:
             lens_optimizer.step()
             lens_scheduler.step()
+        if calibration_optimizer is not None:
+            calibration_optimizer.step()
+            calibration_scheduler.step()
         for module in model.modules():
             if hasattr(module, "clamp_per_level_scale"):
                 module.clamp_per_level_scale()
