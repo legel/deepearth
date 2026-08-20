@@ -1408,7 +1408,6 @@ class MeshModel(nn.Module):
         pollinator_valid = None
         pollinator_structured_term = None
         pollinator_calibration_term = None
-        lfmc_calibration_term = None
         for variable in self.variables:
             hidden = (~present[variable.name]) & observed[variable.name]
             if not hidden.any():
@@ -1475,23 +1474,6 @@ class MeshModel(nn.Module):
             error = (self.lfmc_head(lfmc_pool).squeeze(-1)
                      - target_lfmc).square()
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
-            if getattr(self, "reader_phase", False):
-                calibrated_lfmc = self.lfmc_head(
-                    lfmc_pool.detach()
-                ).squeeze(-1).detach() + self._lfmc_lens_residual(
-                    lfmc_pool.detach()
-                )
-                lfmc_valid = valid.bool()
-                if int(lfmc_valid.sum()) > 2:
-                    prediction = calibrated_lfmc[lfmc_valid]
-                    target = target_lfmc[lfmc_valid]
-                    prediction = prediction - prediction.mean()
-                    target = target - target.mean()
-                    correlation = (prediction * target).sum() / (
-                        prediction.square().sum().sqrt()
-                        * target.square().sum().sqrt()
-                    ).clamp_min(1e-8)
-                    lfmc_calibration_term = 1.0 - correlation
         if self.myco_head is not None and "_myco" in values:
             valid = values["_myco_valid"].float()
             error = F.cross_entropy(self._myco_logits(latent),
@@ -1508,8 +1490,6 @@ class MeshModel(nn.Module):
                + 0.05 * torch.stack(mesh_terms).mean()
         if pollinator_calibration_term is not None:
             loss = loss + pollinator_calibration_term
-        if lfmc_calibration_term is not None:
-            loss = loss + lfmc_calibration_term
         if self.species_myco_head is not None and self.species_myco_valid.any():
             species_myco = self.species_myco_head(
                 self._refined_species.detach()[self.species_myco_valid]
@@ -1857,6 +1837,11 @@ def train(
     calibration_scheduler = None
     reader_budget = design.steps if design.reader_only else design.reader_steps
     reader_start = 0 if design.reader_only else design.steps - design.reader_steps
+    lfmc_train_index = None
+    if model.lfmc_head is not None and hasattr(source, "lfmc_valid"):
+        lfmc_mask = source.lfmc_valid[source.cls[source.train_index]]
+        lfmc_train_index = source.train_index[lfmc_mask]
+        print(f"LFMC reader examples {len(lfmc_train_index):,}", flush=True)
     model.train()
     started = time.time()
     for step in range(design.steps):
@@ -1956,6 +1941,43 @@ def train(
             loss, structured_loss = objective
         else:
             loss, structured_loss = objective, None
+        if model.reader_phase and lfmc_train_index is not None \
+                and len(lfmc_train_index) > 2:
+            lfmc_index = lfmc_train_index[torch.randint(
+                len(lfmc_train_index), (design.batch,), device=device
+            )]
+            lfmc_values, lfmc_observed, lfmc_coords, lfmc_neighbors, \
+                lfmc_manifolds, lfmc_neighbor_values = source.batch(lfmc_index)
+            lfmc_context = model.context(
+                lfmc_coords, lfmc_neighbors, lfmc_manifolds,
+                lfmc_neighbor_values
+            )
+            lfmc_present = {
+                name: lfmc_observed[name]
+                if name in model.environment_names
+                else torch.zeros_like(lfmc_observed[name])
+                for name in model.names
+            }
+            lfmc_latent = model.encode(
+                lfmc_values, lfmc_present, lfmc_context, detach_species=True
+            )
+            lfmc_pool = model._pool(lfmc_latent, "lfmc")
+            prediction = model.lfmc_head(
+                lfmc_pool.detach()
+            ).squeeze(-1).detach() + model._lfmc_lens_residual(
+                lfmc_pool.detach()
+            )
+            target = torch.log(lfmc_values["_lfmc"].clamp_min(1.0))
+            valid = lfmc_values["_lfmc_valid"].bool()
+            prediction = prediction[valid]
+            target = target[valid]
+            prediction = prediction - prediction.mean()
+            target = target - target.mean()
+            correlation = (prediction * target).sum() / (
+                prediction.square().sum().sqrt()
+                * target.square().sum().sqrt()
+            ).clamp_min(1e-8)
+            loss = loss + 1.0 - correlation
         total_loss = loss if structured_loss is None else loss + structured_loss
         if not torch.isfinite(total_loss):
             raise FloatingPointError(f"non-finite loss at step {step}")
