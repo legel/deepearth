@@ -100,6 +100,9 @@ READER_PARAMETERS = (
 SPECIES_LENS_PARAMETERS = (
     "species_lens_reader.", "species_lens_reader_norm."
 )
+LFMC_LENS_PARAMETERS = (
+    "lfmc_lens_reader.", "lfmc_lens_reader_norm.", "lfmc_lens_head."
+)
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
 CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
@@ -381,6 +384,16 @@ class MeshModel(nn.Module):
         )
         torch.random.set_rng_state(identity_reader_rng)
         self.lfmc_head = nn.Linear(d_model, 1) if hasattr(source, "lfmc") else None
+        if self.lfmc_head is not None:
+            lfmc_reader_rng = torch.random.get_rng_state()
+            self.lfmc_lens_reader_norm = nn.LayerNorm(d_model)
+            self.lfmc_lens_reader = nn.MultiheadAttention(
+                d_model, n_heads, batch_first=True
+            )
+            self.lfmc_lens_head = nn.Linear(d_model, 1)
+            nn.init.zeros_(self.lfmc_lens_head.weight)
+            nn.init.zeros_(self.lfmc_lens_head.bias)
+            torch.random.set_rng_state(lfmc_reader_rng)
         self.myco_head = nn.Linear(d_model, 5) if hasattr(source, "myco") else None
         self.flower_head = nn.Linear(d_model, 1) if hasattr(source, "flower") else None
         self.species_myco_head = None
@@ -1148,6 +1161,24 @@ class MeshModel(nn.Module):
         temperature = self.pollinator_log_temperature.clamp(-2.0, 2.0).exp()
         return logits / temperature
 
+    def _lfmc_lens_residual(self, pooled: torch.Tensor) -> torch.Tensor:
+        query = self.lfmc_lens_reader_norm(
+            pooled.detach().float()
+        ).unsqueeze(1)
+        lenses = self.lfmc_lens_reader_norm(
+            self._fiber_mesh[:, 0].mean(1).detach().float()
+        )
+        read = self.lfmc_lens_reader(
+            query, lenses, lenses, need_weights=False
+        )[0].squeeze(1)
+        return self.lfmc_lens_head(read).squeeze(-1)
+
+    def _lfmc_log_prediction(self, pooled: torch.Tensor) -> torch.Tensor:
+        prediction = self.lfmc_head(pooled).squeeze(-1)
+        if self._fiber_mesh is not None:
+            prediction = prediction + self._lfmc_lens_residual(pooled)
+        return prediction
+
     def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
         if name == self.species_variable:
             return pooled @ self._refined_species.t()
@@ -1345,7 +1376,7 @@ class MeshModel(nn.Module):
                 out[name] = prediction
             elif name == "lfmc":
                 pooled = self._pool(latent, "lfmc")
-                out[name] = self.lfmc_head(pooled).squeeze(-1).exp()
+                out[name] = self._lfmc_log_prediction(pooled).exp()
             elif name == "myco":
                 out[name] = self._myco_logits(latent)
             elif name == "flower":
@@ -1377,6 +1408,7 @@ class MeshModel(nn.Module):
         pollinator_valid = None
         pollinator_structured_term = None
         pollinator_calibration_term = None
+        lfmc_calibration_term = None
         for variable in self.variables:
             hidden = (~present[variable.name]) & observed[variable.name]
             if not hidden.any():
@@ -1438,9 +1470,20 @@ class MeshModel(nn.Module):
             )
         if self.lfmc_head is not None and "_lfmc" in values:
             valid = values["_lfmc_valid"].float()
-            error = (self.lfmc_head(self._pool(latent, "lfmc")).squeeze(-1)
-                     - torch.log(values["_lfmc"].clamp_min(1.0))).square()
+            lfmc_pool = self._pool(latent, "lfmc")
+            target_lfmc = torch.log(values["_lfmc"].clamp_min(1.0))
+            error = (self.lfmc_head(lfmc_pool).squeeze(-1)
+                     - target_lfmc).square()
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
+            if getattr(self, "reader_phase", False):
+                calibrated_lfmc = self.lfmc_head(
+                    lfmc_pool.detach()
+                ).squeeze(-1).detach() + self._lfmc_lens_residual(
+                    lfmc_pool.detach()
+                )
+                calibrated_error = (calibrated_lfmc - target_lfmc).square()
+                lfmc_calibration_term = (calibrated_error * valid).sum() \
+                                        / valid.sum().clamp_min(1)
         if self.myco_head is not None and "_myco" in values:
             valid = values["_myco_valid"].float()
             error = F.cross_entropy(self._myco_logits(latent),
@@ -1457,6 +1500,8 @@ class MeshModel(nn.Module):
                + 0.05 * torch.stack(mesh_terms).mean()
         if pollinator_calibration_term is not None:
             loss = loss + pollinator_calibration_term
+        if lfmc_calibration_term is not None:
+            loss = loss + lfmc_calibration_term
         if self.species_myco_head is not None and self.species_myco_valid.any():
             species_myco = self.species_myco_head(
                 self._refined_species.detach()[self.species_myco_valid]
@@ -1763,7 +1808,7 @@ def train(
     }
     lens_parameters = [
         parameter for name, parameter in model.named_parameters()
-        if name.startswith(SPECIES_LENS_PARAMETERS)
+        if name.startswith(SPECIES_LENS_PARAMETERS + LFMC_LENS_PARAMETERS)
     ]
     lens_ids = {id(parameter) for parameter in lens_parameters}
     calibration_parameters = [
@@ -1812,6 +1857,7 @@ def train(
             for name, parameter in model.named_parameters():
                 is_reader = name.startswith(READER_PARAMETERS) \
                             or name.startswith(SPECIES_LENS_PARAMETERS) \
+                            or name.startswith(LFMC_LENS_PARAMETERS) \
                             or name.startswith(CALIBRATION_PARAMETERS)
                 if design.reader_only and name.startswith("species_graph."):
                     is_reader = False
