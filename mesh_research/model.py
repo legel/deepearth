@@ -129,6 +129,22 @@ class Projection(nn.Module):
         return self.net(x)
 
 
+class NestedProjection(nn.Module):
+    """Keep the proven field intact while a new field earns influence."""
+
+    def __init__(self, base: nn.Module, residual: nn.Module, base_dim: int, levels: int):
+        super().__init__()
+        self.base = base
+        self.residual = residual
+        self.base_dim = base_dim
+        self.gate = nn.Parameter(torch.full((levels,), -3.0))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        base, residual = x.split((self.base_dim, x.shape[-1] - self.base_dim), -1)
+        gate = torch.sigmoid(self.gate).view(*([1] * (x.dim() - 2)), -1, 1)
+        return self.base(base) + gate * self.residual(residual)
+
+
 class WorldMesh(nn.Module):
     """Compact persistent state addressed at several space-time resolutions."""
 
@@ -158,6 +174,36 @@ class WorldMesh(nn.Module):
         self.spatial_projection = Projection(features, d_model)
         self.temporal_projection = Projection(3 * features, d_model)
 
+        residual_rng = torch.random.get_rng_state()
+        self.spatial_residual = HashEncoder(
+            input_dim=3,
+            num_levels=levels,
+            level_dim=4,
+            base_resolution=16,
+            per_level_scale=1.7,
+            log2_hashmap_size=log2_size,
+        )
+        self.temporal_residual = nn.ModuleList([
+            HashEncoder(
+                input_dim=3,
+                num_levels=levels,
+                level_dim=4,
+                base_resolution=(16, 16, 4),
+                per_level_scale=(1.7, 1.7, 1.5),
+                log2_hashmap_size=log2_size,
+            )
+            for _ in range(3)
+        ])
+        residual_s = Projection(4, d_model)
+        residual_t = Projection(12, d_model)
+        self.spatial_projection = NestedProjection(
+            self.spatial_projection, residual_s, features, levels
+        )
+        self.temporal_projection = NestedProjection(
+            self.temporal_projection, residual_t, 3 * features, levels
+        )
+        torch.random.set_rng_state(residual_rng)
+
     @staticmethod
     def coordinates(coords: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
@@ -169,13 +215,24 @@ class WorldMesh(nn.Module):
         lead = coords.shape[:-1]
         xyz, xyzt = self.coordinates(coords)
         spatial = self.spatial(xyz.contiguous(), size=1.0).reshape(*lead, self.levels, self.features)
+        spatial_residual = self.spatial_residual(
+            xyz.contiguous(), size=1.0
+        ).reshape(*lead, self.levels, 4)
         projections = ((0, 1, 3), (1, 2, 3), (0, 2, 3))
         temporal = torch.cat([
             encoder(xyzt[..., axes].contiguous(), size=1.0).reshape(
                 *lead, self.levels, self.features)
             for encoder, axes in zip(self.temporal, projections)
         ], -1)
-        return spatial, temporal
+        temporal_residual = torch.cat([
+            encoder(xyzt[..., axes].contiguous(), size=1.0).reshape(
+                *lead, self.levels, 4
+            )
+            for encoder, axes in zip(self.temporal_residual, projections)
+        ], -1)
+        return torch.cat((spatial, spatial_residual), -1), torch.cat(
+            (temporal, temporal_residual), -1
+        )
 
 
 class RelativeField(nn.Module):
