@@ -1578,7 +1578,8 @@ class MeshModel(nn.Module):
                     (error * pollinator_valid).sum()
                     / pollinator_valid.sum().clamp_min(1)
                 )
-            loss = loss + 0.25 * torch.stack(structured_terms).mean()
+            structured_loss = 0.25 * torch.stack(structured_terms).mean()
+            return loss, structured_loss
         return loss
 
 def build_model(source, variable_specs, always_dims, device: str, design: Experiment = EXPERIMENT) -> MeshModel:
@@ -1730,15 +1731,68 @@ def train(
         index = source.train_index[torch.randint(len(source.train_index), (design.batch,), device=device)]
         values, observed, coords, neighbors, manifolds, neighbor_values = source.batch(index)
         context = model.context(coords, neighbors, manifolds, neighbor_values)
-        loss = model.reconstruction_loss(values, observed, context, design.hide_probability)
-        if not torch.isfinite(loss):
+        objective = model.reconstruction_loss(
+            values, observed, context, design.hide_probability
+        )
+        if isinstance(objective, tuple):
+            loss, structured_loss = objective
+        else:
+            loss, structured_loss = objective, None
+        total_loss = loss if structured_loss is None else loss + structured_loss
+        if not torch.isfinite(total_loss):
             raise FloatingPointError(f"non-finite loss at step {step}")
         optimizer.zero_grad(set_to_none=True)
         if relation_optimizer is not None:
             relation_optimizer.zero_grad(set_to_none=True)
         if detail_optimizer is not None:
             detail_optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        gradient_cosine = None
+        if structured_loss is None:
+            loss.backward()
+        else:
+            trainable = [
+                parameter for parameter in model.parameters()
+                if parameter.requires_grad
+            ]
+            loss.backward(retain_graph=True)
+            base_grad = {
+                id(parameter): parameter.grad.detach().clone()
+                for parameter in trainable if parameter.grad is not None
+            }
+            optimizer.zero_grad(set_to_none=True)
+            if relation_optimizer is not None:
+                relation_optimizer.zero_grad(set_to_none=True)
+            if detail_optimizer is not None:
+                detail_optimizer.zero_grad(set_to_none=True)
+            structured_loss.backward()
+            shared = [
+                parameter for parameter in trainable
+                if parameter.grad is not None and id(parameter) in base_grad
+            ]
+            dot = sum(
+                (parameter.grad * base_grad[id(parameter)]).sum()
+                for parameter in shared
+            )
+            base_norm = sum(
+                base_grad[id(parameter)].square().sum()
+                for parameter in shared
+            ).clamp_min(1e-12)
+            structured_norm = sum(
+                parameter.grad.square().sum() for parameter in shared
+            ).clamp_min(1e-12)
+            gradient_cosine = float(
+                dot / (base_norm.sqrt() * structured_norm.sqrt())
+            )
+            projection = dot / base_norm if dot < 0 else dot.new_zeros(())
+            for parameter in trainable:
+                base = base_grad.get(id(parameter))
+                auxiliary = parameter.grad
+                if base is None:
+                    continue
+                if auxiliary is None:
+                    parameter.grad = base
+                else:
+                    parameter.grad = base + auxiliary - projection * base
         torch.nn.utils.clip_grad_norm_(base_parameters, 5.0)
         if relation_optimizer is not None:
             torch.nn.utils.clip_grad_norm_(relation_parameters, 5.0)
@@ -1759,7 +1813,13 @@ def train(
         if completed in checkpoint_steps:
             torch.save(model.state_dict(), checkpoint_dir / f"step_{completed:06d}.pt")
         if step % 100 == 0 or step + 1 == design.steps:
-            print(f"step {step:>5}  loss {float(loss):.4f}  elapsed {time.time() - started:.1f}s", flush=True)
+            conflict = "" if gradient_cosine is None \
+                       else f"  gradient_cosine {gradient_cosine:+.3f}"
+            print(
+                f"step {step:>5}  loss {float(total_loss):.4f}{conflict}  "
+                f"elapsed {time.time() - started:.1f}s",
+                flush=True,
+            )
 
     checkpoint = Path(__file__).with_name("checkpoint.pt")
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
