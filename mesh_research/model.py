@@ -1941,7 +1941,8 @@ def train(
             loss, structured_loss = objective
         else:
             loss, structured_loss = objective, None
-        if model.reader_phase and lfmc_train_index is not None \
+        if getattr(model, "reader_phase", False) \
+                and lfmc_train_index is not None \
                 and len(lfmc_train_index) > 2:
             devices = [torch.cuda.current_device()] \
                       if device.startswith("cuda") else []
