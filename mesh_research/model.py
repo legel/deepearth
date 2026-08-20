@@ -1481,9 +1481,17 @@ class MeshModel(nn.Module):
                 ).squeeze(-1).detach() + self._lfmc_lens_residual(
                     lfmc_pool.detach()
                 )
-                calibrated_error = (calibrated_lfmc - target_lfmc).square()
-                lfmc_calibration_term = (calibrated_error * valid).sum() \
-                                        / valid.sum().clamp_min(1)
+                lfmc_valid = valid.bool()
+                if int(lfmc_valid.sum()) > 2:
+                    prediction = calibrated_lfmc[lfmc_valid]
+                    target = target_lfmc[lfmc_valid]
+                    prediction = prediction - prediction.mean()
+                    target = target - target.mean()
+                    correlation = (prediction * target).sum() / (
+                        prediction.square().sum().sqrt()
+                        * target.square().sum().sqrt()
+                    ).clamp_min(1e-8)
+                    lfmc_calibration_term = 1.0 - correlation
         if self.myco_head is not None and "_myco" in values:
             valid = values["_myco_valid"].float()
             error = F.cross_entropy(self._myco_logits(latent),
