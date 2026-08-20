@@ -1137,8 +1137,21 @@ class MeshModel(nn.Module):
     def _niche_species_logits(self, pooled: torch.Tensor) -> torch.Tensor:
         key = self._refined_species.detach().float() \
               + self.species_niche_key.float()
-        pooled = pooled.float() + self.species_niche_adapter(pooled.float())
-        return pooled @ key.t()
+        pooled = pooled.float()
+        base = pooled @ key.t()
+        residual = self.species_niche_adapter(pooled) @ key.t()
+        family_sum = residual.new_zeros(residual.shape[0], self.family_count)
+        family_sum.scatter_add_(
+            1, self.species_family.expand(residual.shape[0], -1), residual
+        )
+        family_size = torch.bincount(
+            self.species_family, minlength=self.family_count
+        ).clamp_min(1).to(residual.dtype)
+        family_mean = family_sum / family_size
+        residual = residual - family_mean.gather(
+            1, self.species_family.expand(residual.shape[0], -1)
+        )
+        return base + residual
 
     def _hierarchical_family_read(self, species_logits: torch.Tensor) -> torch.Tensor:
         """Read the strongest species inside the mesh posterior's strongest family."""
