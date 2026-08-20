@@ -95,7 +95,7 @@ READER_PARAMETERS = (
     "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
     "mesh_condition_gate.", "mesh_condition_norm.",
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
-    "species_niche_key",
+    "species_niche_key", "species_niche_adapter.",
 )
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
@@ -283,6 +283,16 @@ class MeshModel(nn.Module):
         self.species_niche_key = nn.Parameter(
             torch.zeros(source.n_classes, d_model)
         )
+        niche_rng = torch.random.get_rng_state()
+        self.species_niche_adapter = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        nn.init.zeros_(self.species_niche_adapter[-1].weight)
+        nn.init.zeros_(self.species_niche_adapter[-1].bias)
+        torch.random.set_rng_state(niche_rng)
         self.register_buffer("species_family", source.class_group)
         self.family_count = len(source.group_names)
         self.environment_names = tuple(
@@ -1127,7 +1137,8 @@ class MeshModel(nn.Module):
     def _niche_species_logits(self, pooled: torch.Tensor) -> torch.Tensor:
         key = self._refined_species.detach().float() \
               + self.species_niche_key.float()
-        return pooled.float() @ key.t()
+        pooled = pooled.float() + self.species_niche_adapter(pooled.float())
+        return pooled @ key.t()
 
     def _hierarchical_family_read(self, species_logits: torch.Tensor) -> torch.Tensor:
         """Read the strongest species inside the mesh posterior's strongest family."""
