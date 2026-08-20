@@ -1,7 +1,7 @@
-"""DeepEarth core: the multimodal fusion model, its data adapter, and its training + evaluation harness.
+"""DeepEarth's production fusion and world-mesh models.
 
     from deepearth.core.fusion import DeepEarth
+    from deepearth.core.mesh import MeshModel
 
-Kept import-light on purpose: importing this package does not eagerly load the CUDA space-time kernel. Import
-:mod:`deepearth.core.fusion` (or run :mod:`deepearth.core.train`) when you actually need the model.
+Kept import-light so importing this package does not compile the Earth4D CUDA kernel.
 """
