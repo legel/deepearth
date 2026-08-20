@@ -421,15 +421,6 @@ class California:
             d[name] = dim
         return d
 
-    def memory(self, size: int = 4096):
-        """A memory bank for experience replay: anchor observations keyed by their neighborhood's habitat
-        signature (mean neighbor vision), with the anchors' own features. Returns ``(key [M, dim], features)``."""
-        m = min(size, len(self.train))
-        anchors = self.train_index[torch.randint(0, len(self.train_index), (m,), device=self.device)]
-        key = self.dino[self.neighbors[anchors]].mean(1)
-        key = key / key.norm(dim=-1, keepdim=True).clamp_min(1e-9)
-        return key, {"vision_dino": self.dino[anchors]}
-
     def batch(self, idx):
         """Return one batch: variable values, observed masks, query and neighbor coordinates, the coordinates in
         each vector subspace (here the biological one), and the neighbors' own feature values."""

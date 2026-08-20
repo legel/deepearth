@@ -395,12 +395,9 @@ class DeepEarth(nn.Module):
             self.species_graph = None
         self._refined_species = None
 
-        # Optional modules (scale-mixing, diffusion, experience, inductive) live on the research branch; kept inert here so the forward's guards take the no-op path.
+        # Optional modules (scale-mixing, diffusion, inductive) live on the research branch; kept inert here so the forward's guards take the no-op path.
         self.scale_mixer = None
         self.diffusion_heads = nn.ModuleDict()
-        self.experience = None
-        self._memory_key = None
-        self._memory_features = None
         self.inductive = None
 
         # latent-attention backbone
@@ -649,11 +646,6 @@ class DeepEarth(nn.Module):
         s = self.absolute_encoder.spatial_dim
         return self.absolute_proj_s(flat[..., :s]), self.absolute_proj_t(flat[..., s:])
 
-    def set_memory(self, key: torch.Tensor, features: Dict[str, torch.Tensor]) -> None:
-        """Install the experience-replay memory bank (a key and per-anchor features), refreshed between epochs."""
-        self._memory_key = key
-        self._memory_features = features
-
     def enable_sparse_hash(self, coords: torch.Tensor, lr: float = 3e-4, weight_decay: float = 3e-4) -> None:
         """Precompute the absolute encoder over a fixed coordinate set and route it through sparse Adam (each batch reads few entries). Then pass ``batch_indices`` to :meth:`context` and call :meth:`sparse_hash_step` after backward."""
         self.absolute_encoder.precompute(coords)
@@ -744,7 +736,6 @@ class DeepEarth(nn.Module):
             T = T * pres[..., None].to(T.dtype)              # single-shot behavior: a masked slot is the zero vector
         ctx = [(context["position"] + self.position_token).unsqueeze(1), context["tokens"]]  # always-present position (combined) + neighbor tokens
         if context.get("cls_tokens") is not None: ctx.append(context["cls_tokens"])
-        if context.get("experience") is not None: ctx.append(context["experience"])
         return self._refine(T, torch.cat(ctx, dim=1), pres, val, pos_v, gpos=context["position"])
 
     def _read_fn(self, q: torch.Tensor, kv: torch.Tensor, V: int) -> torch.Tensor:
