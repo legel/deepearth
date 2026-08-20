@@ -1835,7 +1835,7 @@ def train(
             )
             lens_optimizer = torch.optim.AdamW(
                 lens_parameters,
-                lr=design.learning_rate * 0.2,
+                lr=design.learning_rate * 0.4,
                 weight_decay=design.weight_decay,
                 fused=device.startswith("cuda"),
             )
