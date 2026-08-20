@@ -1491,6 +1491,22 @@ class MeshModel(nn.Module):
                         / math.log(max(lens_logits.shape[-1], 2))
             loss = loss + 0.25 * (lens_rank * family_valid).sum() \
                           / family_valid.sum().clamp_min(1)
+            lens_probability = lens_logits.softmax(-1)
+            lens_family_probability = lens_probability.new_zeros(
+                batch, self.family_count
+            )
+            lens_family_probability.scatter_add_(
+                1,
+                self.species_family.expand(batch, -1),
+                lens_probability,
+            )
+            lens_target_family = self.species_family[target_species]
+            lens_family_error = -lens_family_probability.gather(
+                1, lens_target_family[:, None]
+            ).squeeze(1).clamp_min(1e-8).log() \
+             / math.log(max(self.family_count, 2))
+            loss = loss + 0.25 * (lens_family_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
         probability = family_logits.softmax(-1)
         family_probability = probability.new_zeros(batch, self.family_count)
         family_probability.scatter_add_(1, self.species_family.expand(batch, -1), probability)
