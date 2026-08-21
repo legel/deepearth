@@ -163,10 +163,12 @@ def combine_for_publication(runs: list[dict]) -> dict:
     if len(runs) != 2:
         raise ValueError("publishing a champion requires exactly two seed receipts")
     seeds = [r.get("seed") for r in runs]
-    if None in seeds or len(set(seeds)) != 2:
-        raise ValueError("publishing a champion requires two distinct recorded seeds")
+    if set(seeds) != {1337, 1338}:
+        raise ValueError("publishing a champion requires seeds 1337 and 1338")
     if len({r.get("steps") for r in runs}) != 1 or len({r.get("parameters") for r in runs}) != 1:
         raise ValueError("seed receipts must have matching steps and parameter counts")
+    if runs[0].get("steps") != 2291:
+        raise ValueError("publishing a champion requires exactly 2,291 steps per seed")
     return combine_runs(runs)
 
 

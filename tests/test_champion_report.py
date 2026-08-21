@@ -5,11 +5,11 @@ import pytest
 from deepearth.autoresearch.champion_report import combine_for_publication, parse_run
 
 
-def _receipt(seed, harmonic, arithmetic, score):
+def _receipt(seed, harmonic, arithmetic, score, steps=2291):
     return {
         "protocol": "v2-held-species-pollinator-transfer",
         "seed": seed,
-        "steps": 2291,
+        "steps": steps,
         "parameters": 25700000,
         "peak_vram_mb": 19000.0 + seed,
         "capability_suite": ["B1_species_from_env_top10"],
@@ -22,6 +22,13 @@ def _receipt(seed, harmonic, arithmetic, score):
 def test_publication_requires_two_seeds():
     with pytest.raises(ValueError, match="exactly two"):
         combine_for_publication([_receipt(1337, 0.4, 0.5, 0.4)])
+
+    with pytest.raises(ValueError, match="1337 and 1338"):
+        combine_for_publication([_receipt(1, 0.4, 0.5, 0.4), _receipt(2, 0.4, 0.5, 0.4)])
+
+    with pytest.raises(ValueError, match="2,291"):
+        combine_for_publication([_receipt(1337, 0.4, 0.5, 0.4, 100),
+                                 _receipt(1338, 0.4, 0.5, 0.4, 100)])
 
 
 def test_two_full_precision_receipts_preserve_the_scorecard(tmp_path):
