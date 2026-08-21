@@ -1632,8 +1632,11 @@ class MeshModel(nn.Module):
                         @ self._refined_species.detach().float().t()
         target_species = values[self.species_variable].long()
         family_valid = observed[self.species_variable]
+        niche_input = environment_pool if getattr(
+            self, "rank_aligned_expansion", False
+        ) else environment_pool.detach()
         niche_logits = self._niche_species_logits(
-            environment_pool.detach(), include_lens=False
+            niche_input, include_lens=False
         )
         species_error = F.cross_entropy(
             niche_logits, target_species, reduction="none"
@@ -1970,6 +1973,7 @@ def train(
     for step in range(design.steps):
         if design.reader_steps and step == reader_start:
             model.reader_phase = True
+            model.rank_aligned_expansion = design.reader_only
             for name, parameter in model.named_parameters():
                 is_reader = name.startswith(READER_PARAMETERS) \
                             or name.startswith(SPECIES_LENS_PARAMETERS) \
