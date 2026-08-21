@@ -425,6 +425,18 @@ def train_and_evaluate(config, device):
     print(f"benchmark_suite_seconds: {_eval_s:.1f} ({len(source.test)} held-out rows, {len(ev.normalized(raw))} active)", flush=True)
     ns = ev.net_score(raw)
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if device.startswith("cuda") else 0.0
+    receipt = {
+        "protocol": ev.BENCHMARK_PROTOCOL,
+        "seed": int(seed),
+        "steps": int(t.get("steps", steps_done) if eval_ckpt else steps_done),
+        "parameters": sum(p.numel() for p in model.parameters()),
+        "peak_vram_mb": peak_vram_mb,
+        "capability_suite": list(ev.capability_suite(raw)),
+        "scores": raw,
+        "harmonic": ns,
+        "arithmetic": ev.arithmetic_net(raw),
+    }
+    print("BENCHMARK_RECEIPT: " + json.dumps(receipt, sort_keys=True), flush=True)
     if config.get("_tag"):
         print(f"tag:              {config['_tag']}", flush=True)   # parseable run label (matches --tag), so run.log self-identifies
     print(f"net_score:        {ns:.6f}", flush=True)          # parseable north star

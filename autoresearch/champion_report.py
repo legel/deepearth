@@ -1,6 +1,6 @@
 """champion_report.py — the STANDARD way to save champion benchmark scores and format a git-commit report.
 
-Every time a benchmark run becomes the new champion, run this. It (1) reads the run's scores, (2) diffs them
+Every time a paired benchmark run becomes the new champion, run this. It (1) reads both seeds' scores, (2) diffs them
 against the previous champion record (autoresearch/champion_scores.json), (3) prints a ready-to-paste commit
 message — a headline with the net score BEFORE -> AFTER, then an enumerated per-benchmark BEFORE -> AFTER list —
 and (4) with --save, promotes the run to the new champion record (the "before" for the next upgrade).
@@ -10,8 +10,8 @@ This makes every champion commit read consistently (see science.md rule 30). Exa
 
 Usage:
     # after a benchmark run whose stdout/eval was captured to run.log:
-    python -m deepearth.autoresearch.champion_report --log run.log --desc "widen d_model 256->384" --save
-    # prints the commit message and promotes run.log's scores to the champion record.
+    python -m deepearth.autoresearch.champion_report --log seed1337.log seed1338.log --desc "widen d_model 256->384" --save
+    # prints the commit message and promotes the paired scorecard to the champion record.
     # omit --save to preview the report without changing the record (e.g. a candidate that did not win).
 """
 import re
@@ -102,6 +102,9 @@ DESC = {
 def parse_run(log_path: str) -> dict:
     """Extract {Bxx_name: score}, harmonic (net_score) and arithmetic mean from a train/eval run log."""
     txt = Path(log_path).read_text()
+    receipts = re.findall(r"^BENCHMARK_RECEIPT:\s*(\{.*\})$", txt, re.M)
+    if receipts:
+        return json.loads(receipts[-1])
     protocol_match = re.search(r"^BENCHMARK PROTOCOL:\s*(\S+)", txt, re.M)
     protocol = protocol_match.group(1) if protocol_match else None
     scores = {}
@@ -118,6 +121,53 @@ def parse_run(log_path: str) -> dict:
         return {"protocol": protocol, "capability_suite": list(capability_suite(scores)),
                 "scores": scores, "harmonic": float(h.group(1)) if h else None,
                 "arithmetic": float(a.group(1)) if a else None}
+
+
+def combine_runs(runs: list[dict]) -> dict:
+    """Combine compatible seed receipts without recomputing their nonlinear headline scores."""
+    if len(runs) == 1:
+        return runs[0]
+    protocol, suite, keys = runs[0]["protocol"], runs[0]["capability_suite"], set(runs[0]["scores"])
+    if any(r["protocol"] != protocol or r["capability_suite"] != suite or set(r["scores"]) != keys for r in runs[1:]):
+        raise ValueError("seed receipts must use the same protocol, capability suite, and score keys")
+    n = len(runs)
+    scores = {k: sum(r["scores"][k] for r in runs) / n for k in keys}
+    out = {
+        "protocol": protocol,
+        "capability_suite": suite,
+        "harmonic": sum(r["harmonic"] for r in runs) / n,
+        "arithmetic": sum(r["arithmetic"] for r in runs) / n,
+        "scores": scores,
+        "seeds": [r.get("seed") for r in runs],
+        "steps": runs[0].get("steps"),
+        "steps_completed": [r.get("steps") for r in runs],
+        "parameters": runs[0].get("parameters"),
+        "peak_vram_mb": max(r.get("peak_vram_mb", 0.0) for r in runs),
+        "seed_receipts": [
+            {"seed": r.get("seed"), "harmonic": r["harmonic"], "arithmetic": r["arithmetic"],
+             **({"B64_pollinator_phylo_transfer_ndcg": r["scores"]["B64_pollinator_phylo_transfer_ndcg"]}
+                if "B64_pollinator_phylo_transfer_ndcg" in r["scores"] else {})}
+            for r in runs
+        ],
+    }
+    try:
+        from deepearth.autoresearch.evaluate import net_score
+        out["harmonic_of_mean_scores"] = net_score(scores)
+    except Exception:
+        pass
+    return out
+
+
+def combine_for_publication(runs: list[dict]) -> dict:
+    """Require the complete matched two-seed evidence used by the promotion contract."""
+    if len(runs) != 2:
+        raise ValueError("publishing a champion requires exactly two seed receipts")
+    seeds = [r.get("seed") for r in runs]
+    if None in seeds or len(set(seeds)) != 2:
+        raise ValueError("publishing a champion requires two distinct recorded seeds")
+    if len({r.get("steps") for r in runs}) != 1 or len({r.get("parameters") for r in runs}) != 1:
+        raise ValueError("seed receipts must have matching steps and parameter counts")
+    return combine_runs(runs)
 
 
 def _n(x):                                                     # benchmark sort key: B<number>
@@ -166,14 +216,18 @@ def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> s
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--log", required=True, help="run log (train + eval stdout) to score")
+    ap.add_argument("--log", required=True, nargs="+", help="two seed run logs (train + eval stdout) to score")
     ap.add_argument("--desc", required=True, help="one-line result description for the commit headline")
     ap.add_argument("--config", default="", help="optional config/hardware note line")
     ap.add_argument("--save", action="store_true", help="promote this run to the champion record")
     ap.add_argument("--baseline", action="store_true",
                     help="replace an incomparable protocol/suite as a baseline, never as an improvement")
     a = ap.parse_args()
-    new = parse_run(a.log)
+    runs = [parse_run(path) for path in a.log]
+    try:
+        new = combine_for_publication(runs) if a.save else combine_runs(runs)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if not new["scores"]:
         raise SystemExit(f"no Bxx scores found in {a.log}")
     old = json.loads(RECORD.read_text()) if RECORD.exists() else None
@@ -192,10 +246,7 @@ def main():
                      "label": a.desc, "config": a.config, "protocol": new["protocol"],
                      "capability_suite": new["capability_suite"], "harmonic": new["harmonic"],
                      "arithmetic": new["arithmetic"], "scores": new["scores"]})   # append every champion -> both users' records plot over time
-        RECORD.write_text(json.dumps({"label": a.desc, "config": a.config, "protocol": new["protocol"],
-                                      "capability_suite": new["capability_suite"], "harmonic": new["harmonic"],
-                                      "arithmetic": new["arithmetic"], "scores": new["scores"],
-                                      "history": hist}, indent=2))
+        RECORD.write_text(json.dumps({"label": a.desc, "config": a.config, **new, "history": hist}, indent=2))
         print(f"\n[champion_scores.json updated: {len(new['scores'])} benchmarks, "
               f"harmonic {new['harmonic']}, arith {new['arithmetic']}; history={len(hist)} records]")
 
