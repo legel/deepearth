@@ -1,9 +1,8 @@
-"""Train and score the 13.7M-parameter Earth4D mesh record."""
+"""Train the production fibered world model and score it with the public evaluator."""
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -11,25 +10,91 @@ from pathlib import Path
 import torch
 
 from deepearth.core import data as base_data
-from deepearth.core.fusion import MeshConfig, build_model
+from deepearth.core.fusion import DeepEarth, Variable
 
 
 @dataclass(frozen=True)
-class Experiment(MeshConfig):
-    seed: int = int(os.environ.get("MESH_SEED", "1337"))
-    steps: int = int(os.environ.get("MESH_STEPS", "8000"))
+class Experiment:
+    seed: int = 1337
+    steps: int = 2291
     batch: int = 256
+    width: int = 192
+    levels: int = 12
+    hash_log2: int = 14
+    latents: int = 16
+    layers: int = 2
     hide_probability: float = 0.5
     learning_rate: float = 5e-4
     weight_decay: float = 1e-3
-    reader_steps: int = int(os.environ.get("MESH_READER_STEPS", "100"))
-    graph_learning_rate_scale: float = float(os.environ.get("MESH_GRAPH_LR_SCALE", "0.02"))
-    init_checkpoint: str = os.environ.get("MESH_INIT_CHECKPOINT", "")
-    reader_only: bool = os.environ.get("MESH_READER_ONLY", "0") == "1"
+    reader_steps: int = 100
+    graph_learning_rate_scale: float = 0.02
+    init_checkpoint: str = ""
+    reader_only: bool = False
 
 
 EXPERIMENT = Experiment()
-PUBLIC_EVALUATOR = "public-main-bbbe6be6"
+
+
+CONTINUOUS_SIGNALS = (
+    "vision_dino", "vision_bio", "phylo", "climate", "soil", "naip_rgb",
+    "naip_ir", "clay", "topo", "chm", "hydro", "phenology",
+)
+
+
+def prepared_cache(cache: Path) -> Path:
+    preferred = cache / "prepared_mesh.pt"
+    if preferred.exists():
+        return preferred
+    legacy = sorted(cache.glob("prepared_*.pt"))
+    if len(legacy) <= 1:
+        return legacy[0] if legacy else preferred
+    names = ", ".join(path.name for path in legacy)
+    raise RuntimeError(f"multiple prepared caches found: {names}")
+
+
+def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
+    settings = {
+        "adapter": "california",
+        "cache_dir": str(Path(cache_dir).expanduser().resolve()),
+        "n_neighbors": 16,
+        "holdout": "spatial",
+        "subset": subset,
+        "time_axis": True,
+        "time_km": 50.0,
+        "clay_v2": False,
+    }
+    cache = Path(settings["cache_dir"])
+    prepared = prepared_cache(cache)
+    source = base_data.build(
+        settings["adapter"], cache_dir=settings["cache_dir"],
+        n_neighbors=settings["n_neighbors"], device=device,
+        holdout=settings["holdout"], subset=settings["subset"],
+        time_axis=settings["time_axis"], time_km=settings["time_km"],
+        clay_v2=settings["clay_v2"], prepared=str(prepared),
+    )
+    expected = {"n_neighbors": 16, "holdout": "spatial", "time_axis": True}
+    mismatched = {key: (getattr(source, key), value) for key, value in expected.items()
+                  if getattr(source, key) != value}
+    if mismatched:
+        raise ValueError(f"prepared cache violates the production data contract: {mismatched}")
+    dims = source.variable_dims()
+    variables = [
+        {"name": name, "kind": "continuous", "dim": int(dims[name])}
+        for name in CONTINUOUS_SIGNALS if int(dims.get(name, 0)) > 0
+    ]
+    variables.insert(2, {
+        "name": "identity", "kind": "categorical",
+        "num_classes": int(dims["identity_classes"]),
+    })
+    variables.extend(
+        {"name": name, "kind": "categorical", "num_classes": int(classes)}
+        for name, classes in dims["trait_classes"].items()
+    )
+    always = {}
+    if "alphaearth" in source.extra:
+        always["alphaearth"] = int(source.extra["alphaearth"][2])
+    return source, variables, always
+
 
 READER_PARAMETERS = (
     "latents", "read.", "read_norm.", "blocks.",
@@ -55,6 +120,16 @@ READER_PARAMETERS = (
     "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
     "mesh_condition_gate.", "mesh_condition_norm.",
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
+    "evidence_reader.", "evidence_reader_norm.",
+    "evidence_reader_output_norm.", "evidence_read_gate.",
+    "detail_evidence_tokenizer.", "detail_evidence_subtoken.",
+    "detail_evidence_reader.", "detail_evidence_norm.",
+    "detail_evidence_output_norm.", "detail_evidence_gate.",
+    "evidence_refine_reader.", "evidence_refine_norm.",
+    "evidence_refine_query.", "evidence_refine_router.",
+    "evidence_refine_output_norm.", "evidence_refine_gate.",
+    "evidence_refine_ffn.", "evidence_refine_ffn_gate.",
+    "evidence_parallel_lens_gate.", "evidence_parallel_gate.",
     "species_niche_key", "species_niche_adapter.",
 )
 SPECIES_LENS_PARAMETERS = (
@@ -67,85 +142,20 @@ IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
 CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
 
-CONTINUOUS_SIGNALS = (
-    "vision_dino",
-    "vision_bio",
-    "phylo",
-    "climate",
-    "soil",
-    "naip_rgb",
-    "naip_ir",
-    "clay",
-    "topo",
-    "chm",
-    "hydro",
-    "phenology",
-)
 
 
-def prepared_cache(cache: Path) -> Path:
-    preferred = cache / "prepared_mesh.pt"
-    if preferred.exists():
-        return preferred
-    legacy = sorted(cache.glob("prepared_*.pt"))
-    if len(legacy) <= 1:
-        return legacy[0] if legacy else preferred
-    names = ", ".join(path.name for path in legacy)
-    raise RuntimeError(f"multiple prepared caches found: {names}")
-
-
-def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
-    """Restore the canonical California observations and spatial holdout."""
-    settings = {
-        "adapter": "california",
-        "cache_dir": str(Path(cache_dir).expanduser().resolve()),
-        "n_neighbors": 16,
-        "holdout": "spatial",
-        "subset": subset,
-        "time_axis": True,
-        "time_km": 50.0,
-        "clay_v2": False,
-    }
-    cache = Path(settings["cache_dir"])
-    prepared = prepared_cache(cache)
-    source = base_data.build(
-        settings["adapter"],
-        cache_dir=settings["cache_dir"],
-        n_neighbors=settings["n_neighbors"],
-        device=device,
-        holdout=settings["holdout"],
-        subset=settings["subset"],
-        time_axis=settings["time_axis"],
-        time_km=settings["time_km"],
-        clay_v2=settings["clay_v2"],
-        prepared=str(prepared),
-    )
-    expected = {"n_neighbors": 16, "holdout": "spatial", "time_axis": True}
-    mismatched = {key: (getattr(source, key), value) for key, value in expected.items()
-                  if getattr(source, key) != value}
-    if mismatched:
-        raise ValueError(f"prepared cache violates the production data contract: {mismatched}")
-
-    dims = source.variable_dims()
-    variables = [
-        {"name": name, "kind": "continuous", "dim": int(dims[name])}
-        for name in CONTINUOUS_SIGNALS
-        if int(dims.get(name, 0)) > 0
-    ]
-    variables.insert(2, {
-        "name": "identity",
-        "kind": "categorical",
-        "num_classes": int(dims["identity_classes"]),
-    })
-    variables.extend(
-        {"name": name, "kind": "categorical", "num_classes": int(classes)}
-        for name, classes in dims["trait_classes"].items()
-    )
-
-    always = {}
-    if "alphaearth" in source.extra:
-        always["alphaearth"] = int(source.extra["alphaearth"][2])
-    return source, variables, always
+def build_model(source, variable_specs, always_dims, device: str, design: Experiment = EXPERIMENT) -> DeepEarth:
+    variables = [Variable(**spec) for spec in variable_specs]
+    return DeepEarth(
+        variables,
+        always_dims,
+        source,
+        d_model=design.width,
+        levels=design.levels,
+        log2_size=design.hash_log2,
+        n_latents=design.latents,
+        n_layers=design.layers,
+    ).to(device)
 
 
 def train(
@@ -155,7 +165,6 @@ def train(
     *,
     checkpoint_steps: frozenset[int] = frozenset(),
     checkpoint_dir: Path | None = None,
-    output: Path | None = None,
 ):
     if not design.reader_only and not 0 <= design.reader_steps < design.steps:
         raise ValueError("reader_steps must fall between 0 and total steps")
@@ -166,12 +175,38 @@ def train(
     if device.startswith("cuda"):
         torch.cuda.manual_seed_all(design.seed)
     source, variable_specs, always_dims = load_data(cache, device)
-    model = build_model(source, variable_specs, always_dims, device, design)
+    if design.width != 128:
+        candidate_rng = torch.random.get_rng_state()
+        candidate_cuda_rng = torch.cuda.get_rng_state_all() \
+            if device.startswith("cuda") else None
+        control = build_model(
+            source, variable_specs, always_dims, device,
+            replace(design, width=128),
+        )
+        control_rng = torch.random.get_rng_state()
+        control_cuda_rng = torch.cuda.get_rng_state_all() \
+            if device.startswith("cuda") else None
+        del control
+        if device.startswith("cuda"):
+            torch.cuda.empty_cache()
+            torch.cuda.set_rng_state_all(candidate_cuda_rng)
+        torch.random.set_rng_state(candidate_rng)
+        model = build_model(source, variable_specs, always_dims, device, design)
+        torch.random.set_rng_state(control_rng)
+        if device.startswith("cuda"):
+            torch.cuda.set_rng_state_all(control_cuda_rng)
+    else:
+        model = build_model(source, variable_specs, always_dims, device, design)
     if design.init_checkpoint:
         checkpoint = Path(design.init_checkpoint).expanduser()
         state = torch.load(checkpoint, map_location=device, weights_only=True)
-        model.load_state_dict(state)
-        print(f"initialized from {checkpoint}", flush=True)
+        incompatible = model.load_state_dict(state, strict=False)
+        print(
+            f"initialized from {checkpoint}  "
+            f"missing={len(incompatible.missing_keys)}  "
+            f"unexpected={len(incompatible.unexpected_keys)}",
+            flush=True,
+        )
     if checkpoint_steps:
         if checkpoint_dir is None:
             raise ValueError("checkpoint_dir is required when checkpoint_steps are requested")
@@ -482,10 +517,10 @@ def train(
                 flush=True,
             )
 
-    if output is not None:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(model.state_dict(), output)
-        print(f"checkpoint: {output}", flush=True)
+    checkpoint = Path(__file__).with_name("checkpoint.pt")
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), checkpoint)
+    print(f"checkpoint: {checkpoint}", flush=True)
     return model, source
 
 
@@ -495,33 +530,20 @@ def main() -> None:
     parser.add_argument("--cache", required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=1337)
-    parser.add_argument("--steps", type=int, default=8000)
-    parser.add_argument("--reader-steps", type=int, default=100)
-    parser.add_argument("--init-checkpoint", "--checkpoint", dest="init_checkpoint")
-    parser.add_argument("--output", type=Path, default=Path("checkpoint.pt"))
+    parser.add_argument("--steps", type=int, default=2291)
+    parser.add_argument("--checkpoint")
     args = parser.parse_args()
 
     design = replace(
-        Experiment(),
-        seed=args.seed,
-        steps=args.steps,
-        reader_steps=args.reader_steps,
-        init_checkpoint=args.init_checkpoint or "",
+        Experiment(), seed=args.seed, steps=args.steps,
+        init_checkpoint=args.checkpoint or "",
     )
-    model, source = train(args.cache, args.device, design, output=args.output)
+    model, source = train(args.cache, args.device, design)
     from deepearth.autoresearch import evaluate
 
     scores = evaluate.evaluate_benchmarks(model, source, args.device, batch=1280)
     print(evaluate.format_benchmarks(scores), flush=True)
     print("BENCHMARK RECEIPT: " + json.dumps({
-        "protocol": f"{PUBLIC_EVALUATOR}-fixed-{design.steps}-steps",
-        "data": {
-            "observations": int(source.n),
-            "species": int(source.n_classes),
-            "neighbors": int(source.n_neighbors),
-            "holdout": source.holdout,
-            "time_axis": bool(source.time_axis),
-        },
         "scores": scores,
         "harmonic": evaluate.net_score(scores),
         "arithmetic": evaluate.arithmetic_net(scores),
