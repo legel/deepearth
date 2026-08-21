@@ -740,7 +740,7 @@ class DeepEarth(nn.Module):
         pos_v = w[:, 0].view(1, -1, 1) * pos_s.unsqueeze(1) + w[:, 1].view(1, -1, 1) * pos_t.unsqueeze(1)   # [B,V,d]
         pres = torch.stack([present[n] for n in self.names], dim=1)                          # [B,V] bool
         val = torch.stack([self._variable_token(n, values[n]) for n in self.names], dim=1)   # [B,V,d] value embeddings
-        if self.diffusion:                                   # rule-22: masked slots begin as noise (round-0 state)
+        if self.diffusion and self.training:                 # train with noise; evaluate from a fixed masked state
             content = torch.where(pres[..., None], val, torch.randn_like(val))
         else:
             content = torch.where(pres[..., None], val, self.mask_token) if self.learned_mask else val
@@ -847,7 +847,7 @@ class DeepEarth(nn.Module):
             obs = (1.0 - r) * value_emb + r * E
         else:
             obs = value_emb
-        if self.diffusion:                                   # denoise: noise into masked slots decays to 0 by the final round
+        if self.diffusion and self.training:                 # train with noise; evaluate the deterministic posterior mean
             sigma = max(0.0, 1.0 - (k + 1) / max(1, self.rounds - 1))
             masked = g * E + sigma * torch.randn_like(E)
         else:
