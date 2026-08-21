@@ -161,7 +161,7 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     construction; a dense/top-k attention is an interim approximation to be replaced, never the champion.
 
 30. **Report every champion improvement as before->after — always run the benchmarks and use `champion_report.py`.**
-    No SoTA champion is committed without `python -m deepearth.autoresearch.champion_report --log <run> --desc
+    No SoTA champion is committed without `python -m deepearth.autoresearch.champion_report --log <seed1337> <seed1338> --desc
     <result> --save`: the commit headline states the net score BEFORE->AFTER (harmonic mean + arithmetic), the body
     describes what changed / why / how, and an enumerated list reports every benchmark's before->after (delta) with an
     explicit regressions summary — no individual metric may regress. The helper diffs against the committed
@@ -178,11 +178,11 @@ DeepEarth **learns through masked autoencoding**, including by masking and recon
     weight does NOT protect the universal axis (a single myco head cost -0.012 at both w=0.1 and w=1.0) -- only
     subspace isolation does.
 
-32. **Score AND optimize 100% of the benchmark suite -- nothing excluded.** Every benchmark exists to be measured and
-    driven up. The net score is the harmonic mean over ALL active benchmarks -- capabilities AND ablation-delta /
-    information-gain diagnostics. Metrics not naturally bounded or that can sit near 0 (the deltas) are renormalized
-    (logistic, evaluate._net_value) so inclusion NEVER exceeds 1.0, NEVER forms a below-0 well, and is always
-    monotonically beneficial to raise (repetitive signal is fine). A champion must carry the WHOLE suite, not a subset.
+32. **Promote capabilities; report every diagnostic.** The net score is the harmonic mean over the active
+    human-capability suite, with its arithmetic mean reported alongside. Derived `*_gain` values measure dependence on
+    a mechanism, not capability, so they remain visible but enter neither mean. A structurally invalid benchmark must
+    remain visible with a written quarantine reason until repaired under a new protocol. A champion must carry the
+    same active capability suite as its baseline; membership changes require a new protocol and baseline.
 
 ## References
 

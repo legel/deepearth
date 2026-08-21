@@ -269,6 +269,7 @@ class DeepEarth(nn.Module):
         poll_species_frq: Optional[torch.Tensor] = None,
         poll_species_mixture: float = 0.0,
         poll_species_all_masked: bool = False,
+        poll_transfer_holdout: Optional[torch.Tensor] = None,
         phylo_head_routing: bool = False,
         species_trait_recon: bool = False,
     ) -> None:
@@ -481,6 +482,10 @@ class DeepEarth(nn.Module):
             if (n_pollinators > 0 and pollinator_distance is not None) else None
         self.poll_species_mixture = float(poll_species_mixture)
         self.poll_species_all_masked = bool(poll_species_all_masked)
+        if poll_transfer_holdout is not None:
+            self.register_buffer("poll_transfer_holdout", poll_transfer_holdout.bool())
+        else:
+            self.poll_transfer_holdout = None
         if self.poll_species_mixture > 0:
             if poll_species_idx is None or poll_species_frq is None:
                 raise ValueError("poll_species_mixture requires the species-pollinator table")
@@ -735,8 +740,9 @@ class DeepEarth(nn.Module):
         pos_v = w[:, 0].view(1, -1, 1) * pos_s.unsqueeze(1) + w[:, 1].view(1, -1, 1) * pos_t.unsqueeze(1)   # [B,V,d]
         pres = torch.stack([present[n] for n in self.names], dim=1)                          # [B,V] bool
         val = torch.stack([self._variable_token(n, values[n]) for n in self.names], dim=1)   # [B,V,d] value embeddings
-        if self.diffusion:                                   # rule-22: masked slots begin as noise (round-0 state)
-            content = torch.where(pres[..., None], val, torch.randn_like(val))
+        if self.diffusion:
+            noise = torch.randn_like(val) if self.training else torch.zeros_like(val)
+            content = torch.where(pres[..., None], val, noise)
         else:
             content = torch.where(pres[..., None], val, self.mask_token) if self.learned_mask else val
         T = self._token_combine(self.tok_norm(content + self.type_emb), self.pos_norm(pos_v))  # [B,V,d] value x position
@@ -842,7 +848,7 @@ class DeepEarth(nn.Module):
             obs = (1.0 - r) * value_emb + r * E
         else:
             obs = value_emb
-        if self.diffusion:                                   # denoise: noise into masked slots decays to 0 by the final round
+        if self.diffusion and self.training:                 # noise decays to its zero-mean evaluation path
             sigma = max(0.0, 1.0 - (k + 1) / max(1, self.rounds - 1))
             masked = g * E + sigma * torch.randn_like(E)
         else:

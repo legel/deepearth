@@ -1,6 +1,6 @@
 """champion_report.py — the STANDARD way to save champion benchmark scores and format a git-commit report.
 
-Every time a benchmark run becomes the new champion, run this. It (1) reads the run's scores, (2) diffs them
+Every time a paired benchmark run becomes the new champion, run this. It (1) reads both seeds' scores, (2) diffs them
 against the previous champion record (autoresearch/champion_scores.json), (3) prints a ready-to-paste commit
 message — a headline with the net score BEFORE -> AFTER, then an enumerated per-benchmark BEFORE -> AFTER list —
 and (4) with --save, promotes the run to the new champion record (the "before" for the next upgrade).
@@ -10,8 +10,8 @@ This makes every champion commit read consistently (see science.md rule 30). Exa
 
 Usage:
     # after a benchmark run whose stdout/eval was captured to run.log:
-    python -m deepearth.autoresearch.champion_report --log run.log --desc "widen d_model 256->384" --save
-    # prints the commit message and promotes run.log's scores to the champion record.
+    python -m deepearth.autoresearch.champion_report --log seed1337.log seed1338.log --desc "widen d_model 256->384" --save
+    # prints the commit message and promotes the paired scorecard to the champion record.
     # omit --save to preview the report without changing the record (e.g. a candidate that did not win).
 """
 import re
@@ -22,9 +22,11 @@ from pathlib import Path
 RECORD = Path(__file__).with_name("champion_scores.json")   # the current champion (before for the next run)
 
 try:                                                        # canonical order so EVERY benchmark is listed (inactive ones marked, never silently missing)
-    from deepearth.autoresearch.evaluate import BENCHMARKS as _CANON
+    from deepearth.autoresearch.evaluate import (BENCHMARKS as _CANON, BENCHMARK_PROTOCOL,
+                                                  capability_suite)
 except Exception:
-    _CANON = []
+    _CANON = []; BENCHMARK_PROTOCOL = None
+    capability_suite = lambda scores: tuple(sorted(scores))
 
 # One-line description per benchmark (given-set -> target, metric), so a reader grasps whole-system performance at a
 # glance. "env" = the location's full environment vector U; "phylo graph gain" = ablation delta from species-graph refinement.
@@ -83,7 +85,7 @@ DESC = {
     "B52_pollinator_from_photo_recall": "env + ground photo -> pollinators, recall@10",
     "B53_pollinator_calibration_mrr": "pollinator posterior calibration, MRR",
     "B54_pollinator_dist_kl": "predicted vs true pollinator frequency, exp(-KL)",
-    "B55_pollinator_phylo_transfer_recall": "plant's pollinators from relatives' pollinators, recall@10",
+    "B55_pollinator_phylo_transfer_recall": "legacy spatial-neighbor pollinator-union recall (quarantined)",
     "B56_family_phylo_graph_gain": "family-from-phylo acc gained from species-graph refinement",
     "B57_flowering_phylo_graph_gain": "flowering-AUC gained from species-graph refinement",
     "B58_lfmc_phylo_graph_gain": "LFMC correlation gained from species-graph refinement",
@@ -92,25 +94,82 @@ DESC = {
     "B61_trait_phylo_graph_gain": "trait macro-F1 gained from species-graph refinement",
     "B62_mycorrhiza_phylo_graph_gain": "mycorrhiza macro-F1 gained from species-graph refinement",
     "B63_myco_from_species_f1": "mycorrhiza imputation given species identity, macro-F1",
+    "B64_pollinator_phylo_transfer_ndcg": "held plant's own pollinators from phylogeny, chance-normalized NDCG@10",
+    "B65_pollinator_phylo_transfer_gain": "B64 gain from plant species-graph refinement",
 }
 
 
 def parse_run(log_path: str) -> dict:
     """Extract {Bxx_name: score}, harmonic (net_score) and arithmetic mean from a train/eval run log."""
     txt = Path(log_path).read_text()
+    receipts = re.findall(r"^BENCHMARK_RECEIPT:\s*(\{.*\})$", txt, re.M)
+    if receipts:
+        return json.loads(receipts[-1])
+    protocol_match = re.search(r"^BENCHMARK PROTOCOL:\s*(\S+)", txt, re.M)
+    protocol = protocol_match.group(1) if protocol_match else None
     scores = {}
-    # score may be followed by trailing text on the diagnostic lines, e.g. "B24_geo_information_gain 0.593 (net
-    # contrib 0.997)" -- match the score after the name, not requiring end-of-line, so B24/B56-B62 are captured.
+    # Match the score after the name without requiring end-of-line, so annotated diagnostic rows are captured.
     for m in re.finditer(r"^\s*(B\d+_\w+)\s+(-?[0-9.]+)(?:\s|$)", txt, re.M):
         scores[m.group(1)] = float(m.group(2))                 # last occurrence wins (final eval)
     try:                                                       # RECOMPUTE the net from scores with the live logic, so
         from deepearth.autoresearch.evaluate import net_score, arithmetic_net   # every champion record is comparable
-        return {"scores": scores, "harmonic": float(net_score(scores)), "arithmetic": float(arithmetic_net(scores))}
+        return {"protocol": protocol, "capability_suite": list(capability_suite(scores)),
+                "scores": scores, "harmonic": float(net_score(scores)), "arithmetic": float(arithmetic_net(scores))}
     except Exception:                                          # fallback: parse whatever the log printed
         h = re.search(r"net_score:\s+([0-9.]+)", txt)
         a = re.search(r"arithmetic mean:\s+([0-9.]+)", txt)
-        return {"scores": scores, "harmonic": float(h.group(1)) if h else None,
+        return {"protocol": protocol, "capability_suite": list(capability_suite(scores)),
+                "scores": scores, "harmonic": float(h.group(1)) if h else None,
                 "arithmetic": float(a.group(1)) if a else None}
+
+
+def combine_runs(runs: list[dict]) -> dict:
+    """Combine compatible seed receipts without recomputing their nonlinear headline scores."""
+    if len(runs) == 1:
+        return runs[0]
+    protocol, suite, keys = runs[0]["protocol"], runs[0]["capability_suite"], set(runs[0]["scores"])
+    if any(r["protocol"] != protocol or r["capability_suite"] != suite or set(r["scores"]) != keys for r in runs[1:]):
+        raise ValueError("seed receipts must use the same protocol, capability suite, and score keys")
+    n = len(runs)
+    scores = {k: sum(r["scores"][k] for r in runs) / n for k in keys}
+    out = {
+        "protocol": protocol,
+        "capability_suite": suite,
+        "harmonic": sum(r["harmonic"] for r in runs) / n,
+        "arithmetic": sum(r["arithmetic"] for r in runs) / n,
+        "scores": scores,
+        "seeds": [r.get("seed") for r in runs],
+        "steps": runs[0].get("steps"),
+        "steps_completed": [r.get("steps") for r in runs],
+        "parameters": runs[0].get("parameters"),
+        "peak_vram_mb": max(r.get("peak_vram_mb", 0.0) for r in runs),
+        "seed_receipts": [
+            {"seed": r.get("seed"), "harmonic": r["harmonic"], "arithmetic": r["arithmetic"],
+             **({"B64_pollinator_phylo_transfer_ndcg": r["scores"]["B64_pollinator_phylo_transfer_ndcg"]}
+                if "B64_pollinator_phylo_transfer_ndcg" in r["scores"] else {})}
+            for r in runs
+        ],
+    }
+    try:
+        from deepearth.autoresearch.evaluate import net_score
+        out["harmonic_of_mean_scores"] = net_score(scores)
+    except Exception:
+        pass
+    return out
+
+
+def combine_for_publication(runs: list[dict]) -> dict:
+    """Require the complete matched two-seed evidence used by the promotion contract."""
+    if len(runs) != 2:
+        raise ValueError("publishing a champion requires exactly two seed receipts")
+    seeds = [r.get("seed") for r in runs]
+    if set(seeds) != {1337, 1338}:
+        raise ValueError("publishing a champion requires seeds 1337 and 1338")
+    if len({r.get("steps") for r in runs}) != 1 or len({r.get("parameters") for r in runs}) != 1:
+        raise ValueError("seed receipts must have matching steps and parameter counts")
+    if runs[0].get("steps") != 2291:
+        raise ValueError("publishing a champion requires exactly 2,291 steps per seed")
+    return combine_runs(runs)
 
 
 def _n(x):                                                     # benchmark sort key: B<number>
@@ -150,7 +209,8 @@ def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> s
             row = f"{name}: {_f(before)} -> {_f(after)} ({d}){flag}"
         lines.append(f"{i:>2}. {row}" + (f"  -- {desc}" if desc else ""))
     if old is not None:                                        # regression guard summary (science.md: NO metric regressing)
-        reg = [f"{n} ({os_[n]:.3f}->{ns[n]:.3f})" for n in sorted(ns, key=_n)
+        eligible = set(new.get("capability_suite", capability_suite(ns)))
+        reg = [f"{n} ({os_[n]:.3f}->{ns[n]:.3f})" for n in sorted(eligible, key=_n)
                if n in os_ and ns[n] < os_[n] - 0.005]
         lines += ["", f"REGRESSIONS (>0.005): {', '.join(reg) if reg else 'none'}"]
     return "\n".join(lines)
@@ -158,26 +218,37 @@ def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> s
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--log", required=True, help="run log (train + eval stdout) to score")
+    ap.add_argument("--log", required=True, nargs="+", help="two seed run logs (train + eval stdout) to score")
     ap.add_argument("--desc", required=True, help="one-line result description for the commit headline")
     ap.add_argument("--config", default="", help="optional config/hardware note line")
     ap.add_argument("--save", action="store_true", help="promote this run to the champion record")
+    ap.add_argument("--baseline", action="store_true",
+                    help="replace an incomparable protocol/suite as a baseline, never as an improvement")
     a = ap.parse_args()
-    new = parse_run(a.log)
+    runs = [parse_run(path) for path in a.log]
+    try:
+        new = combine_for_publication(runs) if a.save else combine_runs(runs)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if not new["scores"]:
         raise SystemExit(f"no Bxx scores found in {a.log}")
     old = json.loads(RECORD.read_text()) if RECORD.exists() else None
-    print(format_commit(new, old, a.desc, a.config))
+    comparable = (old is not None and new.get("protocol") == old.get("protocol")
+                  and tuple(new["capability_suite"]) == tuple(old.get("capability_suite", ())))
+    if new.get("protocol") != BENCHMARK_PROTOCOL:
+        raise SystemExit(f"run protocol {new.get('protocol')!r} != evaluator protocol {BENCHMARK_PROTOCOL!r}")
+    if a.save and old is not None and not comparable and not a.baseline:
+        raise SystemExit("protocol or capability suite changed; publish a fresh run with --baseline")
+    print(format_commit(new, old if comparable else None, a.desc, a.config))
     if a.save:
         import getpass, datetime
         hist = (old or {}).get("history", [])
         hist.append({"user": getpass.getuser(),
                      "timestamp": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                     "label": a.desc, "config": a.config, "harmonic": new["harmonic"],
+                     "label": a.desc, "config": a.config, "protocol": new["protocol"],
+                     "capability_suite": new["capability_suite"], "harmonic": new["harmonic"],
                      "arithmetic": new["arithmetic"], "scores": new["scores"]})   # append every champion -> both users' records plot over time
-        RECORD.write_text(json.dumps({"label": a.desc, "config": a.config, "harmonic": new["harmonic"],
-                                      "arithmetic": new["arithmetic"], "scores": new["scores"],
-                                      "history": hist}, indent=2))
+        RECORD.write_text(json.dumps({"label": a.desc, "config": a.config, **new, "history": hist}, indent=2))
         print(f"\n[champion_scores.json updated: {len(new['scores'])} benchmarks, "
               f"harmonic {new['harmonic']}, arith {new['arithmetic']}; history={len(hist)} records]")
 
