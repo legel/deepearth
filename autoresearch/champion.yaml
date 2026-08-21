@@ -25,6 +25,7 @@ model:
   contrastive_weight: 0.3
   d_model: 128
   decoder_hidden: 512
+  detail_evidence_tokens: 3
   densify_weight: 0.3
   flower_weight: 0.1
   lfmc_weight: 0.1

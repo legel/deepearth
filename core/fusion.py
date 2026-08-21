@@ -249,6 +249,7 @@ class DeepEarth(nn.Module):
         read_op: str = "mha",
         neighbor_op: str = "add",
         token_op: str = "add",
+        detail_evidence_tokens: int = 0,
         read_cond: bool = False,
         joint_decode: bool = False,
         grad_checkpoint: bool = False,
@@ -577,6 +578,31 @@ class DeepEarth(nn.Module):
                 nn.init.zeros_(adapter[-1].bias)
             nn.init.zeros_(self.blank_family.weight)
             nn.init.zeros_(self.blank_family.bias)
+        self.detail_evidence_tokens = int(detail_evidence_tokens)
+        self.detail_tokenizers = nn.ModuleDict()
+        self.detail_subtokens = nn.ParameterDict()
+        self.detail_reader = None
+        if self.detail_evidence_tokens > 0:
+            with torch.random.fork_rng(devices=[]):
+                for v in self.variables:
+                    if v.kind != "continuous":
+                        continue
+                    self.detail_tokenizers[v.name] = nn.Sequential(
+                        nn.LayerNorm(v.dim),
+                        nn.Linear(v.dim, self.detail_evidence_tokens * d_model),
+                    )
+                    self.detail_subtokens[v.name] = nn.Parameter(
+                        torch.randn(self.detail_evidence_tokens, d_model) * 0.02
+                    )
+                self.detail_norm = nn.LayerNorm(d_model)
+                self.detail_reader = nn.MultiheadAttention(
+                    d_model, n_heads, batch_first=True
+                )
+                self.detail_output_norm = nn.LayerNorm(d_model)
+                self.detail_gate = nn.Parameter(torch.zeros(len(self.variables)))
+                self.detail_null = nn.Parameter(torch.zeros(d_model))
+        self._detail_evidence = None
+        self._detail_padding = None
         if compile_processor:
             self._refine = torch.compile(self._refine)
 
@@ -594,6 +620,29 @@ class DeepEarth(nn.Module):
             return self._refined_species[value.clamp(min=0)]
         v = self.variables[self.names.index(name)]
         return self.encoders[name](value if v.kind == "continuous" else value.clamp(min=0))
+
+    def _cache_detail_evidence(
+        self, values: Dict[str, torch.Tensor], present: Dict[str, torch.Tensor]
+    ) -> None:
+        if self.detail_reader is None:
+            self._detail_evidence = self._detail_padding = None
+            return
+        batch = next(iter(values.values())).shape[0]
+        tokens = [self.detail_null.view(1, 1, -1).expand(batch, 1, -1)]
+        valid = [torch.ones(batch, 1, dtype=torch.bool, device=self.detail_null.device)]
+        for index, v in enumerate(self.variables):
+            if v.name not in self.detail_tokenizers:
+                continue
+            detail = self.detail_tokenizers[v.name](values[v.name].float()).view(
+                batch, self.detail_evidence_tokens, self.d_model
+            )
+            detail = detail + self.detail_subtokens[v.name] + self.type_emb[index]
+            tokens.append(detail)
+            valid.append(present[v.name].view(batch, 1).expand(
+                -1, self.detail_evidence_tokens
+            ))
+        self._detail_evidence = torch.cat(tokens, dim=1)
+        self._detail_padding = ~torch.cat(valid, dim=1)
 
     def context(self, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
                 manifold_positions: Optional[Dict[str, torch.Tensor]] = None,
@@ -735,6 +784,7 @@ class DeepEarth(nn.Module):
         pos_v = w[:, 0].view(1, -1, 1) * pos_s.unsqueeze(1) + w[:, 1].view(1, -1, 1) * pos_t.unsqueeze(1)   # [B,V,d]
         pres = torch.stack([present[n] for n in self.names], dim=1)                          # [B,V] bool
         val = torch.stack([self._variable_token(n, values[n]) for n in self.names], dim=1)   # [B,V,d] value embeddings
+        self._cache_detail_evidence(values, present)
         if self.diffusion:                                   # rule-22: masked slots begin as noise (round-0 state)
             content = torch.where(pres[..., None], val, torch.randn_like(val))
         else:
@@ -812,7 +862,36 @@ class DeepEarth(nn.Module):
         batched op -> [B,V,d] (replaces the Python loop of tiny GEMMs)."""
         scores = torch.einsum("bld,vd->blv", z, self.decode_query) / (self.d_model ** 0.5)   # [B,L,V]
         w = torch.softmax(scores, dim=1)                                                      # over latents
-        return torch.einsum("blv,bld->bvd", w, z)                                             # [B,V,d]
+        pooled = torch.einsum("blv,bld->bvd", w, z)                                          # [B,V,d]
+        return self._read_detail(pooled, torch.arange(
+            len(self.variables), device=z.device
+        ))
+
+    def _read_detail(self, pooled: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+        if self.detail_reader is None or self._detail_evidence is None:
+            return pooled
+        squeeze = pooled.dim() == 2
+        if squeeze:
+            pooled = pooled.unsqueeze(1)
+        batch, tasks = pooled.shape[:2]
+        evidence = self.detail_norm(self._detail_evidence)
+        evidence = evidence.unsqueeze(1).expand(-1, tasks, -1, -1).reshape(
+            batch * tasks, evidence.shape[1], self.d_model
+        )
+        padding = self._detail_padding.unsqueeze(1).expand(
+            -1, tasks, -1
+        ).reshape(batch * tasks, -1)
+        task_query = self.decode_query[indices].view(1, tasks, self.d_model)
+        query = self.detail_norm(pooled + task_query).reshape(
+            batch * tasks, 1, self.d_model
+        )
+        read = self.detail_reader(
+            query, evidence, evidence,
+            key_padding_mask=padding, need_weights=False,
+        )[0].reshape(batch, tasks, self.d_model)
+        gate = torch.tanh(self.detail_gate[indices]).view(1, tasks, 1)
+        pooled = pooled + gate * self.detail_output_norm(read)
+        return pooled[:, 0] if squeeze else pooled
 
     def _reencode(self, name: str, pooled: torch.Tensor) -> torch.Tensor:
         """A per-variable interface backbone: predict the variable from its latent belief, then re-embed the prediction
@@ -855,7 +934,10 @@ class DeepEarth(nn.Module):
         """Attention-weighted pooling of the latents into one vector for reading variable ``name``."""
         i = self.names.index(name)
         w = torch.softmax((latents @ self.decode_query[i]) / (self.d_model ** 0.5), dim=-1)
-        return torch.einsum("bl,bld->bd", w, latents)
+        pooled = torch.einsum("bl,bld->bd", w, latents)
+        return self._read_detail(
+            pooled, torch.tensor([i], device=latents.device)
+        )
 
     def _head_in(self, z: torch.Tensor, name: str, detach: bool = False) -> torch.Tensor:
         """Input to a phylo-conserved trait head. Baseline: the pooled latent. With phylo_head_routing: the pooled
