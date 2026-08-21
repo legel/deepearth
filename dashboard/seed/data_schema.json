@@ -34,7 +34,7 @@
   },
   {
    "name": "phylo",
-   "shape": "[n_classes=4628, 2048] indexed per-obs via cls",
+   "shape": "[n_classes, 2048] indexed per observation via cls",
    "dtype": "float32",
    "origin": "evolutionary-position vector E1 in gbif_vocab.npz (phylogenomic embedding; dated tree ca_subtree.dated.nwk, plant_dated_patristic.R); L2-normalized",
    "per_observation": false
@@ -107,13 +107,13 @@
    "name": "worldclim / phenology / alphaearth",
    "shape": "19 / 12-month NDVI cycle / 64 (per data.py loaders)",
    "dtype": "float32",
-   "origin": "WorldClim v2.1 bioclim, NOAA-CDR VIIRS NDVI, Google AlphaEarth Satellite Embedding V1 \u2014 supported by _load_modalities but their token files (gbif_worldclim_tokens.npz etc.) are NOT present in this cache dir, so not loaded here",
+   "origin": "WorldClim v2.1 bioclim, NOAA-CDR VIIRS NDVI, and Google AlphaEarth Satellite Embedding V1 sidecars",
    "per_observation": true,
-   "notes": "absent on disk"
+   "notes": "optional; loaded when the corresponding token sidecar is present"
   },
   {
    "name": "species_text",
-   "shape": "[n_classes=4628, 1024]",
+   "shape": "[n_classes, 1024]",
    "dtype": "float32",
    "origin": "bioclip_taxon_text_emb.npy \u2014 frozen BioCLIP-2 taxonomic-string text embeddings in vocab order (code comment says 768 but file is 1024-d)",
    "per_observation": false
@@ -128,14 +128,14 @@
   },
   {
    "name": "lfmc / lfmc_valid",
-   "shape": "[n_classes=4628]",
+   "shape": "[n_classes]",
    "dtype": "float32 / bool",
    "origin": "gbif_lfmc.npz \u2014 per-species peak fire-season live fuel moisture (B34)",
    "per_observation": false
   },
   {
    "name": "myco / myco_valid",
-   "shape": "[n_classes=4628]",
+   "shape": "[n_classes]",
    "dtype": "int64 (5 classes) / bool",
    "origin": "gbif_mycorrhiza.npz \u2014 FungalRoot genus-level mycorrhizal symbiosis type (B42)",
    "per_observation": false
@@ -171,7 +171,7 @@
   },
   "seed": 0,
   "fraction": 0.16666666666666666,
-  "counts_note": "n = 343035 observations total (44 gbif_tokens chunks); train/test counts printed by prepare.py at cache build"
+  "counts_note": "observation and split counts are derived from the mounted cache"
  },
  "coordinates": {
   "storage": "self.coords: [n, 4] float32 = stack([lat, lon, elev, tnorm])",
@@ -183,17 +183,17 @@
  },
  "neighbors": {
   "structure": "scipy cKDTree built over TRAIN observations only, in the km metric frame from _frame()",
-  "k": "n_neighbors, default 24",
+  "k": "production record uses 16 neighbors",
   "self_exclusion": "train queries fetch k+4 candidates and stable-sort self (by global index) to the end before truncating to k, handling duplicate coordinates; test queries the train-only tree so self can never appear",
-  "stored_as": "self.neighbors: [n, 24] int64 tensor of global train-row indices, for every row (train and test); test rows' neighbors are always train rows",
+  "stored_as": "self.neighbors: [n, 16] int64 tensor of global train-row indices; test rows always reference train rows",
   "what_neighbors_carry": "batch() returns neighbor coords (coords[ci]), manifold_positions {biological: phylo[cls[ci]]} (neighbors' evolutionary positions), and neighbor_values {identity: cls[ci], vision_dino: dino[ci]}",
   "spatio_temporal": "with time_axis=True the 4th KD-tree dim is tnorm*time_km (default 50 km per unit normalized time), so space dominates and recency breaks ties"
  },
- "raw_imagery": "No raw images on disk under data/deepcal \u2014 only precomputed embeddings. Ground photos exist solely as pooled DINOv2 (1024-d) and BioCLIP (768-d) vectors in gbif_tokens/*.npz; aerial/satellite imagery exists solely as DINOv3-SAT493M pooled vectors (gbif_naip_tokens) and Clay v1.5 Sentinel-2 embeddings (gbif_clay_tokens.npz). No jpg/png/tif archives are present; prepare.py downloads only this pre-processed cache (deepcal_data.zip from https://portal.nersc.gov/cfs/m5239/deepcal).",
+ "raw_imagery": "The runtime consumes precomputed embeddings, not raw imagery. data/deepcal/package.py defines the published cache manifest.",
  "files_on_disk": [
   {
-   "path": "data/deepcal/gbif_tokens/ (44 chunk*.npz, 2.2G)",
-   "contents": "per chunk: gbifID [8192] int64, species_local int32, lat/lon float32, ord int32, dino [8192,1024] float32, bio [8192,768] float32; 343035 obs total"
+   "path": "data/deepcal/gbif_tokens/chunk*.npz",
+   "contents": "gbifID int64, species_local int32, lat/lon float32, ord int32, dino [n,1024] float32, bio [n,768] float32"
   },
   {
    "path": "data/deepcal/gbif_vocab.npz (37M)",
@@ -289,19 +289,11 @@
   },
   {
    "path": "data/deepcal/derived/patristic_ref.npy",
-   "contents": "reference patristic distances (required by prepare.py)"
+   "contents": "reference patristic distances built by build_plant.py"
   },
   {
-   "path": "data/deepcal/prepared_*.pt (4 files, 8.0G each)",
-   "contents": "torch.save blob of fully assembled dataset (all _PREPARED_KEYS tensors on CPU + extra modalities + tree buffers) keyed by md5 of data-config; instant reload path"
-  },
-  {
-   "path": "data/deepcal/test_io_sample.pt",
-   "contents": "test_index_sample (256 held-out rows), n_test, n_train, variable list"
-  },
-  {
-   "path": "data/deepcal/ckpt_diag.pt, ckpt_merged3.pt, ckpt_merged5.pt (3.0G each)",
-   "contents": "model checkpoints"
+   "path": "data/deepcal/prepared_*.pt",
+   "contents": "optional assembled-dataset cache with tensors, modalities, and tree buffers"
   },
   {
    "path": "data/deepcal/build_plant.py, build_pollinator.py, env_priors/build_*.py, package.py",

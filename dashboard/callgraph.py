@@ -1,8 +1,7 @@
-"""Static call-graph reachability under the ACTUAL config — proof of integration, not capability.
+"""Static call-graph reachability from the production entrypoint.
 
 Crawls every def/class/method in the model codebase, builds the reference graph, and BFS-walks it
-from the real entry points (train.py main). Config-gated branches are evaluated against the current
-yaml: code behind a false gate is GATED, not live. Code no root reaches is an ISLAND.
+from the real entry points in core.train. Code no root reaches is an ISLAND.
 
 Reach classes: live (on the champion train/eval path, gates evaluated) · gated (reachable only
 through a branch the config turns off, with the gate key) · data-pipeline / recipes / tests /
@@ -120,7 +119,7 @@ class Analyzer:
         return out
 
     def _get_value(self, node):
-        """Evaluate m.get("k", d) / config["s"]["k"]-style reads against the yaml; ... = unknown."""
+        """Evaluate config-style reads when the analyzer receives a value map."""
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" \
                 and node.args and isinstance(node.args[0], ast.Constant):
             k = node.args[0].value

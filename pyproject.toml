@@ -16,5 +16,16 @@ packages = [
   "deepearth.encoders.biological",
   "deepearth.encoders.spacetime",
   "deepearth.encoders.spacetime.hashencoder",
+  "deepearth.data",
+  "deepearth.data.deepcal",
+  "deepearth.data.deepcal.env_priors",
+  "deepearth.data.deepcal.pollinator",
+  "dashboard",
 ]
-package-dir = {deepearth = "."}
+package-dir = {deepearth = ".", dashboard = "dashboard"}
+
+[tool.setuptools.package-data]
+"deepearth.encoders.spacetime" = ["*.md", "*.sh"]
+"deepearth.encoders.spacetime.hashencoder" = ["src/*", "*.toml"]
+"deepearth.data.deepcal" = ["*.md", "*.yaml", "*.R"]
+dashboard = ["*.md", "seed/*.json", "static/*", "hooks/*.sh", "tests/*.js"]

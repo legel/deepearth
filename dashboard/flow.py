@@ -6,9 +6,9 @@ data.py/train.py source lines that load it (absent = stray file, flagged).
 Architecture: dimensions come from the production dataclasses; stages are live defs
 pulled from state/callgraph.json with their file:line spans and reach labels.
 
-    python -m dashboard.flow
+    python -m dashboard.flow [--cache /path/to/deepcal]
 """
-import ast, json, time, zipfile
+import argparse, ast, json, time, zipfile
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +16,7 @@ from numpy.lib import format as npf
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
-DATA = REPO / "data" / "deepcal"
+DEFAULT_DATA = REPO / "data" / "deepcal"
 
 
 def npz_headers(path):
@@ -27,7 +27,9 @@ def npz_headers(path):
                 continue
             with z.open(name) as f:
                 ver = npf.read_magic(f)
-                shape, _, dtype = npf._read_array_header(f, ver)
+                reader = npf.read_array_header_1_0 if ver == (1, 0) \
+                         else npf.read_array_header_2_0
+                shape, _, dtype = reader(f)
                 out[name[:-4]] = [list(shape), str(dtype)]
     return out
 
@@ -35,7 +37,9 @@ def npz_headers(path):
 def npy_header(path):
     with open(path, "rb") as f:
         ver = npf.read_magic(f)
-        shape, _, dtype = npf._read_array_header(f, ver)
+        reader = npf.read_array_header_1_0 if ver == (1, 0) \
+                 else npf.read_array_header_2_0
+        shape, _, dtype = reader(f)
     return {path.stem: [list(shape), str(dtype)]}
 
 
@@ -43,7 +47,7 @@ def gid_key(keys):
     return next((k for k in keys if k.lower() == "gbifid"), None)
 
 
-def census(canon):
+def census(canon, data):
     src = {p: (REPO / p).read_text(errors="replace").splitlines()
            for p in ("core/data.py", "core/train.py")}
     entries = []
@@ -60,7 +64,7 @@ def census(canon):
         entries.append({"name": name, "files": files, "keys": keys, "bytes": int(nbytes),
                         "coverage": cov, "loaders": refs, "stray": not refs})
 
-    for d in sorted(DATA.glob("gbif_*_tokens")) + [DATA / "gbif_tokens"]:
+    for d in sorted(data.glob("gbif_*_tokens")) + [data / "gbif_tokens"]:
         if not d.is_dir():
             continue
         chunks = sorted(d.glob("chunk*.npz"))
@@ -70,12 +74,12 @@ def census(canon):
         gk = gid_key(keys)
         ids = np.concatenate([np.load(c, allow_pickle=True)[gk] for c in chunks]) if gk else None
         add(d.name, len(chunks), keys, sum(c.stat().st_size for c in chunks), ids)
-    for f in sorted(DATA.glob("*.npz")):
+    for f in sorted(data.glob("*.npz")):
         keys = npz_headers(f)
         gk = gid_key(keys)
         ids = np.load(f, allow_pickle=True)[gk] if gk else None
         add(f.name, 1, keys, f.stat().st_size, ids)
-    for f in sorted(DATA.glob("*.npy")):
+    for f in sorted(data.glob("*.npy")):
         add(f.name, 1, npy_header(f), f.stat().st_size)
     return sorted(entries, key=lambda e: -(e["coverage"] or 0))
 
@@ -103,9 +107,9 @@ def architecture(callg):
             {"stage": "source", "title": "batch assembly",
              "defs": [ref("core/data.py::California.batch")]},
             {"stage": "spacetime", "title": "Earth4D space-time encoding",
-             "defs": [ref("encoders/spacetime/earth4d.py::Earth4D.forward"),
+             "defs": [ref("encoders/spacetime/earth4d.py::to_ecef"),
                       ref("encoders/spacetime/hashencoder/hashgrid.py::HashEncoder.forward"),
-                      ref("core/fusion.py::WorldMesh.forward"),
+                      ref("core/fusion.py::WorldMesh.raw"),
                       ref("core/fusion.py::RelativeField.forward")]},
             {"stage": "species", "title": "phylogenomic species encoding",
              "defs": [ref("encoders/biological/phylogenomic.py::SpeciesGraph.forward"),
@@ -125,11 +129,17 @@ def architecture(callg):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cache", type=Path, default=DEFAULT_DATA)
+    args = parser.parse_args()
+    data = args.cache.expanduser().resolve()
     callg = json.loads((ROOT / "state" / "callgraph.json").read_text())
-    canon = np.load(ROOT / "state" / "observations.npz")["gbifID"]
+    chunks = sorted((data / "gbif_tokens").glob("chunk*.npz"))
+    canon = np.concatenate([np.load(path)["gbifID"] for path in chunks]) \
+            if chunks else np.array([], np.int64)
     flow = {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": "core",
             "n_observations": int(len(canon)),
-            "modalities": census(canon), "arch": architecture(callg)}
+            "modalities": census(canon, data), "arch": architecture(callg)}
     (ROOT / "state" / "flow.json").write_text(json.dumps(flow) + "\n")
     m = flow["modalities"]
     print(f"flow: {len(m)} cache artifacts ({sum(x['stray'] for x in m)} stray), "

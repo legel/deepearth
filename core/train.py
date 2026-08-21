@@ -83,6 +83,17 @@ CONTINUOUS_SIGNALS = (
 )
 
 
+def prepared_cache(cache: Path) -> Path:
+    preferred = cache / "prepared_mesh.pt"
+    if preferred.exists():
+        return preferred
+    legacy = sorted(cache.glob("prepared_*.pt"))
+    if len(legacy) <= 1:
+        return legacy[0] if legacy else preferred
+    names = ", ".join(path.name for path in legacy)
+    raise RuntimeError(f"multiple prepared caches found: {names}")
+
+
 def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
     """Restore the canonical California observations and spatial holdout."""
     settings = {
@@ -96,8 +107,7 @@ def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
         "clay_v2": False,
     }
     cache = Path(settings["cache_dir"])
-    existing = sorted(cache.glob("prepared_*.pt"))
-    prepared = existing[0] if existing else cache / "prepared_mesh.pt"
+    prepared = prepared_cache(cache)
     source = base_data.build(
         settings["adapter"],
         cache_dir=settings["cache_dir"],
@@ -110,6 +120,11 @@ def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
         clay_v2=settings["clay_v2"],
         prepared=str(prepared),
     )
+    expected = {"n_neighbors": 16, "holdout": "spatial", "time_axis": True}
+    mismatched = {key: (getattr(source, key), value) for key, value in expected.items()
+                  if getattr(source, key) != value}
+    if mismatched:
+        raise ValueError(f"prepared cache violates the production data contract: {mismatched}")
 
     dims = source.variable_dims()
     variables = [
@@ -500,6 +515,13 @@ def main() -> None:
     print(evaluate.format_benchmarks(scores), flush=True)
     print("BENCHMARK RECEIPT: " + json.dumps({
         "protocol": f"{PUBLIC_EVALUATOR}-fixed-{design.steps}-steps",
+        "data": {
+            "observations": int(source.n),
+            "species": int(source.n_classes),
+            "neighbors": int(source.n_neighbors),
+            "holdout": source.holdout,
+            "time_axis": bool(source.time_axis),
+        },
         "scores": scores,
         "harmonic": evaluate.net_score(scores),
         "arithmetic": evaluate.arithmetic_net(scores),

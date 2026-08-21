@@ -40,11 +40,11 @@ See `ARCHITECTURE.md`. Pipeline: `registry.py` (deterministic) -> `audit.py`
 | all of the below, coherently | `python -m dashboard.refresh` | after any commit — prevents state skew |
 | `state/registry.json` | `python -m dashboard.registry` | after any commit |
 | `state/graph.json`, `state/status.json` | `python -m dashboard.audit` (`--loop` to daemonize) | after any merge; cached per file hash |
-| `state/observations.npz` | `python -m dashboard.observations` | after data cache changes |
+| `state/observations.npz` | `python -m dashboard.observations --cache <path>` | after data cache changes |
 | `runs/<id>.jsonl` | `python -m dashboard.tracker --cache <path> [--tag t]` | every training run |
 | `state/reconstructions.json` | `python -m dashboard.reconstruct <ckpt> --cache <path>` | after a run worth inspecting |
 | `state/callgraph.json` | `python -m dashboard.callgraph` | after code/config changes — reachability truth |
-| `state/flow.json` | `python -m dashboard.flow` | after callgraph or data cache changes |
+| `state/flow.json` | `python -m dashboard.flow --cache <path>` | after callgraph or data cache changes |
 | `state/verification.json` | periodic adversarial agent fleet (see ARCHITECTURE.md) | before decisions |
 | `state/triage.json` | `python -m dashboard.audit --triage-islands` | after callgraph changes — island action plan |
 | E2E behavior check | `node dashboard/tests/sweep.js` | after UI changes; prints ALL CLEAN |

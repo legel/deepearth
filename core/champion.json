@@ -8,6 +8,14 @@
   "total_parameters": 13710284,
   "initial_trainable_parameters": 13710283,
   "seeds": [1337, 1338],
+  "data_contract": {
+    "observations": 621558,
+    "training_observations": 591890,
+    "species": 4628,
+    "neighbors": 16,
+    "holdout": "spatial",
+    "time_axis": true
+  },
   "headline": {
     "harmonic": 0.419102219246962,
     "arithmetic": 0.5826232122187176,

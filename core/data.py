@@ -90,8 +90,7 @@ class California:
         self.lat = torch.tensor(lat, device=dev); self.lon = torch.tensor(lon, device=dev)
         self.elev = torch.tensor(elev, device=dev); self.cls = torch.tensor(cls, device=dev)
         self.dino = torch.tensor(dino, device=dev); self.bio = torch.tensor(bio, device=dev)
-        # [Ensue rule 18] per-obs vision presence, DERIVED from the data (robust): occurrence-only densify obs carry
-        # zeroed vision embeddings -> masked so they contribute species+location evidence without poisoning vision.
+        # Occurrence-only rows carry no vision signal.
         self.has_vision = (self.dino.abs().sum(-1) > 1e-6)
         self.phylo = torch.tensor(phylo, device=dev); self.traits = torch.tensor(traits, device=dev)
         self.species_text = None                          # frozen BioCLIP-2 text prior per species (rule 26 seed / inductive placement)
@@ -198,8 +197,7 @@ class California:
         """Locate observations_meta.parquet (carries eventDate per gbifID) across machines/layouts."""
         cands = [cache / "observations_meta.parquet",
                  cache.parent / "deepearth_gbif" / "observations_meta.parquet",
-                 Path.home() / "deepearth/data/deepearth_gbif/observations_meta.parquet",
-                 Path("/home/photon/4tb/deepearth_gbif/observations_meta.parquet")]
+                 Path.home() / "deepearth/data/deepearth_gbif/observations_meta.parquet"]
         for c in cands:
             if c.exists():
                 return str(c)
@@ -354,15 +352,15 @@ class California:
         if hydro.exists():
             z = np.load(hydro)
             self._add_modality("hydro", z["gbifID"], z["hydro"], gid, dev, zscore=True, valid=z["has_hydro"])
-        worldclim = cache / "gbif_worldclim_tokens.npz"                                 # [Ensue] WorldClim v2.1 bioclim normals (19, 30-yr climatology) -- transferable climate niche for species-from-env
+        worldclim = cache / "gbif_worldclim_tokens.npz"                    # WorldClim bioclim normals
         if worldclim.exists():
             z = np.load(worldclim)
             self._add_modality("worldclim", z["gbifID"], z["worldclim"], gid, dev, zscore=True, valid=z["has_worldclim"])
-        phenology = cache / "gbif_phenology_tokens.npz"                                 # [Ensue] NOAA-CDR VIIRS NDVI 12-month seasonal cycle -- vegetation greenup/senescence timing (orthogonal to static climate/soil)
+        phenology = cache / "gbif_phenology_tokens.npz"                    # VIIRS annual NDVI cycle
         if phenology.exists():
             z = np.load(phenology)
             self._add_modality("phenology", z["gbifID"], z["phenology"], gid, dev, zscore=True, valid=z["has_phenology"])
-        alphaearth = cache / "gbif_alphaearth_tokens.npz"                              # [Ensue] Google Satellite Embedding V1 (AlphaEarth) 64d annual @10m -- SatCLIP-style learned geo prior; consumed by model.alphaearth_geo (added to the spatial position every head reads), NOT a reconstruction variable
+        alphaearth = cache / "gbif_alphaearth_tokens.npz"                  # AlphaEarth annual embedding
         if alphaearth.exists():
             z = np.load(alphaearth)
             _ae = np.asarray(z["ae"], dtype=np.float32); _valid = np.isfinite(_ae[:, 0])

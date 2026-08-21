@@ -22,7 +22,8 @@ _FIXED_POINT_BITS = 36
 
 def _fixed_scale(grad: torch.Tensor) -> float:
     """Fixed-point scale for this backward, or 0.0 to keep the original float-atomic path."""
-    if os.environ.get("EARTH4D_DETERMINISTIC", "") not in ("1", "true", "True"):
+    explicit = os.environ.get("EARTH4D_DETERMINISTIC", "") in ("1", "true", "True")
+    if not explicit and not torch.are_deterministic_algorithms_enabled():
         return 0.0
     gmax = grad.detach().abs().max()
     if not torch.isfinite(gmax) or gmax.item() <= 0.0:

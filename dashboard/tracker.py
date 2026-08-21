@@ -59,6 +59,7 @@ def main():
             bench.update(d["scores"])
             final.update({
                 "protocol": d["protocol"],
+                "data": d.get("data"),
                 "net_score": d["harmonic"],
                 "arithmetic": d["arithmetic"],
             })

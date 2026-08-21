@@ -30,7 +30,7 @@
     },
     {
       "type": "stdout",
-      "format": "BENCHMARK RECEIPT: JSON with protocol, full scores, harmonic, and arithmetic"
+      "format": "BENCHMARK RECEIPT: JSON with protocol, data contract, full scores, harmonic, and arithmetic"
     }
   ],
   "promotion": {
