@@ -5,7 +5,8 @@
   "delivery_commit": "0c6e6383",
   "protocol": "v6-canonical-family-identity",
   "steps": 8000,
-  "trainable_parameters": 13710284,
+  "total_parameters": 13710284,
+  "initial_trainable_parameters": 13710283,
   "seeds": [1337, 1338],
   "headline": {
     "harmonic": 0.419102219246962,

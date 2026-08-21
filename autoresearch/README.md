@@ -6,6 +6,7 @@ This directory is the fixed public measurement surface:
 - `champion_report.py` compares a run with the registered record.
 - `champion_scores.json` stores the exact registered record.
 - `BENCHMARKS.md` renders the readable scorecard.
+- `science.md` defines the public scientific contract.
 
 Architecture, optimization, and data loading live in `core/`. Run the production model with:
 

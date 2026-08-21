@@ -34,6 +34,12 @@ The final decoder is isolated by replaying the same checkpoints with the option 
 Only the 2,291-step control-to-candidate comparison is a matched promotion claim. The registered 797.1M row is an
 older 5,126-step receipt: it is retained as historical replacement context, not treated as an equal-budget ablation.
 
+## Mesh replay
+
+The 13.7M-parameter mesh record replays at harmonic `0.377728` and arithmetic `0.559667` after 8,000 steps. It does
+not pass the registered public control (`0.378407` / `0.587374`) and is not a public promotion claim. Its private v6
+receipt is preserved in `core/champion.json` as architecture provenance only.
+
 ## Capability scorecard
 
 Capabilities are ordered weakest-first. Deltas isolate hierarchical family MAP by replaying the same PR checkpoints with the option disabled.
