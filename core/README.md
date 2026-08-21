@@ -27,6 +27,9 @@ reconstruction target, whether carried from neighbors) are passed in, not hard-c
   `NeighborContext`; the species variable is read from the refined `SpeciesGraph`.
 - **Processor** — a small set of learnable latents read the token set (cross-attention) then attend among themselves
   (`n_layers` transformer blocks). Pure PyTorch, so it compiles cleanly while the Earth4D CUDA kernel stays eager.
+- **Detail evidence** — each observed continuous modality retains a small set of sub-tokens. During decoding, the
+  target query attends to those sub-tokens through a zero-gated residual, preserving fine detail without bypassing
+  the shared latent state.
 - **Reconstruction** — for a random reveal mask, every hidden-but-observed variable is decoded from the latents and
   scored (cosine for continuous, class-normalized cross-entropy for categorical). `reconstruction_loss` and
   `infer(given, targets)` are the training and inference entry points.

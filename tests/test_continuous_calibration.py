@@ -49,3 +49,17 @@ def test_calibration_applies_once_trained():
 def test_categorical_heads_are_never_calibrated():
     m = _model(True)
     assert "identity" not in m.cal_gain
+
+
+def test_detail_reader_is_an_exact_residual_at_initialization():
+    variables = [Variable("identity", "categorical", num_classes=16),
+                 Variable("climate", "continuous", dim=8)]
+    model = DeepEarth(variables, d_model=32, n_latents=4, n_layers=1, capacity=4,
+                      decoder_hidden=16, species_variable="identity", detail_evidence_tokens=3,
+                      absolute_log2_hashmap_size=8, absolute_levels=2,
+                      relative_log2_hashmap_size=8)
+    model._detail_evidence = torch.randn(5, 4, 32)
+    model._detail_padding = torch.zeros(5, 4, dtype=torch.bool)
+    pooled = torch.randn(5, 2, 32)
+
+    assert torch.equal(model._read_detail(pooled, torch.tensor([0, 1])), pooled)

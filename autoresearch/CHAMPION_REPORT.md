@@ -1,41 +1,39 @@
 # DeepCal champion report
 
-## 25.4M fixed-step hierarchical-family record
+## Query-conditioned detail evidence record
 
-The compact model improves both public aggregates over a seed-matched 24.9M control at exactly 2,291 optimizer
-steps. It retains the PR's central result: the 797.1M default is unnecessary. The candidate is 96.8% smaller and
-uses 48.4% less training VRAM. Its 2,291-step score is also 18.7% higher than the historical 797M receipt, which
-used 5,126 steps; that row is replacement context, not the matched promotion comparison.
+The decoder now receives three detail tokens from every observed continuous modality and reads them with a
+target-conditioned attention residual. The existing fused latent remains the primary state; a learned zero-initialized
+gate admits detailed evidence only when it improves a target. This preserves the shared bottleneck while avoiding the
+lossy one-token compression of high-dimensional imagery and environmental embeddings.
 
-| Model | Seed | Steps | Harmonic | Arithmetic |
-|---|---:|---:|---:|---:|
-| Registered 797.1M reference | 1337 | 5,126 | 0.318693 | 0.570700 |
-| Fixed-step 24.9M control | 1337 | 2,291 | 0.367661 | 0.578883 |
-| Fixed-step 24.9M control | 1338 | 2,291 | 0.365992 | 0.581475 |
-| Prior 25.4M niche fusion | 2-seed mean | 2,291 | 0.373924 | 0.583204 |
-| Prior masked-pollinator record | 2-seed mean | 2,291 | 0.376617 | 0.586926 |
-| **Hierarchical family MAP** | **1337** | **2,291** | **0.377589** | **0.586005** |
-| **Hierarchical family MAP** | **1338** | **2,291** | **0.379225** | **0.588743** |
-| **Candidate mean** | **2 seeds** | **2,291** | **0.378407** | **0.587374** |
-| **Delta vs prior PR record** |  |  | **+0.001790 (+0.48%)** | **+0.000448** |
-| **Delta vs fixed-step control** |  |  | **+0.011581 (+3.16%)** | **+0.007195** |
-| **Difference vs historical reference** |  |  | **+0.059714 (+18.74%)** | **+0.016674** |
+| Model | Seed | Steps | Harmonic | Arithmetic | Parameters | Peak VRAM |
+|---|---:|---:|---:|---:|---:|---:|
+| Registered champion | 2-seed mean | 2,291 | 0.378407 | 0.587374 | 25.4M | 19,100 MB |
+| Detail evidence | 1337 | 2,291 | 0.381355 | 0.588091 | 28.9M | 21,225.8 MB |
+| Detail evidence | 1338 | 2,291 | 0.383536 | 0.594141 | 28.9M | 21,225.8 MB |
+| **Detail-evidence mean** | **2 seeds** | **2,291** | **0.382446** | **0.591116** | **28.9M** | **21,225.8 MB** |
+| **Delta** |  |  | **+0.004039 (+1.07%)** | **+0.003742** | **+3.5M** | **+2,125.8 MB** |
 
-When plant identity is hidden, the model now composes its species posterior through the empirical
-species-to-pollinator table and blends that distribution with the learned pollinator decoder. This makes the
-interaction prediction consistent with the model's own uncertain species belief instead of requiring a single
-guessed species. It implements science rule 27: plant-pollinator interactions carry biological signal.
+Both seeds independently exceed the registered champion on Lance's unchanged harmonic and arithmetic aggregates.
+The comparison uses the public spatial holdout, all 58 active benchmarks, exactly 2,291 optimizer steps, and
+checkpoint replay. Evaluator definitions, data preparation, and holdout membership are unchanged.
 
-The mechanism improves photo-only pollinator recall by 0.0892, photo-plus-environment recall by 0.0872,
-environment recall by 0.0054, and spacetime recall by 0.0043. Scores outside the pollinator pathway are identical
-because the validation replays the exact same trained checkpoints; no additional optimization steps are involved.
+The largest capability gains are hydro reconstruction (+0.0410), topography reconstruction (+0.0389), growth form
+(+0.0166), photo-only species top-1 (+0.0148), photo-conditioned species top-1 (+0.0142), phylogeny reconstruction
+(+0.0140), LFMC (+0.0139), and NAIP-IR reconstruction (+0.0128). The result advances science rules 13-16 and 23:
+fusion still consumes typed multimodal tokens through a shared latent field, while interface decoders can ask
+target-specific questions of the observed evidence.
 
-For masked species queries, the new decoder marginalizes the species posterior by botanical family and promotes
-the most likely species inside the family with the greatest total probability. It preserves every other species
-logit, so fine-grained evidence is retained while family-level decisions become coherent. On the exact same
-checkpoints it raises B6 family-from-environment from 0.159364 to 0.172357 and B8 family-from-spacetime from
-0.161352 to 0.170268, while increasing both public aggregates on both seeds. This implements science rules 17 and
-23: posterior evidence is composed probabilistically without collapsing the species distribution.
+## Regressions
 
-The canonical configuration uses batch 512, dense hash optimization, learning rate `1e-3`, and exactly 2,291
-optimizer steps. The evaluator, aggregate definitions, spatial holdout, and extraction recipe are unchanged.
+The aggregate record includes four capability regressions larger than 0.005. They are reported explicitly rather
+than hidden: pollinator distribution fit 0.531038 -> 0.474724, species-to-pollinator recall 0.460037 -> 0.439075,
+pollinator calibration 0.684013 -> 0.663654, and flowering fidelity 0.734281 -> 0.727470. The complete before/after
+scorecard is in `BENCHMARKS.md`; exact unrounded values are in `champion_scores.json`.
+
+## Reproduction
+
+Run `autoresearch/champion.yaml` for seeds 1337 and 1338 at exactly 2,291 steps, then replay each checkpoint through
+the public evaluator. The canonical `autoresearch/deepcal.yaml` carries the same model setting. No checkpoint or
+generated cache is committed.

@@ -2,7 +2,7 @@
 
 A self-contained environment for autonomously researching and improving **DeepEarth**.
 
-1. Clone `github.com/legel/deepearth` (branch `deepcal`).
+1. Clone `github.com/legel/deepearth` (branch `main`).
 2. `pip install -r requirements.txt`, then build the Earth4D CUDA hash encoder against your torch: `cd encoders/spacetime && bash install.sh` (the shipped .so is ABI-specific — you MUST rebuild it).
 3. `cd deepearth/autoresearch`; read `autoresearch.md` + `science.md` (binding research rules).
 4. `python -m deepearth.autoresearch.prepare` — auto-downloads + extracts the audited dataset (deepcal_data.zip) from NERSC into `data/deepcal/`.
