@@ -14,7 +14,8 @@ latitude, longitude, elevation, time
                   |
       +-----------+-----------+--------------+
       |           |           |              |
-   abiotic      visual     biological     ecological
+   abiotic      visual    biological GNN  ecological
+                            SpeciesGraph
       |           |           |              |
       +------ typed residual mesh writes -----+
                   |
@@ -26,8 +27,8 @@ latitude, longitude, elevation, time
 ```
 
 Earth4D supplies persistent spatial and temporal addressing. Environmental, visual, phylogenomic, and ecological
-measurements write into distinct lenses at those addresses. Fusion reads only the shared mesh; raw modalities do not
-bypass the world state.
+measurements write into distinct lenses at those addresses. `SpeciesGraph` propagates biological state across the
+dated phylogeny before it enters the mesh. Fusion reads only the shared mesh; raw modalities do not bypass it.
 
 ## Repository
 
