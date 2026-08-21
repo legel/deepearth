@@ -1,8 +1,9 @@
-"""Train the production fibered world model and score it with the public evaluator."""
+"""Train and score the 13.7M-parameter Earth4D mesh record."""
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -12,13 +13,18 @@ import torch
 from deepearth.core import data as base_data
 from deepearth.core.fusion import DeepEarth, Variable
 
-
 @dataclass(frozen=True)
 class Experiment:
-    seed: int = 1337
-    steps: int = 2291
+    """Starting hypothesis, not a closed menu of allowed changes.
+
+    The research loop may replace this structure, add state, or rewrite the model
+    and training procedure. It is kept here only so one experiment is legible.
+    """
+
+    seed: int = int(os.environ.get("MESH_SEED", "1337"))
+    steps: int = int(os.environ.get("MESH_STEPS", "8000"))
     batch: int = 256
-    width: int = 192
+    width: int = 128
     levels: int = 12
     hash_log2: int = 14
     latents: int = 16
@@ -26,53 +32,13 @@ class Experiment:
     hide_probability: float = 0.5
     learning_rate: float = 5e-4
     weight_decay: float = 1e-3
-    reader_steps: int = 100
-    graph_learning_rate_scale: float = 0.02
-    init_checkpoint: str = ""
-    reader_only: bool = False
+    reader_steps: int = int(os.environ.get("MESH_READER_STEPS", "100"))
+    graph_learning_rate_scale: float = float(os.environ.get("MESH_GRAPH_LR_SCALE", "0.02"))
+    init_checkpoint: str = os.environ.get("MESH_INIT_CHECKPOINT", "")
+    reader_only: bool = os.environ.get("MESH_READER_ONLY", "0") == "1"
 
 
-CONTINUOUS_SIGNALS = (
-    "vision_dino", "vision_bio", "phylo", "climate", "soil", "naip_rgb",
-    "naip_ir", "clay", "topo", "chm", "hydro", "phenology",
-)
-
-
-def load_data(cache_dir: str, device: str):
-    settings = {
-        "adapter": "california",
-        "cache_dir": str(Path(cache_dir).expanduser().resolve()),
-        "n_neighbors": 16,
-        "holdout": "spatial",
-        "time_axis": True,
-        "time_km": 50.0,
-    }
-    cache = Path(settings["cache_dir"])
-    prepared = cache / f"prepared_{base_data.prepared_tag(settings)}.pt"
-    source = base_data.build(
-        settings["adapter"], cache_dir=settings["cache_dir"],
-        n_neighbors=settings["n_neighbors"], device=device,
-        holdout=settings["holdout"], time_axis=settings["time_axis"],
-        time_km=settings["time_km"], prepared=str(prepared),
-    )
-    dims = source.variable_dims()
-    variables = [
-        {"name": name, "kind": "continuous", "dim": int(dims[name])}
-        for name in CONTINUOUS_SIGNALS if int(dims.get(name, 0)) > 0
-    ]
-    variables.insert(2, {
-        "name": "identity", "kind": "categorical",
-        "num_classes": int(dims["identity_classes"]),
-    })
-    variables.extend(
-        {"name": name, "kind": "categorical", "num_classes": int(classes)}
-        for name, classes in dims["trait_classes"].items()
-    )
-    always = {}
-    if "alphaearth" in source.extra:
-        always["alphaearth"] = int(source.extra["alphaearth"][2])
-    return source, variables, always
-
+EXPERIMENT = Experiment()
 
 READER_PARAMETERS = (
     "latents", "read.", "read_norm.", "blocks.",
@@ -98,16 +64,6 @@ READER_PARAMETERS = (
     "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
     "mesh_condition_gate.", "mesh_condition_norm.",
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
-    "evidence_reader.", "evidence_reader_norm.",
-    "evidence_reader_output_norm.", "evidence_read_gate.",
-    "detail_evidence_tokenizer.", "detail_evidence_subtoken.",
-    "detail_evidence_reader.", "detail_evidence_norm.",
-    "detail_evidence_output_norm.", "detail_evidence_gate.",
-    "evidence_refine_reader.", "evidence_refine_norm.",
-    "evidence_refine_query.", "evidence_refine_router.",
-    "evidence_refine_output_norm.", "evidence_refine_gate.",
-    "evidence_refine_ffn.", "evidence_refine_ffn_gate.",
-    "evidence_parallel_lens_gate.", "evidence_parallel_gate.",
     "species_niche_key", "species_niche_adapter.",
 )
 SPECIES_LENS_PARAMETERS = (
@@ -120,6 +76,72 @@ IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
 CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
 
+CONTINUOUS_SIGNALS = (
+    "vision_dino",
+    "vision_bio",
+    "phylo",
+    "climate",
+    "soil",
+    "naip_rgb",
+    "naip_ir",
+    "clay",
+    "topo",
+    "chm",
+    "hydro",
+    "phenology",
+)
+
+
+def load(cache_dir: str, device: str, *, subset: dict | None = None):
+    """Restore the canonical California observations and spatial holdout."""
+    settings = {
+        "adapter": "california",
+        "cache_dir": str(Path(cache_dir).expanduser().resolve()),
+        "n_neighbors": 16,
+        "holdout": "spatial",
+        "subset": subset,
+        "time_axis": True,
+        "time_km": 50.0,
+        "clay_v2": False,
+    }
+    cache = Path(settings["cache_dir"])
+    # Reuse the canonical assembled dataset when the cache ships one. Rebuilding
+    # this artifact duplicates ~15 GB without changing a single observation.
+    existing = sorted(cache.glob("prepared_*.pt"))
+    prepared = existing[0] if existing else cache / f"prepared_{base_data.prepared_tag(settings)}.pt"
+    source = base_data.build(
+        settings["adapter"],
+        cache_dir=settings["cache_dir"],
+        n_neighbors=settings["n_neighbors"],
+        device=device,
+        holdout=settings["holdout"],
+        subset=settings["subset"],
+        time_axis=settings["time_axis"],
+        time_km=settings["time_km"],
+        clay_v2=settings["clay_v2"],
+        prepared=str(prepared),
+    )
+
+    dims = source.variable_dims()
+    variables = [
+        {"name": name, "kind": "continuous", "dim": int(dims[name])}
+        for name in CONTINUOUS_SIGNALS
+        if int(dims.get(name, 0)) > 0
+    ]
+    variables.insert(2, {
+        "name": "identity",
+        "kind": "categorical",
+        "num_classes": int(dims["identity_classes"]),
+    })
+    variables.extend(
+        {"name": name, "kind": "categorical", "num_classes": int(classes)}
+        for name, classes in dims["trait_classes"].items()
+    )
+
+    always = {}
+    if "alphaearth" in source.extra:
+        always["alphaearth"] = int(source.extra["alphaearth"][2])
+    return source, variables, always
 
 
 def build_model(source, variable_specs, always_dims, device: str, design: Experiment = EXPERIMENT) -> DeepEarth:
@@ -153,28 +175,7 @@ def train(
     if device.startswith("cuda"):
         torch.cuda.manual_seed_all(design.seed)
     source, variable_specs, always_dims = load_data(cache, device)
-    if design.width != 128:
-        candidate_rng = torch.random.get_rng_state()
-        candidate_cuda_rng = torch.cuda.get_rng_state_all() \
-            if device.startswith("cuda") else None
-        control = build_model(
-            source, variable_specs, always_dims, device,
-            replace(design, width=128),
-        )
-        control_rng = torch.random.get_rng_state()
-        control_cuda_rng = torch.cuda.get_rng_state_all() \
-            if device.startswith("cuda") else None
-        del control
-        if device.startswith("cuda"):
-            torch.cuda.empty_cache()
-            torch.cuda.set_rng_state_all(candidate_cuda_rng)
-        torch.random.set_rng_state(candidate_rng)
-        model = build_model(source, variable_specs, always_dims, device, design)
-        torch.random.set_rng_state(control_rng)
-        if device.startswith("cuda"):
-            torch.cuda.set_rng_state_all(control_cuda_rng)
-    else:
-        model = build_model(source, variable_specs, always_dims, device, design)
+    model = build_model(source, variable_specs, always_dims, device, design)
     if design.init_checkpoint:
         checkpoint = Path(design.init_checkpoint).expanduser()
         state = torch.load(checkpoint, map_location=device, weights_only=True)
@@ -508,12 +509,16 @@ def main() -> None:
     parser.add_argument("--cache", required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=1337)
-    parser.add_argument("--steps", type=int, default=2291)
+    parser.add_argument("--steps", type=int, default=8000)
+    parser.add_argument("--reader-steps", type=int, default=100)
     parser.add_argument("--checkpoint")
     args = parser.parse_args()
 
     design = replace(
-        Experiment(), seed=args.seed, steps=args.steps,
+        Experiment(),
+        seed=args.seed,
+        steps=args.steps,
+        reader_steps=args.reader_steps,
         init_checkpoint=args.checkpoint or "",
     )
     model, source = train(args.cache, args.device, design)
@@ -522,6 +527,7 @@ def main() -> None:
     scores = evaluate.evaluate_benchmarks(model, source, args.device, batch=1280)
     print(evaluate.format_benchmarks(scores), flush=True)
     print("BENCHMARK RECEIPT: " + json.dumps({
+        "protocol": getattr(evaluate, "BENCHMARK_PROTOCOL", "unversioned"),
         "scores": scores,
         "harmonic": evaluate.net_score(scores),
         "arithmetic": evaluate.arithmetic_net(scores),

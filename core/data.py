@@ -48,7 +48,15 @@ class California:
 
     def __init__(self, cache_dir: str, n_neighbors: int = 24, device: str = "cuda", holdout_fraction: float = 1 / 6,
                  holdout: str = "spatial", subset: dict | None = None, time_axis: bool = False,
-                 meta_path: str | None = None, time_km: float = 50.0, prepared: str | None = None):
+                 meta_path: str | None = None, time_km: float = 50.0, prepared: str | None = None,
+                 clay_v2: bool = False):
+        # clay_v2 (science.md rule 18, "all available data must be included"): gbif_clay_v2_tokens.npz carries
+        # Clay embeddings for 616,044 of the 621,558 observations (99.1%) at float32, while the default
+        # gbif_clay_tokens.npz carries 215,297 (34.6%) at float16 -- 2.86x fewer observations with clay evidence.
+        # NOTE the prepared cache stores `extra` (see _save_prepared), and the fast path below SKIPS
+        # _load_modalities entirely, so this flag must also be part of the prepared-cache key in train.py or a
+        # change here is silently ignored.
+        self._clay_v2 = clay_v2
         if prepared and Path(prepared).exists():           # fast path: restore the assembled dataset from a cache
             self._load_prepared(prepared, device); return
         cache = Path(cache_dir); dev = self.device = device; self.n_neighbors = n_neighbors
@@ -167,7 +175,7 @@ class California:
             v = getattr(self, k, None)
             blob[k] = v.detach().cpu() if torch.is_tensor(v) else v
         blob["extra"] = {n: (t.cpu(), h.cpu(), d) for n, (t, h, d) in self.extra.items()}
-        for k in ("poll_idx", "poll_frq", "poll_valid", "n_pollinators", "pollinator_text"):   # pollinator distribution + BioCLIP prior (pollinator_text gates the R27 pollinator_graph — dropping it silently disabled the graph on every prepared-cache run)
+        for k in ("poll_idx", "poll_frq", "poll_valid", "n_pollinators"):               # pollinator distribution (restored generically on load)
             if hasattr(self, k):
                 v = getattr(self, k); blob[k] = v.cpu() if torch.is_tensor(v) else v
         blob["tree"] = self.tree
@@ -252,7 +260,7 @@ class California:
         if not nwk.exists():
             return None, None
         import re, torch as _t
-        from deepearth.encoders.biological.phylogenomic import build_tree_buffers
+        from deepearth.autoresearch.main.editable_files.encoders.phylogenomic import build_tree_buffers
         toks = set(re.findall(r"[^(),:;\s]+", open(nwk).read()))
         pairs = [(i, tl) for i, tl in enumerate(self._tip_labels) if tl in toks]   # (species-local idx, tip_label)
         if not pairs:
@@ -266,7 +274,7 @@ class California:
         nwk = cache / "ca_subtree.dated.nwk"
         if not nwk.exists():
             return None
-        from deepearth.encoders.biological.phylogenomic import build_tree_buffers
+        from deepearth.autoresearch.main.editable_files.encoders.phylogenomic import build_tree_buffers
         try:
             return build_tree_buffers(str(nwk), self._tip_labels)
         except KeyError as e:                              # inductively-placed species (rules 25/26) aren't in the dated tree
@@ -329,6 +337,8 @@ class California:
                 rows = np.concatenate([np.load(f)[key] for f in nf])
                 self._add_modality(name, ids, rows, gid, dev, normalize=True)
         clay = cache / "gbif_clay_tokens.npz"                                        # Clay 1.5 Sentinel-2
+        if getattr(self, "_clay_v2", False) and (cache / "gbif_clay_v2_tokens.npz").exists():
+            clay = cache / "gbif_clay_v2_tokens.npz"                                 # 99.1% coverage, float32
         if clay.exists():
             z = np.load(clay)
             self._add_modality("clay", z["gbifID"], z["clay"], gid, dev, normalize=True,
