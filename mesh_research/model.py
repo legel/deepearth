@@ -99,6 +99,10 @@ READER_PARAMETERS = (
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
     "species_niche_key", "species_niche_adapter.",
 )
+EXPANSION_PARAMETERS = (
+    "deep_mesh_reader.", "deep_mesh_reader_gate.",
+    "deep_mesh_reader_output_norm.",
+)
 SPECIES_LENS_PARAMETERS = (
     "species_lens_reader.", "species_lens_reader_norm."
 )
@@ -576,7 +580,7 @@ class MeshModel(nn.Module):
             CrossFiberReaderBlock(d_model, n_heads) for _ in range(4)
         ])
         self.deep_mesh_reader_gate = nn.ParameterDict({
-            name: nn.Parameter(torch.tensor(0.05))
+            name: nn.Parameter(torch.zeros(()))
             for name in self.mesh_read_names
         })
         self.deep_mesh_reader_output_norm = nn.LayerNorm(d_model)
@@ -1967,6 +1971,8 @@ def train(
                             or name.startswith(SPECIES_LENS_PARAMETERS) \
                             or name.startswith(LFMC_LENS_PARAMETERS) \
                             or name.startswith(CALIBRATION_PARAMETERS)
+                if design.reader_only:
+                    is_reader = name.startswith(EXPANSION_PARAMETERS)
                 if design.reader_only and name.startswith("species_graph."):
                     is_reader = False
                 parameter.requires_grad_(is_reader)
