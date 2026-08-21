@@ -1,30 +1,28 @@
 # DeepCal compact hierarchical-family record scorecard
 
-Protocol: `public-main-4d6cb44-fixed-2291-steps`. Config: `autoresearch/champion.yaml`. Data: 621,558 observations,
-29,668-row spatial holdout, complete 64-dimensional AlphaEarth coverage. Values are the unrounded mean of two
-checkpoint replays through the unchanged public evaluator.
+Protocol: `v2-held-species-pollinator-transfer`. Config: `autoresearch/champion.yaml`. Data: 621,558 observations,
+29,668-row spatial holdout, complete 64-dimensional AlphaEarth coverage. This is a membership migration of the stored
+two-seed benchmark rows, not a model improvement: derived `*_gain` diagnostics and structurally invalid B55 remain
+reported but enter neither mean. B64 stays inactive until a fresh model is trained without the held species' labels.
 
 | Model | Seed | Steps | Harmonic | Arithmetic | Training VRAM |
 |---|---:|---:|---:|---:|---:|
-| Registered 797.1M reference | 1337 | 5,126 | 0.318693 | 0.570700 | 37,003.6 MB |
-| Fixed-step 24.9M control | 1337 | 2,291 | 0.367661 | 0.578883 | 17,971.6 MB |
-| Fixed-step 24.9M control | 1338 | 2,291 | 0.365992 | 0.581475 | 17,971.6 MB |
-| Prior 25.4M niche fusion | 2 seeds | 2,291 | 0.373924 | 0.583204 | 19,100 MB observed |
-| Prior masked-pollinator record | 2 seeds | 2,291 | 0.376617 | 0.586926 | 19,100 MB observed |
-| **Hierarchical family MAP** | **1337** | **2,291** | **0.377589** | **0.586005** | **17,436 MB replay** |
-| **Hierarchical family MAP** | **1338** | **2,291** | **0.379225** | **0.588743** | **17,436 MB replay** |
-| **Candidate mean** | **2 seeds** | **2,291** | **0.378407** | **0.587374** | **17,436 MB replay** |
-| **Delta vs prior PR record** |  |  | **+0.001790 (+0.48%)** | **+0.000448** | **no training change** |
-| **Delta vs fixed-step control** |  |  | **+0.011581 (+3.16%)** | **+0.007195** | **+1,128 MB** |
-| **Difference vs historical 797.1M reference** |  |  | **+0.059714 (+18.74%)** | **+0.016674** | **-48.4% training VRAM** |
+| Hierarchical family MAP, legacy membership | 2 seeds | 2,291 | 0.378407 | 0.587374 | 17,436 MB replay |
+| **Hierarchical family MAP, v2 membership** | **1337** | **2,291** | **0.435648** | **0.597187** | **stored rows** |
+| **Hierarchical family MAP, v2 membership** | **1338** | **2,291** | **0.437633** | **0.599979** | **stored rows** |
+| **Incumbent v2 mean** | **2 seeds** | **2,291** | **0.436640** | **0.598583** | **no model change** |
+| Rejected mesh candidate, legacy membership | 2 seeds | 8,000 | 0.377728 | 0.559667 | stored public receipts |
+| Rejected mesh candidate, v2 membership | 2 seeds | 8,000 | 0.433762 | 0.570295 | stored public receipts |
 
 ## Record criterion
 
-A replacement record uses the unchanged public evaluator, data, and holdout; completes exactly 2,291 optimizer steps;
-reports every active benchmark; runs seeds 1337 and 1338; and requires each candidate seed to exceed its seed-matched
-control on both harmonic and arithmetic mean. Wall time is reported as a resource diagnostic, never converted into
-extra training steps. Both candidate seeds pass. The replay cache also contains distribution labels for B29/B39/B40;
-those remain inactive here so the record uses the same 58/63 suite as the registered PR scorecard.
+A replacement record uses this protocol, data, and holdout; completes exactly 2,291 optimizer steps; reports every
+active benchmark; and runs seeds 1337 and 1338. Candidate and baseline must have the same active capability suite.
+The first holdout-trained run activates B64 and must therefore be registered explicitly as the new baseline, not
+claimed as a comparable improvement over this migrated record.
+
+The mesh candidate still does not win after reaggregation: its harmonic is 0.002879 lower and its arithmetic is
+0.028288 lower. Changing membership does not reverse the earlier scientific verdict.
 
 The final decoder is isolated by replaying the same checkpoints with the option disabled: harmonic
 0.376196977 -> 0.377588822 and arithmetic 0.585728514 -> 0.586005331 on seed 1337; harmonic
@@ -39,7 +37,6 @@ Capabilities are ordered weakest-first. Deltas isolate hierarchical family MAP b
 
 | Benchmark | Prior PR checkpoint | Candidate | Delta | Seed 1337 | Seed 1338 |
 |---|---:|---:|---:|---:|---:|
-| `B55_pollinator_phylo_transfer_recall` | 0.038160 | 0.038147 | -0.000013 | 0.038115 | 0.038178 |
 | `B8_family_from_spacetime` | 0.161352 | 0.170268 | +0.008915 | 0.171464 | 0.169071 |
 | `B6_family_from_env` | 0.159364 | 0.172357 | +0.012994 | 0.169037 | 0.175677 |
 | `B23_species_calibration_mrr` | 0.191363 | 0.186731 | -0.004633 | 0.186955 | 0.186506 |
@@ -90,9 +87,18 @@ Capabilities are ordered weakest-first. Deltas isolate hierarchical family MAP b
 | `B63_myco_from_species_f1` | 0.987818 | 0.987818 | +0.000000 | 0.988121 | 0.987516 |
 | `B12_traits_leave_one_out_f1` | 0.992887 | 0.992887 | +0.000000 | 0.993258 | 0.992516 |
 
+## Quarantined
+
+| Benchmark | Prior PR checkpoint | Candidate | Delta | Seed 1337 | Seed 1338 |
+|---|---:|---:|---:|---:|---:|
+| `B55_pollinator_phylo_transfer_recall` | 0.038160 | 0.038147 | -0.000013 | 0.038115 | 0.038178 |
+
+B55 is retained for continuity but excluded from both means: its target is the spatial neighbors' pollinator union,
+not the focal plant's own interactions transferred through phylogenetic relatives.
+
 ## Mechanism diagnostics
 
-Derived `*_gain` values remain diagnostics. The unchanged evaluator applies its existing affine map only when computing the harmonic score; arithmetic excludes them.
+Derived `*_gain` values remain fully reported diagnostics and enter neither headline mean.
 
 | Benchmark | Prior PR checkpoint | Candidate | Delta | Seed 1337 | Seed 1338 |
 |---|---:|---:|---:|---:|---:|
@@ -114,3 +120,4 @@ Derived `*_gain` values remain diagnostics. The unchanged evaluator applies its 
 | `B29_species_dist_30m_skill` | required inputs or labels absent |
 | `B39_species_dist_3km_skill` | required inputs or labels absent |
 | `B40_species_dist_300m_skill` | required inputs or labels absent |
+| `B64_pollinator_phylo_transfer_ndcg` | requires a fresh checkpoint trained with the deterministic interaction holdout |

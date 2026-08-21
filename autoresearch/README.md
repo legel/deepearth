@@ -13,3 +13,7 @@ A self-contained environment for autonomously researching and improving **DeepEa
 Every comparable run completes exactly **2,291 optimizer steps**, then is scored by `evaluate.py` (science.md rule 20).
 Wall time, parameters, and VRAM are reported separately; faster hardware or code never buys a candidate extra updates.
 Run both seeds 1337 and 1338 and compare each against its seed-matched control.
+
+Protocol `v2-held-species-pollinator-transfer` excludes mechanism gains and quarantined B55 from both means. B64
+requires a checkpoint trained with its species-level interaction holdout; register the first such two-seed run with
+`champion_report --save --baseline` rather than comparing it with the migrated incumbent.

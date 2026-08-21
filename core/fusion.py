@@ -269,6 +269,7 @@ class DeepEarth(nn.Module):
         poll_species_frq: Optional[torch.Tensor] = None,
         poll_species_mixture: float = 0.0,
         poll_species_all_masked: bool = False,
+        poll_transfer_holdout: Optional[torch.Tensor] = None,
         phylo_head_routing: bool = False,
         species_trait_recon: bool = False,
     ) -> None:
@@ -481,6 +482,10 @@ class DeepEarth(nn.Module):
             if (n_pollinators > 0 and pollinator_distance is not None) else None
         self.poll_species_mixture = float(poll_species_mixture)
         self.poll_species_all_masked = bool(poll_species_all_masked)
+        if poll_transfer_holdout is not None:
+            self.register_buffer("poll_transfer_holdout", poll_transfer_holdout.bool())
+        else:
+            self.poll_transfer_holdout = None
         if self.poll_species_mixture > 0:
             if poll_species_idx is None or poll_species_frq is None:
                 raise ValueError("poll_species_mixture requires the species-pollinator table")
