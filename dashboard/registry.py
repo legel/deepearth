@@ -69,23 +69,16 @@ def build():
     rules = seed.get("science", {}).get("rules", [])
     benches = seed.get("benchmarks", {}).get("benchmarks", [])
     champ = REPO / "autoresearch" / "champion_scores.json"
-    record = json.loads(champ.read_text()) if champ.exists() else {}
-    scores = record.get("scores", {})
+    scores = json.loads(champ.read_text()).get("scores", {}) if champ.exists() else {}
     for b in benches:
-        b["current_score"] = scores.get(b["key"])
-
-    scoring = seed.get("benchmarks", {}).get("scoring", {})
-    if "net_score" in scoring:
-        scoring["net_score"]["value"] = record.get("harmonic")
-    if "arithmetic_net" in scoring:
-        scoring["arithmetic_net"]["value"] = record.get("arithmetic")
+        b["current_score"] = scores.get(b["key"], b.get("current_score"))
 
     head = _git("log", "-1", "--format=%H").strip()
     reg = {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "head": head,
            "counts": {"files": len(files), "blocks": len(blocks), "rules": len(rules),
                       "benchmarks": len(benches)},
            "files": files, "blocks": blocks, "rules": rules, "benchmarks": benches,
-           "scoring": scoring,
+           "scoring": seed.get("benchmarks", {}).get("scoring"),
            "tokens": seed.get("tokens"), "data_schema": seed.get("data_schema"),
            "training": seed.get("training")}
     STATE.mkdir(exist_ok=True)

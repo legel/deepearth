@@ -48,10 +48,7 @@ class California:
 
     def __init__(self, cache_dir: str, n_neighbors: int = 24, device: str = "cuda", holdout_fraction: float = 1 / 6,
                  holdout: str = "spatial", subset: dict | None = None, time_axis: bool = False,
-                 meta_path: str | None = None, time_km: float = 50.0, prepared: str | None = None,
-                 clay_v2: bool = False):
-        # Prepared caches include the selected Clay representation.
-        self._clay_v2 = clay_v2
+                 meta_path: str | None = None, time_km: float = 50.0, prepared: str | None = None):
         if prepared and Path(prepared).exists():           # fast path: restore the assembled dataset from a cache
             self._load_prepared(prepared, device); return
         cache = Path(cache_dir); dev = self.device = device; self.n_neighbors = n_neighbors
@@ -90,7 +87,8 @@ class California:
         self.lat = torch.tensor(lat, device=dev); self.lon = torch.tensor(lon, device=dev)
         self.elev = torch.tensor(elev, device=dev); self.cls = torch.tensor(cls, device=dev)
         self.dino = torch.tensor(dino, device=dev); self.bio = torch.tensor(bio, device=dev)
-        # Occurrence-only rows carry no vision signal.
+        # [Ensue rule 18] per-obs vision presence, DERIVED from the data (robust): occurrence-only densify obs carry
+        # zeroed vision embeddings -> masked so they contribute species+location evidence without poisoning vision.
         self.has_vision = (self.dino.abs().sum(-1) > 1e-6)
         self.phylo = torch.tensor(phylo, device=dev); self.traits = torch.tensor(traits, device=dev)
         self.species_text = None                          # frozen BioCLIP-2 text prior per species (rule 26 seed / inductive placement)
@@ -169,7 +167,7 @@ class California:
             v = getattr(self, k, None)
             blob[k] = v.detach().cpu() if torch.is_tensor(v) else v
         blob["extra"] = {n: (t.cpu(), h.cpu(), d) for n, (t, h, d) in self.extra.items()}
-        for k in ("poll_idx", "poll_frq", "poll_valid", "n_pollinators"):               # pollinator distribution (restored generically on load)
+        for k in ("poll_idx", "poll_frq", "poll_valid", "n_pollinators", "pollinator_text"):   # pollinator distribution + BioCLIP prior (pollinator_text gates the R27 pollinator_graph — dropping it silently disabled the graph on every prepared-cache run)
             if hasattr(self, k):
                 v = getattr(self, k); blob[k] = v.cpu() if torch.is_tensor(v) else v
         blob["tree"] = self.tree
@@ -197,7 +195,8 @@ class California:
         """Locate observations_meta.parquet (carries eventDate per gbifID) across machines/layouts."""
         cands = [cache / "observations_meta.parquet",
                  cache.parent / "deepearth_gbif" / "observations_meta.parquet",
-                 Path.home() / "deepearth/data/deepearth_gbif/observations_meta.parquet"]
+                 Path.home() / "deepearth/data/deepearth_gbif/observations_meta.parquet",
+                 Path("/home/photon/4tb/deepearth_gbif/observations_meta.parquet")]
         for c in cands:
             if c.exists():
                 return str(c)
@@ -330,8 +329,6 @@ class California:
                 rows = np.concatenate([np.load(f)[key] for f in nf])
                 self._add_modality(name, ids, rows, gid, dev, normalize=True)
         clay = cache / "gbif_clay_tokens.npz"                                        # Clay 1.5 Sentinel-2
-        if getattr(self, "_clay_v2", False) and (cache / "gbif_clay_v2_tokens.npz").exists():
-            clay = cache / "gbif_clay_v2_tokens.npz"                                 # 99.1% coverage, float32
         if clay.exists():
             z = np.load(clay)
             self._add_modality("clay", z["gbifID"], z["clay"], gid, dev, normalize=True,
@@ -352,15 +349,15 @@ class California:
         if hydro.exists():
             z = np.load(hydro)
             self._add_modality("hydro", z["gbifID"], z["hydro"], gid, dev, zscore=True, valid=z["has_hydro"])
-        worldclim = cache / "gbif_worldclim_tokens.npz"                    # WorldClim bioclim normals
+        worldclim = cache / "gbif_worldclim_tokens.npz"                                 # [Ensue] WorldClim v2.1 bioclim normals (19, 30-yr climatology) -- transferable climate niche for species-from-env
         if worldclim.exists():
             z = np.load(worldclim)
             self._add_modality("worldclim", z["gbifID"], z["worldclim"], gid, dev, zscore=True, valid=z["has_worldclim"])
-        phenology = cache / "gbif_phenology_tokens.npz"                    # VIIRS annual NDVI cycle
+        phenology = cache / "gbif_phenology_tokens.npz"                                 # [Ensue] NOAA-CDR VIIRS NDVI 12-month seasonal cycle -- vegetation greenup/senescence timing (orthogonal to static climate/soil)
         if phenology.exists():
             z = np.load(phenology)
             self._add_modality("phenology", z["gbifID"], z["phenology"], gid, dev, zscore=True, valid=z["has_phenology"])
-        alphaearth = cache / "gbif_alphaearth_tokens.npz"                  # AlphaEarth annual embedding
+        alphaearth = cache / "gbif_alphaearth_tokens.npz"                              # [Ensue] Google Satellite Embedding V1 (AlphaEarth) 64d annual @10m -- SatCLIP-style learned geo prior; consumed by model.alphaearth_geo (added to the spatial position every head reads), NOT a reconstruction variable
         if alphaearth.exists():
             z = np.load(alphaearth)
             _ae = np.asarray(z["ae"], dtype=np.float32); _valid = np.isfinite(_ae[:, 0])
@@ -423,6 +420,15 @@ class California:
         for name, (_, _, dim) in self.extra.items():
             d[name] = dim
         return d
+
+    def memory(self, size: int = 4096):
+        """A memory bank for experience replay: anchor observations keyed by their neighborhood's habitat
+        signature (mean neighbor vision), with the anchors' own features. Returns ``(key [M, dim], features)``."""
+        m = min(size, len(self.train))
+        anchors = self.train_index[torch.randint(0, len(self.train_index), (m,), device=self.device)]
+        key = self.dino[self.neighbors[anchors]].mean(1)
+        key = key / key.norm(dim=-1, keepdim=True).clamp_min(1e-9)
+        return key, {"vision_dino": self.dino[anchors]}
 
     def batch(self, idx):
         """Return one batch: variable values, observed masks, query and neighbor coordinates, the coordinates in

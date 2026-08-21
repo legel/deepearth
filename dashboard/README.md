@@ -19,10 +19,10 @@ HEAD and re-audits changed files only.
 ## Live training
 
 ```bash
-python -m dashboard.tracker --cache /path/to/deepcal --tag exp1
+python -m dashboard.tracker autoresearch/deepcal.yaml   # wraps train.py, zero code change
 ```
 
-`core.train` output passes through unchanged; parsed events (steps, losses, eval,
+train.py output passes through unchanged; parsed events (steps, losses, eval,
 final benchmark suite) stream to `dashboard/runs/<id>.jsonl` and the Runs view
 tails them live — loss curve, held-out transfer, per-benchmark champion deltas.
 For custom scripts, `dashboard.logger.RunLogger` emits the same events directly.
@@ -40,11 +40,11 @@ See `ARCHITECTURE.md`. Pipeline: `registry.py` (deterministic) -> `audit.py`
 | all of the below, coherently | `python -m dashboard.refresh` | after any commit — prevents state skew |
 | `state/registry.json` | `python -m dashboard.registry` | after any commit |
 | `state/graph.json`, `state/status.json` | `python -m dashboard.audit` (`--loop` to daemonize) | after any merge; cached per file hash |
-| `state/observations.npz` | `python -m dashboard.observations --cache <path>` | after data cache changes |
-| `runs/<id>.jsonl` | `python -m dashboard.tracker --cache <path> [--tag t]` | every training run |
-| `state/reconstructions.json` | `python -m dashboard.reconstruct <ckpt> --cache <path>` | after a run worth inspecting |
+| `state/observations.npz` | `python -m dashboard.observations` | after data cache changes |
+| `runs/<id>.jsonl` | `python -m dashboard.tracker <config> [--tag t]` | every training run |
+| `state/reconstructions.json` | `python -m dashboard.reconstruct <ckpt>` | after a run worth inspecting |
 | `state/callgraph.json` | `python -m dashboard.callgraph` | after code/config changes — reachability truth |
-| `state/flow.json` | `python -m dashboard.flow --cache <path>` | after callgraph or data cache changes |
+| `state/flow.json` | `python -m dashboard.flow` | after callgraph or data cache changes |
 | `state/verification.json` | periodic adversarial agent fleet (see ARCHITECTURE.md) | before decisions |
 | `state/triage.json` | `python -m dashboard.audit --triage-islands` | after callgraph changes — island action plan |
 | E2E behavior check | `node dashboard/tests/sweep.js` | after UI changes; prints ALL CLEAN |
@@ -61,7 +61,8 @@ findings as they are discovered.
 - Python 3.10+, Flask, numpy, pyyaml; torch only for trace/reconstruct/tracker runs.
   LLM calls are raw REST — no SDK.
 - `GEMINI_API_KEY` required for audit only; `GEMINI_MODEL` overrides the default model.
-- Install with `pip install -e .`, then build the CUDA extension with
-  `bash encoders/spacetime/install.sh` against the active PyTorch environment.
+- Known setup order for a fresh clone: parent dir named `deepearth` on sys.path,
+  `bash encoders/spacetime/install.sh` (the committed .so is ABI-stale — see F2),
+  AlphaEarth recipe before champion configs (F1). Details: Status wall findings.
 - All generated state is gitignored; regenerate with the commands above.
 - Do not edit `state/` by hand — it is overwritten on every audit.
