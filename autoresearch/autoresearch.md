@@ -25,10 +25,10 @@ difference into a harmonic mean double-counts its constituents and pins the nort
 metric's floor on real data before trusting it.
 
 **Protocol v2:** legacy B55 remains reported but is quarantined because it scores a focal prediction against spatial
-neighbors' pollinator union rather than testing transfer from phylogenetic relatives. B64 replaces it after training:
+neighbors' pollinator union rather than testing transfer from phylogenetic relatives. B64 replaces it:
 the focal species' interaction labels and direct lookup row are withheld before optimization, then its own partners are
-scored with chance-normalized NDCG@10. A paired graph ablation remains a diagnostic. The first B64-active two-seed run
-is a new baseline, not a comparable improvement over the migrated incumbent.
+scored with chance-normalized NDCG@10. A paired graph ablation remains a diagnostic. The committed champion scorecard
+is the first B64-active two-seed baseline; compare future runs against it, not the migrated legacy receipt.
 
 **Conditional Bayesian queries (core capability):** DeepEarth must answer masked queries at any constraint level and
 return calibrated posteriors that tighten as evidence is added. Canonical case = plant-pollinator (B41,B51-B54): given

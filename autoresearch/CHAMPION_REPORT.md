@@ -1,36 +1,26 @@
 # DeepCal champion report
 
-## v2 pollinator-transfer protocol migration
+## Fresh v2 held-species baseline
 
-This migration changes score membership and interaction supervision, not the incumbent model. Reaggregating the
-stored two-seed rows moves harmonic `0.378407 -> 0.436640` and arithmetic `0.587374 -> 0.598583`; scores across that
-boundary are incomparable and the change is not a scientific improvement.
+This is the first two-seed baseline trained with the deterministic species-level pollinator holdout. It activates B64
+and replaces the provisional membership-only receipt; it is a protocol baseline, not a scientific improvement claim.
 
-| Stored receipt | Seed | Harmonic | Arithmetic |
-|---|---:|---:|---:|
-| Hierarchical family MAP, v2 | 1337 | 0.435648 | 0.597187 |
-| Hierarchical family MAP, v2 | 1338 | 0.437633 | 0.599979 |
-| **Incumbent v2 mean** | **2 seeds** | **0.436640** | **0.598583** |
-| Rejected mesh candidate, v2 mean | 2 seeds | 0.433762 | 0.570295 |
+| Receipt | Seed | Harmonic | Arithmetic | B64 held-species NDCG@10 |
+|---|---:|---:|---:|---:|
+| Fresh v2 control | 1337 | 0.420846 | 0.581585 | 0.172044 |
+| Fresh v2 control | 1338 | 0.419688 | 0.584098 | 0.174569 |
+| **Fresh v2 baseline** | **2 seeds** | **0.420267** | **0.582842** | **0.173307** |
 
-The mesh candidate remains below the incumbent on both means, so the membership correction does not reverse its
-rejection.
+The previous `0.436640 / 0.598583` row reaggregated legacy checkpoints under new membership. Those checkpoints had
+seen every species' interaction labels and could not report B64, so the number remains migration history and is not a
+promotion target.
 
-### Membership correction
+### Evaluation correction
 
-- Derived `*_gain` values measure dependence on a mechanism. They remain fully reported but enter neither mean.
-- Legacy B55 remains fully reported but is quarantined. It predicts from focal identity plus environment and scores
-  against spatial neighbors' pollinator union; it does not test transfer from phylogenetic relatives.
-- Raw cosine capabilities are unchanged by this PR.
+The champion trains with diffusion noise, but evaluation previously sampled fresh masked-state noise on every pass.
+Evaluation now reads the deterministic posterior mean; training behavior is unchanged. Replaying seed 1337 before the
+fix produced harmonic values from `0.417799` to `0.420934`; the corrected model removes that explicit inference RNG.
 
-### Valid transfer benchmark
-
-B64 withholds a deterministic species-level subset of plant-pollinator interactions before training. Held species
-cannot contribute pollinator loss or direct species-to-pollinator lookup rows. Evaluation retains their legitimate
-species identity and phylogenetic placement, predicts the focal plant's own interaction distribution, and reports
-NDCG@10 normalized against the exact uniform-ranking null. B65 reports the paired species-graph ablation delta as a
-mechanism diagnostic.
-
-The holdout mask is checkpointed. Legacy checkpoints cannot report B64, and the first fresh two-seed B64-active run
-must be registered explicitly as a new baseline rather than promoted against this migrated scorecard. This implements
-science rules 27, 30, and 32 without fabricating a score for the incumbent.
+Legacy B55 remains visible but quarantined because it scores a focal prediction against spatial neighbors' pollinator
+union. B64 is the valid held-species transfer capability. Derived `*_gain` values remain visible mechanism diagnostics
+and enter neither headline mean. This implements science rules 27, 30, and 32.
