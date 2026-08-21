@@ -29,6 +29,7 @@ class Experiment(MeshConfig):
 
 
 EXPERIMENT = Experiment()
+PUBLIC_EVALUATOR = "public-main-bbbe6be6"
 
 READER_PARAMETERS = (
     "latents", "read.", "read_norm.", "blocks.",
@@ -503,7 +504,7 @@ def main() -> None:
     scores = evaluate.evaluate_benchmarks(model, source, args.device, batch=1280)
     print(evaluate.format_benchmarks(scores), flush=True)
     print("BENCHMARK RECEIPT: " + json.dumps({
-        "protocol": getattr(evaluate, "BENCHMARK_PROTOCOL", "unversioned"),
+        "protocol": f"{PUBLIC_EVALUATOR}-fixed-{design.steps}-steps",
         "scores": scores,
         "harmonic": evaluate.net_score(scores),
         "arithmetic": evaluate.arithmetic_net(scores),

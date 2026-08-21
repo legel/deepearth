@@ -11,6 +11,7 @@ This directory is the fixed public measurement surface:
 Architecture, optimization, and data loading live in `core/`. Run the production model with:
 
 ```bash
+pip install -e .
 python -m deepearth.core.train --cache /path/to/deepcal --device cuda --steps 2291 --seed 1337
 ```
 

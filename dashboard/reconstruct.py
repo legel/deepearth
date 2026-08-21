@@ -1,10 +1,9 @@
 """Real masked reconstructions vs ground truth for sampled test observations.
 
-Loads a trained checkpoint through train.py's own eval path (no duplicated model
-plumbing), then for K held-out observations masks each target variable and
-reconstructs it from everything else — the model's actual posterior, per example.
+Loads a trained checkpoint through the production model path, then masks each
+target variable for K held-out observations and reconstructs it from the rest.
 
-    python -m dashboard.reconstruct data/deepcal/ckpt_dash-e2e.pt [--config autoresearch/deepcal.yaml] [--k 64]
+    python -m dashboard.reconstruct checkpoint.pt --cache /path/to/cache [--k 64]
 """
 import argparse, json, sys
 from pathlib import Path
@@ -12,7 +11,6 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-import yaml
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
@@ -22,38 +20,14 @@ sys.path.insert(0, str(REPO.parent))                   # deepearth.* imports
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("ckpt")
-    ap.add_argument("--config", default=str(REPO / "autoresearch" / "deepcal.yaml"))
+    ap.add_argument("--cache", required=True)
     ap.add_argument("--k", type=int, default=64)
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
 
-    from deepearth.autoresearch import train as T
-    from deepearth.core.fusion import DeepEarth
-    _load = DeepEarth.load_state_dict                    # checkpoints may lack aux-head keys
-    def _tolerant(self, sd, strict=True):                # (prepared-cache vs fresh-assembly asymmetry)
-        r = _load(self, sd, strict=False)
-        if r.missing_keys:
-            print(f"[reconstruct] {len(r.missing_keys)} keys left at init: "
-                  f"{sorted({k.split('.')[0] for k in r.missing_keys})}")
-        return r
-    DeepEarth.load_state_dict = _tolerant
-    from dashboard._shared import normalize_config, prepared_path
-    config = normalize_config(yaml.safe_load(open(args.config)))
-    config["_eval_ckpt"] = args.ckpt
-    config["_tag"] = "reconstruct"
-    model, scores = T.train_and_evaluate(config, args.device)   # builds model, loads ckpt, scores suite
+    from dashboard._shared import load_checkpoint
+    model, source = load_checkpoint(args.cache, args.ckpt, args.device)
     model.eval()
-
-    d = config["data"]
-    import hashlib
-    keyparts = {k: d.get(k) for k in ("adapter", "cache_dir", "n_neighbors", "holdout", "subset", "time_axis", "time_km")}
-    tag = hashlib.md5(json.dumps(keyparts, sort_keys=True, default=str).encode()).hexdigest()[:10]
-    from deepearth.autoresearch import data as data_module
-    source = data_module.build(d["adapter"], cache_dir=d["cache_dir"], n_neighbors=d.get("n_neighbors", 24),
-                               device=args.device, holdout=d.get("holdout", "spatial"), subset=d.get("subset"),
-                               time_axis=d.get("time_axis", False), meta_path=d.get("meta_path"),
-                               time_km=d.get("time_km", 50.0),
-                               prepared=prepared_path(config))
 
     obs = np.load(ROOT / "state" / "observations.npz")
     species = json.loads((ROOT / "state" / "species.json").read_text())["binomial"]
@@ -89,12 +63,8 @@ def main():
                 for j, g in enumerate(pick.tolist()):
                     out.setdefault(str(int(obs["gbifID"][g])), {})[t] = {"cos": round(float(cos[j]), 4)}
 
-    with torch.no_grad():                                # R23's own invariant: pluralism conserved iff
-        mf = model.marginal_fidelity(values, observed, ctx)   # marginals hold as coupling K rises
     (ROOT / "state" / "reconstructions.json").write_text(json.dumps(
-        {"ckpt": args.ckpt, "net_score": scores.get("net_score"), "n": len(pick),
-         "targets": targets, "rows": out,
-         "marginal_fidelity": {k: {kk: round(v, 4) for kk, v in d.items()} for k, d in mf.items()}}) + "\n")
+        {"ckpt": args.ckpt, "n": len(pick), "targets": targets, "rows": out}) + "\n")
     print(f"reconstructions: {len(pick)} observations x {len(targets)} targets -> state/reconstructions.json")
 
 

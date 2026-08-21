@@ -3,16 +3,15 @@
 Modalities: every cache file under data/deepcal, its REAL keys/shapes/dtypes (npz headers,
 no data loaded), size, gbifID coverage against the canonical observation set, and the
 data.py/train.py source lines that load it (absent = stray file, flagged).
-Architecture: dims and counts read from the champion yaml; stages are live defs pulled
-from state/callgraph.json with their file:line spans and reach labels.
+Architecture: dimensions come from the production dataclasses; stages are live defs
+pulled from state/callgraph.json with their file:line spans and reach labels.
 
-    python -m dashboard.flow [--config autoresearch/deepcal.yaml]
+    python -m dashboard.flow
 """
-import argparse, json, time, zipfile
+import ast, json, time, zipfile
 from pathlib import Path
 
 import numpy as np
-import yaml
 from numpy.lib import format as npf
 
 ROOT = Path(__file__).resolve().parent
@@ -46,7 +45,7 @@ def gid_key(keys):
 
 def census(canon):
     src = {p: (REPO / p).read_text(errors="replace").splitlines()
-           for p in ("autoresearch/data.py", "autoresearch/train.py", "autoresearch/prepare.py")}
+           for p in ("core/data.py", "core/train.py")}
     entries = []
 
     def loader_refs(basename):
@@ -81,66 +80,60 @@ def census(canon):
     return sorted(entries, key=lambda e: -(e["coverage"] or 0))
 
 
-def architecture(config, callg):
-    m, d = config.get("model", {}), config.get("data", {})
+def architecture(callg):
     byid = {x["id"]: x for x in callg["defs"]}
 
     def ref(did):
         x = byid.get(did)
+        if not x:
+            return None
         return {"id": did, "path": x["path"], "start": x["start"], "end": x["end"],
-                "reach": x["reach"], **({"gate": x["gate"]} if x and x.get("gate") else {})} if x else None
+                "reach": x["reach"], **({"gate": x["gate"]} if x.get("gate") else {})}
 
-    variables = list(config.get("variables", []))
-    n_manifolds = len(m.get("manifolds", {}))
-    K = d.get("n_neighbors", 24)
-    V = len(variables)
+    tree = ast.parse((REPO / "core" / "fusion.py").read_text())
+    config = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MeshConfig")
+    dims = {n.target.id: ast.literal_eval(n.value) for n in config.body
+            if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)}
     return {
-        "dims": {"d_model": m.get("d_model", 256), "n_latents": m.get("n_latents", 24),
-                 "n_layers": m.get("n_layers", 2), "rounds": m.get("rounds", 1),
-                 "n_neighbors": K, "n_manifolds": n_manifolds, "n_variables": V,
-                 "context_tokens": V + 1 + (1 + n_manifolds) * K,
-                 "batch": config.get("training", {}).get("batch")},
-        "variables": variables,
+        "dims": {"d_model": dims["width"], "n_latents": dims["latents"],
+                 "n_layers": dims["layers"], "levels": dims["levels"],
+                 "world_cells": 2, "lenses": 4,
+                 "mesh_slots": 2 * dims["levels"] * 4},
         "stages": [
             {"stage": "source", "title": "batch assembly",
-             "defs": [ref("autoresearch/data.py::California.batch")]},
+             "defs": [ref("core/data.py::California.batch")]},
             {"stage": "spacetime", "title": "Earth4D space-time encoding",
              "defs": [ref("encoders/spacetime/earth4d.py::Earth4D.forward"),
                       ref("encoders/spacetime/hashencoder/hashgrid.py::HashEncoder.forward"),
-                      ref("core/fusion.py::SpaceTimeField.forward"),
-                      ref("core/fusion.py::NeighborContext.forward")]},
+                      ref("core/fusion.py::WorldMesh.forward"),
+                      ref("core/fusion.py::RelativeField.forward")]},
             {"stage": "species", "title": "phylogenomic species encoding",
              "defs": [ref("encoders/biological/phylogenomic.py::SpeciesGraph.forward"),
                       ref("encoders/biological/phylogenomic.py::LatentCladeAttention.forward"),
                       ref("encoders/biological/phylogenomic.py::TreeMessagePassing.forward")]},
-            {"stage": "tokens", "title": "token assembly (value+type+position)",
-             "defs": [ref("core/fusion.py::DeepEarth.context"),
-                      ref("core/fusion.py::DeepEarth.encode")]},
-            {"stage": "fuse", "title": "latent fusion (read + blocks)",
-             "defs": [ref("core/fusion.py::LatentBlock.forward"),
-                      ref("core/fusion.py::DeepEarth._refine")]},
-            {"stage": "decode", "title": "per-variable decoders",
-             "defs": [ref("core/fusion.py::DeepEarth._decode_loss"),
+            {"stage": "write", "title": "typed residual mesh writes",
+             "defs": [ref("core/fusion.py::DeepEarth._write"),
+                      ref("core/fusion.py::DeepEarth._fiber_write")]},
+            {"stage": "read", "title": "query-conditioned reader and fusion",
+             "defs": [ref("core/fusion.py::DeepEarth._pool"),
+                      ref("core/fusion.py::DeepEarth._prime_pool_cache")]},
+            {"stage": "decode", "title": "per-variable predictions",
+             "defs": [ref("core/fusion.py::DeepEarth.decode"),
                       ref("core/fusion.py::DeepEarth.infer")]},
         ],
     }
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default=str(REPO / "autoresearch" / "deepcal.yaml"))
-    args = ap.parse_args()
-    config = yaml.safe_load(open(args.config))
     callg = json.loads((ROOT / "state" / "callgraph.json").read_text())
     canon = np.load(ROOT / "state" / "observations.npz")["gbifID"]
-    flow = {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": args.config,
+    flow = {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": "core",
             "n_observations": int(len(canon)),
-            "modalities": census(canon), "arch": architecture(config, callg)}
+            "modalities": census(canon), "arch": architecture(callg)}
     (ROOT / "state" / "flow.json").write_text(json.dumps(flow) + "\n")
     m = flow["modalities"]
     print(f"flow: {len(m)} cache artifacts ({sum(x['stray'] for x in m)} stray), "
-          f"{flow['arch']['dims']['context_tokens']} context tokens "
-          f"({flow['arch']['dims']['n_variables']} vars, {flow['arch']['dims']['n_neighbors']} neighbors)")
+          f"{flow['arch']['dims']['mesh_slots']} mesh slots")
 
 
 if __name__ == "__main__":

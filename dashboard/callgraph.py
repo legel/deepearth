@@ -8,12 +8,10 @@ Reach classes: live (on the champion train/eval path, gates evaluated) · gated 
 through a branch the config turns off, with the gate key) · data-pipeline / recipes / tests /
 tooling (reachable from those roots only) · island (nothing calls it).
 
-    python -m dashboard.callgraph [--config autoresearch/deepcal.yaml]
+    python -m dashboard.callgraph
 """
-import argparse, ast, json, subprocess, time
+import ast, json, subprocess, time
 from pathlib import Path
-
-import yaml
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
@@ -99,7 +97,7 @@ class Analyzer:
     def _attr_values(self):
         """model._x = m.get("k", d)  and  DeepEarth(k=m.get("k", d)) -> self.k = k  data flows."""
         out = {}
-        tr = self.mods.get("autoresearch/train.py")
+        tr = self.mods.get("core/train.py")
         if not tr:
             return out
         ctor_kwargs = {}
@@ -246,16 +244,15 @@ class Analyzer:
             self.edges[src].add((dst, gate))
 
     def reach(self):
-        roots = {"live": ["autoresearch/train.py::main", "autoresearch/train.py::train_and_evaluate",
-                          "autoresearch/train.py::(cli)"],
+        roots = {"live": ["core/train.py::main", "core/train.py::train", "core/train.py::(cli)"],
                  "data-pipeline": [], "tests": [], "recipes": [], "tooling": []}
         for rel, m in self.mods.items():
             scope = ("data-pipeline" if rel.startswith("data/") else
                      "tests" if rel.startswith("tests/") else
                      "recipes" if rel.startswith("autoresearch/recipes/") else "tooling")
-            if rel != "autoresearch/train.py" and m.cli:
+            if rel != "core/train.py" and m.cli:
                 roots[scope].append(f"{rel}::(cli)")
-            elif rel != "autoresearch/train.py" and scope != "tooling" and m.toplevel:
+            elif rel != "core/train.py" and scope != "tooling" and m.toplevel:
                 roots[scope].append(f"{rel}::(module)")   # guard-less scripts run at import
 
             for q in m.defs:
@@ -315,17 +312,13 @@ class Analyzer:
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default=str(REPO / "autoresearch" / "deepcal.yaml"))
-    args = ap.parse_args()
-    config = yaml.safe_load(open(args.config))
-    a = Analyzer(config).build()
+    a = Analyzer({}).build()
     defs = a.reach()
     from collections import Counter
     stats = Counter(d["reach"] for d in defs)
     (ROOT / "state").mkdir(exist_ok=True)
     (ROOT / "state" / "callgraph.json").write_text(json.dumps(
-        {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": args.config,
+        {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": "core",
          "stats": dict(stats), "defs": defs}) + "\n")
     print(f"callgraph: {len(defs)} defs -> {dict(stats)}")
     for d in defs:

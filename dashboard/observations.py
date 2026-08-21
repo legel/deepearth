@@ -1,6 +1,6 @@
 """Build state/observations.npz: one compact row per observation for the map + detail views.
 
-Reproduces the default spatial holdout of autoresearch/data.py exactly
+Reproduces the default spatial holdout of core/data.py exactly
 (0.5-degree cells, rng(0), 1/6 held out). Modality presence is a bitmask.
 
     python -m dashboard.observations
