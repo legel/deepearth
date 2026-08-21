@@ -1937,5 +1937,3 @@ class DeepEarth(nn.Module):
             structured_loss = 0.25 * torch.stack(structured_terms).mean()
             return loss, structured_loss
         return loss
-
-

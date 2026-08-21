@@ -5,7 +5,7 @@ against the previous champion record (autoresearch/champion_scores.json), (3) pr
 message — a headline with the net score BEFORE -> AFTER, then an enumerated per-benchmark BEFORE -> AFTER list —
 and (4) with --save, promotes the run to the new champion record (the "before" for the next upgrade).
 
-This makes every champion commit read consistently (see science.md rule 30). Example headline:
+This makes every champion commit read consistently (see SCIENCE.md rule 30). Example headline:
     "Latent Clade Attention doubled in size (harmonic 0.0204 -> 0.0231, arith 0.446 -> 0.461)"
 
 Usage:
@@ -149,7 +149,7 @@ def format_commit(new: dict, old: dict | None, desc: str, config: str = "") -> s
             flag = "" if before is None else ("  ^" if after > before + 1e-9 else ("  v" if after < before - 1e-9 else "  ="))
             row = f"{name}: {_f(before)} -> {_f(after)} ({d}){flag}"
         lines.append(f"{i:>2}. {row}" + (f"  -- {desc}" if desc else ""))
-    if old is not None:                                        # regression guard summary (science.md: NO metric regressing)
+    if old is not None:                                        # regression guard summary (SCIENCE.md rule 30)
         reg = [f"{n} ({os_[n]:.3f}->{ns[n]:.3f})" for n in sorted(ns, key=_n)
                if n in os_ and ns[n] < os_[n] - 0.005]
         lines += ["", f"REGRESSIONS (>0.005): {', '.join(reg) if reg else 'none'}"]

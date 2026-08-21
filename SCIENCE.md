@@ -36,5 +36,5 @@ measurement writes to that state and every prediction is a query-conditioned rea
 31. Task heads must not commandeer or regress the universal world state.
 32. Harmonic mean is the primary breadth objective; arithmetic mean is reported alongside it.
 
-`autoresearch/evaluate.py` is the authoritative public measurement implementation. Private-mirror aggregates use a
-different protocol and are never compared numerically with public results.
+`autoresearch/evaluate.py` is the authoritative public measurement implementation. Aggregate scores are comparable
+only within the same tagged protocol.

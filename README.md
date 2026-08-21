@@ -1,66 +1,67 @@
-![DeepEarth logo](docs/logo.png)
-## DeepEarth: AI for Planetary Science & Sustainability
+# DeepEarth
 
-DeepEarth is a [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multi-modal](https://en.wikipedia.org/wiki/Multimodal_learning), [spatio-temporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) GeoAI model for global environmental intelligence and optimization.
+DeepEarth is a self-supervised multimodal world model for ecological inference. It represents planetary state as a
+fibered, hash-addressed Earth4D mesh and learns by reconstructing masked observations from the remaining evidence.
 
-![DeepEarth v.0.01 preview of architecture](docs/deepearth.png)
+## Architecture
 
-DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen above). It uses a novel space-time positional encoder, [Earth4D](encoders/spacetime/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
+```text
+latitude, longitude, elevation, time
+                  |
+      multiresolution Earth4D hashes
+                  |
+    addressed cells x resolution levels
+                  |
+      +-----------+-----------+--------------+
+      |           |           |              |
+   abiotic      visual     biological     ecological
+      |           |           |              |
+      +------ typed residual mesh writes -----+
+                  |
+       cross-scale and cross-lens state
+                  |
+        query-conditioned reader/fusion
+                  |
+             target prediction
+```
 
-![Earth4D space-time encoder](docs/earth4d.png) 
+Earth4D supplies persistent spatial and temporal addressing. Environmental, visual, phylogenomic, and ecological
+measurements write into distinct lenses at those addresses. Fusion reads only the shared mesh; raw modalities do not
+bypass the world state.
 
-## Exciting News:
+## Repository
 
-- _July 16, 2026_  
-  **NASA award.** [NASA's Commercial Satellite Data Acquisition](https://science.nasa.gov/earth-science/csda/) has awarded DeepEarth investigators at UC Berkeley 5 million km**2 of [Planet](https://www.planet.com/) data, approximately $200,000 in value.
+- `core/fusion.py` — the complete production mesh and query-conditioned reader.
+- `core/train.py` — fixed-step optimization and public scoring entrypoint.
+- `core/data.py` — runtime California data adapter.
+- `encoders/` — Earth4D hash and phylogenomic primitives.
+- `data/deepcal/` — reproducible source-data preparation.
+- `autoresearch/` — immutable public evaluator, aggregate definitions, and score receipts only.
+- `SCIENCE.md` — the scientific contract.
 
-- _March 7, 2026_  
-  **Paper on arXiv.** [_"Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding"_](https://arxiv.org/pdf/2603.07039), following peer-review through the [2026 World Modeling Workshop](https://world-model-mila.github.io/), is now on arXiv. See [_paper_](https://arxiv.org/abs/2603.07039).
+## Run
 
-- _January 28, 2026_  
-  **Poster at World Modeling Workshop.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) will present DeepEarth at the [2026 World Modeling Workshop](https://world-model-mila.github.io/). See [_poster_](docs/science/world_modeling_workshop_2026/poster/DeepEarth_2026_World_Modeling_Workshop_Poster.pdf).
+Install the dependencies, then build the Earth4D CUDA extension against the installed PyTorch:
 
-- _January 14, 2026_  
-  **New geospatial coordinate system.** A refined (_x_, _y_, _z_, _t_) = (_latitude_, _longitude_, _elevation_, _time_) coordinate system in [Earth4D](encoders/spacetime) improved a state-of-the-art forecasting benchmark by 4%. See [_commit_](https://github.com/legel/deepearth/commit/4d21a32).
+```bash
+pip install -r requirements.txt
+cd encoders/spacetime/hashencoder && pip install -e . && cd ../../..
+```
 
-- _December 22, 2025_  
-  **10x faster.** Following state-of-the-art [Earth4D](encoders/spacetime/earth4d.py) experiments by [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based) on small batches, [Lance Legel](https://www.linkedin.com/in/legel/) sped up small batch processing by 10x. See [_commit_](https://github.com/legel/deepearth/commit/69f5be4e35c29df43c302bd3580b47d3911997e3). 
+Train and score one fixed-budget seed:
 
-- _December 19, 2025_  
-  **Supercomputing award.** US DOE [National Energy Research Scientific Computing Center](https://www.nersc.gov) has awarded a DeepEarth team with supercomputing access in 2026 through [BER](https://science.osti.gov/ber).
-  
-- _December 2, 2025_  
-  **Peer-reviewed presentation in top venue.** Accepted to the [2026 World Modeling Workshop](https://world-model-mila.github.io/) at the [Mila Quebec AI Institute](https://mila.quebec/en), alongside keynote talks by [Yoshua Bengio](https://yoshuabengio.org/) and [Yann LeCun](http://yann.lecun.com/). See [_paper_](docs/deepearth.pdf). 
-  
-- _November 17, 2025_  
-  **99% parameter reduction, 4× speedup.** [Earth4D](encoders/spacetime) with [learned hash probing](https://arxiv.org/abs/2312.17241) tested on an [ecological benchmark](https://www.nature.com/articles/s41597-024-03159-6) demonstrates spectacular accuracy with 5M parameters. 
+```bash
+python -m deepearth.core.train \
+  --cache /path/to/deepcal-cache \
+  --device cuda \
+  --steps 2291 \
+  --seed 1337
+```
 
-- _November 16, 2025_  
-  **23% error reduction in space-time encoder.** [Lance Legel](https://www.linkedin.com/in/legel/) and [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather) implemented [learned hash probing](https://arxiv.org/abs/2312.17241) in [Earth4D](encoders/spacetime), achieving state-of-the-art R² on an ecological forecasting benchmark. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
+Repeat with seed 1338 before promoting a public record. Scores are comparable only when they use the same evaluator,
+protocol tag, data, step budget, and seeds.
 
-- _October 29, 2025_  
-  **Predicting risk of fires.**  [Qin Huang](https://news.asu.edu/b/20250512-asu-phd-student-tackles-climate-change-and-extreme-weather), [Brandon Voelker](https://www.egr.uh.edu/news/202410/space-ground-%E2%80%93-phd-student-voelker-leads-team-transforming-remote-sensing-based), and [Lance Legel](https://www.linkedin.com/in/legel/) presented on simulating [live fuel moisture content](https://www.nature.com/articles/s41597-024-03159-6) through NSF's [Institute for Geospatial Understanding](http://i-guide.io/). See [_event_](https://i-guide.io/i-guide-vco/geospatial-simulation-of-fire-ecology-with-deepearth/).
+## Citation
 
-- _October 27, 2025_  
-  **Battle-hardened (_x_, _y_, _z_, _t_) AI.**  For our spatio-temporal [multi-resolution hash encoding](https://nvlabs.github.io/instant-ngp/), we've [fixed a numerical bug in NVIDIA's CUDA kernels](https://github.com/legel/deepearth/pull/7) based on profiling of hash collisions.
-
-- _September 30, 2025_  
-  **Presentation at top AI lab.** 
-  Thanks to the [Allen Institute for AI](https://allenai.org) for hosting a 1 hour talk with scientists pioneering [AI foundation models for the planet](https://allenai.org/earth-system). See [_video_](  https://www.youtube.com/watch?v=SHJwCInICiA).
-
-- _August 8, 2025_  
-  **NSF summer school program.** NSF funded a week-long ["Spatial AI for Disaster Resilience"](https://i-guide.io/summer-school/summer-school-2025/) summer school program in Boulder, Colorado. 5 PhD students researched and developed DeepEarth.
-
-- _June 23, 2025_  
-  **Workshop in Chicago.** NSF funded a 3 hour workshop on DeepEarth in Chicago for a ["GeoAI for Sustainability"](https://i-guide.io/forum/forum-2025/workshops/) conference. 3 professors, 5 postdocs, and 2 PhD students contributed.
-
-#### Planetary Intelligence for Everyone
-DeepEarth is an open source project for solving intelligence across the planet 🌎. We aspire to help solve major sustainability challenges including [climate resilience and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx).
-
-#### Invitation for Open Source Collaboration
-Collaborators welcomed! Contact [Lance Legel](https://linkedin.com/in/legel) at lance@ecodash.ai or submit an issue/PR here.
-
-For further details, see papers:
-- [Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding](https://arxiv.org/abs/2603.07039) (2026)
-- [Inductive Neural Networks for Ecology](https://doi.org/10.13140/RG.2.2.25523.90406) (2025)
-- [AI Foundation Models for Biogeography and Ecophysiology](https://doi.org/10.13140/RG.2.2.12102.13123) (2024)
+DeepEarth was introduced in *Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding* (2026),
+[arXiv:2603.07039](https://arxiv.org/abs/2603.07039).

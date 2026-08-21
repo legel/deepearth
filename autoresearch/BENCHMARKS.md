@@ -1,8 +1,9 @@
-# DeepCal compact hierarchical-family record scorecard
+# Registered Lance-public control scorecard
 
-Protocol: `public-main-4d6cb44-fixed-2291-steps`. Config: `autoresearch/champion.yaml`. Data: 621,558 observations,
-29,668-row spatial holdout, complete 64-dimensional AlphaEarth coverage. Values are the unrounded mean of two
-checkpoint replays through the unchanged public evaluator.
+Protocol: `public-main-4d6cb44-fixed-2291-steps`. Data: 621,558 observations, 29,668-row spatial holdout, complete
+64-dimensional AlphaEarth coverage. Values are the unrounded mean of two checkpoint replays through the public
+evaluator. This is the frozen public acceptance bar, not a score for the new mesh model. Scores produced by any other
+evaluator or protocol are not comparable.
 
 | Model | Seed | Steps | Harmonic | Arithmetic | Training VRAM |
 |---|---:|---:|---:|---:|---:|

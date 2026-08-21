@@ -215,7 +215,6 @@ __global__ void kernel_grid(
     }
 }
 
-
 // BACKWARD KERNEL (EMBEDDING GRADIENTS)
 
 template <typename input_t, typename scalar_t, uint32_t D, uint32_t C, uint32_t N_C>
@@ -1890,4 +1889,3 @@ void hash_encode_adam_sparse_update(
         }
     }));
 }
-

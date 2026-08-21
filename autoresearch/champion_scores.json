@@ -1,6 +1,6 @@
 {
-  "label": "25.4M hierarchical family MAP fixed-step record; public-main-4d6cb44; two-seed checkpoint-replay mean",
-  "config": "autoresearch/champion.yaml",
+  "label": "registered Lance-public control; public-main-4d6cb44; two-seed checkpoint-replay mean",
+  "config": null,
   "protocol": "public-main-4d6cb44-fixed-2291-steps",
   "harmonic": 0.3784069957635501,
   "arithmetic": 0.5873741478462489,

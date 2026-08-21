@@ -331,7 +331,6 @@ class _hash_encode_precomputed(Function):
         ctx.calc_grad_inputs = calc_grad_inputs
 
         return outputs
-
     @staticmethod
     @custom_bwd(device_type='cuda')
     def backward(ctx, grad):
@@ -865,4 +864,3 @@ class HashEncoder(nn.Module):
         outputs = outputs.view(prefix_shape + [self.output_dim])
 
         return outputs
-

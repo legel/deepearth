@@ -280,4 +280,3 @@ __device__ inline void compute_softmax(const float* logits, float* weights) {
 }
 
 #endif // UTILS_CUH
-
