@@ -50,12 +50,7 @@ class California:
                  holdout: str = "spatial", subset: dict | None = None, time_axis: bool = False,
                  meta_path: str | None = None, time_km: float = 50.0, prepared: str | None = None,
                  clay_v2: bool = False):
-        # clay_v2 (science.md rule 18, "all available data must be included"): gbif_clay_v2_tokens.npz carries
-        # Clay embeddings for 616,044 of the 621,558 observations (99.1%) at float32, while the default
-        # gbif_clay_tokens.npz carries 215,297 (34.6%) at float16 -- 2.86x fewer observations with clay evidence.
-        # NOTE the prepared cache stores `extra` (see _save_prepared), and the fast path below SKIPS
-        # _load_modalities entirely, so this flag must also be part of the prepared-cache key in train.py or a
-        # change here is silently ignored.
+        # Prepared caches include the selected Clay representation.
         self._clay_v2 = clay_v2
         if prepared and Path(prepared).exists():           # fast path: restore the assembled dataset from a cache
             self._load_prepared(prepared, device); return

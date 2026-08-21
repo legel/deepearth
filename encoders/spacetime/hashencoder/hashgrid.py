@@ -9,35 +9,14 @@ import torch.nn as nn
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
 
-# Use torch.amp instead of deprecated torch.cuda.amp
 try:
     from torch.amp import custom_bwd, custom_fwd
 except ImportError:
-    # Fallback for older PyTorch versions
     from torch.cuda.amp import custom_bwd, custom_fwd 
 
 from .backend import _backend
 
-# ------------------------------------------------------------------------------------------------
-# DETERMINISM
-#
-# float atomicAdd is not associative, so the backward's colliding writes land in scheduling order and
-# two identical runs disagree in the last bits. Measured on this encoder: five runs at seed 0, same
-# code and config, gave 0.1873 / 0.1925 / 0.1867 / 0.1872 / 0.1952 (sd 0.0038) -- as large as the whole
-# ACROSS-seed spread, and comparable to a capability's entire fair-gain budget. That is why every
-# standing probe record is frozen-encoder: the trained protocol could not be reproduced, so it could
-# not set a record.
-#
-# EARTH4D_DETERMINISTIC=1 routes those atomics through an int64 fixed-point sink instead. Integer
-# addition IS associative, so the sum no longer depends on arrival order.
-#
-# The scale is chosen HERE, from the upstream gradient's own magnitude, because Python already holds
-# the tensor and can reduce it without forcing an extra device sync inside the kernel launch. 2^36
-# below the max means the largest single term is ~6.9e10, leaving int64 room for ~1.3e8 accumulations
-# into one cell, while the quantum is finer than float32's own step at that magnitude.
-#
-# Default OFF: the champion path stays bit-identical until this is validated end-to-end
-# per science.md rule 21 -- gate at graduation, not at conception.
+# Fixed-point atomics make colliding gradient writes order-independent when explicitly enabled.
 _FIXED_POINT_BITS = 36
 
 
@@ -47,7 +26,7 @@ def _fixed_scale(grad: torch.Tensor) -> float:
         return 0.0
     gmax = grad.detach().abs().max()
     if not torch.isfinite(gmax) or gmax.item() <= 0.0:
-        return 0.0                              # all-zero or non-finite grad: nothing to accumulate
+        return 0.0
     return float((2.0 ** _FIXED_POINT_BITS) / gmax.item())
 
 

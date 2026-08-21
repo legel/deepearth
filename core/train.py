@@ -15,12 +15,6 @@ from deepearth.core.fusion import DeepEarth, Variable
 
 @dataclass(frozen=True)
 class Experiment:
-    """Starting hypothesis, not a closed menu of allowed changes.
-
-    The research loop may replace this structure, add state, or rewrite the model
-    and training procedure. It is kept here only so one experiment is legible.
-    """
-
     seed: int = int(os.environ.get("MESH_SEED", "1337"))
     steps: int = int(os.environ.get("MESH_STEPS", "8000"))
     batch: int = 256

@@ -233,9 +233,7 @@ __global__ void kernel_grid_backward(
     const uint32_t N_f = 0,
     const uint32_t N_p = 1,
     const uint32_t N_c = 0,
-    // DETERMINISM. nullptr => the original float-atomic path, bit-identical to before. Non-null =>
-    // every embedding gradient is accumulated in int64 fixed-point instead, which is order-independent
-    // and therefore reproducible run-to-run. See atomicAddFixed in utils.cuh.
+    // Null fixed buffers preserve floating-point accumulation.
     long long * __restrict__ grad_grid_fixed = nullptr,
     long long * __restrict__ grad_logits_fixed = nullptr,
     const float fixed_scale = 0.0f
@@ -344,7 +342,6 @@ __global__ void kernel_grid_backward(
                     uint32_t probe_index = ((N_p * h1 + p) % hashmap_size) * C + ch;
                     float weight = w * weights[p];
 
-                     // DETERMINISM: order-independent int64 accumulation (utils.cuh::atomicAddFixed).
                      if (grad_grid_fixed != nullptr) {
                          #pragma unroll
                          for (uint32_t c = 0; c < N_C; c++) {
@@ -385,9 +382,6 @@ __global__ void kernel_grid_backward(
                     for (uint32_t p = 0; p < N_p; ++p) {
                         float grad_logit = weights[p] * (grad_weights[p] - dot_product);
                         uint32_t logit_idx = level * N_c * N_p + h2 * N_p + p;
-                        // The logit gradient collides on (level, h2, p) exactly as the grid does,
-                        // so it needs the same order-independent accumulation or the run is still
-                        // irreproducible whenever learned probing is on (it is, by default).
                         if (grad_logits_fixed != nullptr) {
                             atomicAddFixed(&grad_logits_fixed[logit_idx], grad_logit, fixed_scale);
                         } else {
@@ -402,7 +396,6 @@ __global__ void kernel_grid_backward(
             } else {
                 uint32_t index = (uint32_t)((index_direct % hashmap_size) * C + ch);
 
-                 // DETERMINISM: order-independent int64 accumulation (utils.cuh::atomicAddFixed).
                  if (grad_grid_fixed != nullptr) {
                      #pragma unroll
                      for (uint32_t c = 0; c < N_C; c++) {
@@ -424,7 +417,6 @@ __global__ void kernel_grid_backward(
         } else {
             uint32_t index = get_grid_index<D, C>(ch, hashmap_size, resolution, pos_grid_local);
 
-             // DETERMINISM: order-independent int64 accumulation (utils.cuh::atomicAddFixed).
              if (grad_grid_fixed != nullptr) {
                  #pragma unroll
                  for (uint32_t c = 0; c < N_C; c++) {
@@ -679,9 +671,7 @@ void hash_encode_forward_cuda(const input_t *inputs, const scalar_t *embeddings,
 }
 
 
-// Fixed-point -> float, once, after every atomic has landed. One multiply per element; the result is a
-// correctly-rounded sum of the exact fixed-point accumulation, so it is both deterministic AND closer
-// to the true sum than the float-atomic path (which reorders and rounds at every step).
+// Convert once after fixed-point accumulation completes.
 template <typename scalar_t>
 __global__ void kernel_fixed_to_float(const long long * __restrict__ src, scalar_t * __restrict__ dst,
                                       const int64_t n, const float inv_scale) {
@@ -877,13 +867,7 @@ void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const 
         grad_index_logits_ptr = grad_index_logits.data_ptr<float>();
     }
 
-    // DETERMINISTIC MODE. fixed_scale > 0 routes every colliding atomic into an int64 fixed-point
-    // sink; integer addition is order-independent, so the result is bit-reproducible run to run.
-    // fixed_scale <= 0 leaves the original float-atomic path untouched and BIT-IDENTICAL, which is
-    // what the champion still runs until this is validated end-to-end (science.md rule 21: gate at
-    // graduation, not at conception). The scale is chosen by the caller from the upstream gradient's
-    // own magnitude -- see hashgrid.py, which has the tensor and can do the reduction without an
-    // extra device sync here.
+    // Positive scale enables fixed-point accumulation; zero preserves float atomics.
     at::Tensor grad_fixed, logits_fixed;
     long long *grad_fixed_ptr = nullptr;
     long long *logits_fixed_ptr = nullptr;
@@ -908,9 +892,7 @@ void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const 
         }));
     }
 
-    // Land the fixed-point sums back in the real gradient tensors. Every atomic has completed by the
-    // time this launches (same stream, ordered), so this pass sees a total that does not depend on
-    // the order the atomics arrived in -- which is the whole point.
+    // Convert fixed-point sums after the accumulation kernels finish.
     if (grad_fixed_ptr != nullptr) {
         const float inv = (float)(1.0 / fixed_scale);
         const int64_t n = grad_embeddings.numel();
@@ -1284,9 +1266,7 @@ __global__ void kernel_grid_backward_precomputed(
     const uint32_t B, const uint32_t L,
     const uint32_t N_p,
     const uint32_t N_c,
-    // DETERMINISM, same contract as the dense path: nullptr => the original float-atomic behaviour,
-    // bit-identical to before. fusion.py trains through THIS kernel, so leaving it out meant
-    // EARTH4D_DETERMINISTIC=1 silently did nothing for the champion.
+    // Match the dense path's optional fixed-point accumulation.
     long long * __restrict__ grad_grid_fixed = nullptr,
     long long * __restrict__ grad_logits_fixed = nullptr,
     const float fixed_scale = 0.0f
@@ -1798,8 +1778,7 @@ void hash_encode_backward_precomputed(
     const uint32_t* h1_ptr = reinterpret_cast<const uint32_t*>(precomp_h1.data_ptr<int>());
     const uint32_t* h2_ptr = reinterpret_cast<const uint32_t*>(precomp_h2.data_ptr<int>());
 
-    // Deterministic sink, identical contract to the dense entry. fixed_scale <= 0 leaves the original
-    // float-atomic path bit-identical.
+    // Zero scale preserves the original float-atomic path.
     at::Tensor grad_fixed, logits_fixed;
     long long *grad_grid_fixed = nullptr;
     long long *grad_logits_fixed = nullptr;
