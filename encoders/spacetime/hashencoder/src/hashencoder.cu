@@ -385,11 +385,7 @@ __global__ void kernel_grid_backward(
                         if (grad_logits_fixed != nullptr) {
                             atomicAddFixed(&grad_logits_fixed[logit_idx], grad_logit, fixed_scale);
                         } else {
-                            if (grad_logits_fixed != nullptr) {
-                        atomicAddFixed(&grad_logits_fixed[logit_idx], grad_logit, fixed_scale);
-                    } else {
-                        atomicAdd(&grad_index_logits[logit_idx], grad_logit);
-                    }
+                            atomicAdd(&grad_index_logits[logit_idx], grad_logit);
                         }
                     }
                 }

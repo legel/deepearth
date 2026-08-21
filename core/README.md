@@ -14,8 +14,9 @@ task query ----------> sparse reader/fusion -> prediction
 ```
 
 Each cell separates abiotic, visual, biological, and ecological lenses. Earth4D provides persistent spatial and
-temporal addressing; the phylogenomic graph supplies biological state; cross-scale and cross-lens operations compose
-the mesh before query-conditioned attention reduces it to a prediction. Raw modalities do not bypass the mesh.
+temporal addressing; the phylogenomic `SpeciesGraph` GNN supplies biological state; cross-scale and cross-lens
+operations compose the mesh before query-conditioned attention reduces it to a prediction. Raw modalities do not
+bypass the mesh.
 
 - `fusion.py`: complete model and reconstruction objective.
 - `data.py`: runtime California data adapter.

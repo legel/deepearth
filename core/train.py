@@ -11,18 +11,14 @@ from pathlib import Path
 import torch
 
 from deepearth.core import data as base_data
-from deepearth.core.fusion import DeepEarth, Variable
+from deepearth.core.fusion import MeshConfig, build_model
+
 
 @dataclass(frozen=True)
-class Experiment:
+class Experiment(MeshConfig):
     seed: int = int(os.environ.get("MESH_SEED", "1337"))
     steps: int = int(os.environ.get("MESH_STEPS", "8000"))
     batch: int = 256
-    width: int = 128
-    levels: int = 12
-    hash_log2: int = 14
-    latents: int = 16
-    layers: int = 2
     hide_probability: float = 0.5
     learning_rate: float = 5e-4
     weight_decay: float = 1e-3
@@ -99,10 +95,8 @@ def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
         "clay_v2": False,
     }
     cache = Path(settings["cache_dir"])
-    # Reuse the canonical assembled dataset when the cache ships one. Rebuilding
-    # this artifact duplicates ~15 GB without changing a single observation.
     existing = sorted(cache.glob("prepared_*.pt"))
-    prepared = existing[0] if existing else cache / f"prepared_{base_data.prepared_tag(settings)}.pt"
+    prepared = existing[0] if existing else cache / "prepared_mesh.pt"
     source = base_data.build(
         settings["adapter"],
         cache_dir=settings["cache_dir"],
@@ -138,20 +132,6 @@ def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
     return source, variables, always
 
 
-def build_model(source, variable_specs, always_dims, device: str, design: Experiment = EXPERIMENT) -> DeepEarth:
-    variables = [Variable(**spec) for spec in variable_specs]
-    return DeepEarth(
-        variables,
-        always_dims,
-        source,
-        d_model=design.width,
-        levels=design.levels,
-        log2_size=design.hash_log2,
-        n_latents=design.latents,
-        n_layers=design.layers,
-    ).to(device)
-
-
 def train(
     cache: str,
     device: str,
@@ -159,6 +139,7 @@ def train(
     *,
     checkpoint_steps: frozenset[int] = frozenset(),
     checkpoint_dir: Path | None = None,
+    output: Path | None = None,
 ):
     if not design.reader_only and not 0 <= design.reader_steps < design.steps:
         raise ValueError("reader_steps must fall between 0 and total steps")
@@ -490,10 +471,10 @@ def train(
                 flush=True,
             )
 
-    checkpoint = Path(__file__).with_name("checkpoint.pt")
-    checkpoint.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), checkpoint)
-    print(f"checkpoint: {checkpoint}", flush=True)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), output)
+        print(f"checkpoint: {output}", flush=True)
     return model, source
 
 
@@ -505,7 +486,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--steps", type=int, default=8000)
     parser.add_argument("--reader-steps", type=int, default=100)
-    parser.add_argument("--checkpoint")
+    parser.add_argument("--init-checkpoint", "--checkpoint", dest="init_checkpoint")
+    parser.add_argument("--output", type=Path, default=Path("checkpoint.pt"))
     args = parser.parse_args()
 
     design = replace(
@@ -513,9 +495,9 @@ def main() -> None:
         seed=args.seed,
         steps=args.steps,
         reader_steps=args.reader_steps,
-        init_checkpoint=args.checkpoint or "",
+        init_checkpoint=args.init_checkpoint or "",
     )
-    model, source = train(args.cache, args.device, design)
+    model, source = train(args.cache, args.device, design, output=args.output)
     from deepearth.autoresearch import evaluate
 
     scores = evaluate.evaluate_benchmarks(model, source, args.device, batch=1280)
