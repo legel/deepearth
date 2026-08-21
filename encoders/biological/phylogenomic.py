@@ -307,7 +307,7 @@ class TreeMessagePassing(nn.Module):
     state, branch lengths gating how much signal survives each split — is the principled way to share information across
     species, above all for rare/held-out clades. A GNN over the phylogeny (cf. GraphCast, Science 2023; GenCast,
     Nature 2025 — phylogeny as the mesh, ancestral state as the propagated field); :class:`OrnsteinUhlenbeckAttention`
-    is an efficient approximation. See ``autoresearch/science.md``.
+    is an efficient approximation. See ``SCIENCE.md``.
 
     Args: ``n_species`` (tips), ``d_model`` (width), ``tree`` (buffers from :func:`build_tree_buffers`), ``n_layers``
     (upward+downward sweeps, each a :class:`_TreeRound`; more sweeps propagate further), ``hidden`` (message-MLP width).
@@ -736,4 +736,3 @@ def _test_real_tree():
 
 if __name__ == "__main__":
     _test()
-
