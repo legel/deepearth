@@ -91,6 +91,8 @@ READER_PARAMETERS = (
     "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
     "task_mesh_reader_output_norm.", "scale_mesh_reader.",
     "scale_mesh_reader_mix.", "scale_mesh_reader_router.",
+    "deep_mesh_reader.", "deep_mesh_reader_gate.",
+    "deep_mesh_reader_output_norm.",
     "mesh_prior_read_gate.", "mesh_prior_information_gate.",
     "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
     "mesh_condition_gate.", "mesh_condition_norm.",
@@ -292,6 +294,36 @@ class SignalAdapter(nn.Module):
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         return self.net(value.float())
+
+
+class CrossFiberReaderBlock(nn.Module):
+    """Refine one scientific query against routed mesh fibers."""
+
+    def __init__(self, d_model: int, n_heads: int):
+        super().__init__()
+        self.query_norm = nn.LayerNorm(d_model)
+        self.token_norm = nn.LayerNorm(d_model)
+        self.attention = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.mlp_norm = nn.LayerNorm(d_model)
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model),
+        )
+
+    def forward(
+        self, query: torch.Tensor, keys: torch.Tensor, values: torch.Tensor
+    ) -> torch.Tensor:
+        update = self.attention(
+            self.query_norm(query).unsqueeze(1),
+            self.token_norm(keys),
+            self.token_norm(values),
+            need_weights=False,
+        )[0].squeeze(1)
+        query = query + update
+        return query + self.mlp(self.mlp_norm(query))
 
 
 class MeshModel(nn.Module):
@@ -539,6 +571,16 @@ class MeshModel(nn.Module):
         scale_reader_rng = torch.random.get_rng_state()
         self.scale_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         torch.random.set_rng_state(scale_reader_rng)
+        deep_reader_rng = torch.random.get_rng_state()
+        self.deep_mesh_reader = nn.ModuleList([
+            CrossFiberReaderBlock(d_model, n_heads) for _ in range(4)
+        ])
+        self.deep_mesh_reader_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.mesh_read_names
+        })
+        self.deep_mesh_reader_output_norm = nn.LayerNorm(d_model)
+        torch.random.set_rng_state(deep_reader_rng)
         self.scale_mesh_reader_mix = nn.ParameterDict({
             name: nn.Parameter(torch.tensor(
                 -2.0 if name == self.species_variable else 0.0
@@ -955,6 +997,11 @@ class MeshModel(nn.Module):
         )
         pooled = pooled + torch.tanh(self.mesh_scale_attention_gate[name]) \
                  * self.mesh_scale_task_norm(scale_attention)
+        deep_read = scale_query
+        for block in self.deep_mesh_reader:
+            deep_read = block(deep_read, selected_keys, selected_fibers)
+        pooled = pooled + torch.tanh(self.deep_mesh_reader_gate[name]) \
+                 * self.deep_mesh_reader_output_norm(deep_read - scale_query)
         prior_fibers = self._mesh_reader_cache["prior_fibers"]
         prior_keys = self._mesh_reader_cache["prior_keys"]
         if mesh_query.dim() == 2:
@@ -1142,6 +1189,17 @@ class MeshModel(nn.Module):
         ]).view(1, tasks, 1)
         pooled = pooled + torch.tanh(attention_gates) \
                  * self.mesh_scale_task_norm(scale_attention)
+
+        deep_read = flat_query.squeeze(1)
+        for block in self.deep_mesh_reader:
+            deep_read = block(deep_read, selected_keys, selected_fibers)
+        deep_read = self.deep_mesh_reader_output_norm(
+            deep_read - flat_query.squeeze(1)
+        ).reshape(batch, tasks, self.d_model)
+        deep_gates = torch.stack([
+            self.deep_mesh_reader_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(deep_gates) * deep_read
 
         prior_fibers = self._mesh_reader_cache["prior_fibers"]
         prior_keys = self._mesh_reader_cache["prior_keys"]
