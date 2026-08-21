@@ -1,8 +1,9 @@
 import enum
-from math import ceil, isfinite
+from math import ceil
 from cachetools import cached
 import numpy as np
 
+import os
 import torch
 import torch.nn as nn
 from torch.autograd import Function
@@ -17,16 +18,40 @@ except ImportError:
 
 from .backend import _backend
 
+# ------------------------------------------------------------------------------------------------
+# DETERMINISM
+#
+# float atomicAdd is not associative, so the backward's colliding writes land in scheduling order and
+# two identical runs disagree in the last bits. Measured on this encoder: five runs at seed 0, same
+# code and config, gave 0.1873 / 0.1925 / 0.1867 / 0.1872 / 0.1952 (sd 0.0038) -- as large as the whole
+# ACROSS-seed spread, and comparable to a capability's entire fair-gain budget. That is why every
+# standing probe record is frozen-encoder: the trained protocol could not be reproduced, so it could
+# not set a record.
+#
+# EARTH4D_DETERMINISTIC=1 routes those atomics through an int64 fixed-point sink instead. Integer
+# addition IS associative, so the sum no longer depends on arrival order.
+#
+# The scale is chosen HERE, from the upstream gradient's own magnitude, because Python already holds
+# the tensor and can reduce it without forcing an extra device sync inside the kernel launch. 2^36
+# below the max means the largest single term is ~6.9e10, leaving int64 room for ~1.3e8 accumulations
+# into one cell, while the quantum is finer than float32's own step at that magnitude.
+#
+# Default OFF: the champion path stays bit-identical until this is validated end-to-end
+# per science.md rule 21 -- gate at graduation, not at conception.
 _FIXED_POINT_BITS = 36
 
 
 def _fixed_scale(grad: torch.Tensor) -> float:
-    if not torch.are_deterministic_algorithms_enabled():
+    """Fixed-point scale for this backward, or 0.0 to keep the original float-atomic path."""
+    if os.environ.get("EARTH4D_DETERMINISTIC", "") not in ("1", "true", "True"):
         return 0.0
-    gmax = grad.detach().abs().max().item()
-    if not isfinite(gmax) or gmax <= 0.0:
-        return 0.0
-    return (2.0 ** _FIXED_POINT_BITS) / gmax
+    gmax = grad.detach().abs().max()
+    if not torch.isfinite(gmax) or gmax.item() <= 0.0:
+        return 0.0                              # all-zero or non-finite grad: nothing to accumulate
+    return float((2.0 ** _FIXED_POINT_BITS) / gmax.item())
+
+
+
 class _hash_encode(Function):
     @staticmethod
     @custom_fwd(cast_inputs=torch.half, device_type='cuda')
@@ -329,8 +354,8 @@ class _hash_encode_precomputed(Function):
             grad, offsets,
             h1_used, h2_used, weights,
             probe_indices, index_logits, grad_index_logits, grad_embeddings,
-            B, D, C, L, N_p, N_c, _fixed_scale(grad)
-        )
+            B, D, C, L, N_p, N_c
+        , _fixed_scale(grad))
 
         # per_level_scale gradient: same formula as the standard backward, from the freshly recomputed dy_dx.
         # scale_l[d] = exp2(pls[l,d])*base[d]-1 ; d(out)/d(pls) = ln2*(scale+1)/scale * (dy_dx contracted with grad) * input
@@ -714,9 +739,8 @@ class HashEncoder(nn.Module):
             probe_indices, index_logits, grad_index_logits, self._adam_grad_buffer,
             B, self.input_dim, self.level_dim, self.num_levels,
             self.N_p if self.enable_learned_probing else 1,
-            self.N_c if self.enable_learned_probing else 0,
-            _fixed_scale(grad)
-        )
+            self.N_c if self.enable_learned_probing else 0
+        , _fixed_scale(grad))
 
     def adam_step(self, batch_indices):
         """
@@ -841,3 +865,4 @@ class HashEncoder(nn.Module):
         outputs = outputs.view(prefix_shape + [self.output_dim])
 
         return outputs
+

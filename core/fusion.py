@@ -1,1396 +1,1941 @@
-"""DeepEarth: a config-driven model of spatio-temporally covarying variables.
+"""Fibered Earth4D world model.
 
-Given whichever variables are observed at a location plus those at nearby places/times, it infers the rest,
-trained by masked reconstruction so any variable predicts any other. Space-time enters via Earth4D through two
-channels: an absolute (coarse regional memory) and a relative (neighbor-offset, transferring across place/time).
+Every observation writes into an addressed space-time mesh. Query-conditioned
+fusion reads that shared state; raw modalities never bypass it.
 """
 from __future__ import annotations
+
 import math
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from dataclasses import dataclass
+from typing import Dict, Sequence
+
 import torch
-import torch.utils.checkpoint
 import torch.nn as nn
 import torch.nn.functional as F
 
-from deepearth.encoders.spacetime.earth4d import Earth4D
 from deepearth.encoders.biological.phylogenomic import SpeciesGraph
+from deepearth.encoders.spacetime.earth4d import ECEF_NORM_FACTOR, to_ecef
+from deepearth.encoders.spacetime.hashencoder.hashgrid import HashEncoder
 
 
-@dataclass
+@dataclass(frozen=True)
 class Variable:
-    """One variable DeepEarth models at each observation.
-
-    kind: "continuous" (vector, cosine-reconstructed) or "categorical" (class label, probability-reconstructed).
-    dim/num_classes: widths. reconstruct: a target (False = input-only). neighbor: also carried from neighbors.
-    """
     name: str
     kind: str
     dim: int = 0
     num_classes: int = 0
     reconstruct: bool = True
-    neighbor: bool = False
 
 
-class SpaceTimeField(nn.Module):
-    """Encode each neighbor's space-time offset from the query via Earth4D in relative mode."""
+LENSES = ("abiotic", "visual", "biological", "ecological")
+LENS_INDEX = {name: index for index, name in enumerate(LENSES)}
 
-    def __init__(self, d_model: int, window: Sequence[float], levels: int = 24, reference_latitude_deg: float = 0.0,
-                 finest: Sequence[float] = (0.1, 0.1, 1.0, 0.042), log2_hashmap_size: int = 22):
+
+def signal_lens(name: str, kind: str | None = None) -> str:
+    if name in {"climate", "soil", "clay", "topo", "hydro", "water", "soil_drainage"}:
+        return "abiotic"
+    if name in {"vision_dino", "naip_rgb", "naip_ir", "alphaearth"}:
+        return "visual"
+    if name in {"identity", "phylo", "vision_bio"} or kind == "categorical":
+        return "biological"
+    return "ecological"
+
+
+class Projection(nn.Module):
+    """Named boundary used by the canonical Earth4D ablation."""
+
+    def __init__(self, source_dim: int, target_dim: int):
         super().__init__()
-        # relative-only: skip absolute projections; the relative encoder carries high-frequency local structure
-        self.earth4d = Earth4D(verbose=False, enable_relative=True, enable_absolute=False,
-                               relative_window=tuple(window), relative_finest=tuple(finest),
-                               relative_levels=levels, relative_log2_hashmap_size=log2_hashmap_size)
-        self.proj = nn.Sequential(nn.Linear(self.earth4d.relative_output_dim, d_model), nn.GELU(),
-                                  nn.Linear(d_model, d_model))
-        self.m_per_deg = 111_320.0
-        self.m_per_deg_lon = 111_320.0 * math.cos(math.radians(reference_latitude_deg))
-
-    def forward(self, query_coords: torch.Tensor, neighbor_coords: torch.Tensor) -> torch.Tensor:
-        delta = neighbor_coords - query_coords.unsqueeze(1)
-        offset = torch.stack([delta[..., 0] * self.m_per_deg, delta[..., 1] * self.m_per_deg_lon,
-                              delta[..., 2], delta[..., 3]], dim=-1)
-        return self.proj(self.earth4d.encode_relative(offset))
-
-
-class ManifoldField(nn.Module):
-    """Encode each neighbor's own position within a vector subspace, such as an evolutionary manifold."""
-
-    def __init__(self, d_model: int, dim: int, hidden: int = 256):
-        super().__init__()
-        self.encode = nn.Sequential(nn.Linear(dim, hidden), nn.GELU(), nn.Linear(hidden, d_model))
-
-    def forward(self, neighbor_positions: torch.Tensor) -> torch.Tensor:
-        return self.encode(neighbor_positions)
-
-
-class SmoothGeoField(nn.Module):
-    """Random Fourier Features over (lat, lon, elev, time): a smooth, continuous geo encoding that generalizes to
-    held-out locations, unlike the memorizing hash grid whose fine cells are untrained at unseen points. A transferable
-    low-frequency spatial prior complementing, not replacing, the absolute hash memory.
-    (Rahimi & Recht RFF / Tancik Fourier-features; SatCLIP's generalizing geo prior.)
-    """
-
-    def __init__(self, d_model: int, per_scale: int = 32, sigmas: Sequence[float] = (1.0, 4.0, 16.0, 64.0)):
-        super().__init__()
-        # Sigma-bank (Fourier-features): each scale is a fixed Gaussian projection giving a shift-invariant RBF kernel
-        # at that bandwidth (low sigma = broad/transferable, high = fine). Multi-scale coverage without per-cell
-        # parameters, so it generalizes to held-out locations by construction.
-        B = torch.cat([torch.randn(4, per_scale) * s for s in sigmas], dim=1)   # [4, per_scale*n_scales]
-        self.register_buffer("B", B)
-        self.register_buffer("coord_scale", torch.tensor([1 / 90.0, 1 / 180.0, 1 / 3000.0, 1 / 60.0]))  # lat°, lon°, elev m, time
-        n_features = 2 * per_scale * len(sigmas)                               # cos+sin over every scale's directions
-        self.proj = nn.Sequential(nn.Linear(n_features, d_model), nn.GELU(), nn.Linear(d_model, d_model))
-
-    def forward(self, coords: torch.Tensor) -> torch.Tensor:
-        x = (coords * self.coord_scale) @ self.B * (2.0 * math.pi)             # [B, per_scale*n_scales]
-        return self.proj(torch.cat([torch.cos(x), torch.sin(x)], dim=-1))       # [B, d_model]
-
-
-class NeighborContext(nn.Module):
-    """One token per (neighbor, subspace) = subspace encoding + neighbor feature projections + a subspace marker.
-
-    space_time: kwargs for SpaceTimeField; manifolds: {name: dim} vector subspaces; feature_dims: {name: dim} features.
-    """
-
-    def __init__(self, d_model: int, space_time: dict, manifolds: Dict[str, int] | None = None,
-                 feature_dims: Dict[str, int] | None = None, neighbor_op: str = "add"):
-        super().__init__()
-        self.d_model = d_model
-        self.space_time = SpaceTimeField(d_model, **space_time)
-        self.manifolds = nn.ModuleDict({name: ManifoldField(d_model, dim) for name, dim in (manifolds or {}).items()})
-        self.features = nn.ModuleDict({name: nn.Linear(dim, d_model) for name, dim in (feature_dims or {}).items()})
-        self.field_marker = nn.ParameterDict(
-            {name: nn.Parameter(torch.randn(d_model) * 0.02) for name in ["space_time", *(manifolds or {})]})
-        # neighbor_op: how a neighbor's VALUE (features) binds with its POSITION encoding. 'add'=bare sum (champion).
-        self.neighbor_op = neighbor_op
-        if neighbor_op == "film":       # position FiLM-modulated by the neighbor's value
-            self.film_g = nn.Linear(d_model, d_model); self.film_b = nn.Linear(d_model, d_model)
-        elif neighbor_op == "gate":     # neighbor value gated by where it is
-            self.feat_gate = nn.Linear(d_model, d_model)
-        elif neighbor_op == "bind":     # explicit Hadamard value x position binding term
-            self.bind_proj = nn.Linear(d_model, d_model)
-
-    def _combine(self, pos: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
-        op = self.neighbor_op
-        if op == "add":  return pos + features
-        if op == "film": return pos * (1.0 + self.film_g(features)) + self.film_b(features)
-        if op == "gate": return pos + features * torch.sigmoid(self.feat_gate(pos))
-        if op == "bind": return pos + features + self.bind_proj(pos * features)
-        raise ValueError(f"unknown neighbor_op {op}")
-
-    def forward(self, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
-                manifold_positions: Dict[str, torch.Tensor] | None = None,
-                neighbor_features: Dict[str, torch.Tensor] | None = None) -> torch.Tensor:
-        B, K = neighbor_coords.shape[0], neighbor_coords.shape[1]
-        features = query_coords.new_zeros(B, K, self.d_model)
-        for name, val in (neighbor_features or {}).items():
-            features = features + self.features[name](val)
-        tokens = [self._combine(self.space_time(query_coords, neighbor_coords), features) + self.field_marker["space_time"]]
-        for name, field in self.manifolds.items():
-            tokens.append(self._combine(field(manifold_positions[name]), features) + self.field_marker[name])
-        return torch.cat(tokens, dim=1)
-
-
-class RMSNorm(nn.Module):
-    """RMSNorm (Zhang & Sennrich 2019): scale-only, no mean-centering — a genuinely different normalizer than
-    LayerNorm, cheaper and with different gradient dynamics. An architecture lever, not a knob."""
-
-    def __init__(self, d: int, eps: float = 1e-6):
-        super().__init__()
-        self.g = nn.Parameter(torch.ones(d)); self.eps = eps
+        self.net = nn.Sequential(nn.Linear(source_dim, target_dim), nn.GELU())
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.g * x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        return self.net(x)
 
 
-class GLUFFN(nn.Module):
-    """Gated-linear-unit FFN (SwiGLU / GeGLU, Shazeer 2020): a value branch multiplicatively gated by a learned
-    activation branch — a different information-routing structure than the MLP's single activation path."""
+class NestedProjection(nn.Module):
+    """Keep the proven field intact while a new field earns influence."""
 
-    def __init__(self, d: int, hidden: int, act: str = "swish"):
+    def __init__(self, base: nn.Module, residual: nn.Module, base_dim: int, levels: int):
         super().__init__()
-        self.gate = nn.Linear(d, hidden); self.up = nn.Linear(d, hidden); self.down = nn.Linear(hidden, d)
-        self.act = F.silu if act == "swish" else F.gelu
+        self.base = base
+        self.residual = residual
+        self.base_dim = base_dim
+        self.gate = nn.Parameter(torch.full((levels,), -3.0))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down(self.act(self.gate(x)) * self.up(x))
+        base, residual = x.split((self.base_dim, x.shape[-1] - self.base_dim), -1)
+        gate = torch.sigmoid(self.gate).view(*([1] * (x.dim() - 2)), -1, 1)
+        return self.base(base) + gate * self.residual(residual)
 
 
-class LatentBlock(nn.Module):
-    """Configurable pre-norm latent self-attention block — the ARCHITECTURE-variant replacement for
-    ``nn.TransformerEncoderLayer``. norm in {ln, rms}; ffn in {mlp, swiglu, geglu}. The ``torch`` block stays the
-    loop default (champion reproduces byte-identically); this activates only when a config selects a variant."""
+class WorldMesh(nn.Module):
+    """Compact persistent state addressed at several space-time resolutions."""
 
-    def __init__(self, d_model: int, n_heads: int, ffn: str = "mlp", norm: str = "ln", mult: int = 4):
+    def __init__(self, d_model: int, levels: int, log2_size: int, features: int = 2):
         super().__init__()
-        Norm = (lambda d: RMSNorm(d)) if norm == "rms" else (lambda d: nn.LayerNorm(d))
-        self.n1, self.n2 = Norm(d_model), Norm(d_model)
-        self.attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
-        h = mult * d_model
-        if ffn == "swiglu":
-            self.ffn = GLUFFN(d_model, h, "swish")
-        elif ffn == "geglu":
-            self.ffn = GLUFFN(d_model, h, "gelu")
-        else:
-            self.ffn = nn.Sequential(nn.Linear(d_model, h), nn.GELU(), nn.Linear(h, d_model))
+        self.levels = levels
+        self.features = features
+        self.spatial = HashEncoder(
+            input_dim=3,
+            num_levels=levels,
+            level_dim=features,
+            base_resolution=16,
+            per_level_scale=1.7,
+            log2_hashmap_size=log2_size,
+        )
+        self.temporal = nn.ModuleList([
+            HashEncoder(
+                input_dim=3,
+                num_levels=levels,
+                level_dim=features,
+                base_resolution=(16, 16, 4),
+                per_level_scale=(1.7, 1.7, 1.5),
+                log2_hashmap_size=log2_size,
+            )
+            for _ in range(3)
+        ])
+        self.spatial_projection = Projection(features, d_model)
+        self.temporal_projection = Projection(3 * features, d_model)
 
-    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:   # drop-in for TransformerEncoderLayer(x)
-        a = self.n1(x); x = x + self.attn(a, a, a, need_weights=False)[0]
-        return x + self.ffn(self.n2(x))
+        residual_rng = torch.random.get_rng_state()
+        self.spatial_residual = HashEncoder(
+            input_dim=3,
+            num_levels=levels,
+            level_dim=4,
+            base_resolution=16,
+            per_level_scale=1.7,
+            log2_hashmap_size=log2_size,
+        )
+        self.temporal_residual = nn.ModuleList([
+            HashEncoder(
+                input_dim=3,
+                num_levels=levels,
+                level_dim=4,
+                base_resolution=(16, 16, 4),
+                per_level_scale=(1.7, 1.7, 1.5),
+                log2_hashmap_size=log2_size,
+            )
+            for _ in range(3)
+        ])
+        residual_s = Projection(4, d_model)
+        residual_t = Projection(12, d_model)
+        self.spatial_projection = NestedProjection(
+            self.spatial_projection, residual_s, features, levels
+        )
+        self.temporal_projection = NestedProjection(
+            self.temporal_projection, residual_t, 3 * features, levels
+        )
+        torch.random.set_rng_state(residual_rng)
+
+    @staticmethod
+    def coordinates(coords: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
+        xyz = torch.stack((x, y, z), -1) / ECEF_NORM_FACTOR
+        xyzt = torch.cat((xyz, coords[..., 3:4] * 2.0 - 1.0), -1)
+        return xyz.clamp(-0.999, 0.999), xyzt.clamp(-0.999, 0.999)
+
+    def raw(self, coords: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        lead = coords.shape[:-1]
+        xyz, xyzt = self.coordinates(coords)
+        spatial = self.spatial(xyz.contiguous(), size=1.0).reshape(*lead, self.levels, self.features)
+        spatial_residual = self.spatial_residual(
+            xyz.contiguous(), size=1.0
+        ).reshape(*lead, self.levels, 4)
+        projections = ((0, 1, 3), (1, 2, 3), (0, 2, 3))
+        temporal = torch.cat([
+            encoder(xyzt[..., axes].contiguous(), size=1.0).reshape(
+                *lead, self.levels, self.features)
+            for encoder, axes in zip(self.temporal, projections)
+        ], -1)
+        temporal_residual = torch.cat([
+            encoder(xyzt[..., axes].contiguous(), size=1.0).reshape(
+                *lead, self.levels, 4
+            )
+            for encoder, axes in zip(self.temporal_residual, projections)
+        ], -1)
+        return torch.cat((spatial, spatial_residual), -1), torch.cat(
+            (temporal, temporal_residual), -1
+        )
+
+
+class RelativeField(nn.Module):
+    """Transferable metric offsets between a query and its neighboring mesh cells."""
+
+    def __init__(self, d_model: int, levels: int, log2_size: int):
+        super().__init__()
+        self.levels = levels
+        self.hash = nn.ModuleList([
+            HashEncoder(
+                input_dim=3,
+                num_levels=levels,
+                level_dim=2,
+                base_resolution=(8, 8, 4),
+                per_level_scale=(1.8, 1.8, 1.5),
+                log2_hashmap_size=log2_size,
+            )
+            for _ in range(4)
+        ])
+        self.project = Projection(8, d_model)
+        self.register_buffer("window", torch.tensor((8000.0, 8000.0, 300.0, 130.0)))
+
+    def forward(self, query: torch.Tensor, neighbors: torch.Tensor) -> torch.Tensor:
+        delta = neighbors - query.unsqueeze(1)
+        north = delta[..., 0] * 111_320.0
+        east = delta[..., 1] * (111_320.0 * math.cos(math.radians(37.0)))
+        offset = torch.stack((north, east, delta[..., 2], delta[..., 3]), -1)
+        norm = (offset / self.window).clamp(-0.999, 0.999)
+        projections = ((0, 1, 2), (0, 1, 3), (1, 2, 3), (0, 2, 3))
+        raw = torch.cat([
+            encoder(norm[..., axes].contiguous(), size=1.0).reshape(
+                *norm.shape[:-1], self.levels, 2)
+            for encoder, axes in zip(self.hash, projections)
+        ], -1)
+        return self.project(raw)
+
+
+class Neighborhood(nn.Module):
+    """Holder keeps the fixed evaluator's relative-Earth4D ablation meaningful."""
+
+    def __init__(self, d_model: int, levels: int, log2_size: int):
+        super().__init__()
+        self.space_time = RelativeField(d_model, levels, log2_size)
+
+
+class SignalAdapter(nn.Module):
+    """Translate one measurement system into the common mesh-state language."""
+
+    def __init__(self, input_dim: int, d_model: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.LayerNorm(input_dim),
+            nn.Linear(input_dim, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return self.net(value.float())
 
 
 class DeepEarth(nn.Module):
-    """Config-driven model of spatio-temporally covarying variables (see module docstring).
-
-    variables: the modeled variables. d_model/n_latents/n_layers/n_heads: latent-attention backbone.
-    relative_window: neighbor-offset half-extent per axis (m, time). manifolds: extra vector subspaces {name: dim}.
-    """
-
-    # Train-only: blank the neighbor community on a fraction of rows so the model learns universal->biology induction rather than leaning on a community crutch absent at eval.
-    COMMUNITY_DROPOUT = 0.5
+    """All scientific evidence must enter fusion through a mesh-state update."""
 
     def __init__(
         self,
         variables: Sequence[Variable],
+        always_dims: Dict[str, int],
+        source,
         *,
-        d_model: int = 256,
-        n_latents: int = 24,
-        n_layers: int = 4,
+        d_model: int = 128,
+        levels: int = 12,
+        log2_size: int = 14,
+        n_latents: int = 16,
+        n_layers: int = 2,
         n_heads: int = 8,
-        relative_window: Sequence[float] = (2500.0, 2500.0, 300.0, 180.0),
-        relative_finest: Sequence[float] = (0.1, 0.1, 1.0, 0.042),
-        relative_log2_hashmap_size: int = 22,
-        manifolds: Optional[Dict[str, int]] = None,
-        capacity: int = 16,
-        reference_latitude_deg: float = 0.0,
-        absolute_log2_hashmap_size: int = 20,
-        absolute_levels: int = 18,
-        continuous_calibration: bool = False,
-        species_variable: Optional[str] = None,
-        species_embedding: Optional[torch.Tensor] = None,
-        species_layers: int = 2,
-        species_heads: int = 4,
-        species_top_k: Optional[int] = None,
-        species_flex: bool = False,
-        species_operator: str = "ou-attention",
-        species_tree: Optional[dict] = None,
-        species_tip_row: Optional[torch.Tensor] = None,   # (latent-clade) species-local vocab index of each in-tree tip, in tree-tip order
-        species_mask_posterior: Optional[str] = None,
-        species_distance: Optional[tuple] = None,   # (dated[m,m], model_idx[m]): real dated patristic for tree-covered species -> replaces the embedding shadow (ou-attention)
-        species_text: Optional[torch.Tensor] = None,
-        species_family: Optional[torch.Tensor] = None,
-        family_alphaearth_expert: bool = False,
-        family_env_expert: bool = False,
-        family_env_vars: Optional[Sequence[str]] = None,
-        family_env_residual: bool = False,
-        ecological_family_map: bool = False,
-        orthogonal_blank_hidden: int = 0,
-        task_occupancy_experts: bool = False,
-        task_niche_prior: bool = False,
-        niche_coord_mean: Optional[torch.Tensor] = None,
-        niche_coord_scale: Optional[torch.Tensor] = None,
-        niche_ae_mean: Optional[torch.Tensor] = None,
-        niche_ae_scale: Optional[torch.Tensor] = None,
-        compile_processor: bool = False,
-        rounds: int = 1,
-        write_back: bool = True,
-        revise: bool = False,
-        round_loss: str = "final",
-        learned_mask: Optional[bool] = None,
-        feedback_detach: bool = False,
-        flex_attention: bool = False,
-        decoder_hidden: Optional[int] = None,
-        mod_encoder: str = "linear",
-        block_ffn: str = "torch",
-        block_norm: str = "ln",
-        read_depth: int = 1,
-        read_op: str = "mha",
-        neighbor_op: str = "add",
-        token_op: str = "add",
-        read_cond: bool = False,
-        joint_decode: bool = False,
-        grad_checkpoint: bool = False,
-        diffusion: bool = False,
-        loss_weights: Optional[Dict[str, float]] = None,
-        contrastive_weight: float = 0.0,
-        contrastive_vars: Optional[Sequence[str]] = None,
-        smooth_geo: bool = False,
-        smooth_geo_sigmas: Optional[Sequence[float]] = None,
-        smooth_geo_per_scale: int = 32,
-        absolute_temporal_basis: str = "hash",
-        alphaearth_geo: bool = False,
-        n_pollinators: int = 0,
-        pollinator_distance: Optional[torch.Tensor] = None,
-        pollinator_text: Optional[torch.Tensor] = None,
-        pollinator_top_k: Optional[int] = None,
-        poll_species_idx: Optional[torch.Tensor] = None,
-        poll_species_frq: Optional[torch.Tensor] = None,
-        poll_species_mixture: float = 0.0,
-        poll_species_all_masked: bool = False,
-        phylo_head_routing: bool = False,
-        species_trait_recon: bool = False,
-    ) -> None:
+    ):
         super().__init__()
-        self.phylo_head_routing = phylo_head_routing   # route the phylo-refined species embedding into the trait heads
-        self.species_trait_recon = species_trait_recon # LCA fine-tuning: reconstruct phylo-conserved traits FROM the refined species embedding (tree learns trait structure)
-        self.loss_weights = loss_weights or {}
-        self.contrastive_weight = contrastive_weight
-        self.contrastive_vars = set(contrastive_vars or ())
         self.variables = list(variables)
-        self.names = [v.name for v in self.variables]
+        self.names = [v.name for v in variables]
         self.d_model = d_model
+        self.levels = levels
+        self.species_variable = "identity"
+        self.always_names = tuple(always_dims)
+        self._ablate_species = False
 
-        self.encoders = nn.ModuleDict()
-        self.decoders = nn.ModuleDict()
-        # Interface decoder factory (science.md rule 23: rich interface decoders reading from the latent field).
-        # decoder_hidden=None -> a single Linear (lean); set -> a 1-hidden-layer MLP for richer reconstruction.
-        def _dec(out_dim):
-            return (nn.Sequential(nn.Linear(d_model, decoder_hidden), nn.GELU(), nn.Linear(decoder_hidden, out_dim))
-                    if decoder_hidden else nn.Linear(d_model, out_dim))
-        def _enc(in_dim):   # [Ensue] mod_encoder toggle: deeper/normalized modality tokenizer (default = bare Linear)
-            if mod_encoder == "mlp2":
-                return nn.Sequential(nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
-            if mod_encoder == "mlp2ln":
-                return nn.Sequential(nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model), nn.LayerNorm(d_model))
-            if mod_encoder == "prenorm":       # per-modality INPUT LayerNorm before projection (standardize raw feature scales across modalities)
-                return nn.Sequential(nn.LayerNorm(in_dim), nn.Linear(in_dim, d_model))
-            if mod_encoder == "prenormmlp2":    # input-normalized 2-layer tokenizer (scale-fix + capacity)
-                return nn.Sequential(nn.LayerNorm(in_dim), nn.Linear(in_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
-            return nn.Linear(in_dim, d_model)
-        for v in self.variables:
+        self.mesh = WorldMesh(d_model, levels, log2_size)
+        self.absolute_proj_s = self.mesh.spatial_projection
+        self.absolute_proj_t = self.mesh.temporal_projection
+        self.neighbors = Neighborhood(d_model, levels, max(10, log2_size - 2))
+
+        self.adapters = nn.ModuleDict()
+        self.category_inputs = nn.ModuleDict()
+        for v in variables:
             if v.kind == "continuous":
-                self.encoders[v.name] = _enc(v.dim)
-                if v.reconstruct:
-                    self.decoders[v.name] = _dec(v.dim)
-            elif v.kind == "categorical":
-                if v.name == species_variable and species_embedding is not None:
-                    continue          # species tokens and logits use the refined species graph, not these dead heads
-                self.encoders[v.name] = nn.Embedding(v.num_classes, d_model)
-                if v.reconstruct:
-                    self.decoders[v.name] = _dec(v.num_classes)
-            else:
-                raise ValueError(f"unknown variable kind {v.kind!r} for {v.name!r}")
-        # Cosine is scale-free; fit magnitude through a detached per-dimension affine.
-        self.continuous_calibration = continuous_calibration
-        self.cal_gain = nn.ParameterDict()
-        self.cal_bias = nn.ParameterDict()
-        if continuous_calibration:
-            for v in self.variables:
-                if v.kind == "continuous" and v.reconstruct and v.name in self.decoders:
-                    self.cal_gain[v.name] = nn.Parameter(torch.ones(v.dim))
-                    self.cal_bias[v.name] = nn.Parameter(torch.zeros(v.dim))
+                self.adapters[v.name] = SignalAdapter(v.dim, d_model)
+            elif v.name != self.species_variable:
+                self.category_inputs[v.name] = nn.Embedding(v.num_classes, d_model)
+        for name, dim in always_dims.items():
+            self.adapters[name] = SignalAdapter(dim, d_model)
 
-        self.type_emb = nn.Parameter(torch.randn(len(self.variables), d_model) * 0.02)
-        # A dedicated always-present space-time token, so a query revealing no variable keeps its position (variable tokens are zeroed by the present-mask).
-        self.position_token = nn.Parameter(torch.randn(d_model) * 0.02)
-        # Normalize content and position to matched unit scale before adding (token-embedding + PE practice): both stay legible and the absolute-encoder gradient stays bounded.
-        self.tok_norm = nn.LayerNorm(d_model)
-        self.pos_norm = nn.LayerNorm(d_model)
-        self.decode_query = nn.Parameter(torch.randn(len(self.variables), d_model) * 0.02)
-
-        # Absolute location memory: coarse regional/long-period memorization (~200M, 20% of Earth4D); fine structure lives in the relative encoder.
-        self.absolute_encoder = Earth4D(verbose=False, spatial_levels=absolute_levels, temporal_levels=absolute_levels,
-                                        spatial_log2_hashmap_size=absolute_log2_hashmap_size,
-                                        temporal_log2_hashmap_size=absolute_log2_hashmap_size,
-                                        temporal_basis=absolute_temporal_basis,
-                                        freq_log_scale_init=-2.5)   # start coarse (~1 km finest); learned from there
-        # Project Earth4D's [xyz | xyt|yzt|xzt] as separate spatial/spatiotemporal channels; each variable learns a
-        # softmax prior over which it reads, so time-invariant modalities can shut time out while vision keeps it.
-        self.absolute_proj_s = nn.Sequential(nn.Linear(self.absolute_encoder.spatial_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
-        self.absolute_proj_t = nn.Sequential(nn.Linear(self.absolute_encoder.spatiotemporal_dim, d_model), nn.GELU(), nn.Linear(d_model, d_model))
-        gate0 = torch.zeros(len(self.variables), 2); gate0[:, 0] = 2.0   # init ~0.88 spatial / 0.12 temporal
-        self.pos_channel_gate = nn.Parameter(gate0)
-        # Smooth transferable geo prior (RFF): added to the memorizing hash position -> generalizes to held-out regions.
-        self.smooth_geo = SmoothGeoField(
-            d_model, per_scale=smooth_geo_per_scale,
-            sigmas=tuple(smooth_geo_sigmas) if smooth_geo_sigmas else (1.0, 4.0, 16.0, 64.0),
-        ) if smooth_geo else None
-        # AlphaEarth (Google Satellite Embedding V1, 64d) as a SatCLIP-style LEARNED geo prior: projected and added to the
-        # spatial position channel that EVERY head reads (like smooth_geo), NOT a reconstruction variable competing for head capacity.
-        self.alphaearth_geo = nn.Sequential(nn.Linear(64, d_model), nn.GELU(), nn.Linear(d_model, d_model)) if alphaearth_geo else None
-        # neighbor context over coordinate subspaces: space-time, plus any vector manifolds (e.g. biological)
-        neighbor_dims = {v.name: (v.dim if v.kind == "continuous" else d_model)
-                         for v in self.variables if v.neighbor}
-        self.neighbor_emb = nn.ModuleDict(
-            {v.name: nn.Embedding(v.num_classes, d_model) for v in self.variables if v.neighbor and v.kind == "categorical"})
-        self.neighbors = NeighborContext(
-            d_model, space_time=dict(window=relative_window, levels=18, finest=relative_finest,
-                                     log2_hashmap_size=relative_log2_hashmap_size,
-                                     reference_latitude_deg=reference_latitude_deg),
-            manifolds=manifolds, feature_dims=neighbor_dims, neighbor_op=neighbor_op)
-
-        # species graph: refine identity through phylogenetic-neighbor attention. "tree" propagates over the dated phylogeny; "ou-attention" biases attention with an embedding-derived distance.
-        self.species_variable = species_variable
-        self.register_buffer("species_family", species_family)
-        self.family_env_vars = tuple(family_env_vars or ())
-        self.family_env_residual = family_env_residual
-        self.ecological_family_map = ecological_family_map
-        self.family_count = int(species_family.max()) + 1 if species_family is not None else 0
-        if species_variable is not None and species_embedding is not None:
-            if species_operator == "tree":
-                assert species_tree is not None, "species_operator='tree' needs the parsed tree (source.tree)"
-                self.species_graph = SpeciesGraph(species_embedding.shape[0], d_model, operator="tree",
-                                                  tree=species_tree, n_layers=species_layers, species_text=species_text)
-            elif species_operator == "latent-clade":                                 # rule 29: exact tree-GP refinement + out-of-tree clade cross-attention
-                assert species_tree is not None and species_tip_row is not None, \
-                    "species_operator='latent-clade' needs source.lca_tree + source.lca_tip_row"
-                self.species_graph = SpeciesGraph(species_embedding.shape[0], d_model, operator="latent-clade",
-                                                  tree=species_tree, tip_row=species_tip_row, n_heads=species_heads,
-                                                  n_layers=species_layers, species_text=species_text,
-                                                  mask_posterior=species_mask_posterior)
-            else:
-                distance = SpeciesGraph.distance_from_embedding(species_embedding)   # BioCLIP-embedding shadow (kept for inductively-placed species not on the dated tree)
-                if species_distance is not None:                                     # overwrite the tree-covered block with the REAL dated patristic (rules 7-12), rescaled to the shadow's scale
-                    dated, midx = species_distance
-                    blk = dated / (dated[~torch.eye(len(dated), dtype=torch.bool, device=dated.device)].mean() + 1e-9) \
-                                * distance[midx][:, midx][~torch.eye(len(midx), dtype=torch.bool, device=distance.device)].mean()
-                    blk = 0.5 * (blk + blk.t()); blk.fill_diagonal_(0.0)
-                    distance = distance.clone(); distance[midx.unsqueeze(1), midx.unsqueeze(0)] = blk
-                self.species_graph = SpeciesGraph(species_embedding.shape[0], d_model, distance,
-                                                  n_heads=species_heads, n_layers=species_layers,
-                                                  top_k=species_top_k, flex=species_flex, species_text=species_text)
+        graph_args = dict(n_species=source.n_classes, d_model=d_model, n_layers=2, n_heads=4)
+        if source.lca_tree is not None:
+            graph_args.update(operator="latent-clade", tree=source.lca_tree,
+                              tip_row=source.lca_tip_row, species_text=source.species_text)
         else:
-            self.species_graph = None
+            distance = SpeciesGraph.distance_from_embedding(source.phylo)
+            graph_args.update(operator="ou-attention", phylo_distance=distance,
+                              top_k=min(128, source.n_classes), species_text=source.species_text)
+        self.species_graph = SpeciesGraph(**graph_args)
         self._refined_species = None
+        self.species_niche_key = nn.Parameter(
+            torch.zeros(source.n_classes, d_model)
+        )
+        niche_rng = torch.random.get_rng_state()
+        self.species_niche_adapter = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        nn.init.zeros_(self.species_niche_adapter[-1].weight)
+        nn.init.zeros_(self.species_niche_adapter[-1].bias)
+        torch.random.set_rng_state(niche_rng)
+        lens_rng = torch.random.get_rng_state()
+        self.species_lens_reader_norm = nn.LayerNorm(d_model)
+        self.species_lens_reader = nn.MultiheadAttention(
+            d_model, 4, batch_first=True
+        )
+        nn.init.zeros_(self.species_lens_reader.out_proj.weight)
+        nn.init.zeros_(self.species_lens_reader.out_proj.bias)
+        torch.random.set_rng_state(lens_rng)
+        self.register_buffer("species_family", source.class_group)
+        self.family_count = len(source.group_names)
+        self.environment_names = tuple(
+            name for name in ("climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro")
+            if name in self.names
+        )
 
-        # Optional modules (scale-mixing, diffusion, experience, inductive) live on the research branch; kept inert here so the forward's guards take the no-op path.
-        self.scale_mixer = None
-        self.diffusion_heads = nn.ModuleDict()
-        self.experience = None
-        self._memory_key = None
-        self._memory_features = None
-        self.inductive = None
+        write_names = [*self.names, *self.always_names]
+        self.write_type = nn.ParameterDict({n: nn.Parameter(torch.randn(d_model) * 0.02) for n in write_names})
+        residual_rng = torch.random.get_rng_state()
+        self.fiber_residual = nn.ModuleDict({
+            name: nn.Linear(d_model, d_model, bias=False)
+            for name in write_names
+        })
+        for residual in self.fiber_residual.values():
+            nn.init.zeros_(residual.weight)
+        torch.random.set_rng_state(residual_rng)
+        self.write_gate = nn.ParameterDict({n: nn.Parameter(torch.zeros(levels)) for n in write_names})
+        self.write_norm = nn.LayerNorm(d_model)
+        self.neighbor_norm = nn.LayerNorm(d_model)
 
-        # latent-attention backbone
         self.latents = nn.Parameter(torch.randn(n_latents, d_model) * 0.02)
+        self.read_norm = nn.LayerNorm(d_model)
         self.read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
-        self.n_heads = n_heads
-        self.read_op = read_op
-        # READ-operator variants (architecture lever). 'mha'=champion-identical stock cross-attention.
-        # 'slot': competitive slot-attention (softmax over LATENTS, not keys) -> latents partition/specialize the field.
-        # 'typed': separate cross-attn over variable-state vs neighbor-context, per-latent gated -> respects key type.
-        # 'crossself': latents co-attend to the field AND each other in one softmax -> dissolves read/process split.
-        if read_op == "slot":
-            self.slot_q = nn.Linear(d_model, d_model); self.slot_k = nn.Linear(d_model, d_model)
-            self.slot_v = nn.Linear(d_model, d_model); self.slot_o = nn.Linear(d_model, d_model)
-        elif read_op == "typed":
-            self.read_T = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
-            self.read_C = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
-            self.type_gate = nn.Linear(d_model, 2)
-        elif read_op == "crossself":
-            self.read_cs = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
-        self.token_op = token_op        # value x position binding for the query's own variable tokens
-        if token_op in ("bind", "filmbind"):
-            self.tok_bind_proj = nn.Linear(d_model, d_model)
-        if token_op in ("film", "filmbind"):
-            self.tok_film_g = nn.Linear(d_model, d_model); self.tok_film_b = nn.Linear(d_model, d_model)
-        self.read_cond = read_cond      # location-aware read: FiLM the read query by the query's GLOBAL position
-        if read_cond:
-            self.read_film_g = nn.Linear(d_model, d_model); self.read_film_b = nn.Linear(d_model, d_model)
-        self.joint_decode = joint_decode  # cross-variable joint decoder: variables attend to each other before decoding
-        self.grad_checkpoint = grad_checkpoint  # recompute read+block activations in backward (memory<->compute)
-        self.diffusion = diffusion  # rule-22: masked states start as noise, denoised over rounds
-        if joint_decode:
-            self.joint_block = nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True)
-        self.q_norm = nn.LayerNorm(d_model); self.kv_norm = nn.LayerNorm(d_model)
-        # Latent self-attention blocks. Default block_ffn="torch" = nn.TransformerEncoderLayer (champion-identical);
-        # an ARCHITECTURE variant swaps in the configurable pre-norm LatentBlock (ffn: mlp/swiglu/geglu, norm: ln/rms).
-        def _block():
-            if block_ffn == "torch":
-                return nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True)
-            return LatentBlock(d_model, n_heads, ffn=block_ffn, norm=block_norm)
-        self.blocks = nn.ModuleList([_block() for _ in range(n_layers)])
-        # Fusion depth (architecture lever): re-read the fixed context between latent blocks instead of once up front,
-        # so the latents keep pulling from the neighbor/position context as they process. read_depth=1 (default) -> no
-        # extra reads -> champion-identical (empty ModuleList consumes no init RNG).
-        self.extra_reads = nn.ModuleList([nn.MultiheadAttention(d_model, n_heads, batch_first=True)
-                                          for _ in range(max(0, read_depth - 1))])
+        self.blocks = nn.ModuleList([
+            nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True)
+            for _ in range(n_layers)
+        ])
+        self.decode_query = nn.Parameter(torch.randn(len(variables), d_model) * 0.02)
+        self.decoders = nn.ModuleDict()
+        for v in variables:
+            if v.name == self.species_variable:
+                continue
+            width = v.dim if v.kind == "continuous" else v.num_classes
+            self.decoders[v.name] = nn.Sequential(
+                nn.LayerNorm(d_model), nn.Linear(d_model, 2 * d_model), nn.GELU(), nn.Linear(2 * d_model, width)
+            )
 
-        # Iterative joint-field denoising: refine the state tokens over K rounds (read -> latent self-attn -> write back
-        # each variable's belief through its interface decoder). rounds=1 with learned_mask off is the single-shot model.
-        self.rounds = rounds
-        self.write_back = write_back
-        self.revise = revise
-        self.round_loss = round_loss
-        self.learned_mask = (rounds > 1) if learned_mask is None else learned_mask
-        self.feedback_detach = feedback_detach
-        self.flex_attention = flex_attention
-        nv = len(self.variables)
-        self.mask_token = nn.Parameter(torch.randn(d_model) * 0.02)      # a masked slot's placeholder (vs the zero vector)
-        self.update_gate = nn.Parameter(torch.zeros(nv))                 # sigmoid=0.5: gain re-injecting a masked belief
-        self.revise_rate = nn.Parameter(torch.full((nv,), -3.0))        # sigmoid~0.05: how far an observed token revises
-        self.read_gate = nn.Parameter(torch.ones(d_model))              # per-dim gate on each round's latent read (identity at init)
-        self._round_stack = None
-        # Community-distribution head (MADE joint-dist): a SEPARATE readout trained on a DETACHED latent toward the
-        # LOCAL community distribution, so no gradient reaches the shared backbone. Created LAST so it consumes no init
-        # RNG ahead of the backbone -> the shared model initializes bit-identically with or without this head.
-        self.comm_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)) \
-            if (species_variable is not None and species_embedding is not None) else None
-        # Pollinator-distribution head (plant->pollinator interaction, MADE joint-dist): a DETACHED readout from the
-        # species-pooled latent into a learned pollinator-vocab basis, trained toward the plant's local GloBI pollinator
-        # distribution. Created LAST so it consumes no init RNG ahead of the backbone.
-        self.poll_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)) if n_pollinators > 0 else None
-        self.poll_emb = nn.Parameter(torch.randn(n_pollinators, d_model) * 0.02) if n_pollinators > 0 else None
-        # Cross-tree interaction (rule 27): decode the plant->pollinator interaction against a SECOND, separately
-        # phylo-refined pollinator species graph (its own tree), so an observed interaction propagates to BOTH sides'
-        # relatives. Falls back to the free poll_emb table until the pollinator tree is wired.
-        self.pollinator_graph = SpeciesGraph(n_pollinators, d_model, pollinator_distance, top_k=pollinator_top_k,
-                                             species_text=pollinator_text) \
-            if (n_pollinators > 0 and pollinator_distance is not None) else None
-        self.poll_species_mixture = float(poll_species_mixture)
-        self.poll_species_all_masked = bool(poll_species_all_masked)
-        if self.poll_species_mixture > 0:
-            if poll_species_idx is None or poll_species_frq is None:
-                raise ValueError("poll_species_mixture requires the species-pollinator table")
-            self.register_buffer("poll_species_idx", poll_species_idx.long(), persistent=False)
-            self.register_buffer("poll_species_frq", poll_species_frq.float(), persistent=False)
-        else:
-            self.poll_species_idx = None
-            self.poll_species_frq = None
-        # Phylo-conserved trait heads (B34/B42/B26) on a DETACHED latent. With phylo_head_routing the head reads the
-        # pooled latent CONCATENATED with the expected phylo-refined species embedding, so the species graph's
-        # conserved signal (relatives' trait values) reaches the head -- and its graph-gain (B57/B58/B62) is real.
-        _hd = 2 * d_model if self.phylo_head_routing else d_model
-        # Ecophysiology (B34): predict a species' peak fire-season live fuel moisture from its phylo-refined representation.
-        self.lfmc_head = nn.Sequential(nn.Linear(_hd, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
-            if species_variable is not None else None
-        # Symbiosis (B42): predict a plant's mycorrhizal type (AM/EcM/ErM/OM/NM, FungalRoot label).
-        self.myco_head = nn.Sequential(nn.Linear(_hd, d_model), nn.GELU(), nn.Linear(d_model, 5)) \
-            if species_variable is not None else None
-        # Phenology (B26): predict whether a (space-time-conditioned) observation is flowering (PhenoVision label).
-        self.flower_head = nn.Sequential(nn.Linear(_hd, d_model), nn.GELU(), nn.Linear(d_model, 1)) \
-            if species_variable is not None else None
-        # LCA fine-tuning (rule 25 extended to traits): a head reconstructs a species' phylo-conserved trait FROM its
-        # refined embedding. Trained NON-detached (shapes the tree) with phylo masking, so a masked species' trait is
-        # imputed from relatives through the tree -- learned nearest-neighbor-on-the-dated-tree, which must beat raw NN.
-        # Per-species labels (_species_myco/_valid) are attached post-construction from the data source.
-        if self.species_trait_recon and species_variable is not None:
-            self.species_myco_head = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5))
-            self._species_myco = None; self._species_myco_valid = None; self._train_species = None
-        self.family_ae_head = None
-        if family_alphaearth_expert and self.family_count:
-            with torch.random.fork_rng(devices=[]):
-                self.family_ae_head = nn.Sequential(
-                    nn.LayerNorm(64), nn.Linear(64, d_model), nn.GELU(),
-                    nn.Linear(d_model, self.family_count))
-        self.family_env_attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True) \
-            if family_env_expert and self.family_count else None
-        if self.family_env_attn is not None:
-            self.family_env_query = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
-            self.family_env_head = nn.Sequential(
-                nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(),
-                nn.Linear(d_model, self.family_count))
-            if family_env_residual:
-                nn.init.zeros_(self.family_env_head[-1].weight)
-                nn.init.zeros_(self.family_env_head[-1].bias)
-        self.occupancy_experts = None
-        if task_occupancy_experts and self.family_ae_head is not None:
-            with torch.random.fork_rng(devices=[]):
-                width = 2 * d_model
-                outputs = {"identity": d_model, "community": d_model, "family": self.family_count}
-                if self.poll_emb is not None:
-                    outputs["pollinator"] = d_model
-                self.occupancy_experts = nn.ModuleDict({
-                    name: nn.Sequential(nn.LayerNorm(width), nn.Linear(width, d_model), nn.GELU(),
-                                        nn.Linear(d_model, out))
-                    for name, out in outputs.items()
-                })
-            for head in self.occupancy_experts.values():
-                nn.init.zeros_(head[-1].weight)
-                nn.init.zeros_(head[-1].bias)
-        self.niche_trunk = None
-        self.niche_experts = None
-        if task_niche_prior and self.family_ae_head is not None:
-            if any(x is None for x in (niche_coord_mean, niche_coord_scale,
-                                       niche_ae_mean, niche_ae_scale)):
-                raise ValueError("task_niche_prior requires training-split feature statistics")
-            self.register_buffer("niche_coord_mean", niche_coord_mean.float())
-            self.register_buffer("niche_coord_scale", niche_coord_scale.float().clamp_min(1e-4))
-            self.register_buffer("niche_ae_mean", niche_ae_mean.float())
-            self.register_buffer("niche_ae_scale", niche_ae_scale.float().clamp_min(1e-4))
-            with torch.random.fork_rng(devices=[]):
-                self.niche_trunk = nn.Sequential(
-                    nn.LayerNorm(116), nn.Linear(116, 512), nn.GELU(),
-                    nn.Linear(512, 256), nn.GELU())
-                outputs = {"family": self.family_count, "identity": d_model,
-                           "community": d_model}
-                if self.poll_emb is not None:
-                    outputs["pollinator"] = d_model
-                self.niche_experts = nn.ModuleDict({
-                    name: nn.Linear(256, size) for name, size in outputs.items()
-                })
-        self.blank_adapters = nn.ModuleDict()
-        self.blank_family = None
-        if orthogonal_blank_hidden > 0 and self.family_ae_head is None:
-            raise ValueError("orthogonal_blank_hidden requires family_alphaearth_expert")
-        if orthogonal_blank_hidden > 0 and self.family_count:
-            with torch.random.fork_rng(devices=[]):
-                for route in ("species", "community"):
-                    self.blank_adapters[route] = nn.Sequential(
-                        nn.LayerNorm(d_model), nn.Linear(d_model, orthogonal_blank_hidden), nn.GELU(),
-                        nn.Linear(orthogonal_blank_hidden, d_model))
-                self.blank_family = nn.Linear(d_model, self.family_count)
-            for adapter in self.blank_adapters.values():
-                nn.init.zeros_(adapter[-1].weight)
-                nn.init.zeros_(adapter[-1].bias)
-            nn.init.zeros_(self.blank_family.weight)
-            nn.init.zeros_(self.blank_family.bias)
-        if compile_processor:
-            self._refine = torch.compile(self._refine)
+        self.community_head = nn.Linear(d_model, source.n_classes)
+        self.poll_head = nn.Linear(d_model, source.n_pollinators) if hasattr(source, "n_pollinators") else None
+        self.pollinator_reader = None
+        if self.poll_head is not None:
+            self.pollinator_log_temperature = nn.Parameter(
+                torch.zeros(()), requires_grad=False
+            )
+            self.register_buffer("poll_species_idx", source.poll_idx.long(), persistent=False)
+            self.register_buffer("poll_species_frq", source.poll_frq.float(), persistent=False)
+            interaction_rng = torch.random.get_rng_state()
+            self.pollinator_reader_query = nn.Parameter(torch.randn(2, d_model) * 0.02)
+            self.pollinator_reader_norm = nn.LayerNorm(d_model)
+            self.pollinator_reader = nn.MultiheadAttention(
+                d_model, n_heads, batch_first=True
+            )
+            self.pollinator_reader_output_norm = nn.LayerNorm(d_model)
+            self.pollinator_reader_gate = nn.Parameter(torch.tensor(0.05))
+            self.pollinator_reader_cell_key = nn.Parameter(torch.zeros(2, d_model))
+            self.pollinator_reader_level_key = nn.Parameter(torch.zeros(levels, d_model))
+            self.pollinator_reader_lens_key = nn.Parameter(
+                torch.zeros(len(LENSES), d_model)
+            )
+            torch.random.set_rng_state(interaction_rng)
+        identity_reader_rng = torch.random.get_rng_state()
+        self.identity_detail_query = nn.Parameter(torch.randn(2, d_model) * 0.02)
+        self.identity_detail_norm = nn.LayerNorm(d_model)
+        self.identity_detail_reader = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.identity_detail_output_norm = nn.LayerNorm(d_model)
+        self.identity_detail_gate = nn.Parameter(torch.tensor(0.05))
+        self.identity_detail_cell_key = nn.Parameter(torch.zeros(2, d_model))
+        self.identity_detail_level_key = nn.Parameter(torch.zeros(levels, d_model))
+        self.identity_detail_lens_key = nn.Parameter(
+            torch.zeros(len(LENSES), d_model)
+        )
+        torch.random.set_rng_state(identity_reader_rng)
+        self.lfmc_head = nn.Linear(d_model, 1) if hasattr(source, "lfmc") else None
+        if self.lfmc_head is not None:
+            lfmc_reader_rng = torch.random.get_rng_state()
+            self.lfmc_lens_reader_norm = nn.LayerNorm(d_model)
+            self.lfmc_lens_reader = nn.MultiheadAttention(
+                d_model, n_heads, batch_first=True
+            )
+            self.lfmc_lens_head = nn.Linear(d_model, 1)
+            nn.init.zeros_(self.lfmc_lens_head.weight)
+            nn.init.zeros_(self.lfmc_lens_head.bias)
+            torch.random.set_rng_state(lfmc_reader_rng)
+        self.myco_head = nn.Linear(d_model, 5) if hasattr(source, "myco") else None
+        self.flower_head = nn.Linear(d_model, 1) if hasattr(source, "flower") else None
+        self.species_myco_head = None
+        if self.myco_head is not None:
+            myco_rng = torch.random.get_rng_state()
+            self.species_myco_head = nn.Sequential(
+                nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, 5)
+            )
+            self.myco_relation_gate = nn.Parameter(torch.tensor(math.atanh(0.75)))
+            torch.random.set_rng_state(myco_rng)
+            train_species = torch.zeros(
+                source.n_classes, dtype=torch.bool, device=source.cls.device
+            )
+            train_species[source.cls[source.train]] = True
+            valid = source.myco_valid.bool() & train_species
+            counts = torch.bincount(
+                source.myco[valid].long(), minlength=5
+            ).to(torch.float32)
+            self.register_buffer("species_myco", source.myco.long())
+            self.register_buffer("species_myco_valid", valid)
+            self.register_buffer(
+                "species_myco_prior", counts / counts.sum().clamp_min(1.0)
+            )
+        self.community_metric = nn.Sequential(
+            nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)
+        )
 
-    # ---------------------------------------------------------------- tokens
-    def _token_combine(self, base: torch.Tensor, posn: torch.Tensor) -> torch.Tensor:
-        op = self.token_op
-        if op == "add":  return base + posn
-        if op == "bind": return base + posn + self.tok_bind_proj(base * posn)
-        if op == "film": return base * (1.0 + self.tok_film_g(posn)) + self.tok_film_b(posn)
-        if op == "filmbind": return base * (1.0 + self.tok_film_g(posn)) + self.tok_film_b(posn) + self.tok_bind_proj(base * posn)
-        raise ValueError(f"unknown token_op {op}")
+        variable_kind = {v.name: v.kind for v in variables}
+        self.write_lens = {
+            name: LENS_INDEX[signal_lens(name, variable_kind.get(name))]
+            for name in write_names
+        }
+        sidecar_rng = torch.random.get_rng_state()
+        self.fiber_level_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(levels)) for name in write_names
+        })
+        self.fiber_reliability = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(())) for name in write_names
+        })
+        self.fiber_type = nn.Parameter(torch.randn(len(LENSES), d_model) * 0.02)
+        self.fiber_prior = nn.ModuleList([
+            nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, d_model))
+            for _ in LENSES
+        ])
+        self.fiber_information_gate = nn.Sequential(
+            nn.LayerNorm(4 * d_model),
+            nn.Linear(4 * d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, 1),
+        )
+        self.fiber_norm = nn.LayerNorm(d_model)
+        self.fiber_latents = 4
+        self.fiber_query = nn.Parameter(
+            torch.randn(len(LENSES), self.fiber_latents, d_model) * 0.02
+        )
+        self.fiber_decode_query = nn.Parameter(torch.randn(len(variables), d_model) * 0.02)
+        scientific_reads = ["community"]
+        if self.poll_head is not None:
+            scientific_reads.append("pollinator")
+        if self.lfmc_head is not None:
+            scientific_reads.append("lfmc")
+        if self.myco_head is not None:
+            scientific_reads.append("myco")
+        if self.flower_head is not None:
+            scientific_reads.append("flower")
+        self.mesh_read_names = (*self.names, *scientific_reads)
+        self.mesh_read_query = nn.ParameterDict({
+            name: nn.Parameter(torch.randn(d_model) * 0.02)
+            for name in self.mesh_read_names
+        })
+        self.mesh_read_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.mesh_read_names
+        })
+        self.mesh_scale_read_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.mesh_read_names
+        })
+        self.mesh_scale_attention_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(()))
+            for name in self.mesh_read_names
+        })
+        task_reader_rng = torch.random.get_rng_state()
+        self.task_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        torch.random.set_rng_state(task_reader_rng)
+        scale_reader_rng = torch.random.get_rng_state()
+        self.scale_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        torch.random.set_rng_state(scale_reader_rng)
+        self.scale_mesh_reader_mix = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(
+                -2.0 if name == self.species_variable else 0.0
+            ))
+            for name in self.mesh_read_names
+        })
+        router_rng = torch.random.get_rng_state()
+        self.scale_mesh_reader_router = nn.Sequential(
+            nn.LayerNorm(4 * d_model), nn.Linear(4 * d_model, 1)
+        )
+        nn.init.zeros_(self.scale_mesh_reader_router[-1].weight)
+        nn.init.zeros_(self.scale_mesh_reader_router[-1].bias)
+        torch.random.set_rng_state(router_rng)
+        self.task_mesh_reader_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(()))
+            for name in self.mesh_read_names
+        })
+        self.task_mesh_reader_norm = nn.LayerNorm(d_model)
+        self.task_mesh_reader_output_norm = nn.LayerNorm(d_model)
+        self.mesh_prior_read_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(()))
+            for name in self.mesh_read_names
+        })
+        information_rng = torch.random.get_rng_state()
+        self.mesh_prior_information_gate = nn.Sequential(
+            nn.LayerNorm(4 * d_model),
+            nn.Linear(4 * d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, 1),
+        )
+        torch.random.set_rng_state(information_rng)
+        conditioned_reads = [name for name in ("pollinator",) if name in self.mesh_read_names]
+        self.mesh_condition_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05)) for name in conditioned_reads
+        })
+        self.mesh_task_norm = nn.LayerNorm(d_model)
+        self.mesh_scale_task_norm = nn.LayerNorm(d_model)
+        self.mesh_prior_task_norm = nn.LayerNorm(d_model)
+        self.mesh_condition_norm = nn.LayerNorm(d_model)
+        self.mesh_cell_key = nn.Parameter(torch.zeros(2, d_model))
+        self.mesh_level_key = nn.Parameter(torch.zeros(levels, d_model))
+        self.mesh_lens_key = nn.Parameter(torch.zeros(len(LENSES), d_model))
+        evidence_rng = torch.random.get_rng_state()
+        self.evidence_reader_norm = nn.LayerNorm(d_model)
+        self.evidence_reader = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.evidence_reader_output_norm = nn.LayerNorm(d_model)
+        self.evidence_read_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.mesh_read_names
+        })
+        self.evidence_refine_norm = nn.LayerNorm(d_model)
+        self.evidence_refine_query = nn.ModuleList([
+            nn.Linear(d_model, d_model, bias=False) for _ in LENSES
+        ])
+        self.evidence_refine_reader = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.evidence_refine_router = nn.Linear(d_model, len(LENSES))
+        self.evidence_refine_output_norm = nn.LayerNorm(d_model)
+        self.evidence_refine_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.mesh_read_names
+        })
+        self.evidence_parallel_lens_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.full((len(LENSES),), 0.5))
+            for name in self.mesh_read_names
+        })
+        self.evidence_parallel_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(()))
+            for name in self.mesh_read_names
+        })
+        self.evidence_refine_ffn = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, 2 * d_model),
+            nn.GELU(),
+            nn.Linear(2 * d_model, d_model),
+        )
+        self.evidence_refine_ffn_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.mesh_read_names
+        })
+        torch.random.set_rng_state(evidence_rng)
+        detail_rng = torch.random.get_rng_state()
+        evidence_dims = {
+            variable.name: variable.dim for variable in variables
+            if variable.kind == "continuous"
+        }
+        evidence_dims.update(always_dims)
+        self.detail_evidence_tokenizer = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.LayerNorm(dim), nn.Linear(dim, 3 * d_model)
+            ) for name, dim in evidence_dims.items()
+        })
+        self.detail_evidence_subtoken = nn.ParameterDict({
+            name: nn.Parameter(torch.randn(3, d_model) * 0.02)
+            for name in evidence_dims
+        })
+        self.detail_evidence_norm = nn.LayerNorm(d_model)
+        self.detail_evidence_reader = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.detail_evidence_output_norm = nn.LayerNorm(d_model)
+        self.detail_evidence_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(()))
+            for name in self.mesh_read_names
+        })
+        torch.random.set_rng_state(detail_rng)
+        self.evidence_null = nn.Parameter(torch.zeros(d_model))
+        self.fiber_read_norm = nn.LayerNorm(d_model)
+        self.fiber_read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.fiber_fuse_norm = nn.LayerNorm(d_model)
+        self.fiber_fuse = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.fiber_reconstruct = nn.ModuleDict({
+            name: nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, d_model))
+            for name in write_names
+        })
+        self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
+        self.sparse_fusion_gate = nn.Parameter(torch.tensor(0.05))
+        self.coarse_scale_exchange = nn.Linear(d_model, d_model, bias=False)
+        self.fine_scale_exchange = nn.Linear(d_model, d_model, bias=False)
+        self.scale_exchange_gate = nn.Parameter(torch.full((len(LENSES),), 0.05))
+        self.scale_message_norm = nn.LayerNorm(d_model)
+        self.mesh_linear_reconstruct = nn.ModuleDict({
+            name: nn.Linear(d_model, d_model, bias=False) for name in write_names
+        })
+        self.lens_exchange_norm = nn.LayerNorm(d_model)
+        self.lens_exchange = nn.Parameter(
+            torch.zeros(levels, len(LENSES), len(LENSES))
+        )
+        torch.random.set_rng_state(sidecar_rng)
+        self._fiber_summary = None
+        self._fiber_mesh = None
+        self._fiber_prior_mesh = None
+        self._latest_fiber_prior = None
+        self._evidence_tokens = None
+        self._evidence_padding = None
+        self._evidence_lenses = None
+        self._detail_evidence_tokens = None
+        self._detail_evidence_padding = None
+        self._pool_cache = {}
+        self._mesh_reader_cache = None
 
-    def _variable_token(self, name: str, value: torch.Tensor) -> torch.Tensor:
-        if name == self.species_variable and self._refined_species is not None:
-            return self._refined_species[value.clamp(min=0)]
-        v = self.variables[self.names.index(name)]
-        return self.encoders[name](value if v.kind == "continuous" else value.clamp(min=0))
+    def _species(self, mask: torch.Tensor | None = None) -> torch.Tensor:
+        refined = self.species_graph._seed() if self._ablate_species else self.species_graph(mask)
+        self._refined_species = refined
+        return refined
 
-    def context(self, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
-                manifold_positions: Optional[Dict[str, torch.Tensor]] = None,
-                neighbor_values: Optional[Dict[str, torch.Tensor]] = None,
-                batch_indices: Optional[torch.Tensor] = None) -> dict:
-        """Encode the query's space-time position and its neighbor tokens.
+    def _adapt(self, name: str, value: torch.Tensor, species: torch.Tensor) -> torch.Tensor:
+        if name == self.species_variable:
+            return species[value.long().clamp(0, species.shape[0] - 1)]
+        if name in self.adapters:
+            return self.adapters[name](value)
+        return self.category_inputs[name](value.long().clamp_min(0))
 
-        query_coords [B,4]=(lat,lon,elev,time); neighbor_coords [B,K,4]; manifold_positions {name: [B,K,dim]};
-        neighbor_values {name: [B,K,...]}. Returns {"position": [B,d], "tokens": [B, subspaces*K, d]}; pass as ``context``.
-        """
-        # Community dropout (train only): blank the neighbor community on a fraction of rows, leaving only space-time offset geometry (matches how benchmarks query at eval).
-        if self.training and self.COMMUNITY_DROPOUT > 0.0 and (neighbor_values or manifold_positions):
-            Bd = query_coords.shape[0]
-            keep = (torch.rand(Bd, device=query_coords.device) >= self.COMMUNITY_DROPOUT)
-            if neighbor_values:
-                neighbor_values = {n: v * keep.view(Bd, *([1] * (v.dim() - 1))).to(v.dtype)
-                                   for n, v in neighbor_values.items()}
-            if manifold_positions:
-                manifold_positions = {n: p * keep.view(Bd, *([1] * (p.dim() - 1))).to(p.dtype)
-                                      for n, p in manifold_positions.items()}
-        # Sparse-hash path: read the absolute encoder from precomputed indices as a detached leaf so its hash trains through sparse Adam; the leaf grad is captured for the sparse step (plus dy_dx for the resolution gradient).
-        if getattr(self, "_sparse_hash", False) and batch_indices is not None:
-            raw = self.read_absolute_leaf(batch_indices)
-            flat = self.absolute_encoder.transform_precomputed(raw, query_coords)
-        else:
-            flat = self.absolute_encoder(query_coords)
-        pos_s, pos_t = self._project_position(flat)
-        if self.smooth_geo is not None:
-            pos_s = pos_s + self.smooth_geo(query_coords)     # a smooth transferable geo prior is spatial-only
-        feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
-                 for name, val in (neighbor_values or {}).items()}
-        tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
-        return {"position_s": pos_s, "position_t": pos_t, "position": pos_s + pos_t,
-                "tokens": tokens, "coords": query_coords.detach()}
+    def _write(
+        self,
+        state: torch.Tensor,
+        values: Dict[str, torch.Tensor],
+        present: Dict[str, torch.Tensor],
+        species: torch.Tensor,
+    ) -> torch.Tensor:
+        updates = torch.zeros_like(state)
+        count = state.new_zeros((*state.shape[:-2], 1, 1))
+        for name, mask in present.items():
+            if name not in values or name not in self.write_gate:
+                continue
+            edit = self._adapt(name, values[name], species) + self.write_type[name]
+            gate = torch.sigmoid(self.write_gate[name]).view(*([1] * (state.dim() - 2)), self.levels, 1)
+            valid = mask.to(state.dtype).view(*mask.shape, 1, 1)
+            updates = updates + valid * gate * edit.unsqueeze(-2)
+            count = count + valid
+        return self.write_norm(state + updates / count.clamp_min(1.0).sqrt())
 
-    def context_from_flat(self, flat: torch.Tensor, query_coords: torch.Tensor, neighbor_coords: torch.Tensor,
-                          manifold_positions: Optional[Dict[str, torch.Tensor]] = None,
-                          neighbor_values: Optional[Dict[str, torch.Tensor]] = None) -> dict:
-        """Build context from a raw, precomputed absolute-field leaf."""
-        flat = self.absolute_encoder.transform_precomputed(flat, query_coords)
-        pos_s, pos_t = self._project_position(flat)
-        if self.smooth_geo is not None:
-            pos_s = pos_s + self.smooth_geo(query_coords)
-        feats = {name: (self.neighbor_emb[name](val) if name in self.neighbor_emb else val)
-                 for name, val in (neighbor_values or {}).items()}
-        tokens = self.neighbors(query_coords, neighbor_coords, manifold_positions, feats)
-        return {"position_s": pos_s, "position_t": pos_t, "position": pos_s + pos_t,
-                "tokens": tokens, "coords": query_coords.detach()}
+    def _fiber_write(
+        self,
+        state: torch.Tensor,
+        values: Dict[str, torch.Tensor],
+        present: Dict[str, torch.Tensor],
+        species: torch.Tensor,
+    ) -> torch.Tensor:
+        priors = torch.stack([
+            prior(state) for prior in self.fiber_prior
+        ], -2)
+        fiber_type = self.fiber_type.view(
+            *([1] * (priors.dim() - 2)), len(LENSES), self.d_model
+        )
+        priors = priors + fiber_type
+        self._latest_fiber_prior = self.fiber_norm(priors)
+        updates = [torch.zeros_like(state) for _ in LENSES]
+        precision = [state.new_zeros((*state.shape[:-1], 1)) for _ in LENSES]
+        for name, mask in present.items():
+            if name not in values or name not in self.fiber_level_gate:
+                continue
+            lens = self.write_lens[name]
+            prior = priors[..., lens, :]
+            adapted = self._adapt(name, values[name], species).detach()
+            evidence = (
+                adapted + self.fiber_residual[name](adapted) + self.write_type[name]
+            ).unsqueeze(-2)
+            evidence = evidence.expand_as(prior)
+            innovation = evidence - prior
+            features = torch.cat((prior, evidence, prior * evidence, innovation.abs()), -1)
+            gate = self.fiber_information_gate(features)
+            level_gate = self.fiber_level_gate[name].view(
+                *([1] * (prior.dim() - 2)), self.levels, 1
+            )
+            gate = torch.sigmoid(gate + level_gate + self.fiber_reliability[name])
+            valid = mask.to(state.dtype).view(*mask.shape, 1, 1)
+            weight = valid * gate
+            updates[lens] = updates[lens] + weight * innovation
+            precision[lens] = precision[lens] + weight
+        fibers = self.fiber_norm(torch.stack([
+            updates[index] / (1.0 + precision[index])
+            for index in range(len(LENSES))
+        ], -2))
+        coarse = torch.cat((
+            torch.zeros_like(fibers[..., :1, :, :]),
+            fibers[..., :-1, :, :],
+        ), -3)
+        fine = torch.cat((
+            fibers[..., 1:, :, :],
+            torch.zeros_like(fibers[..., :1, :, :]),
+        ), -3)
+        exchange = self.coarse_scale_exchange(coarse) + self.fine_scale_exchange(fine)
+        gate = torch.tanh(self.scale_exchange_gate).view(
+            *([1] * (fibers.dim() - 2)), len(LENSES), 1
+        )
+        fibers = fibers + gate * self.scale_message_norm(exchange)
+        off_diagonal = 1.0 - torch.eye(
+            len(LENSES), device=fibers.device, dtype=fibers.dtype
+        )
+        normalized_lenses = self.lens_exchange_norm(fibers)
+        availability = normalized_lenses.square().mean(-1).clamp(0.0, 1.0)
+        agreement = torch.einsum(
+            "...lid,...ljd->...lij", normalized_lenses, normalized_lenses
+        ) / self.d_model
+        evidence_gate = availability.unsqueeze(-1) * availability.unsqueeze(-2) \
+                        * torch.sigmoid(4.0 * agreement)
+        lens_exchange = torch.tanh(self.lens_exchange) * off_diagonal * evidence_gate
+        lens_message = torch.einsum(
+            "...lid,...lij->...ljd", normalized_lenses, lens_exchange
+        )
+        return fibers + lens_message
 
-    def _project_position(self, flat: torch.Tensor):
-        """Project Earth4D's [xyz | xyt|yzt|xzt] output into (spatial, spatiotemporal) d_model channels separately,
-        so downstream fusion can route time-invariant vs time-varying position per variable (see pos_channel_gate)."""
-        s = self.absolute_encoder.spatial_dim
-        return self.absolute_proj_s(flat[..., :s]), self.absolute_proj_t(flat[..., s:])
+    def context(self, query_coords, neighbor_coords, manifold_positions=None, neighbor_values=None):
+        spatial, temporal = self.mesh.raw(query_coords)
+        query = self.absolute_proj_s(spatial) + self.absolute_proj_t(temporal)
 
-    def set_memory(self, key: torch.Tensor, features: Dict[str, torch.Tensor]) -> None:
-        """Install the experience-replay memory bank (a key and per-anchor features), refreshed between epochs."""
-        self._memory_key = key
-        self._memory_features = features
+        n_spatial, n_temporal = self.mesh.raw(neighbor_coords)
+        neighbor = self.absolute_proj_s(n_spatial) + self.absolute_proj_t(n_temporal)
+        relative = self.neighbors.space_time(query_coords, neighbor_coords)
+        # The fixed ablation returns one zero vector per neighbor; the live field
+        # retains a separate vector per resolution level.
+        if relative.dim() == neighbor.dim() - 1:
+            relative = relative.unsqueeze(-2)
+        neighbor = neighbor + relative
+        return {
+            "position_s": query.mean(-2),
+            "position_t": self.absolute_proj_t(temporal).mean(-2),
+            "position": query.mean(-2),
+            "query_state": query,
+            "neighbor_state": neighbor,
+            "neighbor_values": neighbor_values or {},
+        }
 
-    def enable_sparse_hash(self, coords: torch.Tensor, lr: float = 3e-4, weight_decay: float = 3e-4) -> None:
-        """Precompute the absolute encoder over a fixed coordinate set and route it through sparse Adam (each batch reads few entries). Then pass ``batch_indices`` to :meth:`context` and call :meth:`sparse_hash_step` after backward."""
-        self.absolute_encoder.precompute(coords)
-        e = self.absolute_encoder
-        self._abs_encs = [e.xyz_encoder, e.xyt_encoder, e.yzt_encoder, e.xzt_encoder]
-        for en in self._abs_encs:
-            en.init_sparse_adam(lr=lr, weight_decay=weight_decay)
-        self._abs_odims = [en.num_levels * en.level_dim for en in self._abs_encs]
-        self._abs_L = e.xyz_encoder.num_levels
-        self._abs_F = e.features_per_level
-        self._abs_dydx = None            # per-sub-encoder dy_dx captured by read_absolute_leaf (for the resolution grad)
-        self._abs_inputs = None          # per-sub-encoder normalized inputs used
-        self._sparse_hash = True
+    def encode(
+        self,
+        values: Dict[str, torch.Tensor],
+        present: Dict[str, torch.Tensor],
+        context: dict,
+        detach_species: bool = False,
+        species_mask: torch.Tensor | None = None,
+    ):
+        species = self._species(species_mask)
+        if detach_species:
+            species = species.detach()
+        write_mask = dict(present)
+        for name in self.always_names:
+            if name in values:
+                write_mask[name] = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
+        evidence_tokens = [self.evidence_null.expand(context["query_state"].shape[0], -1)]
+        evidence_valid = [torch.ones(
+            context["query_state"].shape[0], dtype=torch.bool,
+            device=context["query_state"].device,
+        )]
+        evidence_lenses = [-1]
+        detail_tokens = [self.evidence_null.expand(context["query_state"].shape[0], -1)]
+        detail_valid = [torch.ones(
+            context["query_state"].shape[0], dtype=torch.bool,
+            device=context["query_state"].device,
+        )]
+        for name in (*self.names, *self.always_names):
+            if name not in values or name not in write_mask:
+                continue
+            evidence_tokens.append(
+                self._adapt(name, values[name], species) + self.write_type[name]
+            )
+            evidence_valid.append(write_mask[name])
+            evidence_lenses.append(self.write_lens[name])
+            if name in self.detail_evidence_tokenizer:
+                details = self.detail_evidence_tokenizer[name](
+                    values[name].float()
+                ).view(values[name].shape[0], 3, self.d_model)
+                details = details + self.detail_evidence_subtoken[name] \
+                                  + self.write_type[name]
+                detail_tokens.extend(details.unbind(1))
+                detail_valid.extend([write_mask[name]] * 3)
+        self._evidence_tokens = torch.stack(evidence_tokens, 1)
+        self._evidence_padding = ~torch.stack(evidence_valid, 1)
+        self._evidence_lenses = torch.tensor(
+            evidence_lenses, device=self._evidence_tokens.device
+        )
+        self._detail_evidence_tokens = torch.stack(detail_tokens, 1)
+        self._detail_evidence_padding = ~torch.stack(detail_valid, 1)
+        query_fibers = self._fiber_write(context["query_state"], values, write_mask, species)
+        query_priors = self._latest_fiber_prior
+        query = self._write(context["query_state"], values, write_mask, species)
 
-    def read_absolute_leaf(self, batch_indices: torch.Tensor) -> torch.Tensor:
-        """Read the absolute encoder from precomputed indices as a detached leaf (requires_grad) and stash the per-
-        sub-encoder dy_dx + inputs so :meth:`sparse_hash_step` can form the per_level_scale (resolution) gradient. Keep
-        this out of any compiled region (it launches the eager hash kernel)."""
-        flat, dydx, inputs = self.absolute_encoder.forward_precomputed(batch_indices, return_dydx=True, raw=True)
-        self._abs_dydx = dydx
-        self._abs_inputs = inputs
-        leaf = flat.detach().requires_grad_(True)
-        self._abs_leaf = (leaf, batch_indices)
-        return leaf
+        neighbor = context["neighbor_state"]
+        neighbor_values = context["neighbor_values"]
+        masks = {}
+        if neighbor_values:
+            masks = {name: torch.ones(value.shape[:-1] if value.dim() > 2 else value.shape,
+                                      dtype=torch.bool, device=value.device)
+                     for name, value in neighbor_values.items()}
+        neighbor_fibers = self._fiber_write(neighbor, neighbor_values, masks, species)
+        neighbor_priors = self._latest_fiber_prior
+        if neighbor_values:
+            neighbor = self._write(neighbor, neighbor_values, masks, species)
+        neighbor = self.neighbor_norm(neighbor).flatten(1, 2)
+        tokens = torch.cat((query, neighbor), 1)
 
-    def absolute_hash_params(self):
-        """The absolute-encoder embeddings, optimized by sparse Adam and so excluded from the main optimizer."""
-        return [en.embeddings for en in self._abs_encs]
+        latent = self.latents.unsqueeze(0).expand(tokens.shape[0], -1, -1)
+        latent = latent + self.read(latent, self.read_norm(tokens), self.read_norm(tokens), need_weights=False)[0]
+        for block in self.blocks:
+            latent = block(latent)
+        fiber_mesh = torch.cat((query_fibers.unsqueeze(1), neighbor_fibers), 1)
+        self._fiber_mesh = fiber_mesh
+        self._fiber_prior_mesh = torch.cat((query_priors.unsqueeze(1), neighbor_priors), 1)
+        fiber_tokens = fiber_mesh.permute(0, 3, 1, 2, 4).flatten(2, 3).flatten(0, 1)
+        fiber_query = self.fiber_query.unsqueeze(0).expand(latent.shape[0], -1, -1, -1).flatten(0, 1)
+        normalized = self.fiber_read_norm(fiber_tokens)
+        fiber_summary = fiber_query + self.fiber_read(
+            fiber_query, normalized, normalized, need_weights=False
+        )[0]
+        fiber_summary = fiber_summary.reshape(
+            latent.shape[0], len(LENSES), self.fiber_latents, self.d_model
+        )
+        self._fiber_summary = fiber_summary
+        self._pool_cache = {}
+        self._mesh_reader_cache = None
+        normalized = self.fiber_fuse_norm(fiber_summary.flatten(1, 2))
+        latent = latent + torch.tanh(self.fiber_fusion_gate) * self.fiber_fuse(
+            latent.detach(), normalized, normalized, need_weights=False
+        )[0]
+        mesh_tokens = fiber_mesh.flatten(1, 3)
+        normalized = self.fiber_fuse_norm(mesh_tokens)
+        score = torch.einsum(
+            "bld,bkd->blk", latent.detach(), normalized
+        ) / math.sqrt(self.d_model)
+        dense_weight = score.softmax(-1)
+        selected_score, selected = score.topk(min(16, score.shape[-1]), dim=-1)
+        sparse_weight = torch.zeros_like(score).scatter(
+            -1, selected, selected_score.softmax(-1)
+        )
+        route = sparse_weight.detach() + dense_weight - dense_weight.detach()
+        mesh_read = torch.einsum("blk,bkd->bld", route, mesh_tokens)
+        latent = latent + torch.tanh(self.sparse_fusion_gate) * mesh_read
+        return latent
 
-    def set_sparse_lr(self, lr: float) -> None:
-        for en in self._abs_encs:
-            en.set_adam_lr(lr)
+    def _read_evidence(
+        self, pooled: torch.Tensor, names: Sequence[str]
+    ) -> torch.Tensor:
+        if self._evidence_tokens is None:
+            return torch.zeros_like(pooled)
+        squeeze = pooled.dim() == 2
+        if squeeze:
+            pooled = pooled.unsqueeze(1)
+        batch, tasks = pooled.shape[:2]
+        evidence = self.evidence_reader_norm(self._evidence_tokens)
+        evidence = evidence.unsqueeze(1).expand(-1, tasks, -1, -1).reshape(
+            batch * tasks, evidence.shape[1], self.d_model
+        )
+        padding = self._evidence_padding.unsqueeze(1).expand(
+            -1, tasks, -1
+        ).reshape(batch * tasks, -1)
+        task_anchor = torch.stack([
+            self.mesh_read_query[name] for name in names
+        ]).view(1, tasks, self.d_model)
+        query = self.evidence_reader_norm(pooled + task_anchor).reshape(
+            batch * tasks, 1, self.d_model
+        )
+        read = self.evidence_reader(
+            query, evidence, evidence,
+            key_padding_mask=padding, need_weights=False,
+        )[0].reshape(batch, tasks, self.d_model)
+        agreement = (
+            F.normalize(pooled, dim=-1) * F.normalize(read, dim=-1)
+        ).sum(-1, keepdim=True)
+        confidence = torch.sigmoid(agreement)
+        gate = torch.stack([
+            self.evidence_read_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        update = torch.tanh(gate) * confidence \
+                 * self.evidence_reader_output_norm(read)
+        state = pooled + update
 
-    def sparse_hash_step(self, flat: torch.Tensor = None, bidx: torch.Tensor = None) -> None:
-        """Apply the sparse Adam update to the absolute encoder from the leaf gradient; call after ``loss.backward()``. Pass the leaf (compiled path) or omit to use the one captured in :meth:`context`; the accumulation buffer is cleared first. Also forms the per_level_scale (resolution) gradient from the captured dy_dx and routes it to the main optimizer, so resolution trains through the precompute."""
-        if flat is None:
-            flat, bidx = self._abs_leaf
-        g = flat.grad
-        off = 0
-        for i, (en, d) in enumerate(zip(self._abs_encs, self._abs_odims)):
-            en._adam_grad_buffer.zero_()
-            g_e = g[:, off:off + d].contiguous()
-            en.accumulate_grad(g_e, bidx)         # sparse embedding grad (touched entries only)
-            # per_level_scale (resolution) gradient, same formula as the standard backward, from the captured dy_dx.
-            if self._abs_dydx is not None and en.per_level_scale.requires_grad:
-                B = g_e.shape[0]; L = en.num_levels; D = en.input_dim; C = en.level_dim
-                gb = g_e.view(B, L, C)
-                dd = self._abs_dydx[i].view(B, L, D, C)
-                inp = self._abs_inputs[i]
-                contrib = (torch.einsum('blc,bldc->bld', gb.float(), dd.float()) * inp.float().unsqueeze(1)).sum(0)  # [L,D]
-                scale = torch.exp2(en.per_level_scale.view(L, D).float()) * en.base_resolution.view(1, D).float() - 1.0
-                grad_pls = (0.6931471805599453 * (scale + 1.0) / scale.clamp_min(1e-6) * contrib).to(en.per_level_scale.dtype)
-                if en.per_level_scale.grad is None:
-                    en.per_level_scale.grad = grad_pls
-                else:
-                    en.per_level_scale.grad.add_(grad_pls)
-            off += d
-        for en in self._abs_encs:
-            en.adam_step(bidx)                    # sparse Adam on the embeddings (touched entries only)
-            en.transfer_index_logits_grad()       # route learned-probing grad to the main optimizer
-        self._abs_dydx = None; self._abs_inputs = None   # consumed; avoid stale reuse next step
+        detail = self.detail_evidence_norm(self._detail_evidence_tokens)
+        detail = detail.unsqueeze(1).expand(-1, tasks, -1, -1).reshape(
+            batch * tasks, detail.shape[1], self.d_model
+        )
+        detail_padding = self._detail_evidence_padding.unsqueeze(1).expand(
+            -1, tasks, -1
+        ).reshape(batch * tasks, -1)
+        detail_query = self.detail_evidence_norm(state + task_anchor).reshape(
+            batch * tasks, 1, self.d_model
+        )
+        detail_read = self.detail_evidence_reader(
+            detail_query, detail, detail,
+            key_padding_mask=detail_padding, need_weights=False,
+        )[0].reshape(batch, tasks, self.d_model)
+        detail_gate = torch.stack([
+            self.detail_evidence_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        state = state + torch.tanh(detail_gate) \
+                      * self.detail_evidence_output_norm(detail_read)
 
-    def encode(self, values: Dict[str, torch.Tensor], present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
-        """Build the refinable per-variable state tokens (masked slots carry a placeholder) + the fixed context tokens,
-        then refine the latents against them over K rounds. Each variable token carries the query position."""
-        if self.species_graph is not None:
-            # ablation (rule 27 / benchmark families): _ablate_species -> use the UN-refined seed (graph off) so a
-            # benchmark scored with vs without refinement isolates the phylogenomic contribution.
-            self._refined_species = self.species_graph._seed() if getattr(self, "_ablate_species", False) \
-                else self.species_graph()                    # refine all species once per forward
-        if getattr(self, "pollinator_graph", None) is not None:
-            self._refined_pollinators = self.pollinator_graph()   # refine all pollinators once per forward (rule 27 basis)
-        pos_s, pos_t = context["position_s"], context["position_t"]                          # [B,d] each
-        if self.alphaearth_geo is not None and "alphaearth" in values:                       # SatCLIP-style geo prior: enrich the spatial position seen by every head
-            _ae = self.alphaearth_geo(values["alphaearth"])
-            pos_s = pos_s + _ae
-            context = {**context, "position": context["position"] + _ae}
-        w = torch.softmax(self.pos_channel_gate, dim=-1)                                     # [V,2] per-variable prior
-        pos_v = w[:, 0].view(1, -1, 1) * pos_s.unsqueeze(1) + w[:, 1].view(1, -1, 1) * pos_t.unsqueeze(1)   # [B,V,d]
-        pres = torch.stack([present[n] for n in self.names], dim=1)                          # [B,V] bool
-        val = torch.stack([self._variable_token(n, values[n]) for n in self.names], dim=1)   # [B,V,d] value embeddings
-        if self.diffusion:                                   # rule-22: masked slots begin as noise (round-0 state)
-            content = torch.where(pres[..., None], val, torch.randn_like(val))
-        else:
-            content = torch.where(pres[..., None], val, self.mask_token) if self.learned_mask else val
-        T = self._token_combine(self.tok_norm(content + self.type_emb), self.pos_norm(pos_v))  # [B,V,d] value x position
-        if not self.learned_mask:
-            T = T * pres[..., None].to(T.dtype)              # single-shot behavior: a masked slot is the zero vector
-        ctx = [(context["position"] + self.position_token).unsqueeze(1), context["tokens"]]  # always-present position (combined) + neighbor tokens
-        if context.get("cls_tokens") is not None: ctx.append(context["cls_tokens"])
-        if context.get("experience") is not None: ctx.append(context["experience"])
-        return self._refine(T, torch.cat(ctx, dim=1), pres, val, pos_v, gpos=context["position"])
+        normalized_state = self.evidence_refine_norm(state + task_anchor)
+        lens_queries = torch.stack([
+            projection(normalized_state)
+            for projection in self.evidence_refine_query
+        ], 2).reshape(batch * tasks * len(LENSES), 1, self.d_model)
+        lens_evidence = evidence.unsqueeze(1).expand(
+            -1, len(LENSES), -1, -1
+        ).reshape(batch * tasks * len(LENSES), evidence.shape[1], self.d_model)
+        token_lenses = self._evidence_lenses.view(1, 1, -1)
+        lens_index = torch.arange(
+            len(LENSES), device=pooled.device
+        ).view(1, -1, 1)
+        lens_padding = padding.view(batch * tasks, 1, -1).expand(
+            -1, len(LENSES), -1
+        ) | ((token_lenses != -1) & (token_lenses != lens_index))
+        lens_reads = self.evidence_refine_reader(
+            lens_queries, lens_evidence, lens_evidence,
+            key_padding_mask=lens_padding.reshape(
+                batch * tasks * len(LENSES), -1
+            ),
+            need_weights=False,
+        )[0].reshape(batch, tasks, len(LENSES), self.d_model)
+        route = self.evidence_refine_router(normalized_state).softmax(-1)
+        refined = torch.einsum("btl,btld->btd", route, lens_reads)
+        agreement = (
+            F.normalize(state, dim=-1) * F.normalize(refined, dim=-1)
+        ).sum(-1, keepdim=True)
+        refine_gate = torch.stack([
+            self.evidence_refine_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        state = state + torch.tanh(refine_gate) * torch.sigmoid(agreement) \
+                      * self.evidence_refine_output_norm(refined)
+        lens_agreement = (
+            F.normalize(state, dim=-1).unsqueeze(2)
+            * F.normalize(lens_reads, dim=-1)
+        ).sum(-1, keepdim=True)
+        lens_gate = torch.stack([
+            self.evidence_parallel_lens_gate[name] for name in names
+        ]).view(1, tasks, len(LENSES), 1)
+        parallel = (
+            torch.tanh(lens_gate) * torch.sigmoid(lens_agreement)
+            * self.evidence_refine_output_norm(lens_reads)
+        ).sum(2) / math.sqrt(len(LENSES))
+        parallel_gate = torch.stack([
+            self.evidence_parallel_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        state = state + torch.tanh(parallel_gate) * parallel
+        ffn_gate = torch.stack([
+            self.evidence_refine_ffn_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        state = state + torch.tanh(ffn_gate) * self.evidence_refine_ffn(state)
+        update = state - pooled
+        return update.squeeze(1) if squeeze else update
 
-    def _read_fn(self, q: torch.Tensor, kv: torch.Tensor, V: int) -> torch.Tensor:
-        """The Perceiver READ. 'mha' is the stock cross-attention; variants restructure how latents pull the field."""
-        op = self.read_op
-        if op == "mha":
-            return self.read(q, kv, kv)[0]
-        if op == "crossself":
-            keys = torch.cat([q, kv], dim=1)          # latents attend to themselves + the field jointly
-            return self.read_cs(q, keys, keys)[0]
-        if op == "typed":
-            Tk = kv[:, :V]; Ck = kv[:, V:]
-            rT = self.read_T(q, Tk, Tk)[0]
-            if Ck.shape[1] == 0:                       # later rounds carry only variable-state tokens
-                return rT
-            rC = self.read_C(q, Ck, Ck)[0]
-            g = torch.softmax(self.type_gate(q), dim=-1)
-            return g[..., :1] * rT + g[..., 1:] * rC
-        if op == "slot":
-            B, L, d = q.shape; H = self.n_heads; dh = d // H; M = kv.shape[1]
-            Q = self.slot_q(q).view(B, L, H, dh).transpose(1, 2)
-            K = self.slot_k(kv).view(B, M, H, dh).transpose(1, 2)
-            Vv = self.slot_v(kv).view(B, M, H, dh).transpose(1, 2)
-            logits = torch.matmul(Q, K.transpose(-1, -2)) / (dh ** 0.5)   # [B,H,L,M]
-            attn = torch.softmax(logits, dim=2)                          # latents COMPETE for each input token
-            attn = attn / (attn.sum(dim=-1, keepdim=True) + 1e-8)        # per-slot weighted mean over inputs
-            out = torch.matmul(attn, Vv).transpose(1, 2).reshape(B, L, d)
-            return self.slot_o(out)
-        raise ValueError(f"unknown read_op {op}")
-
-    def _refine(self, T: torch.Tensor, C: torch.Tensor, present: torch.Tensor, value_emb: torch.Tensor,
-                pos: torch.Tensor, gpos: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """K rounds of joint-field denoising: the latents read the state+context tokens then attend among themselves;
-        each round writes every variable's belief back into its state token, so masked variables are inducted jointly
-        and observed ones may be revised. rounds=1 (no write-back) is the single-shot Processor."""
-        z = self.latents.unsqueeze(0).expand(T.shape[0], -1, -1)
-        gate = self.read_gate.view(1, 1, -1)
-        stack = [] if self.round_loss == "all" else None
-        for k in range(self.rounds):
-            # The context C (neighbors, position) is fixed across rounds, so read it only in round 0; later rounds
-            # refine against the updated variable states T alone (~5x fewer keys), which the latents already carry C from.
-            V = T.shape[1]
-            kv = self.kv_norm(torch.cat([T, C], dim=1) if k == 0 else T)
-            q = self.q_norm(z)
-            if self.read_cond and gpos is not None:
-                gp = gpos.unsqueeze(1)
-                q = q * (1.0 + self.read_film_g(gp)) + self.read_film_b(gp)
-            r = torch.utils.checkpoint.checkpoint(self._read_fn, q, kv, V, use_reentrant=False) \
-                if self.grad_checkpoint else self._read_fn(q, kv, V)
-            z = z + gate * r
-            for i, blk in enumerate(self.blocks):
-                z = torch.utils.checkpoint.checkpoint(blk, z, use_reentrant=False) if self.grad_checkpoint else blk(z)
-                if i < len(self.extra_reads):     # deeper fusion: re-read the context between blocks (read_depth>1)
-                    z = z + gate * self.extra_reads[i](self.q_norm(z), kv, kv)[0]
-            if stack is not None:
-                stack.append(z)
-            if self.write_back and k < self.rounds - 1:
-                T = self._interface_update(z, value_emb, present, pos, k)
-        if stack is not None:
-            self._round_stack = torch.stack(stack, 0)        # [K,B,n_lat,d] (K fixed -> graph-safe)
-        return z
-
-    def _pooled_all(self, z: torch.Tensor) -> torch.Tensor:
-        """Vectorized per-variable attention-pooling: every variable reads the latents through its own query in one
-        batched op -> [B,V,d] (replaces the Python loop of tiny GEMMs)."""
-        scores = torch.einsum("bld,vd->blv", z, self.decode_query) / (self.d_model ** 0.5)   # [B,L,V]
-        w = torch.softmax(scores, dim=1)                                                      # over latents
-        return torch.einsum("blv,bld->bvd", w, z)                                             # [B,V,d]
-
-    def _reencode(self, name: str, pooled: torch.Tensor) -> torch.Tensor:
-        """A per-variable interface backbone: predict the variable from its latent belief, then re-embed the prediction
-        as a proper token (same space the encoders produce), so the write-back injects structure the read can use. For
-        the species variable this routes the inferred posterior through the phylo-refined table -> a phylogenetically-
-        conditioned prior; for categoricals, the class-mixture embedding; for continuous, decode->re-encode."""
-        if name == self.species_variable and self._refined_species is not None:
-            return torch.softmax(pooled @ self._refined_species.t(), dim=-1) @ self._refined_species
-        if name not in self.decoders:
+    def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
+        if name in self._pool_cache:
+            return self._pool_cache[name]
+        base_name = name if name in self.names else self.species_variable
+        query = self.decode_query[self.names.index(base_name)]
+        weight = torch.softmax((latent @ query) / math.sqrt(self.d_model), -1)
+        pooled = torch.einsum("bl,bld->bd", weight, latent)
+        if self._fiber_summary is None or name not in self.mesh_read_query:
+            self._pool_cache[name] = pooled
             return pooled
-        v = self.variables[self.names.index(name)]
-        if v.kind == "categorical":
-            return torch.softmax(self.decoders[name](pooled), dim=-1) @ self.encoders[name].weight
-        return self.encoders[name](self.decoders[name](pooled))
-
-    def _interface_update(self, z: torch.Tensor, value_emb: torch.Tensor, present: torch.Tensor,
-                          pos: torch.Tensor, k: int = 0) -> torch.Tensor:
-        """Re-inject round-k beliefs as the next round's state tokens: each variable reads the latents through its own
-        query, is decoded+re-embedded into token space by its interface backbone, then masked slots carry the gated
-        belief while observed slots keep their value (optionally revised). Flows to the latents only through the
-        O(N*n_lat) read, so no O(N^2); each variable keeps its own query/decoder so marginals are not collapsed."""
-        P = self._pooled_all(z)                                                              # [B,V,d] vectorized pooling
-        E = torch.stack([self._reencode(n, P[:, i]) for i, n in enumerate(self.names)], dim=1)   # per-variable re-embed
-        g = torch.sigmoid(self.update_gate).view(1, -1, 1)
-        if self.revise:
-            r = torch.sigmoid(self.revise_rate).view(1, -1, 1)
-            obs = (1.0 - r) * value_emb + r * E
+        if self._mesh_reader_cache is None:
+            fibers = self._fiber_summary.flatten(1, 2)
+            cells = self._fiber_mesh.shape[1]
+            cell_key = torch.cat((
+                self.mesh_cell_key[:1],
+                self.mesh_cell_key[1:].expand(cells - 1, -1),
+            ))
+            scale_fibers = self._fiber_mesh.flatten(1, 3)
+            scale_keys = (
+                self._fiber_mesh
+                + cell_key.view(1, cells, 1, 1, self.d_model)
+                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+            ).flatten(1, 3)
+            prior_mesh = self._fiber_prior_mesh.detach()
+            prior_fibers = prior_mesh.flatten(1, 3)
+            prior_keys = (
+                prior_mesh
+                + cell_key.view(1, cells, 1, 1, self.d_model)
+                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+            ).flatten(1, 3)
+            self._mesh_reader_cache = {
+                "fibers": fibers,
+                "task_tokens": self.task_mesh_reader_norm(fibers),
+                "scale_fibers": scale_fibers,
+                "scale_keys": scale_keys,
+                "prior_fibers": prior_fibers,
+                "prior_keys": prior_keys,
+            }
+        fibers = self._mesh_reader_cache["fibers"]
+        mesh_query = self.mesh_read_query[name]
+        if self._fiber_mesh is not None and name in self.mesh_condition_gate:
+            mesh_query = mesh_query.unsqueeze(0).expand(fibers.shape[0], -1)
+            query_lenses = self._fiber_mesh[:, 0].mean(1)
+            lens_score = torch.einsum(
+                "bld,bd->bl", query_lenses, mesh_query
+            ) / math.sqrt(self.d_model)
+            condition = torch.einsum(
+                "bl,bld->bd", lens_score.softmax(-1), query_lenses
+            )
+            mesh_query = mesh_query + torch.tanh(
+                self.mesh_condition_gate[name]
+            ) * self.mesh_condition_norm(condition)
+            score = torch.einsum(
+                "bkd,bd->bk", fibers, mesh_query
+            ) / math.sqrt(self.d_model)
         else:
-            obs = value_emb
-        if self.diffusion:                                   # denoise: noise into masked slots decays to 0 by the final round
-            sigma = max(0.0, 1.0 - (k + 1) / max(1, self.rounds - 1))
-            masked = g * E + sigma * torch.randn_like(E)
+            score = (fibers @ mesh_query) / math.sqrt(self.d_model)
+        task_query = mesh_query if mesh_query.dim() == 2 else mesh_query.unsqueeze(0).expand(
+            fibers.shape[0], -1
+        )
+        task_tokens = self._mesh_reader_cache["task_tokens"]
+        task_read = self.task_mesh_reader(
+            task_query.unsqueeze(1), task_tokens, task_tokens, need_weights=False
+        )[0].squeeze(1)
+        pooled = pooled + torch.tanh(self.task_mesh_reader_gate[name]) \
+                 * self.task_mesh_reader_output_norm(task_read)
+        selected_score, selected = score.topk(min(4, score.shape[-1]), dim=-1)
+        selected_fibers = fibers.gather(
+            1, selected[..., None].expand(-1, -1, self.d_model)
+        )
+        mesh_read = torch.einsum(
+            "bk,bkd->bd", selected_score.softmax(-1), selected_fibers
+        )
+        pooled = pooled + torch.tanh(self.mesh_read_gate[name]) * self.mesh_task_norm(mesh_read)
+        if self._fiber_mesh is None:
+            self._pool_cache[name] = pooled
+            return pooled
+        cells = self._fiber_mesh.shape[1]
+        scale_fibers = self._mesh_reader_cache["scale_fibers"]
+        scale_keys = self._mesh_reader_cache["scale_keys"]
+        if mesh_query.dim() == 2:
+            scale_score = torch.einsum(
+                "bkd,bd->bk", scale_keys, mesh_query
+            ) / math.sqrt(self.d_model)
         else:
-            masked = g * E
-        content = torch.where(present[..., None], obs, masked)
-        T = self._token_combine(self.tok_norm(content + self.type_emb), self.pos_norm(pos))   # value x position
-        return T.detach() if self.feedback_detach else T
-
-    def _pooled(self, latents: torch.Tensor, name: str) -> torch.Tensor:
-        """Attention-weighted pooling of the latents into one vector for reading variable ``name``."""
-        i = self.names.index(name)
-        w = torch.softmax((latents @ self.decode_query[i]) / (self.d_model ** 0.5), dim=-1)
-        return torch.einsum("bl,bld->bd", w, latents)
-
-    def _head_in(self, z: torch.Tensor, name: str, detach: bool = False) -> torch.Tensor:
-        """Input to a phylo-conserved trait head. Baseline: the pooled latent. With phylo_head_routing: the pooled
-        latent concatenated with the expected phylo-refined species embedding (posterior over the refined species
-        table), so the graph's conserved signal reaches the head and the ablation (seed vs refined) moves the output."""
-        pooled = self._pooled(z, name)
-        if not self.phylo_head_routing or self._refined_species is None:
-            return pooled.detach() if detach else pooled
-        sp = self._reencode(self.species_variable, pooled)      # expected phylo-refined species embedding
-        return torch.cat([pooled.detach(), sp.detach()], -1) if detach else torch.cat([pooled, sp], -1)
-
-    @staticmethod
-    def _frozen_head(module: nn.Sequential, x: torch.Tensor) -> torch.Tensor:
-        for layer in module:
-            if isinstance(layer, nn.Linear):
-                x = F.linear(x, layer.weight.detach(),
-                             None if layer.bias is None else layer.bias.detach())
-            elif isinstance(layer, nn.GELU):
-                x = F.gelu(x, approximate=layer.approximate)
-            else:
-                raise TypeError(f"unsupported frozen head layer: {type(layer).__name__}")
-        return x
-
-    def _blank_route(self, z: torch.Tensor, route: str) -> torch.Tensor:
-        pooled = self._pooled(z, self.species_variable).detach()
-        return pooled + self.blank_adapters[route](pooled)
-
-    def _blank_species(self, z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        corrected = self._blank_route(z, "species")
-        species = corrected @ self._refined_species.detach().t()
-        return corrected, species, self.blank_family(corrected)
-
-    def _orthogonal_blank_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor],
-                               observed: Dict[str, torch.Tensor], blank: torch.Tensor) -> torch.Tensor:
-        _, species, family_residual = self._blank_species(z.detach())
-        family = self._family_alphaearth_logits(values).detach() + family_residual
-        species = self._factor_family_mass(species, family)
-        target = values[self.species_variable]
-        valid = (blank & observed[self.species_variable] & observed["alphaearth"]).float()
-        species_loss = 0.5 * (
-            (F.cross_entropy(species.float(), target, reduction="none") * valid).sum()
-            / valid.sum().clamp_min(1.0) / math.log(species.shape[-1])
-            + (F.cross_entropy(family.float(), self.species_family[target], reduction="none") * valid).sum()
-            / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2)))
-        terms = [species_loss]
-        if self._sdist_weight > 0 and "_sdist_idx" in values:
-            corrected = self._blank_route(z, "community")
-            logits = self._frozen_head(self.comm_head, corrected) @ self._refined_species.detach().t()
-            idx = values["_sdist_idx"].clamp(0, logits.shape[1] - 1)
-            dist = torch.zeros_like(logits, dtype=torch.float32)
-            dist.scatter_add_(1, idx, values["_sdist_frq"].float())
-            terms.append((-(dist * F.log_softmax(logits.float(), -1)).sum(-1) * blank).sum()
-                         / blank.sum().clamp_min(1) / math.log(logits.shape[-1]))
-        return sum(terms)
-
-    def _calibrated(self, name: str, pred: torch.Tensor) -> torch.Tensor:
-        """Apply a fitted per-dimension affine when enabled."""
-        if name in self.cal_gain:
-            return pred * self.cal_gain[name] + self.cal_bias[name]
-        return pred
-
-    def decode(self, latents: torch.Tensor, name: str, calibrated: bool = True) -> torch.Tensor:
-        """Read one variable back from the latents. The species variable reads against the refined species states; a diffusion variable is sampled from its head."""
-        if self.joint_decode:
-            Pall = self._pooled_all(latents)                 # [B,V,d]
-            Pall = Pall + self.joint_block(Pall)             # variables attend to each other (joint field)
-            pooled = Pall[:, self.names.index(name)]
+            scale_score = (scale_keys @ mesh_query) / math.sqrt(self.d_model)
+        dense_weight = scale_score.softmax(-1)
+        selected_score, scale_index = scale_score.topk(
+            min(8, scale_score.shape[-1]), dim=-1
+        )
+        sparse_weight = torch.zeros_like(scale_score).scatter(
+            -1, scale_index, selected_score.softmax(-1)
+        )
+        route = sparse_weight.detach() + dense_weight - dense_weight.detach()
+        scale_read = torch.einsum(
+            "bk,bkd->bd", route, scale_fibers
+        )
+        pooled = pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
+            scale_read
+        )
+        score_grid = scale_score.reshape(
+            -1, cells, self.levels, len(LENSES)
+        )
+        lens = torch.arange(len(LENSES), device=scale_score.device)
+        query_level = score_grid[:, 0].argmax(1)
+        query_index = query_level * len(LENSES) + lens
+        neighbor_position = score_grid[:, 1:].reshape(
+            scale_score.shape[0], -1, len(LENSES)
+        ).argmax(1)
+        neighbor_cell = neighbor_position.div(self.levels, rounding_mode="floor") + 1
+        neighbor_level = neighbor_position.remainder(self.levels)
+        neighbor_index = (
+            neighbor_cell * self.levels + neighbor_level
+        ) * len(LENSES) + lens
+        attention_index = torch.cat((query_index, neighbor_index), -1)
+        selected_keys = scale_keys.gather(
+            1, attention_index[..., None].expand(-1, -1, self.d_model)
+        )
+        selected_fibers = scale_fibers.gather(
+            1, attention_index[..., None].expand(-1, -1, self.d_model)
+        )
+        scale_query = task_query + self.task_mesh_reader_output_norm(task_read)
+        shared_scale_attention = self.task_mesh_reader(
+            scale_query.unsqueeze(1),
+            self.task_mesh_reader_norm(selected_keys),
+            self.task_mesh_reader_norm(selected_fibers),
+            need_weights=False,
+        )[0].squeeze(1)
+        dedicated_scale_attention = self.scale_mesh_reader(
+            scale_query.unsqueeze(1),
+            self.task_mesh_reader_norm(selected_keys),
+            self.task_mesh_reader_norm(selected_fibers),
+            need_weights=False,
+        )[0].squeeze(1)
+        reader_features = torch.cat((
+            task_query,
+            shared_scale_attention,
+            dedicated_scale_attention,
+            (shared_scale_attention - dedicated_scale_attention).abs(),
+        ), -1)
+        reader_mix = torch.sigmoid(
+            self.scale_mesh_reader_mix[name]
+            + self.scale_mesh_reader_router(reader_features).squeeze(-1)
+        ).unsqueeze(-1)
+        scale_attention = torch.lerp(
+            shared_scale_attention, dedicated_scale_attention, reader_mix
+        )
+        pooled = pooled + torch.tanh(self.mesh_scale_attention_gate[name]) \
+                 * self.mesh_scale_task_norm(scale_attention)
+        prior_fibers = self._mesh_reader_cache["prior_fibers"]
+        prior_keys = self._mesh_reader_cache["prior_keys"]
+        if mesh_query.dim() == 2:
+            prior_score = torch.einsum("bkd,bd->bk", prior_keys, mesh_query)
         else:
-            pooled = self._pooled(latents, name)
-        if name == self.species_variable and self._refined_species is not None:
-            return self._pooled(latents, name) @ self._refined_species.t()
-        pooled = self._pooled(latents, name)
-        if name in self.diffusion_heads:
-            return self.diffusion_heads[name].sample(pooled)
-        out = self.decoders[name](pooled)
-        return self._calibrated(name, out) if calibrated else out
+            prior_score = prior_keys @ mesh_query
+        prior_score = prior_score / math.sqrt(self.d_model)
+        selected_score, selected = prior_score.topk(min(16, prior_score.shape[-1]), dim=-1)
+        prior_read = torch.einsum(
+            "bk,bkd->bd",
+            selected_score.softmax(-1),
+            prior_fibers.gather(1, selected[..., None].expand(-1, -1, self.d_model)),
+        )
+        confidence = torch.sigmoid(self.mesh_prior_information_gate(torch.cat((
+            pooled, prior_read, pooled * prior_read, (pooled - prior_read).abs(),
+        ), -1)))
+        pooled = pooled + torch.tanh(self.mesh_prior_read_gate[name]) * confidence \
+                          * self.mesh_prior_task_norm(prior_read)
+        pooled = pooled + self._read_evidence(pooled, (name,))
+        self._pool_cache[name] = pooled
+        return pooled
 
-    def decode_field(self, latents: torch.Tensor, query_pos: torch.Tensor,
-                     names: Optional[Sequence[str]] = None) -> Dict[str, torch.Tensor]:
-        """Dense-field decode (Senseiver-style): read EVERY variable at each of G dense query positions from the latents
-        that encode the sparse observations. ``query_pos`` [B,G,d] = ``absolute_proj(Earth4D(grid_coords))``. Each
-        (position, variable) query = the position + that variable's decode-query, cross-attends the latents (O(G*V*L),
-        linear in the grid via the bottleneck), then goes through the variable's head. Returns {name: [B,G,...]}. This
-        turns the model into a dense forecaster: encode observations -> query a whole space-time volume."""
-        names = list(names) if names is not None else [v.name for v in self.variables if v.reconstruct]
-        q = self.pos_norm(query_pos).unsqueeze(2) + self.decode_query.view(1, 1, -1, self.d_model)   # [B,G,V,d]
-        w = torch.softmax(torch.einsum("bgvd,bld->bgvl", q, latents) / (self.d_model ** 0.5), dim=-1)  # [B,G,V,L]
-        read = torch.einsum("bgvl,bld->bgvd", w, latents)                                             # [B,G,V,d]
-        out = {}
-        for name in names:
-            r = read[:, :, self.names.index(name)]                                                    # [B,G,d]
-            if name == self.species_variable and self._refined_species is not None:
-                out[name] = r @ self._refined_species.t()
-            elif name in self.decoders:
-                out[name] = self.decoders[name](r)
-        return out
+    def _prime_pool_cache(self, latent: torch.Tensor) -> None:
+        names = tuple(
+            name for name in self.mesh_read_names
+            if name not in self.mesh_condition_gate and name != "community"
+        )
+        if not names or self._fiber_summary is None or self._fiber_mesh is None:
+            return
+        batch = latent.shape[0]
+        tasks = len(names)
+        queries = torch.stack([
+            self.decode_query[self.names.index(
+                name if name in self.names else self.species_variable
+            )]
+            for name in names
+        ])
+        weight = torch.einsum("bld,td->btl", latent, queries) \
+                 .div(math.sqrt(self.d_model)).softmax(-1)
+        pooled = torch.einsum("btl,bld->btd", weight, latent)
 
-    def query_field(self, values, present, context, grid_coords: torch.Tensor,
-                    names: Optional[Sequence[str]] = None) -> Dict[str, torch.Tensor]:
-        """End-to-end dense field: encode the sparse observations into latents, then decode every variable across the
-        dense space-time grid ``grid_coords`` [B,G,4]. The single query the model trains on is the G=1 special case."""
-        z = self.encode(values, present, context)
-        pos_s, pos_t = self._project_position(self.absolute_encoder(grid_coords.reshape(-1, grid_coords.shape[-1])))
-        query_pos = (pos_s + pos_t).view(grid_coords.shape[0], grid_coords.shape[1], self.d_model)
-        return self.decode_field(z, query_pos, names)
+        if self._mesh_reader_cache is None:
+            fibers = self._fiber_summary.flatten(1, 2)
+            cells = self._fiber_mesh.shape[1]
+            cell_key = torch.cat((
+                self.mesh_cell_key[:1],
+                self.mesh_cell_key[1:].expand(cells - 1, -1),
+            ))
+            scale_fibers = self._fiber_mesh.flatten(1, 3)
+            scale_keys = (
+                self._fiber_mesh
+                + cell_key.view(1, cells, 1, 1, self.d_model)
+                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+            ).flatten(1, 3)
+            prior_mesh = self._fiber_prior_mesh.detach()
+            prior_fibers = prior_mesh.flatten(1, 3)
+            prior_keys = (
+                prior_mesh
+                + cell_key.view(1, cells, 1, 1, self.d_model)
+                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+            ).flatten(1, 3)
+            self._mesh_reader_cache = {
+                "fibers": fibers,
+                "task_tokens": self.task_mesh_reader_norm(fibers),
+                "scale_fibers": scale_fibers,
+                "scale_keys": scale_keys,
+                "prior_fibers": prior_fibers,
+                "prior_keys": prior_keys,
+            }
+        fibers = self._mesh_reader_cache["fibers"]
+        mesh_queries = torch.stack([self.mesh_read_query[name] for name in names])
+        task_query = mesh_queries.unsqueeze(0).expand(batch, -1, -1)
+        task_tokens = self._mesh_reader_cache["task_tokens"]
+        task_tokens = task_tokens.unsqueeze(1).expand(-1, tasks, -1, -1) \
+            .reshape(batch * tasks, task_tokens.shape[1], self.d_model)
+        task_read = self.task_mesh_reader(
+            task_query.reshape(batch * tasks, 1, self.d_model),
+            task_tokens,
+            task_tokens,
+            need_weights=False,
+        )[0].reshape(batch, tasks, self.d_model)
+        task_gates = torch.stack([
+            self.task_mesh_reader_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(task_gates) \
+                 * self.task_mesh_reader_output_norm(task_read)
 
-    @torch.no_grad()
-    def marginal_fidelity(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                          context: dict) -> Dict[str, Dict[str, float]]:
-        """Pluralism probe (science.md rule 23): hide ONLY each variable in turn and measure its own decode fidelity at
-        K=1 vs K=rounds. Pluralism is conserved iff a variable's marginal does not degrade as the joint coupling (K)
-        rises. Off the training path; a monitor, not a loss."""
-        was, r0 = self.training, self.rounds
-        self.eval()
-        out: Dict[str, Dict[str, float]] = {}
-        for v in self.variables:
-            if not v.reconstruct:
-                continue
-            present = {n: observed[n].clone() for n in self.names}
-            present[v.name] = torch.zeros_like(observed[v.name])           # hide only this variable
-            w = observed[v.name].float()
-            res = {}
-            for k in sorted({1, r0}):
-                self.rounds = k
-                pred = self.decode(self.encode(values, present, context), v.name)
-                fid = 1.0 - self._reconstruction_error(v.name, pred, values[v.name])   # cosine (cont) / 1-CE/logC (cat)
-                res[f"K{k}"] = float((fid * w).sum() / w.sum().clamp_min(1.0))
-            out[v.name] = res
-        self.rounds = r0
-        if was:
-            self.train()
-        return out
+        fiber_score = torch.einsum(
+            "bfd,td->btf", fibers, mesh_queries
+        ) / math.sqrt(self.d_model)
+        selected_score, selected = fiber_score.topk(
+            min(4, fiber_score.shape[-1]), dim=-1
+        )
+        selected_fibers = fibers.unsqueeze(1).expand(-1, tasks, -1, -1).gather(
+            2, selected[..., None].expand(-1, -1, -1, self.d_model)
+        )
+        mesh_read = torch.einsum(
+            "btk,btkd->btd", selected_score.softmax(-1), selected_fibers
+        )
+        read_gates = torch.stack([
+            self.mesh_read_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(read_gates) * self.mesh_task_norm(mesh_read)
 
-    # ---------------------------------------------------------------- training / inference
-    def _reconstruction_error(self, name: str, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        v = self.variables[self.names.index(name)]
-        if v.kind == "categorical":
-            # Normalize by log(num_classes) so every categorical term shares the ~[0,1] scale of the continuous cosine terms (a wide identity head otherwise dominates the shared gradient).
-            return F.cross_entropy(pred, target, reduction="none") / math.log(max(int(v.num_classes), 2))
-        # ANOMALY (mean-centered) cosine — matches the eval metric. Raw cosine has a gameable floor for shared-mean
-        # embeddings: the decoder can satisfy it by predicting the MEAN direction and never learn the obs-specific
-        # signal. Centering removes that floor, forcing the obs-specific reconstruction. Mean is over OBSERVED rows
-        # (unobserved targets are 0 vectors).
-        obs = target.norm(dim=-1) > 1e-6
-        mu = (target[obs].mean(0, keepdim=True) if obs.any() else target.mean(0, keepdim=True)).detach()
-        return 1.0 - F.cosine_similarity(pred - mu, target - mu, dim=-1)
+        scale_fibers = self._mesh_reader_cache["scale_fibers"]
+        scale_keys = self._mesh_reader_cache["scale_keys"]
+        scale_score = torch.einsum(
+            "bkd,td->btk", scale_keys, mesh_queries
+        ) / math.sqrt(self.d_model)
+        dense_weight = scale_score.softmax(-1)
+        selected_score, scale_index = scale_score.topk(
+            min(8, scale_score.shape[-1]), dim=-1
+        )
+        sparse_weight = torch.zeros_like(scale_score).scatter(
+            -1, scale_index, selected_score.softmax(-1)
+        )
+        route = sparse_weight.detach() + dense_weight - dense_weight.detach()
+        scale_read = torch.einsum(
+            "btk,bkd->btd", route, scale_fibers
+        )
+        scale_gates = torch.stack([
+            self.mesh_scale_read_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(scale_gates) \
+                 * self.mesh_scale_task_norm(scale_read)
 
-    def _family_env_logits(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                           context: dict, alphaearth_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """Private early expert over environment tokens; the shared fusion path is detached."""
-        tokens, valid = [], []
-        for name in self.family_env_vars:
-            i = self.names.index(name)
-            token = self.tok_norm(self._variable_token(name, values[name]) + self.type_emb[i]).detach()
-            tokens.append(token); valid.append(observed[name])
-        if self.family_env_residual and self.family_ae_head is not None and "alphaearth" in values:
-            tokens.append(self.family_ae_head[:-1](values["alphaearth"].detach()).detach())
-            ae_valid = observed.get("alphaearth", alphaearth_valid)
-            if ae_valid is None:
-                ae_valid = torch.ones(values["alphaearth"].shape[0], dtype=torch.bool,
-                                      device=values["alphaearth"].device)
-            valid.append(ae_valid)
-        tokens.append((context["position"] + self.position_token).detach())
-        valid.append(torch.ones_like(valid[0]))
-        kv = torch.stack(tokens, 1)
-        mask = torch.stack(valid, 1)
-        q = self.family_env_query.expand(kv.shape[0], -1, -1)
-        pooled = self.family_env_attn(q, kv, kv, key_padding_mask=~mask, need_weights=False)[0][:, 0]
-        return self.family_env_head(pooled)
+        cells = self._fiber_mesh.shape[1]
+        score_grid = scale_score.reshape(
+            batch, tasks, cells, self.levels, len(LENSES)
+        )
+        lens = torch.arange(len(LENSES), device=scale_score.device)
+        query_level = score_grid[:, :, 0].argmax(2)
+        query_index = query_level * len(LENSES) + lens
+        neighbor_position = score_grid[:, :, 1:].reshape(
+            batch, tasks, -1, len(LENSES)
+        ).argmax(2)
+        neighbor_cell = neighbor_position.div(
+            self.levels, rounding_mode="floor"
+        ) + 1
+        neighbor_level = neighbor_position.remainder(self.levels)
+        neighbor_index = (
+            neighbor_cell * self.levels + neighbor_level
+        ) * len(LENSES) + lens
+        attention_index = torch.cat((query_index, neighbor_index), -1)
+        expanded_scale_keys = scale_keys.unsqueeze(1).expand(-1, tasks, -1, -1)
+        expanded_scale_fibers = scale_fibers.unsqueeze(1).expand(-1, tasks, -1, -1)
+        selected_keys = expanded_scale_keys.gather(
+            2, attention_index[..., None].expand(-1, -1, -1, self.d_model)
+        )
+        selected_fibers = expanded_scale_fibers.gather(
+            2, attention_index[..., None].expand(-1, -1, -1, self.d_model)
+        )
+        scale_query = task_query + self.task_mesh_reader_output_norm(task_read)
+        selected_keys = self.task_mesh_reader_norm(selected_keys).reshape(
+            batch * tasks, -1, self.d_model
+        )
+        selected_fibers = self.task_mesh_reader_norm(selected_fibers).reshape(
+            batch * tasks, -1, self.d_model
+        )
+        flat_query = scale_query.reshape(batch * tasks, 1, self.d_model)
+        shared_attention = self.task_mesh_reader(
+            flat_query, selected_keys, selected_fibers, need_weights=False
+        )[0].reshape(batch, tasks, self.d_model)
+        dedicated_attention = self.scale_mesh_reader(
+            flat_query, selected_keys, selected_fibers, need_weights=False
+        )[0].reshape(batch, tasks, self.d_model)
+        reader_features = torch.cat((
+            task_query,
+            shared_attention,
+            dedicated_attention,
+            (shared_attention - dedicated_attention).abs(),
+        ), -1)
+        reader_bias = torch.stack([
+            self.scale_mesh_reader_mix[name] for name in names
+        ]).view(1, tasks)
+        reader_mix = torch.sigmoid(
+            reader_bias + self.scale_mesh_reader_router(reader_features).squeeze(-1)
+        ).unsqueeze(-1)
+        scale_attention = torch.lerp(
+            shared_attention, dedicated_attention, reader_mix
+        )
+        attention_gates = torch.stack([
+            self.mesh_scale_attention_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(attention_gates) \
+                 * self.mesh_scale_task_norm(scale_attention)
 
-    def _family_alphaearth_logits(self, values: Dict[str, torch.Tensor]) -> torch.Tensor:
-        return self.family_ae_head(values["alphaearth"].detach())
+        prior_fibers = self._mesh_reader_cache["prior_fibers"]
+        prior_keys = self._mesh_reader_cache["prior_keys"]
+        prior_score = torch.einsum(
+            "bkd,td->btk", prior_keys, mesh_queries
+        ) / math.sqrt(self.d_model)
+        selected_score, selected = prior_score.topk(
+            min(16, prior_score.shape[-1]), dim=-1
+        )
+        selected_prior = prior_fibers.unsqueeze(1).expand(
+            -1, tasks, -1, -1
+        ).gather(2, selected[..., None].expand(-1, -1, -1, self.d_model))
+        prior_read = torch.einsum(
+            "btk,btkd->btd", selected_score.softmax(-1), selected_prior
+        )
+        confidence = torch.sigmoid(self.mesh_prior_information_gate(torch.cat((
+            pooled,
+            prior_read,
+            pooled * prior_read,
+            (pooled - prior_read).abs(),
+        ), -1)))
+        prior_gates = torch.stack([
+            self.mesh_prior_read_gate[name] for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(prior_gates) * confidence \
+                 * self.mesh_prior_task_norm(prior_read)
+        pooled = pooled + self._read_evidence(pooled, names)
+        self._pool_cache.update({
+            name: pooled[:, index] for index, name in enumerate(names)
+        })
 
-    def _family_conditioned_logits(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                                   context: dict, alphaearth_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
-        residual = self._family_env_logits(values, observed, context, alphaearth_valid)
-        if not self.family_env_residual or self.family_ae_head is None or "alphaearth" not in values:
-            return residual
-        valid = observed.get("alphaearth", alphaearth_valid)
-        if valid is None:
-            valid = torch.ones(values["alphaearth"].shape[0], dtype=torch.bool,
-                               device=values["alphaearth"].device)
-        prior = self._family_alphaearth_logits(values).detach()
-        return torch.where(valid[:, None], prior + residual, residual)
+    def _pollinator_pool(self, latent: torch.Tensor, *, isolated: bool = False) -> torch.Tensor:
+        pooled = self._pool(latent, "pollinator")
+        if self.pollinator_reader is None or self._fiber_mesh is None:
+            return pooled
+        cells = self._fiber_mesh.shape[1]
+        fibers = self._fiber_mesh.flatten(1, 3)
+        if isolated:
+            pooled = pooled.detach()
+            fibers = fibers.detach()
+        keys = self.pollinator_reader_norm(fibers)
+        cell_key = torch.cat((
+            self.pollinator_reader_cell_key[:1],
+            self.pollinator_reader_cell_key[1:].expand(cells - 1, -1),
+        ))
+        route_keys = (
+            keys.reshape(-1, cells, self.levels, len(LENSES), self.d_model)
+            + cell_key.view(1, cells, 1, 1, self.d_model)
+            + self.pollinator_reader_level_key.view(
+                1, 1, self.levels, 1, self.d_model
+            )
+            + self.pollinator_reader_lens_key.view(
+                1, 1, 1, len(LENSES), self.d_model
+            )
+        ).flatten(1, 3)
+        score = torch.einsum(
+            "bkd,bd->bk", route_keys, pooled
+        ) / math.sqrt(self.d_model)
+        selected_score, selected_index = score.topk(
+            min(16, score.shape[-1]), dim=-1
+        )
+        selected = keys.gather(
+            1, selected_index[..., None].expand(-1, -1, self.d_model)
+        )
+        routed = torch.einsum(
+            "bk,bkd->bd", selected_score.softmax(-1), selected
+        )
+        query = self.pollinator_reader_query.unsqueeze(0) \
+                + pooled.unsqueeze(1) + routed.unsqueeze(1)
+        read = self.pollinator_reader(query, selected, selected, need_weights=False)[0].mean(1)
+        return pooled + torch.tanh(self.pollinator_reader_gate) \
+                        * self.pollinator_reader_output_norm(read)
 
-    def _factor_family_mass(self, species_logits: torch.Tensor, family_logits: torch.Tensor) -> torch.Tensor:
-        prob = species_logits.float().softmax(-1)
-        mass = prob.new_zeros(prob.shape[0], self.family_count)
-        mass.scatter_add_(1, self.species_family.expand(prob.shape[0], -1), prob)
-        correction = F.log_softmax(family_logits.float(), -1) - mass.clamp_min(1e-8).log()
-        return species_logits + correction[:, self.species_family].to(species_logits.dtype)
+    def _calibrate_pollinator_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        temperature = self.pollinator_log_temperature.clamp(-2.0, 2.0).exp()
+        return logits / temperature
 
-    def _hierarchical_family_map(self, species_logits: torch.Tensor) -> torch.Tensor:
-        """Promote the best species from the family with the most posterior mass."""
+    def _lfmc_lens_residual(self, pooled: torch.Tensor) -> torch.Tensor:
+        query = self.lfmc_lens_reader_norm(
+            pooled.detach().float()
+        ).unsqueeze(1)
+        lenses = self.lfmc_lens_reader_norm(
+            self._fiber_mesh[:, 0].mean(1).detach().float()
+        )
+        read = self.lfmc_lens_reader(
+            query, lenses, lenses, need_weights=False
+        )[0].squeeze(1)
+        return self.lfmc_lens_head(read).squeeze(-1)
+
+    def _lfmc_log_prediction(self, pooled: torch.Tensor) -> torch.Tensor:
+        prediction = self.lfmc_head(pooled).squeeze(-1)
+        if self._fiber_mesh is not None:
+            prediction = prediction + self._lfmc_lens_residual(pooled)
+        return prediction
+
+    def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
+        if name == self.species_variable:
+            return pooled @ self._refined_species.t()
+        return self.decoders[name](pooled)
+
+    def _species_lens_residual(
+        self, pooled: torch.Tensor, key: torch.Tensor
+    ) -> torch.Tensor:
+        query = self.species_lens_reader_norm(
+            pooled.detach().float()
+        ).unsqueeze(1)
+        lenses = self.species_lens_reader_norm(
+            self._fiber_mesh[:, 0].mean(1).detach().float()
+        )
+        read = self.species_lens_reader(
+            query, lenses, lenses, need_weights=False
+        )[0].squeeze(1)
+        residual = read @ key.detach().t()
+        family_sum = residual.new_zeros(residual.shape[0], self.family_count)
+        family_sum.scatter_add_(
+            1, self.species_family.expand(residual.shape[0], -1), residual
+        )
+        family_size = torch.bincount(
+            self.species_family, minlength=self.family_count
+        ).clamp_min(1).to(residual.dtype)
+        family_mean = family_sum / family_size
+        return residual - family_mean.gather(
+            1, self.species_family.expand(residual.shape[0], -1)
+        )
+
+    def _niche_species_logits(
+        self, pooled: torch.Tensor, include_lens: bool = True
+    ) -> torch.Tensor:
+        key = self._refined_species.detach().float() \
+              + self.species_niche_key.float()
+        pooled = pooled.float()
+        base = pooled @ key.t()
+        residual = self.species_niche_adapter(pooled) @ key.t()
+        family_sum = residual.new_zeros(residual.shape[0], self.family_count)
+        family_sum.scatter_add_(
+            1, self.species_family.expand(residual.shape[0], -1), residual
+        )
+        family_size = torch.bincount(
+            self.species_family, minlength=self.family_count
+        ).clamp_min(1).to(residual.dtype)
+        family_mean = family_sum / family_size
+        residual = residual - family_mean.gather(
+            1, self.species_family.expand(residual.shape[0], -1)
+        )
+        logits = base + residual
+        if include_lens:
+            logits = logits + self._species_lens_residual(pooled, key)
+        return logits
+
+    def _hierarchical_family_read(self, species_logits: torch.Tensor) -> torch.Tensor:
+        """Read the strongest species inside the mesh posterior's strongest family."""
         logits = species_logits.float()
-        family = self.species_family.expand(len(logits), -1)
-        family_mass = logits.new_zeros(len(logits), self.family_count)
+        family = self.species_family.expand(logits.shape[0], -1)
+        family_mass = logits.new_zeros(logits.shape[0], self.family_count)
         family_mass.scatter_add_(1, family, logits.softmax(-1))
-        winning = family_mass.argmax(-1)
-        eligible = self.species_family[None] == winning[:, None]
+        winning_family = family_mass.argmax(-1)
+        eligible = self.species_family.unsqueeze(0) == winning_family.unsqueeze(1)
         selected = logits.masked_fill(~eligible, -torch.inf).argmax(-1)
-        top = logits.amax(-1).to(species_logits.dtype)
-        return species_logits.scatter(1, selected[:, None], top[:, None] + 1e-4)
-
-    def family_alphaearth_loss(self, values: Dict[str, torch.Tensor],
-                               observed: Dict[str, torch.Tensor]) -> torch.Tensor:
-        if self.family_ae_head is None:
-            return self.type_emb.new_zeros(())
-        valid = (observed[self.species_variable] & observed["alphaearth"]).to(self.type_emb.dtype)
-        target = self.species_family[values[self.species_variable]]
-        err = F.cross_entropy(self._family_alphaearth_logits(values), target, reduction="none")
-        return (err * valid).sum() / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2))
-
-    def _occupancy_feature(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                           context: dict) -> torch.Tensor:
-        alphaearth = values["alphaearth"].detach() * observed["alphaearth"][:, None]
-        with torch.no_grad():
-            habitat = self.family_ae_head[:-1](alphaearth)
-        return torch.cat((habitat, context["position"].detach()), -1)
-
-    def _niche_feature(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                       context: dict) -> torch.Tensor:
-        coords = (context["coords"] - self.niche_coord_mean) / self.niche_coord_scale
-        geo = [coords]
-        for frequency in (0.5, 1.0, 2.0, 4.0, 8.0, 16.0):
-            geo.extend((torch.sin(math.pi * frequency * coords),
-                        torch.cos(math.pi * frequency * coords)))
-        alphaearth = (values["alphaearth"].detach() - self.niche_ae_mean) / self.niche_ae_scale
-        alphaearth = alphaearth * observed["alphaearth"][:, None]
-        return self.niche_trunk(torch.cat((alphaearth, *geo), -1))
-
-    def occupancy_expert_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                              context: dict) -> Optional[torch.Tensor]:
-        if self.occupancy_experts is None:
-            return None
-        feature = self._occupancy_feature(values, observed, context)
-        target = values[self.species_variable]
-        valid = (observed[self.species_variable] & observed["alphaearth"]).float()
-        base_family = self._family_conditioned_logits(
-            values, observed, context, observed.get("alphaearth")).detach()
-        family = base_family + self.occupancy_experts["family"](feature)
-        niche = self._niche_feature(values, observed, context) if self.niche_trunk is not None else None
-        if niche is not None:
-            family = family + self.niche_experts["family"](niche)
-        identity = self.occupancy_experts["identity"](feature)
-        if niche is not None:
-            identity = identity + self.niche_experts["identity"](niche)
-        species = identity @ self._refined_species.detach().to(identity.dtype).t()
-        species = self._factor_family_mass(species, family)
-        losses = [
-            (F.cross_entropy(species.float(), target, reduction="none") * valid).sum()
-            / valid.sum().clamp_min(1.0) / math.log(species.shape[-1]),
-            (F.cross_entropy(family.float(), self.species_family[target], reduction="none") * valid).sum()
-            / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2)),
-        ]
-        if "_sdist_idx" in values:
-            community = self.occupancy_experts["community"](feature)
-            if niche is not None:
-                community = community + self.niche_experts["community"](niche)
-            logits = community @ self._refined_species.detach().to(community.dtype).t()
-            idx = values["_sdist_idx"].clamp(0, logits.shape[-1] - 1)
-            dist = torch.zeros_like(logits, dtype=torch.float32).scatter_add_(
-                1, idx, values["_sdist_frq"].float())
-            keep = dist.sum(-1) > 0
-            if keep.any():
-                losses.append(-(dist[keep] * F.log_softmax(logits[keep].float(), -1)).sum(-1).mean()
-                              / math.log(logits.shape[-1]))
-        if "pollinator" in self.occupancy_experts and "_poll_idx" in values:
-            pollinator = self.occupancy_experts["pollinator"](feature)
-            if niche is not None and "pollinator" in self.niche_experts:
-                pollinator = pollinator + self.niche_experts["pollinator"](niche)
-            logits = pollinator @ self._pollinator_basis().detach().to(pollinator.dtype).t()
-            idx = values["_poll_idx"].clamp(0, logits.shape[-1] - 1)
-            dist = torch.zeros_like(logits, dtype=torch.float32).scatter_add_(
-                1, idx, values["_poll_frq"].float())
-            keep = values["_poll_valid"].bool()
-            if keep.any():
-                losses.append(-(dist[keep] * F.log_softmax(logits[keep].float(), -1)).sum(-1).mean()
-                              / math.log(logits.shape[-1]))
-        return sum(losses) / len(losses)
-
-    def reconstruction_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                            context: dict, hide_prob: float = 0.35) -> torch.Tensor:
-        """One training step: reveal each variable with prob ``1 - hide_prob`` and reconstruct every hidden-but-observed variable, at one fixed shape."""
-        B = len(next(iter(observed.values()))); dev = self.type_emb.device
-        present = {n: (torch.rand(B, device=dev) > hide_prob) & observed[n] for n in self.names}
-        # Fully blank a fraction of queries so the model must reconstruct from bare space-time + neighbors, training the position->variable pathway (else the absolute channel stays inert at inference).
-        blank = torch.rand(B, device=dev) < 0.15
-        for n in self.names:
-            present[n] = present[n] & ~blank
-        loss = self.masked_loss(values, observed, present, context)
-        if self.family_env_attn is not None:
-            valid = observed[self.species_variable].to(loss.dtype)
-            target = self.species_family[values[self.species_variable]]
-            err = F.cross_entropy(self._family_conditioned_logits(values, observed, context), target, reduction="none")
-            loss = loss + (err * valid).sum() / valid.sum().clamp_min(1.0) / math.log(max(self.family_count, 2))
-        if self.blank_adapters:
-            loss = loss + self._orthogonal_blank_loss(self._blank_query_z, values, observed, blank)
-            self._blank_query_z = None
-        return loss
-
-    def masked_loss(self, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                    present: Dict[str, torch.Tensor], context: dict) -> torch.Tensor:
-        """Reconstruction loss for a fixed reveal mask (no randomness), so it can be compiled/CUDA-graphed with the random masking left outside."""
-        z = self.encode(values, present, context)
-        if self.blank_adapters:
-            self._blank_query_z = z.detach()
-        if self.round_loss == "all" and self._round_stack is not None:
-            zs = self._round_stack                           # [K,B,n_lat,d]: deep-supervise every round, same targets
-            loss = sum(self._decode_loss(zs[k], values, observed, present) for k in range(zs.shape[0])) / zs.shape[0]
-        else:
-            loss = self._decode_loss(z, values, observed, present)
-        if self.inductive is not None:                       # auxiliary: name embedding -> evolutionary position
-            loss = loss + 0.1 * self.inductive.loss(self._species_text, self._species_e1)
-        # Rule 25: mask a fraction of species' seeds and reconstruct their refined embedding from phylogenetic relatives
-        # (self-distillation toward the full-info refinement) -> the model can place a species of uncertain tree position.
-        if self.training and getattr(self, "_phylo_mask_weight", 0.0) > 0 and self._refined_species is not None:
-            m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
-            if m.any():
-                loss = loss + self._phylo_mask_weight * F.mse_loss(self.species_graph(mask=m)[m], self._refined_species[m].detach())
-        # LCA fine-tuning: predict each masked species' mycorrhizal type from its RELATIVE-reconstructed embedding, so the
-        # tree learns trait phylogenetic structure and imputes it for held-out clades (must beat BioCLIP nearest-neighbor).
-        if self.training and getattr(self, "species_trait_recon", False) and getattr(self, "_species_myco", None) is not None:
-            v = self._species_myco_valid & self._train_species                  # train species with myco labels (no held-out leak)
-            if v.any():                                                          # DETACHED default (rule 31) reads the tree's phylo locality without reshaping it toward myco; trait_recon_detach=False + small weight tests gentle backprop (rule-31 tradeoff study).
-                emb = self._refined_species[v] if not getattr(self, "_trait_recon_detach", True) else self._refined_species[v].detach()
-                loss = loss + getattr(self, "_trait_recon_weight", 1.0) * F.cross_entropy(self.species_myco_head(emb), self._species_myco[v].clamp_min(0))
-        # Pollinator phylo self-distillation (mirrors rule 25 for INTERACTIONS): a species' pollinator distribution
-        # predicted from its PHYLO-RELATIVES (masked seed) must match its full-info prediction -> trains the model to
-        # transfer interactions across the phylogeny. Diagnostic (2026-07-15): plant-phylo oracle reaches recall 0.216
-        # but the model only 0.037 (B55) -> the signal is present and unexploited. Default weight 0 = champion-identical.
-        if self.training and getattr(self, "_poll_phylo_weight", 0.0) > 0 and self._refined_species is not None \
-                and getattr(self, "poll_head", None) is not None:
-            m = torch.rand(self._refined_species.shape[0], device=z.device) < 0.15
-            if m.any():
-                basis = self._pollinator_basis().detach().t()                                        # [d, n_poll]
-                full = F.softmax((self.poll_head(self._refined_species[m].detach()) @ basis).float(), dim=-1)   # target
-                rel = F.log_softmax((self.poll_head(self.species_graph(mask=m)[m]) @ basis).float(), dim=-1)    # from relatives
-                loss = loss + self._poll_phylo_weight * F.kl_div(rel, full, reduction="batchmean")
-        return loss
-
-    def _decode_loss(self, z: torch.Tensor, values: Dict[str, torch.Tensor], observed: Dict[str, torch.Tensor],
-                     present: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Per-variable reconstruction error over the hidden-but-observed targets, decoded from latents ``z``."""
-        loss, n_terms = z.new_zeros(()), 0
-        for v in self.variables:
-            if not v.reconstruct:
-                continue
-            w = ((~present[v.name]) & observed[v.name]).to(z.dtype)
-            if v.name in self.diffusion_heads:
-                err = self.diffusion_heads[v.name].loss(values[v.name], self._pooled(z, v.name), reduce=False)
-            else:
-                pred = self.decode(z, v.name, calibrated=False)
-                err = self._reconstruction_error(v.name, pred, values[v.name])
-                if v.name in self.cal_gain:
-                    # Fit scale without changing representation gradients.
-                    tgt = values[v.name].float()
-                    seen = tgt.norm(dim=-1) > 1e-6
-                    ref = tgt[seen] if seen.any() else tgt
-                    # Unit-normalized targets need no magnitude calibration.
-                    if ref.numel() and not bool(((ref.norm(dim=-1) - 1.0).abs() < 1e-3).all()):
-                        var = ref.var(0, unbiased=False).clamp_min(1e-6).detach()
-                        cal = self._calibrated(v.name, pred.detach().float())
-                        z2 = (((cal - tgt) ** 2) / var).mean(-1)   # 1.0 = predicting the target mean
-                        loss = loss + (z2 * w).sum() / w.sum().clamp_min(1.0)
-                # Cross-modal contrastive (JEPA / rule 16): the predicted continuous embedding must retrieve its own
-                # target against the batch (InfoNCE) -- a global signal point-wise cosine cannot give.
-                if self.contrastive_weight > 0.0 and v.name in self.contrastive_vars and v.kind == "continuous":
-                    pn = F.normalize(pred.float(), dim=-1); tn = F.normalize(values[v.name].float(), dim=-1)
-                    logits = pn @ tn.t() / 0.05    # InfoNCE temperature
-                    loss = loss + self.contrastive_weight * F.cross_entropy(
-                        logits, torch.arange(logits.shape[0], device=logits.device))
-            # Per-variable loss weight (science.md rule 18): focus reconstruction where benchmarks have headroom.
-            loss = loss + self.loss_weights.get(v.name, 1.0) * (err * w).sum() / w.sum().clamp_min(1.0)
-            # Distribution matching (MADE joint-dist) via the SEPARATE community head on a DETACHED latent: trains only
-            # comm_head toward the local community distribution, with zero gradient into the shared representation.
-            if getattr(self, "_sdist_weight", 0.0) > 0 and v.name == self.species_variable \
-                    and "_sdist_idx" in values and getattr(self, "comm_head", None) is not None:
-                _cp = self._pooled(z, v.name)                                   # [Ensue] comm_attached: let the community loss shape the backbone
-                _cp = _cp if getattr(self, "_comm_attached", False) else _cp.detach()
-                comm = (self.comm_head(_cp) @ self._refined_species.detach().t()).float()
-                sidx = values["_sdist_idx"].clamp(0, comm.shape[1] - 1)   # -1 padding -> 0 (its freq is 0, harmless)
-                tgt = torch.zeros_like(comm).scatter_add_(1, sidx, values["_sdist_frq"].float())
-                kl = -(tgt * F.log_softmax(comm, -1)).sum(-1)            # soft cross-entropy toward the local distribution
-                loss = loss + self._sdist_weight * (kl * w).sum() / w.sum().clamp_min(1.0)
-            # Pollinator distribution matching via the SEPARATE detached poll_head toward the plant's GloBI pollinator
-            # distribution (zero gradient into the shared representation).
-            if getattr(self, "_poll_weight", 0.0) > 0 and v.name == self.species_variable \
-                    and "_poll_idx" in values and getattr(self, "poll_head", None) is not None:
-                # detach the PLANT latent (protect the shared backbone) but NOT the pollinator basis: the interaction
-                # loss trains poll_head + the pollinator graph, so partners propagate to a pollinator's relatives (rule 27)
-                pl = (self.poll_head(self._pooled(z, v.name).detach()) @ self._pollinator_basis().t()).float()
-                pidx = values["_poll_idx"].clamp(0, pl.shape[1] - 1)
-                ptg = torch.zeros_like(pl).scatter_add_(1, pidx, values["_poll_frq"].float())
-                pv = values["_poll_valid"].float()                       # only plants with known pollinators contribute
-                pkl = -(ptg * F.log_softmax(pl, -1)).sum(-1) * pv
-                loss = loss + self._poll_weight * (pkl * w).sum() / (pv * w).sum().clamp_min(1.0)
-            # Ecophysiology (B34): detached head predicts log live-fuel-moisture toward the species' value (protects backbone)
-            if getattr(self, "_lfmc_weight", 0.0) > 0 and v.name == self.species_variable \
-                    and "_lfmc" in values and getattr(self, "lfmc_head", None) is not None:
-                pred = self.lfmc_head(self._head_in(z, v.name, detach=True)).squeeze(-1).float()
-                tgt = torch.log(values["_lfmc"].clamp_min(1.0)); lv = values["_lfmc_valid"].float()
-                loss = loss + self._lfmc_weight * ((pred - tgt) ** 2 * lv).sum() / lv.sum().clamp_min(1.0)
-            # Symbiosis (B42): detached head predicts the mycorrhizal type (cross-entropy toward the FungalRoot label)
-            if getattr(self, "_myco_weight", 0.0) > 0 and v.name == self.species_variable \
-                    and "_myco" in values and getattr(self, "myco_head", None) is not None:
-                logit = self.myco_head(self._head_in(z, v.name, detach=True))
-                mv = values["_myco_valid"].float()
-                ce = F.cross_entropy(logit, values["_myco"].clamp_min(0), reduction="none")
-                loss = loss + self._myco_weight * (ce * mv).sum() / mv.sum().clamp_min(1.0)
-            # Phenology (B26): detached head predicts flowering (BCE) toward the per-observation PhenoVision label
-            if getattr(self, "_flower_weight", 0.0) > 0 and v.name == self.species_variable \
-                    and "_flower" in values and getattr(self, "flower_head", None) is not None:
-                logit = self.flower_head(self._head_in(z, v.name, detach=True)).squeeze(-1).float()
-                fv = values["_flower_valid"].float()
-                bce = F.binary_cross_entropy_with_logits(logit, values["_flower"].float(), reduction="none")
-                loss = loss + self._flower_weight * (bce * fv).sum() / fv.sum().clamp_min(1.0)
-            n_terms += 1
-        return loss / max(n_terms, 1)
-
-    def _pollinator_basis(self) -> torch.Tensor:
-        """Pollinator output embeddings for the interaction head (rule 27): phylo-refined by the pollinator species
-        graph if wired (cached per forward), else the free table. The refined basis is what makes a predicted pollinator
-        lift its phylogenetic relatives, and training propagate to them."""
-        rp = getattr(self, "_refined_pollinators", None)
-        return rp if rp is not None else self.poll_emb
+        top = species_logits.amax(-1)
+        return species_logits.scatter(1, selected.unsqueeze(1), top.unsqueeze(1) + 1e-4)
 
     def _pollinator_species_posterior(self, species_logits: torch.Tensor) -> torch.Tensor:
+        """Marginalize uncertain plant identity through known pollinator relations."""
         k = min(64, species_logits.shape[-1])
-        weight, species = F.softmax(species_logits.float(), -1).topk(k, -1)
-        idx = self.poll_species_idx[species].clamp(0, self.poll_emb.shape[0] - 1)
-        mass = weight[:, :, None] * self.poll_species_frq[species]
-        mixture = species_logits.new_zeros(species_logits.shape[0], self.poll_emb.shape[0], dtype=torch.float32)
-        mixture.scatter_add_(1, idx.flatten(1), mass.flatten(1))
+        weight, species = species_logits.float().softmax(-1).topk(k, -1)
+        index = self.poll_species_idx[species].clamp(0, self.poll_head.out_features - 1)
+        mass = weight.unsqueeze(-1) * self.poll_species_frq[species]
+        mixture = species_logits.new_zeros(
+            species_logits.shape[0], self.poll_head.out_features, dtype=torch.float32
+        )
+        mixture.scatter_add_(1, index.flatten(1), mass.flatten(1))
         mixture = mixture / mixture.sum(-1, keepdim=True).clamp_min(1e-8)
         return mixture.clamp_min(1e-8).log()
 
+    def _identity_detail_logits(self, pooled: torch.Tensor) -> torch.Tensor:
+        cells = self._fiber_mesh.shape[1]
+        fibers = self._fiber_mesh.flatten(1, 3).detach()
+        keys = self.identity_detail_norm(fibers)
+        cell_key = torch.cat((
+            self.identity_detail_cell_key[:1],
+            self.identity_detail_cell_key[1:].expand(cells - 1, -1),
+        ))
+        route_keys = (
+            keys.reshape(-1, cells, self.levels, len(LENSES), self.d_model)
+            + cell_key.view(1, cells, 1, 1, self.d_model)
+            + self.identity_detail_level_key.view(
+                1, 1, self.levels, 1, self.d_model
+            )
+            + self.identity_detail_lens_key.view(
+                1, 1, 1, len(LENSES), self.d_model
+            )
+        ).flatten(1, 3)
+        score = torch.einsum(
+            "bkd,bd->bk", route_keys, pooled
+        ) / math.sqrt(self.d_model)
+        selected_score, selected_index = score.topk(
+            min(16, score.shape[-1]), dim=-1
+        )
+        selected = keys.gather(
+            1, selected_index[..., None].expand(-1, -1, self.d_model)
+        )
+        routed = torch.einsum(
+            "bk,bkd->bd", selected_score.softmax(-1), selected
+        )
+        query = self.identity_detail_query.unsqueeze(0) \
+                + pooled.unsqueeze(1) + routed.unsqueeze(1)
+        read = self.identity_detail_reader(
+            query, selected, selected, need_weights=False
+        )[0].mean(1)
+        read = torch.tanh(self.identity_detail_gate) \
+               * self.identity_detail_output_norm(read)
+        logits = read @ self._refined_species.detach().t()
+        family = self.species_family.expand(logits.shape[0], -1)
+        family_sum = logits.new_zeros(logits.shape[0], self.family_count)
+        family_sum.scatter_add_(1, family, logits)
+        family_size = torch.bincount(
+            self.species_family, minlength=self.family_count
+        ).clamp_min(1).to(logits.dtype)
+        family_mean = family_sum / family_size
+        return logits - family_mean.gather(1, family)
+
+    def _myco_logits(self, latent: torch.Tensor) -> torch.Tensor:
+        base = self.myco_head(self._pool(latent, "myco"))
+        if self.species_myco_head is None or self.training:
+            return base
+        species_logits = self.decode(latent, self.species_variable)
+        species_to_myco = self.species_myco_head(
+            self._refined_species.detach()
+        ).softmax(-1)
+        myco = species_logits.softmax(-1) @ species_to_myco
+        evidence = myco.clamp_min(1e-8).log() \
+                   - self.species_myco_prior.clamp_min(1e-8).log()
+        return base + torch.tanh(self.myco_relation_gate) * evidence
+
+    def _pool_fiber(self, fiber: torch.Tensor, name: str) -> torch.Tensor:
+        query = self.fiber_decode_query[self.names.index(name)]
+        weight = torch.softmax((fiber @ query) / math.sqrt(self.d_model), -1)
+        return torch.einsum("bl,bld->bd", weight, fiber)
+
+    def decode(self, latent: torch.Tensor, name: str) -> torch.Tensor:
+        pooled = self._pool(latent, name)
+        logits = self._decode_pooled(pooled, name)
+        if name == self.species_variable and not self.training \
+                and self._fiber_mesh is not None:
+            logits = logits + self._identity_detail_logits(pooled)
+        return logits
+
     @torch.no_grad()
-    def infer(self, values: Dict[str, torch.Tensor], given: Sequence[str], targets: Sequence[str],
-              context: dict, observed: Optional[Dict[str, torch.Tensor]] = None) -> Dict[str, torch.Tensor]:
-        """Predict ``targets`` from the variables in ``given`` (plus space-time + neighbor context). A given variable
-        is revealed only where actually ``observed`` (else a missing value would enter as a spurious zero token)."""
-        B = context["position"].shape[0]
-        dev = self.type_emb.device
-        present = {n: torch.zeros(B, dtype=torch.bool, device=dev) for n in self.names}
-        for n in given:
-            present[n] = observed[n] if (observed is not None and n in observed) \
-                else torch.ones(B, dtype=torch.bool, device=dev)
-        z = self.encode(values, present, context)
-        context_z = None
-        if self.blank_adapters and "community" in targets:
-            context_present = {n: torch.zeros_like(present[n]) for n in self.names}
-            context_z = self.encode(values, context_present, context)
-        ae_valid = observed.get("alphaearth") if observed is not None else None
-        family_logits = self._family_conditioned_logits(values, present, context, ae_valid) \
-            if self.family_env_attn is not None and tuple(given) == self.family_env_vars else None
-        family_valid = None
-        if self.family_ae_head is not None and not given:
-            family_logits = self._family_alphaearth_logits(values)
-            family_valid = observed.get("alphaearth") if observed is not None else None
-        universal = tuple(given) == self.family_env_vars
-        occupancy = None
-        niche = None
-        if self.occupancy_experts is not None and (not given or universal):
-            occupancy_observed = observed or {
-                "alphaearth": torch.ones(B, dtype=torch.bool, device=dev),
-            }
-            occupancy = self._occupancy_feature(values, occupancy_observed, context)
-            if self.niche_trunk is not None:
-                niche = self._niche_feature(values, occupancy_observed, context)
-            if family_logits is not None:
-                family_logits = family_logits + self.occupancy_experts["family"](occupancy)
-                if niche is not None:
-                    family_logits = family_logits + self.niche_experts["family"](niche)
-        blank_species = self._blank_species(z) if self.blank_adapters and not given else None
-        if blank_species is not None and family_logits is not None:
-            family_logits = family_logits + blank_species[2]
-        poll_species = None
-        if self.poll_species_idx is not None and (
-                not given or universal or (self.poll_species_all_masked and self.species_variable not in given)):
-            species_logits = blank_species[1] if blank_species is not None else self.decode(z, self.species_variable)
-            if occupancy is not None:
-                species_logits = species_logits + self.occupancy_experts["identity"](occupancy) @ self._refined_species.t()
-            if niche is not None:
-                species_logits = species_logits + self.niche_experts["identity"](niche) @ self._refined_species.t()
-            if family_logits is not None:
-                factored = self._factor_family_mass(species_logits, family_logits)
-                species_logits = torch.where(family_valid[:, None], factored, species_logits) \
-                    if family_valid is not None else factored
-            poll_species = self._pollinator_species_posterior(species_logits)
+    def infer(self, values, given, targets, context, observed=None):
+        batch = context["position"].shape[0]
+        observed = observed or {name: torch.ones(batch, dtype=torch.bool, device=context["position"].device)
+                                for name in self.names}
+        present = {name: torch.zeros(batch, dtype=torch.bool, device=context["position"].device)
+                   for name in self.names}
+        for name in given:
+            if name in present:
+                present[name] = observed.get(name, torch.ones_like(present[name]))
+        latent = self.encode(values, present, context)
+        environment_species = None
+        if tuple(given) == self.environment_names \
+                and self.species_variable in targets:
+            pooled = self._pool(latent, self.species_variable)
+            environment_species = self._niche_species_logits(pooled) \
+                                  + self._identity_detail_logits(pooled)
+            environment_species = self._hierarchical_family_read(
+                environment_species
+            )
+        pollinator_species = None
+        if self.poll_head is not None and "pollinator" in targets \
+                and self.species_variable not in given:
+            species_logits = self.decode(latent, self.species_variable)
+            if not given or tuple(given) == self.environment_names:
+                species_logits = self._hierarchical_family_read(species_logits)
+            pollinator_species = self._pollinator_species_posterior(species_logits)
         out = {}
-        for t in targets:
-            if t == "community":                                                 # env-conditioned community distribution
-                pooled = self._pooled(z, self.species_variable)
-                if getattr(self, "comm_head", None) is not None:
-                    logits = self.comm_head(pooled) @ self._refined_species.t()
-                    if context_z is not None:
-                        base = self.comm_head(self._pooled(context_z, self.species_variable))
-                        corrected = self.comm_head(self._blank_route(context_z, "community"))
-                        logits = logits + (corrected - base) @ self._refined_species.t()
-                    out[t] = logits
+        for name in targets:
+            if name == "community":
+                pooled = self._pool(latent, "community")
+                out[name] = self.community_metric(pooled) @ self._refined_species.t()
+            elif name == "pollinator":
+                pooled = self._pollinator_pool(latent)
+                prediction = self.poll_head(pooled)
+                if pollinator_species is None:
+                    prediction = self._calibrate_pollinator_logits(prediction)
                 else:
-                    out[t] = self.decode(z, self.species_variable)                # fallback: identity posterior
-                if occupancy is not None and universal:
-                    out[t] = out[t] + self.occupancy_experts["community"](occupancy) @ self._refined_species.t()
-                if niche is not None and universal:
-                    out[t] = out[t] + self.niche_experts["community"](niche) @ self._refined_species.t()
-            elif t == "pollinator":                                              # plant -> pollinator interaction (rule 27)
-                out[t] = self.poll_head(self._pooled(z, self.species_variable)) @ self._pollinator_basis().t()
-                if occupancy is not None and "pollinator" in self.occupancy_experts:
-                    out[t] = out[t] + self.occupancy_experts["pollinator"](occupancy) @ self._pollinator_basis().t()
-                if niche is not None and "pollinator" in self.niche_experts:
-                    out[t] = out[t] + self.niche_experts["pollinator"](niche) @ self._pollinator_basis().t()
-                if poll_species is not None:
-                    alpha = self.poll_species_mixture
-                    out[t] = poll_species if alpha >= 1.0 else torch.logaddexp(
-                        F.log_softmax(out[t].float(), -1) + math.log1p(-alpha),
-                        poll_species + math.log(alpha))
-            elif t == "lfmc":                                                    # species -> live fuel moisture (B34)
-                out[t] = self.lfmc_head(self._head_in(z, self.species_variable)).squeeze(-1).exp()
-            elif t == "myco":                                                    # species -> mycorrhizal type logits (B42)
-                out[t] = self.myco_head(self._head_in(z, self.species_variable))
-            elif t == "flower":                                                  # observation -> flowering probability (B26)
-                out[t] = torch.sigmoid(self.flower_head(self._head_in(z, self.species_variable)).squeeze(-1))
+                    prediction = torch.logaddexp(
+                        F.log_softmax(prediction.float(), -1) + math.log(0.5),
+                        pollinator_species + math.log(0.5),
+                    )
+                out[name] = prediction
+            elif name == "lfmc":
+                pooled = self._pool(latent, "lfmc")
+                out[name] = self._lfmc_log_prediction(pooled).exp()
+            elif name == "myco":
+                out[name] = self._myco_logits(latent)
+            elif name == "flower":
+                pooled = self._pool(latent, "flower")
+                out[name] = torch.sigmoid(self.flower_head(pooled).squeeze(-1))
             else:
-                out[t] = blank_species[1] if blank_species is not None and t == self.species_variable \
-                    else self.decode(z, t)
-                if t == self.species_variable and occupancy is not None:
-                    out[t] = out[t] + self.occupancy_experts["identity"](occupancy) @ self._refined_species.t()
-                if t == self.species_variable and niche is not None:
-                    out[t] = out[t] + self.niche_experts["identity"](niche) @ self._refined_species.t()
-                if t == self.species_variable and family_logits is not None:
-                    factored = self._factor_family_mass(out[t], family_logits)
-                    out[t] = torch.where(family_valid[:, None], factored, out[t]) \
-                        if family_valid is not None else factored
-                if t == self.species_variable and self.ecological_family_map and (not given or universal):
-                    out[t] = self._hierarchical_family_map(out[t])
+                prediction = environment_species \
+                    if name == self.species_variable \
+                    and environment_species is not None \
+                    else self.decode(latent, name)
+                if name == self.species_variable and not given:
+                    prediction = self._hierarchical_family_read(prediction)
+                out[name] = prediction
         return out
+
+    def reconstruction_loss(self, values, observed, context, hide_probability: float = 0.5):
+        batch = context["position"].shape[0]
+        present = {name: (torch.rand(batch, device=context["position"].device) > hide_probability) & observed[name]
+                   for name in self.names}
+        blank = torch.rand(batch, device=context["position"].device) < 0.15
+        for name in present:
+            present[name] &= ~blank
+        latent = self.encode(values, present, context)
+        self._prime_pool_cache(latent)
+        terms = []
+        fiber_terms = []
+        mesh_terms = []
+        pollinator_target = None
+        pollinator_valid = None
+        pollinator_structured_term = None
+        pollinator_calibration_term = None
+        for variable in self.variables:
+            hidden = (~present[variable.name]) & observed[variable.name]
+            if not hidden.any():
+                continue
+            prediction = self.decode(latent, variable.name)
+            if variable.kind == "categorical":
+                error = F.cross_entropy(prediction, values[variable.name].long(), reduction="none") \
+                        / math.log(max(variable.num_classes, 2))
+            else:
+                target = values[variable.name].float()
+                valid = target.norm(dim=-1) > 1e-6
+                mean = target[valid].mean(0, keepdim=True).detach() if valid.any() else target.mean(0, keepdim=True)
+                error = 1.0 - F.cosine_similarity(prediction - mean, target - mean, dim=-1)
+            terms.append((error * hidden).sum() / hidden.sum().clamp_min(1))
+            lens = self.write_lens[variable.name]
+            fiber_prediction = self.fiber_reconstruct[variable.name](
+                self._pool_fiber(self._fiber_summary[:, lens], variable.name)
+            )
+            fiber_target = self._adapt(
+                variable.name, values[variable.name], self._refined_species
+            ).detach()
+            fiber_error = 1.0 - F.cosine_similarity(fiber_prediction, fiber_target, dim=-1)
+            fiber_terms.append((fiber_error * hidden).sum() / hidden.sum().clamp_min(1))
+            mesh_state = self._fiber_mesh[:, 0, :, lens, :].mean(1)
+            mesh_prediction = self.mesh_linear_reconstruct[variable.name](mesh_state)
+            mesh_error = 1.0 - F.cosine_similarity(mesh_prediction, fiber_target, dim=-1)
+            mesh_terms.append((mesh_error * hidden).sum() / hidden.sum().clamp_min(1))
+
+        if self.poll_head is not None and "_poll_idx" in values:
+            pooled = self._pool(latent, "pollinator")
+            logits = self.poll_head(pooled)
+            pollinator_target = torch.zeros_like(logits).scatter_add_(
+                1, values["_poll_idx"].clamp_min(0), values["_poll_frq"].float()
+            )
+            pollinator_valid = values["_poll_valid"].float()
+            error = -(pollinator_target * F.log_softmax(logits, -1)).sum(-1)
+            terms.append(
+                0.1 * (error * pollinator_valid).sum()
+                / pollinator_valid.sum().clamp_min(1)
+            )
+            if getattr(self, "reader_phase", False):
+                calibrated = self._calibrate_pollinator_logits(logits.detach())
+                calibration_error = -(
+                    pollinator_target * F.log_softmax(calibrated, -1)
+                ).sum(-1)
+                pollinator_calibration_term = (
+                    calibration_error * pollinator_valid
+                ).sum() / pollinator_valid.sum().clamp_min(1)
+            structured = self.poll_head(
+                self._pollinator_pool(latent, isolated=True)
+            )
+            structured_error = -(
+                pollinator_target * F.log_softmax(structured, -1)
+            ).sum(-1)
+            pollinator_structured_term = (
+                (structured_error * pollinator_valid).sum()
+                / pollinator_valid.sum().clamp_min(1)
+                / math.log(self.poll_head.out_features)
+            )
+        if self.lfmc_head is not None and "_lfmc" in values:
+            valid = values["_lfmc_valid"].float()
+            lfmc_pool = self._pool(latent, "lfmc")
+            target_lfmc = torch.log(values["_lfmc"].clamp_min(1.0))
+            error = (self.lfmc_head(lfmc_pool).squeeze(-1)
+                     - target_lfmc).square()
+            terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
+        if self.myco_head is not None and "_myco" in values:
+            valid = values["_myco_valid"].float()
+            error = F.cross_entropy(self._myco_logits(latent),
+                                    values["_myco"].long().clamp_min(0), reduction="none")
+            terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
+        if self.flower_head is not None and "_flower" in values:
+            valid = values["_flower_valid"].float()
+            error = F.binary_cross_entropy_with_logits(
+                                                        self.flower_head(self._pool(latent, "flower")).squeeze(-1),
+                                                        values["_flower"].float(), reduction="none")
+            terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
+        loss = torch.stack(terms).mean() \
+               + 0.05 * torch.stack(fiber_terms).mean() \
+               + 0.05 * torch.stack(mesh_terms).mean()
+        if pollinator_calibration_term is not None:
+            loss = loss + pollinator_calibration_term
+        if self.species_myco_head is not None and self.species_myco_valid.any():
+            species_myco = self.species_myco_head(
+                self._refined_species.detach()[self.species_myco_valid]
+            )
+            loss = loss + 0.1 * F.cross_entropy(
+                species_myco, self.species_myco[self.species_myco_valid]
+            )
+        if pollinator_structured_term is not None:
+            loss = loss + 0.1 * pollinator_structured_term
+        environment_present = {
+            name: observed[name] if name in self.environment_names else torch.zeros_like(observed[name])
+            for name in self.names
+        }
+        environment_latent = self.encode(values, environment_present, context, detach_species=True)
+        environment_pool = self._pool(environment_latent, self.species_variable)
+        family_logits = environment_pool.float() \
+                        @ self._refined_species.detach().float().t()
+        target_species = values[self.species_variable].long()
+        family_valid = observed[self.species_variable]
+        niche_logits = self._niche_species_logits(
+            environment_pool.detach(), include_lens=False
+        )
+        species_error = F.cross_entropy(
+            niche_logits, target_species, reduction="none"
+        ) / math.log(max(self._refined_species.shape[0], 2))
+        loss = loss + 0.1 * (species_error * family_valid).sum() \
+                      / family_valid.sum().clamp_min(1)
+        if getattr(self, "reader_phase", False):
+            target_score = niche_logits.gather(1, target_species[:, None])
+            soft_rank = 0.5 + torch.sigmoid(
+                (niche_logits - target_score) / 0.25
+            ).sum(-1)
+            rank_error = soft_rank.clamp_min(1.0).log() \
+                         / math.log(max(niche_logits.shape[-1], 2))
+            loss = loss + 0.25 * (rank_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
+            key = self._refined_species.detach().float() \
+                  + self.species_niche_key.detach().float()
+            lens_logits = niche_logits.detach() \
+                          + self._species_lens_residual(
+                              environment_pool.detach(), key
+                          )
+            lens_error = F.cross_entropy(
+                lens_logits, target_species, reduction="none"
+            ) / math.log(max(lens_logits.shape[-1], 2))
+            loss = loss + 0.1 * (lens_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
+            lens_target = lens_logits.gather(1, target_species[:, None])
+            lens_rank = 0.5 + torch.sigmoid(
+                (lens_logits - lens_target) / 0.25
+            ).sum(-1)
+            lens_rank = lens_rank.clamp_min(1.0).log() \
+                        / math.log(max(lens_logits.shape[-1], 2))
+            loss = loss + 0.25 * (lens_rank * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
+            lens_probability = lens_logits.softmax(-1)
+            lens_family_probability = lens_probability.new_zeros(
+                batch, self.family_count
+            )
+            lens_family_probability.scatter_add_(
+                1,
+                self.species_family.expand(batch, -1),
+                lens_probability,
+            )
+            lens_target_family = self.species_family[target_species]
+            lens_family_error = -lens_family_probability.gather(
+                1, lens_target_family[:, None]
+            ).squeeze(1).clamp_min(1e-8).log() \
+             / math.log(max(self.family_count, 2))
+            loss = loss + 0.25 * (lens_family_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
+        probability = family_logits.softmax(-1)
+        family_probability = probability.new_zeros(batch, self.family_count)
+        family_probability.scatter_add_(1, self.species_family.expand(batch, -1), probability)
+        target_family = self.species_family[target_species]
+        family_error = -family_probability.gather(
+            1, target_family[:, None]
+        ).squeeze(1).clamp_min(1e-8).log()
+        family_term = (family_error * family_valid).sum() / family_valid.sum().clamp_min(1) \
+                      / math.log(max(self.family_count, 2))
+        loss = loss + 0.1 * family_term
+        if getattr(self, "reader_phase", False):
+            relation_logits = self._identity_detail_logits(environment_pool)
+            calibrated_logits = family_logits.detach() + relation_logits
+            target_family = self.species_family[target_species]
+            same_family = self.species_family.unsqueeze(0) == target_family.unsqueeze(1)
+            within_family = calibrated_logits.masked_fill(
+                ~same_family, -1e4
+            )
+            relation_error = F.cross_entropy(
+                within_family, target_species, reduction="none"
+            ) / math.log(max(self._refined_species.shape[0], 2))
+            loss = loss + 0.25 * (relation_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
+            target_score = calibrated_logits.gather(1, target_species[:, None])
+            soft_rank = 0.5 + torch.sigmoid(
+                (calibrated_logits - target_score) / 0.25
+            ).sum(-1)
+            rank_error = soft_rank.clamp_min(1.0).log() \
+                         / math.log(max(self._refined_species.shape[0], 2))
+            loss = loss + 0.25 * (rank_error * family_valid).sum() \
+                          / family_valid.sum().clamp_min(1)
+        devices = [torch.cuda.current_device()] if loss.is_cuda else []
+        with torch.random.fork_rng(devices=devices):
+            mask = torch.rand(self._refined_species.shape[0], device=loss.device) < 0.15
+            reconstructed = self.species_graph(mask)
+            loss = loss + 0.1 * self.species_graph.masked_reconstruction_loss(
+                mask, self._refined_species.detach(), metric="mse",
+                reconstructed=reconstructed,
+            )
+            reference = self._refined_species.detach()[~mask]
+            reference_family = self.species_family[~mask]
+            prototypes = reference.new_zeros(self.family_count, self.d_model)
+            prototypes.index_add_(0, reference_family, reference)
+            counts = torch.bincount(
+                reference_family, minlength=self.family_count
+            ).to(reference.dtype)
+            prototypes = prototypes / counts[:, None].clamp_min(1.0)
+            logits = F.normalize(reconstructed[mask], dim=-1) \
+                     @ F.normalize(prototypes, dim=-1).t() / 0.1
+            logits = logits.masked_fill((counts == 0).unsqueeze(0), -1e4)
+            target_family = self.species_family[mask]
+            valid = counts[target_family] > 0
+            if valid.any():
+                family_loss = F.cross_entropy(logits[valid], target_family[valid]) \
+                              / math.log(max(self.family_count, 2))
+                loss = loss + 0.03 * family_loss
+        neighbor_identity = context["neighbor_values"].get("identity")
+        if neighbor_identity is not None:
+            query = self.community_metric(self._pool(latent, "community").detach())
+            logits = query @ self._refined_species.detach().t()
+            target = torch.zeros_like(logits)
+            target.scatter_(1, neighbor_identity.long(), 1.0)
+            target.scatter_(1, values[self.species_variable].long().unsqueeze(1), 1.0)
+            target = target / target.sum(-1, keepdim=True).clamp_min(1.0)
+            community = -(target * F.log_softmax(logits, -1)).sum(-1) / math.log(logits.shape[-1])
+            loss = loss + 0.5 * community.mean()
+
+            if getattr(self, "reader_phase", False):
+                masked_valid = family_valid * mask[values[self.species_variable].long()]
+                empty_present = {
+                    name: torch.zeros_like(observed[name]) for name in self.names
+                }
+                with torch.no_grad():
+                    empty_latent = self.encode(
+                        values, empty_present, context, detach_species=True, species_mask=mask
+                    )
+                    baseline = self.community_metric(self._pool(empty_latent, "community"))
+                identity_present = dict(empty_present)
+                identity_present[self.species_variable] = observed[self.species_variable]
+                identity_latent = self.encode(
+                    values, identity_present, context, detach_species=True, species_mask=mask
+                )
+                identity_query = self.community_metric(self._pool(identity_latent, "community"))
+                conditional_logits = (identity_query - baseline) @ self._refined_species.detach().t()
+                conditional_target = torch.zeros_like(conditional_logits)
+                conditional_target.scatter_(1, neighbor_identity.long(), 1.0)
+                conditional_target = conditional_target / conditional_target.sum(
+                    -1, keepdim=True
+                ).clamp_min(1.0)
+                conditional = -(conditional_target * F.log_softmax(
+                    conditional_logits, -1
+                )).sum(-1) / math.log(conditional_logits.shape[-1])
+                loss = loss + 0.1 * (conditional * masked_valid).sum() \
+                       / family_valid.sum().clamp_min(1)
+        if getattr(self, "reader_phase", False) and pollinator_target is not None:
+            pollinator_present = {
+                name: observed[name]
+                if name == self.species_variable or name in self.environment_names
+                else torch.zeros_like(observed[name])
+                for name in self.names
+            }
+            devices = [torch.cuda.current_device()] if loss.is_cuda else []
+            with torch.random.fork_rng(devices=devices), torch.no_grad():
+                pollinator_latent = self.encode(values, pollinator_present, context)
+            pollinator_logits = self.poll_head(
+                self._pollinator_pool(pollinator_latent, isolated=True)
+            )
+            interaction = -(
+                pollinator_target * F.log_softmax(pollinator_logits, -1)
+            ).sum(-1) / math.log(self.poll_head.out_features)
+            loss = loss + 0.25 * (interaction * pollinator_valid).sum() \
+                   / pollinator_valid.sum().clamp_min(1)
+        if getattr(self, "reader_phase", False):
+            photo_row = torch.arange(batch, device=loss.device).remainder(2).bool()
+            structured_present = {
+                name: observed[name] & photo_row
+                if name in {"vision_dino", "vision_bio"}
+                else torch.zeros_like(observed[name])
+                for name in self.names
+            }
+            structured_latent = self.encode(
+                values, structured_present, context, detach_species=True
+            )
+            identity_pool = self._pool(structured_latent, self.species_variable)
+            identity_logits = self._decode_pooled(
+                identity_pool, self.species_variable
+            ) + self._identity_detail_logits(identity_pool)
+            identity_error = F.cross_entropy(
+                identity_logits, target_species, reduction="none"
+            ) / math.log(max(identity_logits.shape[-1], 2))
+            structured_terms = [
+                (identity_error * family_valid).sum()
+                / family_valid.sum().clamp_min(1)
+            ]
+            probability = identity_logits.softmax(-1)
+            family_probability = probability.new_zeros(batch, self.family_count)
+            family_probability.scatter_add_(
+                1, self.species_family.expand(batch, -1), probability
+            )
+            family_error = -family_probability.gather(
+                1, self.species_family[target_species, None]
+            ).squeeze(1).clamp_min(1e-8).log() / math.log(max(self.family_count, 2))
+            structured_terms.append(
+                (family_error * family_valid).sum()
+                / family_valid.sum().clamp_min(1)
+            )
+            trait_names = {
+                "seasonality", "water", "soil_drainage", "form",
+                "plant_type", "growth_rate", "sun", "ease_of_care",
+            }
+            for variable in self.variables:
+                if variable.name not in trait_names:
+                    continue
+                valid = observed[variable.name] & photo_row
+                if valid.any():
+                    error = F.cross_entropy(
+                        self.decode(structured_latent, variable.name),
+                        values[variable.name].long(), reduction="none"
+                    ) / math.log(max(variable.num_classes, 2))
+                    structured_terms.append(
+                        (error * valid).sum() / valid.sum().clamp_min(1)
+                    )
+            if pollinator_target is not None:
+                pollinator_logits = self.poll_head(
+                    self._pollinator_pool(structured_latent)
+                )
+                error = -(pollinator_target * F.log_softmax(
+                    pollinator_logits, -1
+                )).sum(-1) / math.log(self.poll_head.out_features)
+                structured_terms.append(
+                    (error * pollinator_valid).sum()
+                    / pollinator_valid.sum().clamp_min(1)
+                )
+            structured_loss = 0.25 * torch.stack(structured_terms).mean()
+            return loss, structured_loss
+        return loss
+
+
