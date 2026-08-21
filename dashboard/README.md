@@ -61,8 +61,7 @@ findings as they are discovered.
 - Python 3.10+, Flask, numpy, pyyaml; torch only for trace/reconstruct/tracker runs.
   LLM calls are raw REST — no SDK.
 - `GEMINI_API_KEY` required for audit only; `GEMINI_MODEL` overrides the default model.
-- Known setup order for a fresh clone: parent dir named `deepearth` on sys.path,
-  `bash encoders/spacetime/install.sh` (the committed .so is ABI-stale — see F2),
-  AlphaEarth recipe before champion configs (F1). Details: Status wall findings.
+- Install with `pip install -e .`, then build the CUDA extension with
+  `bash encoders/spacetime/install.sh` against the active PyTorch environment.
 - All generated state is gitignored; regenerate with the commands above.
 - Do not edit `state/` by hand — it is overwritten on every audit.

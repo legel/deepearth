@@ -155,13 +155,8 @@ def train(
     if design.init_checkpoint:
         checkpoint = Path(design.init_checkpoint).expanduser()
         state = torch.load(checkpoint, map_location=device, weights_only=True)
-        incompatible = model.load_state_dict(state, strict=False)
-        print(
-            f"initialized from {checkpoint}  "
-            f"missing={len(incompatible.missing_keys)}  "
-            f"unexpected={len(incompatible.unexpected_keys)}",
-            flush=True,
-        )
+        model.load_state_dict(state)
+        print(f"initialized from {checkpoint}", flush=True)
     if checkpoint_steps:
         if checkpoint_dir is None:
             raise ValueError("checkpoint_dir is required when checkpoint_steps are requested")
