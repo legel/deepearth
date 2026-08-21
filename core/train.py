@@ -92,7 +92,7 @@ CONTINUOUS_SIGNALS = (
 )
 
 
-def load(cache_dir: str, device: str, *, subset: dict | None = None):
+def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
     """Restore the canonical California observations and spatial holdout."""
     settings = {
         "adapter": "california",
