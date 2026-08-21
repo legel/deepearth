@@ -1001,11 +1001,12 @@ class MeshModel(nn.Module):
         )
         pooled = pooled + torch.tanh(self.mesh_scale_attention_gate[name]) \
                  * self.mesh_scale_task_norm(scale_attention)
-        deep_read = scale_query
-        for block in self.deep_mesh_reader:
-            deep_read = block(deep_read, selected_keys, selected_fibers)
-        pooled = pooled + torch.tanh(self.deep_mesh_reader_gate[name]) \
-                 * self.deep_mesh_reader_output_norm(deep_read - scale_query)
+        if name != "community" or self.training:
+            deep_read = scale_query
+            for block in self.deep_mesh_reader:
+                deep_read = block(deep_read, selected_keys, selected_fibers)
+            pooled = pooled + torch.tanh(self.deep_mesh_reader_gate[name]) \
+                     * self.deep_mesh_reader_output_norm(deep_read - scale_query)
         prior_fibers = self._mesh_reader_cache["prior_fibers"]
         prior_keys = self._mesh_reader_cache["prior_keys"]
         if mesh_query.dim() == 2:
@@ -1201,7 +1202,10 @@ class MeshModel(nn.Module):
             deep_read - flat_query.squeeze(1)
         ).reshape(batch, tasks, self.d_model)
         deep_gates = torch.stack([
-            self.deep_mesh_reader_gate[name] for name in names
+            self.deep_mesh_reader_gate[name]
+            if name != "community" or self.training
+            else self.deep_mesh_reader_gate[name] * 0.0
+            for name in names
         ]).view(1, tasks, 1)
         pooled = pooled + torch.tanh(deep_gates) * deep_read
 
