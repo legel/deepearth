@@ -1699,7 +1699,10 @@ class MeshModel(nn.Module):
         loss = loss + 0.1 * family_term
         if getattr(self, "reader_phase", False):
             relation_logits = self._identity_detail_logits(environment_pool)
-            calibrated_logits = family_logits.detach() + relation_logits
+            species_logits = niche_logits if getattr(
+                self, "rank_aligned_expansion", False
+            ) else family_logits.detach()
+            calibrated_logits = species_logits + relation_logits
             target_family = self.species_family[target_species]
             same_family = self.species_family.unsqueeze(0) == target_family.unsqueeze(1)
             within_family = calibrated_logits.masked_fill(
