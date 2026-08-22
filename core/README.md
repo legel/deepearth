@@ -35,7 +35,7 @@ The recorded model uses 192-dimensional cells and 22,744,486 parameters. Across 
 The record uses 8,000 mesh steps followed by a 300-step frozen-graph reader fit:
 
 ```text
-python -m deepearth.core.train --cache DATA --seed 1338 --steps 8000 --reader-steps 0
+python -m deepearth.core.train --cache DATA --seed 1338 --steps 8000 --reader-steps 100
 python -m deepearth.core.train --cache DATA --seed 1338 --steps 300 \
   --checkpoint deepearth/core/checkpoint.pt --reader-only
 ```

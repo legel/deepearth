@@ -54,28 +54,24 @@ def prepared_cache(cache: Path) -> Path:
 
 
 def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
-    settings = {
-        "adapter": "california",
-        "cache_dir": str(Path(cache_dir).expanduser().resolve()),
-        "n_neighbors": 16,
-        "holdout": "spatial",
-        "subset": subset,
-        "time_axis": True,
-        "time_km": 50.0,
-        "clay_v2": False,
-    }
-    cache = Path(settings["cache_dir"])
-    prepared = prepared_cache(cache)
+    cache = Path(cache_dir).expanduser().resolve()
     source = base_data.build(
-        settings["adapter"], cache_dir=settings["cache_dir"],
-        n_neighbors=settings["n_neighbors"], device=device,
-        holdout=settings["holdout"], subset=settings["subset"],
-        time_axis=settings["time_axis"], time_km=settings["time_km"],
-        clay_v2=settings["clay_v2"], prepared=str(prepared),
+        "california",
+        cache_dir=str(cache),
+        n_neighbors=16,
+        device=device,
+        holdout="spatial",
+        subset=subset,
+        time_axis=True,
+        time_km=50,
+        clay_v2=False,
+        prepared=str(prepared_cache(cache)),
     )
     expected = {"n_neighbors": 16, "holdout": "spatial", "time_axis": True}
-    mismatched = {key: (getattr(source, key), value) for key, value in expected.items()
-                  if getattr(source, key) != value}
+    mismatched = {
+        key: (getattr(source, key), value)
+        for key, value in expected.items() if getattr(source, key) != value
+    }
     if mismatched:
         raise ValueError(f"prepared cache violates the production data contract: {mismatched}")
     dims = source.variable_dims()
@@ -91,9 +87,9 @@ def load_data(cache_dir: str, device: str, *, subset: dict | None = None):
         {"name": name, "kind": "categorical", "num_classes": int(classes)}
         for name, classes in dims["trait_classes"].items()
     )
-    always = {}
-    if "alphaearth" in source.extra:
-        always["alphaearth"] = int(source.extra["alphaearth"][2])
+    always = {
+        "alphaearth": int(source.extra["alphaearth"][2])
+    } if "alphaearth" in source.extra else {}
     return source, variables, always
 
 
@@ -102,14 +98,7 @@ READER_PARAMETERS = (
     "fiber_query", "fiber_read", "fiber_fuse", "fiber_fusion_gate",
     "sparse_fusion_gate", "decode_query", "decoders.", "community_metric.",
     "species_graph.",
-    "poll_head.", "pollinator_reader_query", "pollinator_reader.",
-    "pollinator_reader_norm.", "pollinator_reader_output_norm.",
-    "pollinator_reader_gate", "pollinator_reader_cell_key",
-    "pollinator_reader_level_key", "pollinator_reader_lens_key",
-    "identity_detail_query", "identity_detail_reader.",
-    "identity_detail_norm.", "identity_detail_output_norm.",
-    "identity_detail_gate", "identity_detail_cell_key",
-    "identity_detail_level_key", "identity_detail_lens_key",
+    "poll_head.", "pollinator_reader.", "identity_detail_reader.",
     "lfmc_head.", "myco_head.", "species_myco_head.", "myco_relation_gate",
     "flower_head.",
     "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
@@ -174,28 +163,7 @@ def build_model(
 
 
 def initialize_model(source, variable_specs, always_dims, device, design):
-    if design.width == 128:
-        model = build_model(source, variable_specs, always_dims, device, design)
-    else:
-        candidate_rng = torch.random.get_rng_state()
-        candidate_cuda_rng = torch.cuda.get_rng_state_all() \
-            if device.startswith("cuda") else None
-        control = build_model(
-            source, variable_specs, always_dims, device,
-            replace(design, width=128),
-        )
-        control_rng = torch.random.get_rng_state()
-        control_cuda_rng = torch.cuda.get_rng_state_all() \
-            if device.startswith("cuda") else None
-        del control
-        if device.startswith("cuda"):
-            torch.cuda.empty_cache()
-            torch.cuda.set_rng_state_all(candidate_cuda_rng)
-        torch.random.set_rng_state(candidate_rng)
-        model = build_model(source, variable_specs, always_dims, device, design)
-        torch.random.set_rng_state(control_rng)
-        if device.startswith("cuda"):
-            torch.cuda.set_rng_state_all(control_cuda_rng)
+    model = build_model(source, variable_specs, always_dims, device, design)
     if design.init_checkpoint:
         checkpoint = Path(design.init_checkpoint).expanduser()
         state = torch.load(checkpoint, map_location=device, weights_only=True)
@@ -394,9 +362,6 @@ def train(
     cache: str,
     device: str,
     design: Experiment = EXPERIMENT,
-    *,
-    checkpoint_steps: frozenset[int] = frozenset(),
-    checkpoint_dir: Path | None = None,
 ):
     if not design.reader_only and not 0 <= design.reader_steps < design.steps:
         raise ValueError("reader_steps must fall between 0 and total steps")
@@ -410,14 +375,6 @@ def train(
     model = initialize_model(
         source, variable_specs, always_dims, device, design
     )
-    if checkpoint_steps:
-        if checkpoint_dir is None:
-            raise ValueError(
-                "checkpoint_dir is required when checkpoint_steps are requested"
-            )
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        if 0 in checkpoint_steps:
-            torch.save(model.state_dict(), checkpoint_dir / "step_000000.pt")
     optimizers, parameters = initialize_optimizers(model, design, device)
     reader_budget = design.steps if design.reader_only else design.reader_steps
     reader_start = 0 if design.reader_only else design.steps - design.reader_steps
@@ -459,9 +416,6 @@ def train(
         for module in model.modules():
             if hasattr(module, "clamp_per_level_scale"):
                 module.clamp_per_level_scale()
-        completed = step + 1
-        if completed in checkpoint_steps:
-            torch.save(model.state_dict(), checkpoint_dir / f"step_{completed:06d}.pt")
         if step % 100 == 0 or step + 1 == design.steps:
             conflict = "" if gradient_cosine is None \
                        else f"  gradient_cosine {gradient_cosine:+.3f}"
@@ -476,7 +430,6 @@ def train(
     torch.save(model.state_dict(), checkpoint)
     print(f"checkpoint: {checkpoint}", flush=True)
     return model, source
-
 
 
 def main() -> None:
