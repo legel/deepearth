@@ -1,35 +1,21 @@
-"""Data adapters: load a source into the arrays a run needs, behind a uniform interface.
-
-Each adapter exposes per-observation variable values, a presence mask, coordinates, a hold-out split, and a
-nearest-neighbor index. Register a new source by adding an adapter and naming it in a config.
-"""
+"""Production data for the California world model."""
 from __future__ import annotations
 import csv, glob
 from pathlib import Path
-from typing import Callable, Dict
 import numpy as np
 import torch
 from scipy.spatial import cKDTree
 
-_REGISTRY: Dict[str, Callable] = {}
-
-
-def register(name: str):
-    def wrap(cls):
-        _REGISTRY[name] = cls
-        return cls
-    return wrap
-
-
 def build(name: str, **kwargs):
-    return _REGISTRY[name](**kwargs)
+    if name != "california":
+        raise ValueError(f"unknown data source: {name}")
+    return California(**kwargs)
 
 
 def _normalize(a):
     return a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-9)
 
 
-@register("california")
 class California:
     """California observations. Each carries coordinates, two ground-image representations, a categorical
     identity, an evolutionary-position vector, and several categorical descriptors. Builds a spatial hold-out
@@ -37,7 +23,6 @@ class California:
 
     _traits = ["plant_type", "growth_rate", "seasonality", "sun", "water", "soil_drainage", "ease_of_care", "form"]
 
-    # attributes that fully define the assembled dataset, so a prepared cache restores it without the glob + KD-tree build (tensors saved on CPU, moved to ``device`` on load)
     _PREPARED_KEYS = ("n", "n_classes", "reference_latitude_deg", "n_neighbors", "holdout", "time_axis", "_time_km",
                       "dims", "trait_classes", "group_names", "binomial", "_tip_labels", "train", "test",
                       "_train_bool", "time_span_days", "time_cut",
@@ -50,117 +35,181 @@ class California:
                  holdout: str = "spatial", subset: dict | None = None, time_axis: bool = False,
                  meta_path: str | None = None, time_km: float = 50.0, prepared: str | None = None,
                  clay_v2: bool = False):
-        # Prepared caches include the selected Clay representation.
         self._clay_v2 = clay_v2
         if prepared and Path(prepared).exists():           # fast path: restore the assembled dataset from a cache
             self._load_prepared(prepared, device); return
         cache = Path(cache_dir); dev = self.device = device; self.n_neighbors = n_neighbors
         self.reference_latitude_deg = 37.0
-        # Observation time: off -> coord[:,3] is a constant 0 (space-only); on -> date normalized to [0,1] over the span, activating the Earth4D temporal axis and neighbor time-offset.
         self.time_axis = time_axis
         self._time_km = float(time_km)                     # normalized-time -> km weight for the neighbor KD-tree
         self._cache = cache
         self._meta_path = meta_path or self._find_meta(cache)
 
-        vocab = np.load(cache / "gbif_vocab.npz", allow_pickle=True)
-        phylo = _normalize(vocab["E1"].astype(np.float32))
-        self.n_classes = len(vocab["global_idx"])
-        gid, cls, lat, lon, dino, bio = [], [], [], [], [], []
-        for f in sorted(glob.glob(str(cache / "gbif_tokens" / "*.npz"))):
-            d = np.load(f)
-            gid.append(d["gbifID"]); cls.append(d["species_local"]); lat.append(d["lat"]); lon.append(d["lon"])
-            dino.append(d["dino"]); bio.append(d["bio"])
-        gid = np.concatenate(gid); cls = np.concatenate(cls).astype(np.int64)
-        lat = np.concatenate(lat).astype(np.float32); lon = np.concatenate(lon).astype(np.float32)
-        dino = _normalize(np.concatenate(dino).astype(np.float32)); bio = _normalize(np.concatenate(bio).astype(np.float32))
-        elev = np.zeros(len(gid), np.float32)
-        if (cache / "gbif_elev.npz").exists():
-            ge = np.load(cache / "gbif_elev.npz"); em = dict(zip(ge["gbifID"].tolist(), ge["elev"].tolist()))
-            elev = np.array([em.get(int(g), 0.0) for g in gid], np.float32)
-        rows = list(csv.DictReader(open(cache / "derived/species_index.csv")))
-        self._tip_labels = [rows[i]["tip_label"] for i in vocab["global_idx"]]   # Newick leaf label per species
-        groups = np.array([rows[i]["family"] for i in vocab["global_idx"]])
-        self.group_names = sorted(set(groups.tolist())); gmap = {g: i for i, g in enumerate(self.group_names)}
-        self.class_group = torch.tensor([gmap[g] for g in groups], device=dev)
-        z = np.load(cache / "derived/traits_syn.npz", allow_pickle=True)
-        self.trait_classes = {t: int(len(z[f"catvocab_{t}"])) for t in self._traits}
-        traits = np.stack([z[f"cat_{t}"][vocab["global_idx"]] for t in self._traits], 1)
+        gid, cls, lat, lon, elev, vocab = self._load_observations(cache, dev)
 
-        self.n = len(gid)
-        self.lat = torch.tensor(lat, device=dev); self.lon = torch.tensor(lon, device=dev)
-        self.elev = torch.tensor(elev, device=dev); self.cls = torch.tensor(cls, device=dev)
-        self.dino = torch.tensor(dino, device=dev); self.bio = torch.tensor(bio, device=dev)
-        # Occurrence-only rows carry no vision signal.
-        self.has_vision = (self.dino.abs().sum(-1) > 1e-6)
-        self.phylo = torch.tensor(phylo, device=dev); self.traits = torch.tensor(traits, device=dev)
-        self.species_text = None                          # frozen BioCLIP-2 text prior per species (rule 26 seed / inductive placement)
-        if (cache / "bioclip_taxon_text_emb.npy").exists():   # taxonomic-string embeddings, already in vocab order [n_classes, 768]
-            self.species_text = torch.tensor(np.load(cache / "bioclip_taxon_text_emb.npy").astype(np.float32), device=dev)
-        elif (cache / "bioclip_text_emb.npy").exists():
-            te = _normalize(np.load(cache / "bioclip_text_emb.npy")[vocab["global_idx"]].astype(np.float32))
-            self.species_text = torch.tensor(te, device=dev)
-        tnorm = self._load_event_time(gid) if self.time_axis else np.zeros_like(lat)
-        self.coords = torch.tensor(np.stack([lat, lon, elev, tnorm], 1), device=dev)
-        self.dims = {"vision_dino": dino.shape[1], "vision_bio": bio.shape[1], "phylo": phylo.shape[1]}
-
-        # Optional subset (bbox and/or families), applied BEFORE the split + neighbor index. Per-observation arrays are reindexed; per-species arrays stay full-length (indexed through ``cls``).
         if subset:
             gid, cls, lat, lon, elev = self._apply_subset(subset, gid, cls, lat, lon, elev, dev)
         self.gbifID = gid                                  # per-observation GBIF id (post-subset order), for I/O bundles
         self.binomial = vocab["binomial"]                  # species-local index -> binomial name (e.g. "Quercus agrifolia")
 
-        # hold-out split: "spatial" hides whole 0.5deg cells (unseen places); "phylo" hides whole families (unseen clades). Held-out members never appear in training.
+        self._split(cls, lat, lon, holdout, holdout_fraction, dev)
+        self._load_scientific_data(cache, gid, dev)
+        if prepared:                                       # persist the assembled dataset for instant reload
+            self._save_prepared(prepared)
+
+    def _load_observations(self, cache, dev):
+        vocab = np.load(cache / "gbif_vocab.npz", allow_pickle=True)
+        phylo = _normalize(vocab["E1"].astype(np.float32))
+        self.n_classes = len(vocab["global_idx"])
+        chunks = [
+            np.load(path) for path in sorted(
+                glob.glob(str(cache / "gbif_tokens" / "*.npz"))
+            )
+        ]
+        arrays = {
+            name: np.concatenate([chunk[name] for chunk in chunks])
+            for name in ("gbifID", "species_local", "lat", "lon", "dino", "bio")
+        }
+        gid = arrays["gbifID"]
+        cls = arrays["species_local"].astype(np.int64)
+        lat, lon = (arrays[name].astype(np.float32) for name in ("lat", "lon"))
+        dino, bio = (
+            _normalize(arrays[name].astype(np.float32))
+            for name in ("dino", "bio")
+        )
+        elev = np.zeros(len(gid), np.float32)
+        elevation = cache / "gbif_elev.npz"
+        if elevation.exists():
+            values = np.load(elevation)
+            lookup = dict(zip(values["gbifID"].tolist(), values["elev"].tolist()))
+            elev = np.array([lookup.get(int(item), 0) for item in gid], np.float32)
+
+        rows = list(csv.DictReader(open(cache / "derived/species_index.csv")))
+        indices = vocab["global_idx"]
+        self._tip_labels = [rows[index]["tip_label"] for index in indices]
+        groups = np.array([rows[index]["family"] for index in indices])
+        self.group_names = sorted(set(groups.tolist()))
+        group_index = {name: index for index, name in enumerate(self.group_names)}
+        self.class_group = torch.tensor(
+            [group_index[name] for name in groups], device=dev
+        )
+        trait_data = np.load(
+            cache / "derived/traits_syn.npz", allow_pickle=True
+        )
+        self.trait_classes = {
+            name: len(trait_data[f"catvocab_{name}"]) for name in self._traits
+        }
+        traits = np.stack([
+            trait_data[f"cat_{name}"][indices] for name in self._traits
+        ], 1)
+
+        self.n = len(gid)
+        for name, values in (
+            ("lat", lat), ("lon", lon), ("elev", elev), ("cls", cls),
+            ("dino", dino), ("bio", bio), ("phylo", phylo),
+            ("traits", traits),
+        ):
+            setattr(self, name, torch.tensor(values, device=dev))
+        self.has_vision = self.dino.abs().sum(-1) > 1e-6
+        self.species_text = self._load_species_text(cache, indices, dev)
+        time = self._load_event_time(gid) if self.time_axis else np.zeros_like(lat)
+        self.coords = torch.tensor(
+            np.stack((lat, lon, elev, time), 1), device=dev
+        )
+        self.dims = {
+            "vision_dino": dino.shape[1], "vision_bio": bio.shape[1],
+            "phylo": phylo.shape[1],
+        }
+        return gid, cls, lat, lon, elev, vocab
+
+    @staticmethod
+    def _load_species_text(cache, indices, dev):
+        taxon = cache / "bioclip_taxon_text_emb.npy"
+        if taxon.exists():
+            values = np.load(taxon).astype(np.float32)
+        else:
+            path = cache / "bioclip_text_emb.npy"
+            if not path.exists():
+                return None
+            values = _normalize(np.load(path)[indices].astype(np.float32))
+        return torch.tensor(values, device=dev)
+
+    def _split(self, cls, lat, lon, holdout, fraction, dev):
         self.holdout = holdout
         rng = np.random.default_rng(0)
         if holdout == "temporal":
-            # forecasting split: the latest fraction (by event time) is held out, so test lies strictly in the future of every train obs. Requires time_axis=True.
             if not self.time_axis:
                 raise ValueError("holdout='temporal' requires time_axis=True")
-            tnorm = self.coords[:, 3].cpu().numpy()
-            cut = np.quantile(tnorm, 1.0 - holdout_fraction)
-            self.test = np.where(tnorm >= cut)[0]
-            self.time_cut = float(cut)
+            time = self.coords[:, 3].cpu().numpy()
+            self.time_cut = float(np.quantile(time, 1 - fraction))
+            self.test = np.where(time >= self.time_cut)[0]
         elif holdout == "phylo":
-            obs_family = self.class_group.cpu().numpy()[cls]
-            families = np.unique(obs_family); rng.shuffle(families)   # only families actually present (post-subset)
-            held = families[: max(1, int(round(len(families) * holdout_fraction)))]
-            self.test = np.where(np.isin(obs_family, held))[0]
+            family = self.class_group.cpu().numpy()[cls]
+            groups = np.unique(family)
+            rng.shuffle(groups)
+            held = groups[:max(1, round(len(groups) * fraction))]
+            self.test = np.where(np.isin(family, held))[0]
         else:
-            cell = (np.floor(lat / 0.5).astype(np.int64) * 10007 + np.floor(lon / 0.5).astype(np.int64))
-            cells = np.unique(cell); rng.shuffle(cells)
-            self.test = np.where(np.isin(cell, cells[: max(1, int(len(cells) * holdout_fraction))]))[0]
+            cell = (
+                np.floor(lat / 0.5).astype(np.int64) * 10007
+                + np.floor(lon / 0.5).astype(np.int64)
+            )
+            cells = np.unique(cell)
+            rng.shuffle(cells)
+            held = cells[:max(1, int(len(cells) * fraction))]
+            self.test = np.where(np.isin(cell, held))[0]
         self.train = np.setdiff1d(np.arange(self.n), self.test)
         self.train_index = torch.tensor(self.train, device=dev)
-        self._train_bool = np.zeros(self.n, bool); self._train_bool[self.train] = True   # for train-only normalization
+        self._train_bool = np.zeros(self.n, bool)
+        self._train_bool[self.train] = True
         self._build_neighbors()
-        self.extra = {}                                    # extra continuous modalities keyed by name
+
+    def _load_scientific_data(self, cache, gid, dev):
+        self.extra = {}
         self._load_modalities(cache, gid, dev)
-        self._load_pollinator(cache, dev)                  # per-species pollinator distribution (GloBI); enables B41/B51-B54
-        lf = cache / "gbif_lfmc.npz"                        # per-species peak fire-season live fuel moisture (B34 ecophysiology)
-        if lf.exists():
-            z = np.load(lf); self.lfmc = torch.tensor(z["lfmc"], device=dev); self.lfmc_valid = torch.tensor(z["has_lfmc"], device=dev)
-        mc = cache / "gbif_mycorrhiza.npz"                  # per-species plant-fungal symbiosis type (B42; FungalRoot genus-level)
-        if mc.exists():
-            z = np.load(mc, allow_pickle=True); self.myco = torch.tensor(z["myco"].astype(np.int64), device=dev)
-            self.myco_valid = torch.tensor(z["has_myco"], device=dev); self.myco_classes = list(z["classes"])
-        fw = cache / "gbif_flower_all.npz"                  # per-observation flowering label (B26 phenology; PhenoVision/iNat)
-        if fw.exists():
-            z = np.load(fw); fmap = {int(g): float(v) for g, v in zip(z["gbifID"], z["flower"])}
-            fl = np.array([fmap.get(int(g), 0.0) for g in gid], np.float32); fv = np.array([int(g) in fmap for g in gid], np.float32)
-            self.flower = torch.tensor(fl, device=dev); self.flower_valid = torch.tensor(fv, device=dev)
-            if hasattr(self, "obs_month"):                 # per-species peak flowering month (B28 ground truth): month with the highest observed flowering rate
-                clsn = self.cls.cpu().numpy(); mon = self.obs_month; fvb = fv > 0.5
-                peak = np.full(self.n_classes, -1, np.int64)
-                for c in np.unique(clsn[fvb]):
-                    mc = fvb & (clsn == c)
-                    if mc.sum() >= 8:
-                        rates = np.array([fl[mc & (mon == mm)].mean() if (mc & (mon == mm)).any() else -1.0 for mm in range(12)])
-                        if (rates >= 0).sum() >= 3: peak[c] = int(np.argmax(rates))
-                self.species_peak_month = torch.tensor(peak, device=dev)
-        self.tree = self._load_tree(cache)                 # the dated phylogeny as message-passing buffers (or None)
-        self.lca_tree, self.lca_tip_row = self._load_tree_lca(cache)   # in-tree-only buffers + tip_row for latent-clade
-        if prepared:                                       # persist the assembled dataset for instant reload
-            self._save_prepared(prepared)
+        self._load_pollinator(cache, dev)
+        lfmc = cache / "gbif_lfmc.npz"
+        if lfmc.exists():
+            values = np.load(lfmc)
+            self.lfmc = torch.tensor(values["lfmc"], device=dev)
+            self.lfmc_valid = torch.tensor(values["has_lfmc"], device=dev)
+        myco = cache / "gbif_mycorrhiza.npz"
+        if myco.exists():
+            values = np.load(myco, allow_pickle=True)
+            self.myco = torch.tensor(values["myco"].astype(np.int64), device=dev)
+            self.myco_valid = torch.tensor(values["has_myco"], device=dev)
+            self.myco_classes = list(values["classes"])
+        self._load_flowering(cache, gid, dev)
+        self.tree = self._load_tree(cache)
+        self.lca_tree, self.lca_tip_row = self._load_tree_lca(cache)
+
+    def _load_flowering(self, cache, gid, dev):
+        path = cache / "gbif_flower_all.npz"
+        if not path.exists():
+            return
+        data = np.load(path)
+        lookup = dict(zip(data["gbifID"].astype(int), data["flower"].astype(float)))
+        flower = np.array([lookup.get(int(item), 0) for item in gid], np.float32)
+        valid = np.array([int(item) in lookup for item in gid], np.float32)
+        self.flower = torch.tensor(flower, device=dev)
+        self.flower_valid = torch.tensor(valid, device=dev)
+        if not hasattr(self, "obs_month"):
+            return
+        classes = self.cls.cpu().numpy()
+        observed = valid > 0.5
+        peak = np.full(self.n_classes, -1, np.int64)
+        for species in np.unique(classes[observed]):
+            rows = observed & (classes == species)
+            if rows.sum() < 8:
+                continue
+            rates = np.array([
+                flower[rows & (self.obs_month == month)].mean()
+                if (rows & (self.obs_month == month)).any() else -1
+                for month in range(12)
+            ])
+            if (rates >= 0).sum() >= 3:
+                peak[species] = rates.argmax()
+        self.species_peak_month = torch.tensor(peak, device=dev)
 
     def _save_prepared(self, path: str) -> None:
         """Pickle the assembled dataset (tensors on CPU, plus extra modalities and tree buffers) for fast reload."""
@@ -208,7 +257,6 @@ class California:
 
         Reads ``eventDate`` (falling back to year/month/day) keyed by gbifID; unparseable dates take the median.
         ``self.time_span_days`` records the physical span so a relative time window uses the same normalized units."""
-        # Prefer a precomputed sidecar (gbifID -> days-since-epoch) so parquet-less machines still get the time axis; else read the parquet with pandas.
         sidecar = Path(self._cache) / "gbif_eventtime.npz"
         if sidecar.exists():
             z = np.load(sidecar)
@@ -317,54 +365,63 @@ class California:
         self.extra[name] = (torch.tensor(arr, device=dev), torch.tensor(have, device=dev), rows.shape[1])
 
     def _load_modalities(self, cache, gid, dev):
-        """Load every extra modality present in the cache, each aligned to the observations by gbifID."""
-        dm = sorted(glob.glob(str(cache / "gbif_daymet_tokens" / "*.npz")))          # Daymet: 180 days x 7 vars
+        dm = sorted(glob.glob(str(cache / "gbif_daymet_tokens" / "*.npz")))
         if dm:
-            ids = np.concatenate([np.load(f)["gbifID"] for f in dm])
-            rows = np.concatenate([np.load(f)["daymet"].reshape(len(np.load(f)["gbifID"]), -1) for f in dm])
+            chunks = [np.load(path) for path in dm]
+            ids = np.concatenate([chunk["gbifID"] for chunk in chunks])
+            rows = np.concatenate([
+                chunk["daymet"].reshape(len(chunk["gbifID"]), -1)
+                for chunk in chunks
+            ])
             self._add_modality("climate", ids, rows, gid, dev, zscore=True)
-        nf = sorted(glob.glob(str(cache / "gbif_naip_tokens" / "*.npz")))            # NAIP DINOv3-SAT493M (RGB, IR)
+
+        nf = sorted(glob.glob(str(cache / "gbif_naip_tokens" / "*.npz")))
         if nf:
-            ids = np.concatenate([np.load(f)["gbifID"] for f in nf])
+            chunks = [np.load(path) for path in nf]
+            ids = np.concatenate([chunk["gbifID"] for chunk in chunks])
             for key, name in (("rgb_pool", "naip_rgb"), ("ir_pool", "naip_ir")):
-                rows = np.concatenate([np.load(f)[key] for f in nf])
+                rows = np.concatenate([chunk[key] for chunk in chunks])
                 self._add_modality(name, ids, rows, gid, dev, normalize=True)
-        clay = cache / "gbif_clay_tokens.npz"                                        # Clay 1.5 Sentinel-2
+
+        clay = cache / "gbif_clay_tokens.npz"
         if getattr(self, "_clay_v2", False) and (cache / "gbif_clay_v2_tokens.npz").exists():
-            clay = cache / "gbif_clay_v2_tokens.npz"                                 # 99.1% coverage, float32
+            clay = cache / "gbif_clay_v2_tokens.npz"
         if clay.exists():
             z = np.load(clay)
-            self._add_modality("clay", z["gbifID"], z["clay"], gid, dev, normalize=True,
-                               valid=z["has_clay"] if "has_clay" in z else None)
-        soil = cache / "gbif_soil_tokens.npz"                                        # SSURGO soil properties (9)
-        if soil.exists():
-            z = np.load(soil)
-            self._add_modality("soil", z["gbifID"], z["soil"], gid, dev, zscore=True, valid=z["has_soil"])
-        topo = cache / "gbif_topo_tokens.npz"                                         # USGS 3DEP 1m microtopography (12)
-        if topo.exists():
-            z = np.load(topo)
-            self._add_modality("topo", z["gbifID"], z["topo"], gid, dev, zscore=True, valid=z["has_topo"])
-        chm = cache / "gbif_chm_tokens.npz"                                            # NAIP-CHM 0.6m canopy+structure (11)
-        if chm.exists():
-            z = np.load(chm)
-            self._add_modality("chm", z["gbifID"], z["chm"], gid, dev, zscore=True, valid=z["has_chm"])
-        hydro = cache / "gbif_hydro_tokens.npz"                                         # HydroSHEDS-style drainage + Winstral wind exposure (6)
-        if hydro.exists():
-            z = np.load(hydro)
-            self._add_modality("hydro", z["gbifID"], z["hydro"], gid, dev, zscore=True, valid=z["has_hydro"])
-        worldclim = cache / "gbif_worldclim_tokens.npz"                    # WorldClim bioclim normals
-        if worldclim.exists():
-            z = np.load(worldclim)
-            self._add_modality("worldclim", z["gbifID"], z["worldclim"], gid, dev, zscore=True, valid=z["has_worldclim"])
-        phenology = cache / "gbif_phenology_tokens.npz"                    # VIIRS annual NDVI cycle
-        if phenology.exists():
-            z = np.load(phenology)
-            self._add_modality("phenology", z["gbifID"], z["phenology"], gid, dev, zscore=True, valid=z["has_phenology"])
-        alphaearth = cache / "gbif_alphaearth_tokens.npz"                  # AlphaEarth annual embedding
+            valid = z["has_clay"] if "has_clay" in z else None
+            self._add_modality(
+                "clay", z["gbifID"], z["clay"], gid, dev,
+                normalize=True, valid=valid,
+            )
+
+        files = (
+            ("soil", "gbif_soil_tokens.npz"),
+            ("topo", "gbif_topo_tokens.npz"),
+            ("chm", "gbif_chm_tokens.npz"),
+            ("hydro", "gbif_hydro_tokens.npz"),
+            ("worldclim", "gbif_worldclim_tokens.npz"),
+            ("phenology", "gbif_phenology_tokens.npz"),
+        )
+        for name, filename in files:
+            path = cache / filename
+            if not path.exists():
+                continue
+            z = np.load(path)
+            self._add_modality(
+                name, z["gbifID"], z[name], gid, dev, zscore=True,
+                valid=z[f"has_{name}"],
+            )
+
+        alphaearth = cache / "gbif_alphaearth_tokens.npz"
         if alphaearth.exists():
             z = np.load(alphaearth)
-            _ae = np.asarray(z["ae"], dtype=np.float32); _valid = np.isfinite(_ae[:, 0])
-            self._add_modality("alphaearth", z["gbifID"], np.nan_to_num(_ae, nan=0.0, posinf=0.0, neginf=0.0), gid, dev, zscore=True, valid=_valid)
+            values = np.asarray(z["ae"], dtype=np.float32)
+            valid = np.isfinite(values[:, 0])
+            values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+            self._add_modality(
+                "alphaearth", z["gbifID"], values, gid, dev,
+                zscore=True, valid=valid,
+            )
 
     @staticmethod
     def _norm_binom(s):                                                                 # genus+species, lowercased (matches build_pollinator.norm)
@@ -401,14 +458,12 @@ class California:
 
     def _frame(self, idx):
         lat = self.lat.cpu().numpy()[idx]; lon = self.lon.cpu().numpy()[idx]; elev = self.elev.cpu().numpy()[idx]
-        # Neighbor selection is spatial by default; with the time axis on, a modest ``time_km`` weight makes it spatio-temporal (space dominates, recency breaks ties).
         t = self.coords[:, 3].cpu().numpy()[idx] * self._time_km if self.time_axis else np.zeros(len(idx), np.float32)
         return np.stack([lat * 111.0, lon * 111.0 * np.cos(np.radians(self.reference_latitude_deg)), elev / 50.0,
                          t], 1)
 
     def _build_neighbors(self):
         tree = cKDTree(self._frame(self.train))
-        # Exclude self by GLOBAL index (duplicate coords can push self past column 0, leaking its own features): query a few extra, stable-sort self to the end, keep the first n_neighbors.
         _, a = tree.query(self._frame(self.train), k=self.n_neighbors + 4); cand = self.train[a]
         is_self = cand == self.train[:, None]
         cand = np.take_along_axis(cand, np.argsort(is_self, axis=1, kind="stable"), axis=1)
