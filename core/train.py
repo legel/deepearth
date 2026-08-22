@@ -485,6 +485,7 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--steps", type=int, default=2291)
+    parser.add_argument("--reader-steps", type=int, default=100)
     parser.add_argument("--checkpoint")
     parser.add_argument("--reader-only", action="store_true")
     args = parser.parse_args()
@@ -494,7 +495,7 @@ def main() -> None:
         base, seed=args.seed, steps=args.steps,
         init_checkpoint=args.checkpoint or "",
         reader_only=args.reader_only,
-        reader_steps=args.steps if args.reader_only else base.reader_steps,
+        reader_steps=args.steps if args.reader_only else args.reader_steps,
     )
     model, source = train(args.cache, args.device, design)
     from deepearth.autoresearch import evaluate
