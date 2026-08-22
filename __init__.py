@@ -1,6 +1,3 @@
-"""DeepEarth: a fibered, hash-addressed multimodal world model.
-
-    from deepearth.core.fusion import DeepEarth, Variable
-"""
+"""DeepEarth: a fibered, Earth4D-addressed planetary world model."""
 
 __version__ = "1.0.0"

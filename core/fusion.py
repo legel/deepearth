@@ -1,8 +1,4 @@
-"""Fibered Earth4D world model.
-
-Every observation writes into an addressed space-time mesh. Query-conditioned
-fusion reads that shared state; raw modalities never bypass it.
-"""
+"""DeepEarth fusion over a fibered, Earth4D-addressed world state."""
 from __future__ import annotations
 
 import math
@@ -13,9 +9,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from deepearth.core.world_mesh import (
+    FiberAdapter,
+    LENSES,
+    LENS_INDEX,
+    MeshNeighborhood,
+    WorldMesh,
+    signal_lens,
+)
 from deepearth.encoders.biological.phylogenomic import SpeciesGraph
-from deepearth.encoders.spacetime.earth4d import ECEF_NORM_FACTOR, to_ecef
-from deepearth.encoders.spacetime.hashencoder.hashgrid import HashEncoder
 
 
 @dataclass(frozen=True)
@@ -25,197 +27,6 @@ class Variable:
     dim: int = 0
     num_classes: int = 0
     reconstruct: bool = True
-
-
-LENSES = ("abiotic", "visual", "biological", "ecological")
-LENS_INDEX = {name: index for index, name in enumerate(LENSES)}
-
-
-def signal_lens(name: str, kind: str | None = None) -> str:
-    if name in {"climate", "soil", "clay", "topo", "hydro", "water", "soil_drainage"}:
-        return "abiotic"
-    if name in {"vision_dino", "naip_rgb", "naip_ir", "alphaearth"}:
-        return "visual"
-    if name in {"identity", "phylo", "vision_bio"} or kind == "categorical":
-        return "biological"
-    return "ecological"
-
-
-class Projection(nn.Module):
-    """Named boundary used by the canonical Earth4D ablation."""
-
-    def __init__(self, source_dim: int, target_dim: int):
-        super().__init__()
-        self.net = nn.Sequential(nn.Linear(source_dim, target_dim), nn.GELU())
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-
-class NestedProjection(nn.Module):
-    """Keep the proven field intact while a new field earns influence."""
-
-    def __init__(self, base: nn.Module, residual: nn.Module, base_dim: int, levels: int):
-        super().__init__()
-        self.base = base
-        self.residual = residual
-        self.base_dim = base_dim
-        self.gate = nn.Parameter(torch.full((levels,), -3.0))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        base, residual = x.split((self.base_dim, x.shape[-1] - self.base_dim), -1)
-        gate = torch.sigmoid(self.gate).view(*([1] * (x.dim() - 2)), -1, 1)
-        return self.base(base) + gate * self.residual(residual)
-
-
-class WorldMesh(nn.Module):
-    """Compact persistent state addressed at several space-time resolutions."""
-
-    def __init__(self, d_model: int, levels: int, log2_size: int, features: int = 2):
-        super().__init__()
-        self.levels = levels
-        self.features = features
-        self.spatial = HashEncoder(
-            input_dim=3,
-            num_levels=levels,
-            level_dim=features,
-            base_resolution=16,
-            per_level_scale=1.7,
-            log2_hashmap_size=log2_size,
-        )
-        self.temporal = nn.ModuleList([
-            HashEncoder(
-                input_dim=3,
-                num_levels=levels,
-                level_dim=features,
-                base_resolution=(16, 16, 4),
-                per_level_scale=(1.7, 1.7, 1.5),
-                log2_hashmap_size=log2_size,
-            )
-            for _ in range(3)
-        ])
-        self.spatial_projection = Projection(features, d_model)
-        self.temporal_projection = Projection(3 * features, d_model)
-
-        residual_rng = torch.random.get_rng_state()
-        self.spatial_residual = HashEncoder(
-            input_dim=3,
-            num_levels=levels,
-            level_dim=4,
-            base_resolution=16,
-            per_level_scale=1.7,
-            log2_hashmap_size=log2_size,
-        )
-        self.temporal_residual = nn.ModuleList([
-            HashEncoder(
-                input_dim=3,
-                num_levels=levels,
-                level_dim=4,
-                base_resolution=(16, 16, 4),
-                per_level_scale=(1.7, 1.7, 1.5),
-                log2_hashmap_size=log2_size,
-            )
-            for _ in range(3)
-        ])
-        residual_s = Projection(4, d_model)
-        residual_t = Projection(12, d_model)
-        self.spatial_projection = NestedProjection(
-            self.spatial_projection, residual_s, features, levels
-        )
-        self.temporal_projection = NestedProjection(
-            self.temporal_projection, residual_t, 3 * features, levels
-        )
-        torch.random.set_rng_state(residual_rng)
-
-    @staticmethod
-    def coordinates(coords: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x, y, z = to_ecef(coords[..., 0], coords[..., 1], coords[..., 2])
-        xyz = torch.stack((x, y, z), -1) / ECEF_NORM_FACTOR
-        xyzt = torch.cat((xyz, coords[..., 3:4] * 2.0 - 1.0), -1)
-        return xyz.clamp(-0.999, 0.999), xyzt.clamp(-0.999, 0.999)
-
-    def raw(self, coords: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        lead = coords.shape[:-1]
-        xyz, xyzt = self.coordinates(coords)
-        spatial = self.spatial(xyz.contiguous(), size=1.0).reshape(*lead, self.levels, self.features)
-        spatial_residual = self.spatial_residual(
-            xyz.contiguous(), size=1.0
-        ).reshape(*lead, self.levels, 4)
-        projections = ((0, 1, 3), (1, 2, 3), (0, 2, 3))
-        temporal = torch.cat([
-            encoder(xyzt[..., axes].contiguous(), size=1.0).reshape(
-                *lead, self.levels, self.features)
-            for encoder, axes in zip(self.temporal, projections)
-        ], -1)
-        temporal_residual = torch.cat([
-            encoder(xyzt[..., axes].contiguous(), size=1.0).reshape(
-                *lead, self.levels, 4
-            )
-            for encoder, axes in zip(self.temporal_residual, projections)
-        ], -1)
-        return torch.cat((spatial, spatial_residual), -1), torch.cat(
-            (temporal, temporal_residual), -1
-        )
-
-
-class RelativeField(nn.Module):
-    """Transferable metric offsets between a query and its neighboring mesh cells."""
-
-    def __init__(self, d_model: int, levels: int, log2_size: int):
-        super().__init__()
-        self.levels = levels
-        self.hash = nn.ModuleList([
-            HashEncoder(
-                input_dim=3,
-                num_levels=levels,
-                level_dim=2,
-                base_resolution=(8, 8, 4),
-                per_level_scale=(1.8, 1.8, 1.5),
-                log2_hashmap_size=log2_size,
-            )
-            for _ in range(4)
-        ])
-        self.project = Projection(8, d_model)
-        self.register_buffer("window", torch.tensor((8000.0, 8000.0, 300.0, 130.0)))
-
-    def forward(self, query: torch.Tensor, neighbors: torch.Tensor) -> torch.Tensor:
-        delta = neighbors - query.unsqueeze(1)
-        north = delta[..., 0] * 111_320.0
-        east = delta[..., 1] * (111_320.0 * math.cos(math.radians(37.0)))
-        offset = torch.stack((north, east, delta[..., 2], delta[..., 3]), -1)
-        norm = (offset / self.window).clamp(-0.999, 0.999)
-        projections = ((0, 1, 2), (0, 1, 3), (1, 2, 3), (0, 2, 3))
-        raw = torch.cat([
-            encoder(norm[..., axes].contiguous(), size=1.0).reshape(
-                *norm.shape[:-1], self.levels, 2)
-            for encoder, axes in zip(self.hash, projections)
-        ], -1)
-        return self.project(raw)
-
-
-class Neighborhood(nn.Module):
-    """Holder keeps the fixed evaluator's relative-Earth4D ablation meaningful."""
-
-    def __init__(self, d_model: int, levels: int, log2_size: int):
-        super().__init__()
-        self.space_time = RelativeField(d_model, levels, log2_size)
-
-
-class SignalAdapter(nn.Module):
-    """Translate one measurement system into the common mesh-state language."""
-
-    def __init__(self, input_dim: int, d_model: int):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(input_dim),
-            nn.Linear(input_dim, d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model),
-        )
-
-    def forward(self, value: torch.Tensor) -> torch.Tensor:
-        return self.net(value.float())
-
 
 class CrossFiberReaderBlock(nn.Module):
     """Refine one scientific query against routed mesh fibers."""
@@ -275,17 +86,17 @@ class DeepEarth(nn.Module):
         self.mesh = WorldMesh(d_model, levels, log2_size)
         self.absolute_proj_s = self.mesh.spatial_projection
         self.absolute_proj_t = self.mesh.temporal_projection
-        self.neighbors = Neighborhood(d_model, levels, max(10, log2_size - 2))
+        self.neighbors = MeshNeighborhood(d_model, levels, max(10, log2_size - 2))
 
         self.adapters = nn.ModuleDict()
         self.category_inputs = nn.ModuleDict()
         for v in variables:
             if v.kind == "continuous":
-                self.adapters[v.name] = SignalAdapter(v.dim, d_model)
+                self.adapters[v.name] = FiberAdapter(v.dim, d_model)
             elif v.name != self.species_variable:
                 self.category_inputs[v.name] = nn.Embedding(v.num_classes, d_model)
         for name, dim in always_dims.items():
-            self.adapters[name] = SignalAdapter(dim, d_model)
+            self.adapters[name] = FiberAdapter(dim, d_model)
 
         graph_args = dict(n_species=source.n_classes, d_model=d_model, n_layers=2, n_heads=4)
         if source.lca_tree is not None:

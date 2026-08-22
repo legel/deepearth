@@ -1,7 +1,9 @@
 # DeepEarth core
 
-`fusion.py` is the single production model. It writes every observation into a fibered, hash-addressed Earth4D mesh
-and lets target queries read only that shared world state.
+The production model has two explicit layers:
+
+- `world_mesh.py` builds the typed, multiresolution Earth4D state.
+- `fusion.py` writes scientific evidence into that state and reads it for prediction.
 
 ```text
 coordinates + time -> multiresolution Earth4D cells
@@ -10,24 +12,23 @@ neighbors ----------> relative mesh cells
                        |
                fibered world state
                        |
-task query ----------> sparse reader/fusion -> prediction
+task query ----------> reader/fusion -> prediction
 ```
 
-Each cell separates abiotic, visual, biological, and ecological lenses. Earth4D provides persistent spatial and
-temporal addressing; the phylogenomic `SpeciesGraph` GNN supplies biological state; cross-scale and cross-lens
-operations compose the mesh before query-conditioned attention reduces it to a prediction. Raw modalities do not
-bypass the mesh.
+The mesh separates abiotic, visual, biological, and ecological fibers within each cell. Earth4D supplies spatial and
+temporal addressing, while `SpeciesGraph` supplies phylogenomic state. Cross-scale and cross-fiber operations compose
+the world state before task-conditioned attention reduces it to a prediction. Raw modalities do not bypass the mesh.
 
-The recorded 22.7M-parameter model uses 192-dimensional mesh cells. It scores
-`0.385343` harmonic and `0.575491` arithmetic across two seeds with the public
-evaluator. The 14.5M, 128-dimensional mesh scored `0.379341` and `0.561834`.
+The recorded model uses 192-dimensional cells and 22,744,486 parameters. Across two public-evaluator seeds it scores
+`0.385343` harmonic and `0.575491` arithmetic. The matched 128-dimensional control scores `0.379341` and
+`0.561834`.
 
-- `fusion.py`: complete model and reconstruction objective.
-- `data.py`: runtime California data adapter.
-- `train.py`: fixed-step optimization and scoring entrypoint.
+- `world_mesh.py`: Earth4D cells, relative fields, and fiber adapters.
+- `fusion.py`: graph integration, mesh updates, reader, and objectives.
+- `data.py`: runtime California data contract.
+- `train.py`: fixed-step training and scoring entrypoint.
 
-The recorded model uses an 8,000-step mesh checkpoint followed by a 300-step
-frozen-graph reader fit:
+The record uses 8,000 mesh steps followed by a 300-step frozen-graph reader fit:
 
 ```text
 python -m deepearth.core.train --cache DATA --seed 1338 --steps 8000
@@ -35,4 +36,5 @@ python -m deepearth.core.train --cache DATA --seed 1338 --steps 300 \
   --checkpoint deepearth/core/checkpoint.pt --reader-only
 ```
 
-The unchanged public evaluator lives in `autoresearch/`; no architecture is duplicated there.
+The public evaluator and score receipts live in `autoresearch/`; the production architecture is defined only in
+`core/`.

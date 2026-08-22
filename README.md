@@ -3,9 +3,9 @@
 
 DeepEarth is a [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multi-modal](https://en.wikipedia.org/wiki/Multimodal_learning), [spatio-temporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) GeoAI model for global environmental intelligence and optimization.
 
-The production model writes environmental, visual, and phylogenomic evidence into a fibered Earth4D mesh, then uses
-query-conditioned fusion to read only that shared state. See [`core/`](core/) for the model and
-[`autoresearch/`](autoresearch/) for its fixed human-capability evaluator.
+DeepEarth writes environmental, visual, and phylogenomic evidence into a fibered Earth4D world state, then answers
+scientific queries by reading that state. See [`core/`](core/) for the model and [`autoresearch/`](autoresearch/) for
+the human-capability evaluator.
 
 ![DeepEarth v.0.01 preview of architecture](docs/deepearth.png)
 
