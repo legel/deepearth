@@ -153,17 +153,30 @@ def build_model(
 
 
 def initialize_model(source, variable_specs, always_dims, device, design):
+    devices = [torch.cuda.current_device()] if device.startswith("cuda") else []
+    if design.width != 128:
+        with torch.random.fork_rng(devices=devices):
+            build_model(
+                source, variable_specs, always_dims, device,
+                replace(design, width=128),
+            )
+            training_rng = torch.random.get_rng_state()
+            training_cuda_rng = (
+                torch.cuda.get_rng_state_all() if devices else None
+            )
     model = build_model(source, variable_specs, always_dims, device, design)
+    if design.width != 128:
+        torch.random.set_rng_state(training_rng)
+        if devices:
+            torch.cuda.set_rng_state_all(training_cuda_rng)
     if design.init_checkpoint:
         checkpoint = Path(design.init_checkpoint).expanduser()
         state = torch.load(checkpoint, map_location=device, weights_only=True)
         model.load_state_dict(state, strict=True)
         print(f"initialized from {checkpoint}", flush=True)
-    for name, parameter in model.named_parameters():
-        expansion = name.startswith(EXPANSION_PARAMETERS)
-        parameter.requires_grad_(
-            expansion if design.reader_only else not expansion
-        )
+    if design.reader_only:
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad_(name.startswith(EXPANSION_PARAMETERS))
     return model
 
 

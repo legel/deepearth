@@ -32,8 +32,9 @@ The recorded model uses 192-dimensional cells and 21,776,977 parameters. Across 
 - `data.py`: runtime California data contract.
 - `train.py`: fixed-step training and scoring entrypoint.
 
-The record uses 7,900 joint steps, 100 reader steps, then a 300-step frozen-graph reader expansion. Expansion layers
-remain frozen until the second command. Repeat both commands for seeds 1337 and 1338:
+The record uses 7,900 joint steps, 100 reader steps, then a 300-step frozen-graph reader expansion. Expansion joins
+the joint phase, pauses for general reader specialization, then trains alone. Repeat both commands for seeds 1337
+and 1338:
 
 ```text
 python -m deepearth.core.train --cache DATA --seed SEED --steps 8000 --reader-steps 100
