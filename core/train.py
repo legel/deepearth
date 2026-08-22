@@ -18,7 +18,7 @@ class Experiment:
     seed: int = 1337
     steps: int = 2291
     batch: int = 256
-    width: int = 192
+    width: int = 128
     levels: int = 12
     hash_log2: int = 14
     latents: int = 16
@@ -116,21 +116,17 @@ READER_PARAMETERS = (
     "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
     "task_mesh_reader_output_norm.", "scale_mesh_reader.",
     "scale_mesh_reader_mix.", "scale_mesh_reader_router.",
+    "deep_mesh_reader.", "deep_mesh_reader_gate.",
+    "deep_mesh_reader_output_norm.",
     "mesh_prior_read_gate.", "mesh_prior_information_gate.",
     "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
     "mesh_condition_gate.", "mesh_condition_norm.",
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
-    "evidence_reader.", "evidence_reader_norm.",
-    "evidence_reader_output_norm.", "evidence_read_gate.",
-    "detail_evidence_tokenizer.", "detail_evidence_subtoken.",
-    "detail_evidence_reader.", "detail_evidence_norm.",
-    "detail_evidence_output_norm.", "detail_evidence_gate.",
-    "evidence_refine_reader.", "evidence_refine_norm.",
-    "evidence_refine_query.", "evidence_refine_router.",
-    "evidence_refine_output_norm.", "evidence_refine_gate.",
-    "evidence_refine_ffn.", "evidence_refine_ffn_gate.",
-    "evidence_parallel_lens_gate.", "evidence_parallel_gate.",
     "species_niche_key", "species_niche_adapter.",
+)
+EXPANSION_PARAMETERS = (
+    "deep_mesh_reader.", "deep_mesh_reader_gate.",
+    "deep_mesh_reader_output_norm.",
 )
 SPECIES_LENS_PARAMETERS = (
     "species_lens_reader.", "species_lens_reader_norm."
@@ -175,28 +171,7 @@ def train(
     if device.startswith("cuda"):
         torch.cuda.manual_seed_all(design.seed)
     source, variable_specs, always_dims = load_data(cache, device)
-    if design.width != 128:
-        candidate_rng = torch.random.get_rng_state()
-        candidate_cuda_rng = torch.cuda.get_rng_state_all() \
-            if device.startswith("cuda") else None
-        control = build_model(
-            source, variable_specs, always_dims, device,
-            replace(design, width=128),
-        )
-        control_rng = torch.random.get_rng_state()
-        control_cuda_rng = torch.cuda.get_rng_state_all() \
-            if device.startswith("cuda") else None
-        del control
-        if device.startswith("cuda"):
-            torch.cuda.empty_cache()
-            torch.cuda.set_rng_state_all(candidate_cuda_rng)
-        torch.random.set_rng_state(candidate_rng)
-        model = build_model(source, variable_specs, always_dims, device, design)
-        torch.random.set_rng_state(control_rng)
-        if device.startswith("cuda"):
-            torch.cuda.set_rng_state_all(control_cuda_rng)
-    else:
-        model = build_model(source, variable_specs, always_dims, device, design)
+    model = build_model(source, variable_specs, always_dims, device, design)
     if design.init_checkpoint:
         checkpoint = Path(design.init_checkpoint).expanduser()
         state = torch.load(checkpoint, map_location=device, weights_only=True)
@@ -274,11 +249,14 @@ def train(
     for step in range(design.steps):
         if design.reader_steps and step == reader_start:
             model.reader_phase = True
+            model.rank_aligned_expansion = design.reader_only
             for name, parameter in model.named_parameters():
                 is_reader = name.startswith(READER_PARAMETERS) \
                             or name.startswith(SPECIES_LENS_PARAMETERS) \
                             or name.startswith(LFMC_LENS_PARAMETERS) \
                             or name.startswith(CALIBRATION_PARAMETERS)
+                if design.reader_only:
+                    is_reader = name.startswith(EXPANSION_PARAMETERS)
                 if design.reader_only and name.startswith("species_graph."):
                     is_reader = False
                 parameter.requires_grad_(is_reader)
@@ -532,11 +510,15 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--steps", type=int, default=2291)
     parser.add_argument("--checkpoint")
+    parser.add_argument("--reader-only", action="store_true")
     args = parser.parse_args()
 
+    base = Experiment()
     design = replace(
-        Experiment(), seed=args.seed, steps=args.steps,
+        base, seed=args.seed, steps=args.steps,
         init_checkpoint=args.checkpoint or "",
+        reader_only=args.reader_only,
+        reader_steps=args.steps if args.reader_only else base.reader_steps,
     )
     model, source = train(args.cache, args.device, design)
     from deepearth.autoresearch import evaluate

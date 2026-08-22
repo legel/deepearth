@@ -217,6 +217,36 @@ class SignalAdapter(nn.Module):
         return self.net(value.float())
 
 
+class CrossFiberReaderBlock(nn.Module):
+    """Refine one scientific query against routed mesh fibers."""
+
+    def __init__(self, d_model: int, n_heads: int):
+        super().__init__()
+        self.query_norm = nn.LayerNorm(d_model)
+        self.token_norm = nn.LayerNorm(d_model)
+        self.attention = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.mlp_norm = nn.LayerNorm(d_model)
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model),
+        )
+
+    def forward(
+        self, query: torch.Tensor, keys: torch.Tensor, values: torch.Tensor
+    ) -> torch.Tensor:
+        update = self.attention(
+            self.query_norm(query).unsqueeze(1),
+            self.token_norm(keys),
+            self.token_norm(values),
+            need_weights=False,
+        )[0].squeeze(1)
+        query = query + update
+        return query + self.mlp(self.mlp_norm(query))
+
+
 class DeepEarth(nn.Module):
     """All scientific evidence must enter fusion through a mesh-state update."""
 
@@ -462,6 +492,16 @@ class DeepEarth(nn.Module):
         scale_reader_rng = torch.random.get_rng_state()
         self.scale_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         torch.random.set_rng_state(scale_reader_rng)
+        deep_reader_rng = torch.random.get_rng_state()
+        self.deep_mesh_reader = nn.ModuleList([
+            CrossFiberReaderBlock(d_model, n_heads) for _ in range(4)
+        ])
+        self.deep_mesh_reader_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(()))
+            for name in self.mesh_read_names
+        })
+        self.deep_mesh_reader_output_norm = nn.LayerNorm(d_model)
+        torch.random.set_rng_state(deep_reader_rng)
         self.scale_mesh_reader_mix = nn.ParameterDict({
             name: nn.Parameter(torch.tensor(
                 -2.0 if name == self.species_variable else 0.0
@@ -504,74 +544,6 @@ class DeepEarth(nn.Module):
         self.mesh_cell_key = nn.Parameter(torch.zeros(2, d_model))
         self.mesh_level_key = nn.Parameter(torch.zeros(levels, d_model))
         self.mesh_lens_key = nn.Parameter(torch.zeros(len(LENSES), d_model))
-        evidence_rng = torch.random.get_rng_state()
-        self.evidence_reader_norm = nn.LayerNorm(d_model)
-        self.evidence_reader = nn.MultiheadAttention(
-            d_model, n_heads, batch_first=True
-        )
-        self.evidence_reader_output_norm = nn.LayerNorm(d_model)
-        self.evidence_read_gate = nn.ParameterDict({
-            name: nn.Parameter(torch.tensor(0.05))
-            for name in self.mesh_read_names
-        })
-        self.evidence_refine_norm = nn.LayerNorm(d_model)
-        self.evidence_refine_query = nn.ModuleList([
-            nn.Linear(d_model, d_model, bias=False) for _ in LENSES
-        ])
-        self.evidence_refine_reader = nn.MultiheadAttention(
-            d_model, n_heads, batch_first=True
-        )
-        self.evidence_refine_router = nn.Linear(d_model, len(LENSES))
-        self.evidence_refine_output_norm = nn.LayerNorm(d_model)
-        self.evidence_refine_gate = nn.ParameterDict({
-            name: nn.Parameter(torch.tensor(0.05))
-            for name in self.mesh_read_names
-        })
-        self.evidence_parallel_lens_gate = nn.ParameterDict({
-            name: nn.Parameter(torch.full((len(LENSES),), 0.5))
-            for name in self.mesh_read_names
-        })
-        self.evidence_parallel_gate = nn.ParameterDict({
-            name: nn.Parameter(torch.zeros(()))
-            for name in self.mesh_read_names
-        })
-        self.evidence_refine_ffn = nn.Sequential(
-            nn.LayerNorm(d_model),
-            nn.Linear(d_model, 2 * d_model),
-            nn.GELU(),
-            nn.Linear(2 * d_model, d_model),
-        )
-        self.evidence_refine_ffn_gate = nn.ParameterDict({
-            name: nn.Parameter(torch.tensor(0.05))
-            for name in self.mesh_read_names
-        })
-        torch.random.set_rng_state(evidence_rng)
-        detail_rng = torch.random.get_rng_state()
-        evidence_dims = {
-            variable.name: variable.dim for variable in variables
-            if variable.kind == "continuous"
-        }
-        evidence_dims.update(always_dims)
-        self.detail_evidence_tokenizer = nn.ModuleDict({
-            name: nn.Sequential(
-                nn.LayerNorm(dim), nn.Linear(dim, 3 * d_model)
-            ) for name, dim in evidence_dims.items()
-        })
-        self.detail_evidence_subtoken = nn.ParameterDict({
-            name: nn.Parameter(torch.randn(3, d_model) * 0.02)
-            for name in evidence_dims
-        })
-        self.detail_evidence_norm = nn.LayerNorm(d_model)
-        self.detail_evidence_reader = nn.MultiheadAttention(
-            d_model, n_heads, batch_first=True
-        )
-        self.detail_evidence_output_norm = nn.LayerNorm(d_model)
-        self.detail_evidence_gate = nn.ParameterDict({
-            name: nn.Parameter(torch.zeros(()))
-            for name in self.mesh_read_names
-        })
-        torch.random.set_rng_state(detail_rng)
-        self.evidence_null = nn.Parameter(torch.zeros(d_model))
         self.fiber_read_norm = nn.LayerNorm(d_model)
         self.fiber_read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.fiber_fuse_norm = nn.LayerNorm(d_model)
@@ -598,11 +570,6 @@ class DeepEarth(nn.Module):
         self._fiber_mesh = None
         self._fiber_prior_mesh = None
         self._latest_fiber_prior = None
-        self._evidence_tokens = None
-        self._evidence_padding = None
-        self._evidence_lenses = None
-        self._detail_evidence_tokens = None
-        self._detail_evidence_padding = None
         self._pool_cache = {}
         self._mesh_reader_cache = None
 
@@ -744,40 +711,6 @@ class DeepEarth(nn.Module):
         for name in self.always_names:
             if name in values:
                 write_mask[name] = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
-        evidence_tokens = [self.evidence_null.expand(context["query_state"].shape[0], -1)]
-        evidence_valid = [torch.ones(
-            context["query_state"].shape[0], dtype=torch.bool,
-            device=context["query_state"].device,
-        )]
-        evidence_lenses = [-1]
-        detail_tokens = [self.evidence_null.expand(context["query_state"].shape[0], -1)]
-        detail_valid = [torch.ones(
-            context["query_state"].shape[0], dtype=torch.bool,
-            device=context["query_state"].device,
-        )]
-        for name in (*self.names, *self.always_names):
-            if name not in values or name not in write_mask:
-                continue
-            evidence_tokens.append(
-                self._adapt(name, values[name], species) + self.write_type[name]
-            )
-            evidence_valid.append(write_mask[name])
-            evidence_lenses.append(self.write_lens[name])
-            if name in self.detail_evidence_tokenizer:
-                details = self.detail_evidence_tokenizer[name](
-                    values[name].float()
-                ).view(values[name].shape[0], 3, self.d_model)
-                details = details + self.detail_evidence_subtoken[name] \
-                                  + self.write_type[name]
-                detail_tokens.extend(details.unbind(1))
-                detail_valid.extend([write_mask[name]] * 3)
-        self._evidence_tokens = torch.stack(evidence_tokens, 1)
-        self._evidence_padding = ~torch.stack(evidence_valid, 1)
-        self._evidence_lenses = torch.tensor(
-            evidence_lenses, device=self._evidence_tokens.device
-        )
-        self._detail_evidence_tokens = torch.stack(detail_tokens, 1)
-        self._detail_evidence_padding = ~torch.stack(detail_valid, 1)
         query_fibers = self._fiber_write(context["query_state"], values, write_mask, species)
         query_priors = self._latest_fiber_prior
         query = self._write(context["query_state"], values, write_mask, species)
@@ -833,117 +766,6 @@ class DeepEarth(nn.Module):
         mesh_read = torch.einsum("blk,bkd->bld", route, mesh_tokens)
         latent = latent + torch.tanh(self.sparse_fusion_gate) * mesh_read
         return latent
-
-    def _read_evidence(
-        self, pooled: torch.Tensor, names: Sequence[str]
-    ) -> torch.Tensor:
-        if self._evidence_tokens is None:
-            return torch.zeros_like(pooled)
-        squeeze = pooled.dim() == 2
-        if squeeze:
-            pooled = pooled.unsqueeze(1)
-        batch, tasks = pooled.shape[:2]
-        evidence = self.evidence_reader_norm(self._evidence_tokens)
-        evidence = evidence.unsqueeze(1).expand(-1, tasks, -1, -1).reshape(
-            batch * tasks, evidence.shape[1], self.d_model
-        )
-        padding = self._evidence_padding.unsqueeze(1).expand(
-            -1, tasks, -1
-        ).reshape(batch * tasks, -1)
-        task_anchor = torch.stack([
-            self.mesh_read_query[name] for name in names
-        ]).view(1, tasks, self.d_model)
-        query = self.evidence_reader_norm(pooled + task_anchor).reshape(
-            batch * tasks, 1, self.d_model
-        )
-        read = self.evidence_reader(
-            query, evidence, evidence,
-            key_padding_mask=padding, need_weights=False,
-        )[0].reshape(batch, tasks, self.d_model)
-        agreement = (
-            F.normalize(pooled, dim=-1) * F.normalize(read, dim=-1)
-        ).sum(-1, keepdim=True)
-        confidence = torch.sigmoid(agreement)
-        gate = torch.stack([
-            self.evidence_read_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        update = torch.tanh(gate) * confidence \
-                 * self.evidence_reader_output_norm(read)
-        state = pooled + update
-
-        detail = self.detail_evidence_norm(self._detail_evidence_tokens)
-        detail = detail.unsqueeze(1).expand(-1, tasks, -1, -1).reshape(
-            batch * tasks, detail.shape[1], self.d_model
-        )
-        detail_padding = self._detail_evidence_padding.unsqueeze(1).expand(
-            -1, tasks, -1
-        ).reshape(batch * tasks, -1)
-        detail_query = self.detail_evidence_norm(state + task_anchor).reshape(
-            batch * tasks, 1, self.d_model
-        )
-        detail_read = self.detail_evidence_reader(
-            detail_query, detail, detail,
-            key_padding_mask=detail_padding, need_weights=False,
-        )[0].reshape(batch, tasks, self.d_model)
-        detail_gate = torch.stack([
-            self.detail_evidence_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        state = state + torch.tanh(detail_gate) \
-                      * self.detail_evidence_output_norm(detail_read)
-
-        normalized_state = self.evidence_refine_norm(state + task_anchor)
-        lens_queries = torch.stack([
-            projection(normalized_state)
-            for projection in self.evidence_refine_query
-        ], 2).reshape(batch * tasks * len(LENSES), 1, self.d_model)
-        lens_evidence = evidence.unsqueeze(1).expand(
-            -1, len(LENSES), -1, -1
-        ).reshape(batch * tasks * len(LENSES), evidence.shape[1], self.d_model)
-        token_lenses = self._evidence_lenses.view(1, 1, -1)
-        lens_index = torch.arange(
-            len(LENSES), device=pooled.device
-        ).view(1, -1, 1)
-        lens_padding = padding.view(batch * tasks, 1, -1).expand(
-            -1, len(LENSES), -1
-        ) | ((token_lenses != -1) & (token_lenses != lens_index))
-        lens_reads = self.evidence_refine_reader(
-            lens_queries, lens_evidence, lens_evidence,
-            key_padding_mask=lens_padding.reshape(
-                batch * tasks * len(LENSES), -1
-            ),
-            need_weights=False,
-        )[0].reshape(batch, tasks, len(LENSES), self.d_model)
-        route = self.evidence_refine_router(normalized_state).softmax(-1)
-        refined = torch.einsum("btl,btld->btd", route, lens_reads)
-        agreement = (
-            F.normalize(state, dim=-1) * F.normalize(refined, dim=-1)
-        ).sum(-1, keepdim=True)
-        refine_gate = torch.stack([
-            self.evidence_refine_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        state = state + torch.tanh(refine_gate) * torch.sigmoid(agreement) \
-                      * self.evidence_refine_output_norm(refined)
-        lens_agreement = (
-            F.normalize(state, dim=-1).unsqueeze(2)
-            * F.normalize(lens_reads, dim=-1)
-        ).sum(-1, keepdim=True)
-        lens_gate = torch.stack([
-            self.evidence_parallel_lens_gate[name] for name in names
-        ]).view(1, tasks, len(LENSES), 1)
-        parallel = (
-            torch.tanh(lens_gate) * torch.sigmoid(lens_agreement)
-            * self.evidence_refine_output_norm(lens_reads)
-        ).sum(2) / math.sqrt(len(LENSES))
-        parallel_gate = torch.stack([
-            self.evidence_parallel_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        state = state + torch.tanh(parallel_gate) * parallel
-        ffn_gate = torch.stack([
-            self.evidence_refine_ffn_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        state = state + torch.tanh(ffn_gate) * self.evidence_refine_ffn(state)
-        update = state - pooled
-        return update.squeeze(1) if squeeze else update
 
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
         if name in self._pool_cache:
@@ -1096,6 +918,12 @@ class DeepEarth(nn.Module):
         )
         pooled = pooled + torch.tanh(self.mesh_scale_attention_gate[name]) \
                  * self.mesh_scale_task_norm(scale_attention)
+        if name != "community" or self.training:
+            deep_read = scale_query
+            for block in self.deep_mesh_reader:
+                deep_read = block(deep_read, selected_keys, selected_fibers)
+            pooled = pooled + torch.tanh(self.deep_mesh_reader_gate[name]) \
+                     * self.deep_mesh_reader_output_norm(deep_read - scale_query)
         prior_fibers = self._mesh_reader_cache["prior_fibers"]
         prior_keys = self._mesh_reader_cache["prior_keys"]
         if mesh_query.dim() == 2:
@@ -1114,7 +942,6 @@ class DeepEarth(nn.Module):
         ), -1)))
         pooled = pooled + torch.tanh(self.mesh_prior_read_gate[name]) * confidence \
                           * self.mesh_prior_task_norm(prior_read)
-        pooled = pooled + self._read_evidence(pooled, (name,))
         self._pool_cache[name] = pooled
         return pooled
 
@@ -1285,6 +1112,20 @@ class DeepEarth(nn.Module):
         pooled = pooled + torch.tanh(attention_gates) \
                  * self.mesh_scale_task_norm(scale_attention)
 
+        deep_read = flat_query.squeeze(1)
+        for block in self.deep_mesh_reader:
+            deep_read = block(deep_read, selected_keys, selected_fibers)
+        deep_read = self.deep_mesh_reader_output_norm(
+            deep_read - flat_query.squeeze(1)
+        ).reshape(batch, tasks, self.d_model)
+        deep_gates = torch.stack([
+            self.deep_mesh_reader_gate[name]
+            if name not in {"community", "identity"} or self.training
+            else self.deep_mesh_reader_gate[name] * 0.0
+            for name in names
+        ]).view(1, tasks, 1)
+        pooled = pooled + torch.tanh(deep_gates) * deep_read
+
         prior_fibers = self._mesh_reader_cache["prior_fibers"]
         prior_keys = self._mesh_reader_cache["prior_keys"]
         prior_score = torch.einsum(
@@ -1310,7 +1151,6 @@ class DeepEarth(nn.Module):
         ]).view(1, tasks, 1)
         pooled = pooled + torch.tanh(prior_gates) * confidence \
                  * self.mesh_prior_task_norm(prior_read)
-        pooled = pooled + self._read_evidence(pooled, names)
         self._pool_cache.update({
             name: pooled[:, index] for index, name in enumerate(names)
         })
@@ -1709,8 +1549,11 @@ class DeepEarth(nn.Module):
                         @ self._refined_species.detach().float().t()
         target_species = values[self.species_variable].long()
         family_valid = observed[self.species_variable]
+        niche_input = environment_pool if getattr(
+            self, "rank_aligned_expansion", False
+        ) else environment_pool.detach()
         niche_logits = self._niche_species_logits(
-            environment_pool.detach(), include_lens=False
+            niche_input, include_lens=False
         )
         species_error = F.cross_entropy(
             niche_logits, target_species, reduction="none"
@@ -1773,7 +1616,10 @@ class DeepEarth(nn.Module):
         loss = loss + 0.1 * family_term
         if getattr(self, "reader_phase", False):
             relation_logits = self._identity_detail_logits(environment_pool)
-            calibrated_logits = family_logits.detach() + relation_logits
+            species_logits = niche_logits if getattr(
+                self, "rank_aligned_expansion", False
+            ) else family_logits.detach()
+            calibrated_logits = species_logits + relation_logits
             target_family = self.species_family[target_species]
             same_family = self.species_family.unsqueeze(0) == target_family.unsqueeze(1)
             within_family = calibrated_logits.masked_fill(
