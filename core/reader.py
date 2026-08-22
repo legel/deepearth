@@ -42,6 +42,40 @@ class CrossFiberReaderBlock(nn.Module):
 class MeshReaderMixin:
     """Read scientific targets from the mesh without owning model state."""
 
+    def _reader_tokens(self) -> dict[str, torch.Tensor]:
+        if self._mesh_reader_cache is not None:
+            return self._mesh_reader_cache
+        fibers = self._fiber_summary.flatten(1, 2)
+        cells = self._fiber_mesh.shape[1]
+        cell_key = torch.cat((
+            self.mesh_cell_key[:1],
+            self.mesh_cell_key[1:].expand(cells - 1, -1),
+        ))
+        scale_fibers = self._fiber_mesh.flatten(1, 3)
+        scale_keys = (
+            self._fiber_mesh
+            + cell_key.view(1, cells, 1, 1, self.d_model)
+            + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+            + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+        ).flatten(1, 3)
+        prior_mesh = self._fiber_prior_mesh.detach()
+        prior_fibers = prior_mesh.flatten(1, 3)
+        prior_keys = (
+            prior_mesh
+            + cell_key.view(1, cells, 1, 1, self.d_model)
+            + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
+            + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+        ).flatten(1, 3)
+        self._mesh_reader_cache = {
+            "fibers": fibers,
+            "task_tokens": self.task_mesh_reader_norm(fibers),
+            "scale_fibers": scale_fibers,
+            "scale_keys": scale_keys,
+            "prior_fibers": prior_fibers,
+            "prior_keys": prior_keys,
+        }
+        return self._mesh_reader_cache
+
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
         if name in self._pool_cache:
             return self._pool_cache[name]
@@ -52,37 +86,8 @@ class MeshReaderMixin:
         if self._fiber_summary is None or name not in self.mesh_read_query:
             self._pool_cache[name] = pooled
             return pooled
-        if self._mesh_reader_cache is None:
-            fibers = self._fiber_summary.flatten(1, 2)
-            cells = self._fiber_mesh.shape[1]
-            cell_key = torch.cat((
-                self.mesh_cell_key[:1],
-                self.mesh_cell_key[1:].expand(cells - 1, -1),
-            ))
-            scale_fibers = self._fiber_mesh.flatten(1, 3)
-            scale_keys = (
-                self._fiber_mesh
-                + cell_key.view(1, cells, 1, 1, self.d_model)
-                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
-                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-            ).flatten(1, 3)
-            prior_mesh = self._fiber_prior_mesh.detach()
-            prior_fibers = prior_mesh.flatten(1, 3)
-            prior_keys = (
-                prior_mesh
-                + cell_key.view(1, cells, 1, 1, self.d_model)
-                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
-                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-            ).flatten(1, 3)
-            self._mesh_reader_cache = {
-                "fibers": fibers,
-                "task_tokens": self.task_mesh_reader_norm(fibers),
-                "scale_fibers": scale_fibers,
-                "scale_keys": scale_keys,
-                "prior_fibers": prior_fibers,
-                "prior_keys": prior_keys,
-            }
-        fibers = self._mesh_reader_cache["fibers"]
+        reader = self._reader_tokens()
+        fibers = reader["fibers"]
         mesh_query = self.mesh_read_query[name]
         if self._fiber_mesh is not None and name in self.mesh_condition_gate:
             mesh_query = mesh_query.unsqueeze(0).expand(fibers.shape[0], -1)
@@ -104,7 +109,7 @@ class MeshReaderMixin:
         task_query = mesh_query if mesh_query.dim() == 2 else mesh_query.unsqueeze(0).expand(
             fibers.shape[0], -1
         )
-        task_tokens = self._mesh_reader_cache["task_tokens"]
+        task_tokens = reader["task_tokens"]
         task_read = self.task_mesh_reader(
             task_query.unsqueeze(1), task_tokens, task_tokens, need_weights=False
         )[0].squeeze(1)
@@ -122,8 +127,8 @@ class MeshReaderMixin:
             self._pool_cache[name] = pooled
             return pooled
         cells = self._fiber_mesh.shape[1]
-        scale_fibers = self._mesh_reader_cache["scale_fibers"]
-        scale_keys = self._mesh_reader_cache["scale_keys"]
+        scale_fibers = reader["scale_fibers"]
+        scale_keys = reader["scale_keys"]
         if mesh_query.dim() == 2:
             scale_score = torch.einsum(
                 "bkd,bd->bk", scale_keys, mesh_query
@@ -199,8 +204,8 @@ class MeshReaderMixin:
                 deep_read = block(deep_read, selected_keys, selected_fibers)
             pooled = pooled + torch.tanh(self.deep_mesh_reader_gate[name]) \
                      * self.deep_mesh_reader_output_norm(deep_read - scale_query)
-        prior_fibers = self._mesh_reader_cache["prior_fibers"]
-        prior_keys = self._mesh_reader_cache["prior_keys"]
+        prior_fibers = reader["prior_fibers"]
+        prior_keys = reader["prior_keys"]
         if mesh_query.dim() == 2:
             prior_score = torch.einsum("bkd,bd->bk", prior_keys, mesh_query)
         else:
@@ -239,40 +244,11 @@ class MeshReaderMixin:
                  .div(math.sqrt(self.d_model)).softmax(-1)
         pooled = torch.einsum("btl,bld->btd", weight, latent)
 
-        if self._mesh_reader_cache is None:
-            fibers = self._fiber_summary.flatten(1, 2)
-            cells = self._fiber_mesh.shape[1]
-            cell_key = torch.cat((
-                self.mesh_cell_key[:1],
-                self.mesh_cell_key[1:].expand(cells - 1, -1),
-            ))
-            scale_fibers = self._fiber_mesh.flatten(1, 3)
-            scale_keys = (
-                self._fiber_mesh
-                + cell_key.view(1, cells, 1, 1, self.d_model)
-                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
-                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-            ).flatten(1, 3)
-            prior_mesh = self._fiber_prior_mesh.detach()
-            prior_fibers = prior_mesh.flatten(1, 3)
-            prior_keys = (
-                prior_mesh
-                + cell_key.view(1, cells, 1, 1, self.d_model)
-                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
-                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-            ).flatten(1, 3)
-            self._mesh_reader_cache = {
-                "fibers": fibers,
-                "task_tokens": self.task_mesh_reader_norm(fibers),
-                "scale_fibers": scale_fibers,
-                "scale_keys": scale_keys,
-                "prior_fibers": prior_fibers,
-                "prior_keys": prior_keys,
-            }
-        fibers = self._mesh_reader_cache["fibers"]
+        reader = self._reader_tokens()
+        fibers = reader["fibers"]
         mesh_queries = torch.stack([self.mesh_read_query[name] for name in names])
         task_query = mesh_queries.unsqueeze(0).expand(batch, -1, -1)
-        task_tokens = self._mesh_reader_cache["task_tokens"]
+        task_tokens = reader["task_tokens"]
         task_tokens = task_tokens.unsqueeze(1).expand(-1, tasks, -1, -1) \
             .reshape(batch * tasks, task_tokens.shape[1], self.d_model)
         task_read = self.task_mesh_reader(
@@ -304,8 +280,8 @@ class MeshReaderMixin:
         ]).view(1, tasks, 1)
         pooled = pooled + torch.tanh(read_gates) * self.mesh_task_norm(mesh_read)
 
-        scale_fibers = self._mesh_reader_cache["scale_fibers"]
-        scale_keys = self._mesh_reader_cache["scale_keys"]
+        scale_fibers = reader["scale_fibers"]
+        scale_keys = reader["scale_keys"]
         scale_score = torch.einsum(
             "bkd,td->btk", scale_keys, mesh_queries
         ) / math.sqrt(self.d_model)
@@ -401,8 +377,8 @@ class MeshReaderMixin:
         ]).view(1, tasks, 1)
         pooled = pooled + torch.tanh(deep_gates) * deep_read
 
-        prior_fibers = self._mesh_reader_cache["prior_fibers"]
-        prior_keys = self._mesh_reader_cache["prior_keys"]
+        prior_fibers = reader["prior_fibers"]
+        prior_keys = reader["prior_keys"]
         prior_score = torch.einsum(
             "bkd,td->btk", prior_keys, mesh_queries
         ) / math.sqrt(self.d_model)
@@ -637,4 +613,3 @@ class MeshReaderMixin:
         query = self.fiber_decode_query[self.names.index(name)]
         weight = torch.softmax((fiber @ query) / math.sqrt(self.d_model), -1)
         return torch.einsum("bl,bld->bd", weight, fiber)
-
