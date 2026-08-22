@@ -183,4 +183,3 @@ class FiberAdapter(nn.Module):
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         return self.net(value.float())
-
