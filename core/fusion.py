@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from deepearth.core.objective import TrainingObjectiveMixin
+from deepearth.core.reader import CrossFiberReaderBlock, MeshReaderMixin
 from deepearth.core.world_mesh import (
     FiberAdapter,
     LENSES,
@@ -28,37 +30,8 @@ class Variable:
     num_classes: int = 0
     reconstruct: bool = True
 
-class CrossFiberReaderBlock(nn.Module):
-    """Refine one scientific query against routed mesh fibers."""
 
-    def __init__(self, d_model: int, n_heads: int):
-        super().__init__()
-        self.query_norm = nn.LayerNorm(d_model)
-        self.token_norm = nn.LayerNorm(d_model)
-        self.attention = nn.MultiheadAttention(
-            d_model, n_heads, batch_first=True
-        )
-        self.mlp_norm = nn.LayerNorm(d_model)
-        self.mlp = nn.Sequential(
-            nn.Linear(d_model, 4 * d_model),
-            nn.GELU(),
-            nn.Linear(4 * d_model, d_model),
-        )
-
-    def forward(
-        self, query: torch.Tensor, keys: torch.Tensor, values: torch.Tensor
-    ) -> torch.Tensor:
-        update = self.attention(
-            self.query_norm(query).unsqueeze(1),
-            self.token_norm(keys),
-            self.token_norm(values),
-            need_weights=False,
-        )[0].squeeze(1)
-        query = query + update
-        return query + self.mlp(self.mlp_norm(query))
-
-
-class DeepEarth(nn.Module):
+class DeepEarth(MeshReaderMixin, TrainingObjectiveMixin, nn.Module):
     """All scientific evidence must enter fusion through a mesh-state update."""
 
     def __init__(
@@ -83,11 +56,28 @@ class DeepEarth(nn.Module):
         self.always_names = tuple(always_dims)
         self._ablate_species = False
 
+        self.reader_phase = False
+        self.rank_aligned_expansion = False
+        self._init_mesh(d_model, levels, log2_size)
+        self._init_inputs(variables, always_dims, d_model)
+        self._init_species(source, d_model)
+        write_names = [*self.names, *self.always_names]
+        self._init_backbone(
+            variables, write_names, d_model, levels, n_latents, n_layers, n_heads
+        )
+        self._init_scientific_heads(source, d_model, levels, n_heads)
+        self._init_mesh_reader(variables, write_names, d_model, levels, n_heads)
+        self._reset_runtime_state()
+
+    def _init_mesh(self, d_model: int, levels: int, log2_size: int) -> None:
         self.mesh = WorldMesh(d_model, levels, log2_size)
         self.absolute_proj_s = self.mesh.spatial_projection
         self.absolute_proj_t = self.mesh.temporal_projection
         self.neighbors = MeshNeighborhood(d_model, levels, max(10, log2_size - 2))
 
+    def _init_inputs(
+        self, variables: Sequence[Variable], always_dims: Dict[str, int], d_model: int
+    ) -> None:
         self.adapters = nn.ModuleDict()
         self.category_inputs = nn.ModuleDict()
         for v in variables:
@@ -98,6 +88,7 @@ class DeepEarth(nn.Module):
         for name, dim in always_dims.items():
             self.adapters[name] = FiberAdapter(dim, d_model)
 
+    def _init_species(self, source, d_model: int) -> None:
         graph_args = dict(n_species=source.n_classes, d_model=d_model, n_layers=2, n_heads=4)
         if source.lca_tree is not None:
             graph_args.update(operator="latent-clade", tree=source.lca_tree,
@@ -136,7 +127,16 @@ class DeepEarth(nn.Module):
             if name in self.names
         )
 
-        write_names = [*self.names, *self.always_names]
+    def _init_backbone(
+        self,
+        variables: Sequence[Variable],
+        write_names: Sequence[str],
+        d_model: int,
+        levels: int,
+        n_latents: int,
+        n_layers: int,
+        n_heads: int,
+    ) -> None:
         self.write_type = nn.ParameterDict({n: nn.Parameter(torch.randn(d_model) * 0.02) for n in write_names})
         residual_rng = torch.random.get_rng_state()
         self.fiber_residual = nn.ModuleDict({
@@ -167,6 +167,9 @@ class DeepEarth(nn.Module):
                 nn.LayerNorm(d_model), nn.Linear(d_model, 2 * d_model), nn.GELU(), nn.Linear(2 * d_model, width)
             )
 
+    def _init_scientific_heads(
+        self, source, d_model: int, levels: int, n_heads: int
+    ) -> None:
         self.community_head = nn.Linear(d_model, source.n_classes)
         self.poll_head = nn.Linear(d_model, source.n_pollinators) if hasattr(source, "n_pollinators") else None
         self.pollinator_reader = None
@@ -242,6 +245,14 @@ class DeepEarth(nn.Module):
             nn.LayerNorm(d_model), nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model)
         )
 
+    def _init_mesh_reader(
+        self,
+        variables: Sequence[Variable],
+        write_names: Sequence[str],
+        d_model: int,
+        levels: int,
+        n_heads: int,
+    ) -> None:
         variable_kind = {v.name: v.kind for v in variables}
         self.write_lens = {
             name: LENS_INDEX[signal_lens(name, variable_kind.get(name))]
@@ -377,6 +388,8 @@ class DeepEarth(nn.Module):
             torch.zeros(levels, len(LENSES), len(LENSES))
         )
         torch.random.set_rng_state(sidecar_rng)
+
+    def _reset_runtime_state(self) -> None:
         self._fiber_summary = None
         self._fiber_mesh = None
         self._fiber_prior_mesh = None
@@ -578,602 +591,6 @@ class DeepEarth(nn.Module):
         latent = latent + torch.tanh(self.sparse_fusion_gate) * mesh_read
         return latent
 
-    def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
-        if name in self._pool_cache:
-            return self._pool_cache[name]
-        base_name = name if name in self.names else self.species_variable
-        query = self.decode_query[self.names.index(base_name)]
-        weight = torch.softmax((latent @ query) / math.sqrt(self.d_model), -1)
-        pooled = torch.einsum("bl,bld->bd", weight, latent)
-        if self._fiber_summary is None or name not in self.mesh_read_query:
-            self._pool_cache[name] = pooled
-            return pooled
-        if self._mesh_reader_cache is None:
-            fibers = self._fiber_summary.flatten(1, 2)
-            cells = self._fiber_mesh.shape[1]
-            cell_key = torch.cat((
-                self.mesh_cell_key[:1],
-                self.mesh_cell_key[1:].expand(cells - 1, -1),
-            ))
-            scale_fibers = self._fiber_mesh.flatten(1, 3)
-            scale_keys = (
-                self._fiber_mesh
-                + cell_key.view(1, cells, 1, 1, self.d_model)
-                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
-                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-            ).flatten(1, 3)
-            prior_mesh = self._fiber_prior_mesh.detach()
-            prior_fibers = prior_mesh.flatten(1, 3)
-            prior_keys = (
-                prior_mesh
-                + cell_key.view(1, cells, 1, 1, self.d_model)
-                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
-                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-            ).flatten(1, 3)
-            self._mesh_reader_cache = {
-                "fibers": fibers,
-                "task_tokens": self.task_mesh_reader_norm(fibers),
-                "scale_fibers": scale_fibers,
-                "scale_keys": scale_keys,
-                "prior_fibers": prior_fibers,
-                "prior_keys": prior_keys,
-            }
-        fibers = self._mesh_reader_cache["fibers"]
-        mesh_query = self.mesh_read_query[name]
-        if self._fiber_mesh is not None and name in self.mesh_condition_gate:
-            mesh_query = mesh_query.unsqueeze(0).expand(fibers.shape[0], -1)
-            query_lenses = self._fiber_mesh[:, 0].mean(1)
-            lens_score = torch.einsum(
-                "bld,bd->bl", query_lenses, mesh_query
-            ) / math.sqrt(self.d_model)
-            condition = torch.einsum(
-                "bl,bld->bd", lens_score.softmax(-1), query_lenses
-            )
-            mesh_query = mesh_query + torch.tanh(
-                self.mesh_condition_gate[name]
-            ) * self.mesh_condition_norm(condition)
-            score = torch.einsum(
-                "bkd,bd->bk", fibers, mesh_query
-            ) / math.sqrt(self.d_model)
-        else:
-            score = (fibers @ mesh_query) / math.sqrt(self.d_model)
-        task_query = mesh_query if mesh_query.dim() == 2 else mesh_query.unsqueeze(0).expand(
-            fibers.shape[0], -1
-        )
-        task_tokens = self._mesh_reader_cache["task_tokens"]
-        task_read = self.task_mesh_reader(
-            task_query.unsqueeze(1), task_tokens, task_tokens, need_weights=False
-        )[0].squeeze(1)
-        pooled = pooled + torch.tanh(self.task_mesh_reader_gate[name]) \
-                 * self.task_mesh_reader_output_norm(task_read)
-        selected_score, selected = score.topk(min(4, score.shape[-1]), dim=-1)
-        selected_fibers = fibers.gather(
-            1, selected[..., None].expand(-1, -1, self.d_model)
-        )
-        mesh_read = torch.einsum(
-            "bk,bkd->bd", selected_score.softmax(-1), selected_fibers
-        )
-        pooled = pooled + torch.tanh(self.mesh_read_gate[name]) * self.mesh_task_norm(mesh_read)
-        if self._fiber_mesh is None:
-            self._pool_cache[name] = pooled
-            return pooled
-        cells = self._fiber_mesh.shape[1]
-        scale_fibers = self._mesh_reader_cache["scale_fibers"]
-        scale_keys = self._mesh_reader_cache["scale_keys"]
-        if mesh_query.dim() == 2:
-            scale_score = torch.einsum(
-                "bkd,bd->bk", scale_keys, mesh_query
-            ) / math.sqrt(self.d_model)
-        else:
-            scale_score = (scale_keys @ mesh_query) / math.sqrt(self.d_model)
-        dense_weight = scale_score.softmax(-1)
-        selected_score, scale_index = scale_score.topk(
-            min(8, scale_score.shape[-1]), dim=-1
-        )
-        sparse_weight = torch.zeros_like(scale_score).scatter(
-            -1, scale_index, selected_score.softmax(-1)
-        )
-        route = sparse_weight.detach() + dense_weight - dense_weight.detach()
-        scale_read = torch.einsum(
-            "bk,bkd->bd", route, scale_fibers
-        )
-        pooled = pooled + torch.tanh(self.mesh_scale_read_gate[name]) * self.mesh_scale_task_norm(
-            scale_read
-        )
-        score_grid = scale_score.reshape(
-            -1, cells, self.levels, len(LENSES)
-        )
-        lens = torch.arange(len(LENSES), device=scale_score.device)
-        query_level = score_grid[:, 0].argmax(1)
-        query_index = query_level * len(LENSES) + lens
-        neighbor_position = score_grid[:, 1:].reshape(
-            scale_score.shape[0], -1, len(LENSES)
-        ).argmax(1)
-        neighbor_cell = neighbor_position.div(self.levels, rounding_mode="floor") + 1
-        neighbor_level = neighbor_position.remainder(self.levels)
-        neighbor_index = (
-            neighbor_cell * self.levels + neighbor_level
-        ) * len(LENSES) + lens
-        attention_index = torch.cat((query_index, neighbor_index), -1)
-        selected_keys = scale_keys.gather(
-            1, attention_index[..., None].expand(-1, -1, self.d_model)
-        )
-        selected_fibers = scale_fibers.gather(
-            1, attention_index[..., None].expand(-1, -1, self.d_model)
-        )
-        scale_query = task_query + self.task_mesh_reader_output_norm(task_read)
-        shared_scale_attention = self.task_mesh_reader(
-            scale_query.unsqueeze(1),
-            self.task_mesh_reader_norm(selected_keys),
-            self.task_mesh_reader_norm(selected_fibers),
-            need_weights=False,
-        )[0].squeeze(1)
-        dedicated_scale_attention = self.scale_mesh_reader(
-            scale_query.unsqueeze(1),
-            self.task_mesh_reader_norm(selected_keys),
-            self.task_mesh_reader_norm(selected_fibers),
-            need_weights=False,
-        )[0].squeeze(1)
-        reader_features = torch.cat((
-            task_query,
-            shared_scale_attention,
-            dedicated_scale_attention,
-            (shared_scale_attention - dedicated_scale_attention).abs(),
-        ), -1)
-        reader_mix = torch.sigmoid(
-            self.scale_mesh_reader_mix[name]
-            + self.scale_mesh_reader_router(reader_features).squeeze(-1)
-        ).unsqueeze(-1)
-        scale_attention = torch.lerp(
-            shared_scale_attention, dedicated_scale_attention, reader_mix
-        )
-        pooled = pooled + torch.tanh(self.mesh_scale_attention_gate[name]) \
-                 * self.mesh_scale_task_norm(scale_attention)
-        if name != "community" or self.training:
-            deep_read = scale_query
-            for block in self.deep_mesh_reader:
-                deep_read = block(deep_read, selected_keys, selected_fibers)
-            pooled = pooled + torch.tanh(self.deep_mesh_reader_gate[name]) \
-                     * self.deep_mesh_reader_output_norm(deep_read - scale_query)
-        prior_fibers = self._mesh_reader_cache["prior_fibers"]
-        prior_keys = self._mesh_reader_cache["prior_keys"]
-        if mesh_query.dim() == 2:
-            prior_score = torch.einsum("bkd,bd->bk", prior_keys, mesh_query)
-        else:
-            prior_score = prior_keys @ mesh_query
-        prior_score = prior_score / math.sqrt(self.d_model)
-        selected_score, selected = prior_score.topk(min(16, prior_score.shape[-1]), dim=-1)
-        prior_read = torch.einsum(
-            "bk,bkd->bd",
-            selected_score.softmax(-1),
-            prior_fibers.gather(1, selected[..., None].expand(-1, -1, self.d_model)),
-        )
-        confidence = torch.sigmoid(self.mesh_prior_information_gate(torch.cat((
-            pooled, prior_read, pooled * prior_read, (pooled - prior_read).abs(),
-        ), -1)))
-        pooled = pooled + torch.tanh(self.mesh_prior_read_gate[name]) * confidence \
-                          * self.mesh_prior_task_norm(prior_read)
-        self._pool_cache[name] = pooled
-        return pooled
-
-    def _prime_pool_cache(self, latent: torch.Tensor) -> None:
-        names = tuple(
-            name for name in self.mesh_read_names
-            if name not in self.mesh_condition_gate and name != "community"
-        )
-        if not names or self._fiber_summary is None or self._fiber_mesh is None:
-            return
-        batch = latent.shape[0]
-        tasks = len(names)
-        queries = torch.stack([
-            self.decode_query[self.names.index(
-                name if name in self.names else self.species_variable
-            )]
-            for name in names
-        ])
-        weight = torch.einsum("bld,td->btl", latent, queries) \
-                 .div(math.sqrt(self.d_model)).softmax(-1)
-        pooled = torch.einsum("btl,bld->btd", weight, latent)
-
-        if self._mesh_reader_cache is None:
-            fibers = self._fiber_summary.flatten(1, 2)
-            cells = self._fiber_mesh.shape[1]
-            cell_key = torch.cat((
-                self.mesh_cell_key[:1],
-                self.mesh_cell_key[1:].expand(cells - 1, -1),
-            ))
-            scale_fibers = self._fiber_mesh.flatten(1, 3)
-            scale_keys = (
-                self._fiber_mesh
-                + cell_key.view(1, cells, 1, 1, self.d_model)
-                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
-                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-            ).flatten(1, 3)
-            prior_mesh = self._fiber_prior_mesh.detach()
-            prior_fibers = prior_mesh.flatten(1, 3)
-            prior_keys = (
-                prior_mesh
-                + cell_key.view(1, cells, 1, 1, self.d_model)
-                + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
-                + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
-            ).flatten(1, 3)
-            self._mesh_reader_cache = {
-                "fibers": fibers,
-                "task_tokens": self.task_mesh_reader_norm(fibers),
-                "scale_fibers": scale_fibers,
-                "scale_keys": scale_keys,
-                "prior_fibers": prior_fibers,
-                "prior_keys": prior_keys,
-            }
-        fibers = self._mesh_reader_cache["fibers"]
-        mesh_queries = torch.stack([self.mesh_read_query[name] for name in names])
-        task_query = mesh_queries.unsqueeze(0).expand(batch, -1, -1)
-        task_tokens = self._mesh_reader_cache["task_tokens"]
-        task_tokens = task_tokens.unsqueeze(1).expand(-1, tasks, -1, -1) \
-            .reshape(batch * tasks, task_tokens.shape[1], self.d_model)
-        task_read = self.task_mesh_reader(
-            task_query.reshape(batch * tasks, 1, self.d_model),
-            task_tokens,
-            task_tokens,
-            need_weights=False,
-        )[0].reshape(batch, tasks, self.d_model)
-        task_gates = torch.stack([
-            self.task_mesh_reader_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        pooled = pooled + torch.tanh(task_gates) \
-                 * self.task_mesh_reader_output_norm(task_read)
-
-        fiber_score = torch.einsum(
-            "bfd,td->btf", fibers, mesh_queries
-        ) / math.sqrt(self.d_model)
-        selected_score, selected = fiber_score.topk(
-            min(4, fiber_score.shape[-1]), dim=-1
-        )
-        selected_fibers = fibers.unsqueeze(1).expand(-1, tasks, -1, -1).gather(
-            2, selected[..., None].expand(-1, -1, -1, self.d_model)
-        )
-        mesh_read = torch.einsum(
-            "btk,btkd->btd", selected_score.softmax(-1), selected_fibers
-        )
-        read_gates = torch.stack([
-            self.mesh_read_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        pooled = pooled + torch.tanh(read_gates) * self.mesh_task_norm(mesh_read)
-
-        scale_fibers = self._mesh_reader_cache["scale_fibers"]
-        scale_keys = self._mesh_reader_cache["scale_keys"]
-        scale_score = torch.einsum(
-            "bkd,td->btk", scale_keys, mesh_queries
-        ) / math.sqrt(self.d_model)
-        dense_weight = scale_score.softmax(-1)
-        selected_score, scale_index = scale_score.topk(
-            min(8, scale_score.shape[-1]), dim=-1
-        )
-        sparse_weight = torch.zeros_like(scale_score).scatter(
-            -1, scale_index, selected_score.softmax(-1)
-        )
-        route = sparse_weight.detach() + dense_weight - dense_weight.detach()
-        scale_read = torch.einsum(
-            "btk,bkd->btd", route, scale_fibers
-        )
-        scale_gates = torch.stack([
-            self.mesh_scale_read_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        pooled = pooled + torch.tanh(scale_gates) \
-                 * self.mesh_scale_task_norm(scale_read)
-
-        cells = self._fiber_mesh.shape[1]
-        score_grid = scale_score.reshape(
-            batch, tasks, cells, self.levels, len(LENSES)
-        )
-        lens = torch.arange(len(LENSES), device=scale_score.device)
-        query_level = score_grid[:, :, 0].argmax(2)
-        query_index = query_level * len(LENSES) + lens
-        neighbor_position = score_grid[:, :, 1:].reshape(
-            batch, tasks, -1, len(LENSES)
-        ).argmax(2)
-        neighbor_cell = neighbor_position.div(
-            self.levels, rounding_mode="floor"
-        ) + 1
-        neighbor_level = neighbor_position.remainder(self.levels)
-        neighbor_index = (
-            neighbor_cell * self.levels + neighbor_level
-        ) * len(LENSES) + lens
-        attention_index = torch.cat((query_index, neighbor_index), -1)
-        expanded_scale_keys = scale_keys.unsqueeze(1).expand(-1, tasks, -1, -1)
-        expanded_scale_fibers = scale_fibers.unsqueeze(1).expand(-1, tasks, -1, -1)
-        selected_keys = expanded_scale_keys.gather(
-            2, attention_index[..., None].expand(-1, -1, -1, self.d_model)
-        )
-        selected_fibers = expanded_scale_fibers.gather(
-            2, attention_index[..., None].expand(-1, -1, -1, self.d_model)
-        )
-        scale_query = task_query + self.task_mesh_reader_output_norm(task_read)
-        selected_keys = self.task_mesh_reader_norm(selected_keys).reshape(
-            batch * tasks, -1, self.d_model
-        )
-        selected_fibers = self.task_mesh_reader_norm(selected_fibers).reshape(
-            batch * tasks, -1, self.d_model
-        )
-        flat_query = scale_query.reshape(batch * tasks, 1, self.d_model)
-        shared_attention = self.task_mesh_reader(
-            flat_query, selected_keys, selected_fibers, need_weights=False
-        )[0].reshape(batch, tasks, self.d_model)
-        dedicated_attention = self.scale_mesh_reader(
-            flat_query, selected_keys, selected_fibers, need_weights=False
-        )[0].reshape(batch, tasks, self.d_model)
-        reader_features = torch.cat((
-            task_query,
-            shared_attention,
-            dedicated_attention,
-            (shared_attention - dedicated_attention).abs(),
-        ), -1)
-        reader_bias = torch.stack([
-            self.scale_mesh_reader_mix[name] for name in names
-        ]).view(1, tasks)
-        reader_mix = torch.sigmoid(
-            reader_bias + self.scale_mesh_reader_router(reader_features).squeeze(-1)
-        ).unsqueeze(-1)
-        scale_attention = torch.lerp(
-            shared_attention, dedicated_attention, reader_mix
-        )
-        attention_gates = torch.stack([
-            self.mesh_scale_attention_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        pooled = pooled + torch.tanh(attention_gates) \
-                 * self.mesh_scale_task_norm(scale_attention)
-
-        deep_read = flat_query.squeeze(1)
-        for block in self.deep_mesh_reader:
-            deep_read = block(deep_read, selected_keys, selected_fibers)
-        deep_read = self.deep_mesh_reader_output_norm(
-            deep_read - flat_query.squeeze(1)
-        ).reshape(batch, tasks, self.d_model)
-        deep_gates = torch.stack([
-            self.deep_mesh_reader_gate[name]
-            if name not in {"community", "identity"} or self.training
-            else self.deep_mesh_reader_gate[name] * 0.0
-            for name in names
-        ]).view(1, tasks, 1)
-        pooled = pooled + torch.tanh(deep_gates) * deep_read
-
-        prior_fibers = self._mesh_reader_cache["prior_fibers"]
-        prior_keys = self._mesh_reader_cache["prior_keys"]
-        prior_score = torch.einsum(
-            "bkd,td->btk", prior_keys, mesh_queries
-        ) / math.sqrt(self.d_model)
-        selected_score, selected = prior_score.topk(
-            min(16, prior_score.shape[-1]), dim=-1
-        )
-        selected_prior = prior_fibers.unsqueeze(1).expand(
-            -1, tasks, -1, -1
-        ).gather(2, selected[..., None].expand(-1, -1, -1, self.d_model))
-        prior_read = torch.einsum(
-            "btk,btkd->btd", selected_score.softmax(-1), selected_prior
-        )
-        confidence = torch.sigmoid(self.mesh_prior_information_gate(torch.cat((
-            pooled,
-            prior_read,
-            pooled * prior_read,
-            (pooled - prior_read).abs(),
-        ), -1)))
-        prior_gates = torch.stack([
-            self.mesh_prior_read_gate[name] for name in names
-        ]).view(1, tasks, 1)
-        pooled = pooled + torch.tanh(prior_gates) * confidence \
-                 * self.mesh_prior_task_norm(prior_read)
-        self._pool_cache.update({
-            name: pooled[:, index] for index, name in enumerate(names)
-        })
-
-    def _pollinator_pool(self, latent: torch.Tensor, *, isolated: bool = False) -> torch.Tensor:
-        pooled = self._pool(latent, "pollinator")
-        if self.pollinator_reader is None or self._fiber_mesh is None:
-            return pooled
-        cells = self._fiber_mesh.shape[1]
-        fibers = self._fiber_mesh.flatten(1, 3)
-        if isolated:
-            pooled = pooled.detach()
-            fibers = fibers.detach()
-        keys = self.pollinator_reader_norm(fibers)
-        cell_key = torch.cat((
-            self.pollinator_reader_cell_key[:1],
-            self.pollinator_reader_cell_key[1:].expand(cells - 1, -1),
-        ))
-        route_keys = (
-            keys.reshape(-1, cells, self.levels, len(LENSES), self.d_model)
-            + cell_key.view(1, cells, 1, 1, self.d_model)
-            + self.pollinator_reader_level_key.view(
-                1, 1, self.levels, 1, self.d_model
-            )
-            + self.pollinator_reader_lens_key.view(
-                1, 1, 1, len(LENSES), self.d_model
-            )
-        ).flatten(1, 3)
-        score = torch.einsum(
-            "bkd,bd->bk", route_keys, pooled
-        ) / math.sqrt(self.d_model)
-        selected_score, selected_index = score.topk(
-            min(16, score.shape[-1]), dim=-1
-        )
-        selected = keys.gather(
-            1, selected_index[..., None].expand(-1, -1, self.d_model)
-        )
-        routed = torch.einsum(
-            "bk,bkd->bd", selected_score.softmax(-1), selected
-        )
-        query = self.pollinator_reader_query.unsqueeze(0) \
-                + pooled.unsqueeze(1) + routed.unsqueeze(1)
-        read = self.pollinator_reader(query, selected, selected, need_weights=False)[0].mean(1)
-        return pooled + torch.tanh(self.pollinator_reader_gate) \
-                        * self.pollinator_reader_output_norm(read)
-
-    def _calibrate_pollinator_logits(self, logits: torch.Tensor) -> torch.Tensor:
-        temperature = self.pollinator_log_temperature.clamp(-2.0, 2.0).exp()
-        return logits / temperature
-
-    def _lfmc_lens_residual(self, pooled: torch.Tensor) -> torch.Tensor:
-        query = self.lfmc_lens_reader_norm(
-            pooled.detach().float()
-        ).unsqueeze(1)
-        lenses = self.lfmc_lens_reader_norm(
-            self._fiber_mesh[:, 0].mean(1).detach().float()
-        )
-        read = self.lfmc_lens_reader(
-            query, lenses, lenses, need_weights=False
-        )[0].squeeze(1)
-        return self.lfmc_lens_head(read).squeeze(-1)
-
-    def _lfmc_log_prediction(self, pooled: torch.Tensor) -> torch.Tensor:
-        prediction = self.lfmc_head(pooled).squeeze(-1)
-        if self._fiber_mesh is not None:
-            prediction = prediction + self._lfmc_lens_residual(pooled)
-        return prediction
-
-    def _decode_pooled(self, pooled: torch.Tensor, name: str) -> torch.Tensor:
-        if name == self.species_variable:
-            return pooled @ self._refined_species.t()
-        return self.decoders[name](pooled)
-
-    def _species_lens_residual(
-        self, pooled: torch.Tensor, key: torch.Tensor
-    ) -> torch.Tensor:
-        query = self.species_lens_reader_norm(
-            pooled.detach().float()
-        ).unsqueeze(1)
-        lenses = self.species_lens_reader_norm(
-            self._fiber_mesh[:, 0].mean(1).detach().float()
-        )
-        read = self.species_lens_reader(
-            query, lenses, lenses, need_weights=False
-        )[0].squeeze(1)
-        residual = read @ key.detach().t()
-        family_sum = residual.new_zeros(residual.shape[0], self.family_count)
-        family_sum.scatter_add_(
-            1, self.species_family.expand(residual.shape[0], -1), residual
-        )
-        family_size = torch.bincount(
-            self.species_family, minlength=self.family_count
-        ).clamp_min(1).to(residual.dtype)
-        family_mean = family_sum / family_size
-        return residual - family_mean.gather(
-            1, self.species_family.expand(residual.shape[0], -1)
-        )
-
-    def _niche_species_logits(
-        self, pooled: torch.Tensor, include_lens: bool = True
-    ) -> torch.Tensor:
-        key = self._refined_species.detach().float() \
-              + self.species_niche_key.float()
-        pooled = pooled.float()
-        base = pooled @ key.t()
-        residual = self.species_niche_adapter(pooled) @ key.t()
-        family_sum = residual.new_zeros(residual.shape[0], self.family_count)
-        family_sum.scatter_add_(
-            1, self.species_family.expand(residual.shape[0], -1), residual
-        )
-        family_size = torch.bincount(
-            self.species_family, minlength=self.family_count
-        ).clamp_min(1).to(residual.dtype)
-        family_mean = family_sum / family_size
-        residual = residual - family_mean.gather(
-            1, self.species_family.expand(residual.shape[0], -1)
-        )
-        logits = base + residual
-        if include_lens:
-            logits = logits + self._species_lens_residual(pooled, key)
-        return logits
-
-    def _hierarchical_family_read(self, species_logits: torch.Tensor) -> torch.Tensor:
-        """Read the strongest species inside the mesh posterior's strongest family."""
-        logits = species_logits.float()
-        family = self.species_family.expand(logits.shape[0], -1)
-        family_mass = logits.new_zeros(logits.shape[0], self.family_count)
-        family_mass.scatter_add_(1, family, logits.softmax(-1))
-        winning_family = family_mass.argmax(-1)
-        eligible = self.species_family.unsqueeze(0) == winning_family.unsqueeze(1)
-        selected = logits.masked_fill(~eligible, -torch.inf).argmax(-1)
-        top = species_logits.amax(-1)
-        return species_logits.scatter(1, selected.unsqueeze(1), top.unsqueeze(1) + 1e-4)
-
-    def _pollinator_species_posterior(self, species_logits: torch.Tensor) -> torch.Tensor:
-        """Marginalize uncertain plant identity through known pollinator relations."""
-        k = min(64, species_logits.shape[-1])
-        weight, species = species_logits.float().softmax(-1).topk(k, -1)
-        index = self.poll_species_idx[species].clamp(0, self.poll_head.out_features - 1)
-        mass = weight.unsqueeze(-1) * self.poll_species_frq[species]
-        mixture = species_logits.new_zeros(
-            species_logits.shape[0], self.poll_head.out_features, dtype=torch.float32
-        )
-        mixture.scatter_add_(1, index.flatten(1), mass.flatten(1))
-        mixture = mixture / mixture.sum(-1, keepdim=True).clamp_min(1e-8)
-        return mixture.clamp_min(1e-8).log()
-
-    def _identity_detail_logits(self, pooled: torch.Tensor) -> torch.Tensor:
-        cells = self._fiber_mesh.shape[1]
-        fibers = self._fiber_mesh.flatten(1, 3).detach()
-        keys = self.identity_detail_norm(fibers)
-        cell_key = torch.cat((
-            self.identity_detail_cell_key[:1],
-            self.identity_detail_cell_key[1:].expand(cells - 1, -1),
-        ))
-        route_keys = (
-            keys.reshape(-1, cells, self.levels, len(LENSES), self.d_model)
-            + cell_key.view(1, cells, 1, 1, self.d_model)
-            + self.identity_detail_level_key.view(
-                1, 1, self.levels, 1, self.d_model
-            )
-            + self.identity_detail_lens_key.view(
-                1, 1, 1, len(LENSES), self.d_model
-            )
-        ).flatten(1, 3)
-        score = torch.einsum(
-            "bkd,bd->bk", route_keys, pooled
-        ) / math.sqrt(self.d_model)
-        selected_score, selected_index = score.topk(
-            min(16, score.shape[-1]), dim=-1
-        )
-        selected = keys.gather(
-            1, selected_index[..., None].expand(-1, -1, self.d_model)
-        )
-        routed = torch.einsum(
-            "bk,bkd->bd", selected_score.softmax(-1), selected
-        )
-        query = self.identity_detail_query.unsqueeze(0) \
-                + pooled.unsqueeze(1) + routed.unsqueeze(1)
-        read = self.identity_detail_reader(
-            query, selected, selected, need_weights=False
-        )[0].mean(1)
-        read = torch.tanh(self.identity_detail_gate) \
-               * self.identity_detail_output_norm(read)
-        logits = read @ self._refined_species.detach().t()
-        family = self.species_family.expand(logits.shape[0], -1)
-        family_sum = logits.new_zeros(logits.shape[0], self.family_count)
-        family_sum.scatter_add_(1, family, logits)
-        family_size = torch.bincount(
-            self.species_family, minlength=self.family_count
-        ).clamp_min(1).to(logits.dtype)
-        family_mean = family_sum / family_size
-        return logits - family_mean.gather(1, family)
-
-    def _myco_logits(self, latent: torch.Tensor) -> torch.Tensor:
-        base = self.myco_head(self._pool(latent, "myco"))
-        if self.species_myco_head is None or self.training:
-            return base
-        species_logits = self.decode(latent, self.species_variable)
-        species_to_myco = self.species_myco_head(
-            self._refined_species.detach()
-        ).softmax(-1)
-        myco = species_logits.softmax(-1) @ species_to_myco
-        evidence = myco.clamp_min(1e-8).log() \
-                   - self.species_myco_prior.clamp_min(1e-8).log()
-        return base + torch.tanh(self.myco_relation_gate) * evidence
-
-    def _pool_fiber(self, fiber: torch.Tensor, name: str) -> torch.Tensor:
-        query = self.fiber_decode_query[self.names.index(name)]
-        weight = torch.softmax((fiber @ query) / math.sqrt(self.d_model), -1)
-        return torch.einsum("bl,bld->bd", weight, fiber)
-
     def decode(self, latent: torch.Tensor, name: str) -> torch.Tensor:
         pooled = self._pool(latent, name)
         logits = self._decode_pooled(pooled, name)
@@ -1242,355 +659,3 @@ class DeepEarth(nn.Module):
                     prediction = self._hierarchical_family_read(prediction)
                 out[name] = prediction
         return out
-
-    def reconstruction_loss(self, values, observed, context, hide_probability: float = 0.5):
-        batch = context["position"].shape[0]
-        present = {name: (torch.rand(batch, device=context["position"].device) > hide_probability) & observed[name]
-                   for name in self.names}
-        blank = torch.rand(batch, device=context["position"].device) < 0.15
-        for name in present:
-            present[name] &= ~blank
-        latent = self.encode(values, present, context)
-        self._prime_pool_cache(latent)
-        terms = []
-        fiber_terms = []
-        mesh_terms = []
-        pollinator_target = None
-        pollinator_valid = None
-        pollinator_structured_term = None
-        pollinator_calibration_term = None
-        for variable in self.variables:
-            hidden = (~present[variable.name]) & observed[variable.name]
-            if not hidden.any():
-                continue
-            prediction = self.decode(latent, variable.name)
-            if variable.kind == "categorical":
-                error = F.cross_entropy(prediction, values[variable.name].long(), reduction="none") \
-                        / math.log(max(variable.num_classes, 2))
-            else:
-                target = values[variable.name].float()
-                valid = target.norm(dim=-1) > 1e-6
-                mean = target[valid].mean(0, keepdim=True).detach() if valid.any() else target.mean(0, keepdim=True)
-                error = 1.0 - F.cosine_similarity(prediction - mean, target - mean, dim=-1)
-            terms.append((error * hidden).sum() / hidden.sum().clamp_min(1))
-            lens = self.write_lens[variable.name]
-            fiber_prediction = self.fiber_reconstruct[variable.name](
-                self._pool_fiber(self._fiber_summary[:, lens], variable.name)
-            )
-            fiber_target = self._adapt(
-                variable.name, values[variable.name], self._refined_species
-            ).detach()
-            fiber_error = 1.0 - F.cosine_similarity(fiber_prediction, fiber_target, dim=-1)
-            fiber_terms.append((fiber_error * hidden).sum() / hidden.sum().clamp_min(1))
-            mesh_state = self._fiber_mesh[:, 0, :, lens, :].mean(1)
-            mesh_prediction = self.mesh_linear_reconstruct[variable.name](mesh_state)
-            mesh_error = 1.0 - F.cosine_similarity(mesh_prediction, fiber_target, dim=-1)
-            mesh_terms.append((mesh_error * hidden).sum() / hidden.sum().clamp_min(1))
-
-        if self.poll_head is not None and "_poll_idx" in values:
-            pooled = self._pool(latent, "pollinator")
-            logits = self.poll_head(pooled)
-            pollinator_target = torch.zeros_like(logits).scatter_add_(
-                1, values["_poll_idx"].clamp_min(0), values["_poll_frq"].float()
-            )
-            pollinator_valid = values["_poll_valid"].float()
-            error = -(pollinator_target * F.log_softmax(logits, -1)).sum(-1)
-            terms.append(
-                0.1 * (error * pollinator_valid).sum()
-                / pollinator_valid.sum().clamp_min(1)
-            )
-            if getattr(self, "reader_phase", False):
-                calibrated = self._calibrate_pollinator_logits(logits.detach())
-                calibration_error = -(
-                    pollinator_target * F.log_softmax(calibrated, -1)
-                ).sum(-1)
-                pollinator_calibration_term = (
-                    calibration_error * pollinator_valid
-                ).sum() / pollinator_valid.sum().clamp_min(1)
-            structured = self.poll_head(
-                self._pollinator_pool(latent, isolated=True)
-            )
-            structured_error = -(
-                pollinator_target * F.log_softmax(structured, -1)
-            ).sum(-1)
-            pollinator_structured_term = (
-                (structured_error * pollinator_valid).sum()
-                / pollinator_valid.sum().clamp_min(1)
-                / math.log(self.poll_head.out_features)
-            )
-        if self.lfmc_head is not None and "_lfmc" in values:
-            valid = values["_lfmc_valid"].float()
-            lfmc_pool = self._pool(latent, "lfmc")
-            target_lfmc = torch.log(values["_lfmc"].clamp_min(1.0))
-            error = (self.lfmc_head(lfmc_pool).squeeze(-1)
-                     - target_lfmc).square()
-            terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
-        if self.myco_head is not None and "_myco" in values:
-            valid = values["_myco_valid"].float()
-            error = F.cross_entropy(self._myco_logits(latent),
-                                    values["_myco"].long().clamp_min(0), reduction="none")
-            terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
-        if self.flower_head is not None and "_flower" in values:
-            valid = values["_flower_valid"].float()
-            error = F.binary_cross_entropy_with_logits(
-                                                        self.flower_head(self._pool(latent, "flower")).squeeze(-1),
-                                                        values["_flower"].float(), reduction="none")
-            terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
-        loss = torch.stack(terms).mean() \
-               + 0.05 * torch.stack(fiber_terms).mean() \
-               + 0.05 * torch.stack(mesh_terms).mean()
-        if pollinator_calibration_term is not None:
-            loss = loss + pollinator_calibration_term
-        if self.species_myco_head is not None and self.species_myco_valid.any():
-            species_myco = self.species_myco_head(
-                self._refined_species.detach()[self.species_myco_valid]
-            )
-            loss = loss + 0.1 * F.cross_entropy(
-                species_myco, self.species_myco[self.species_myco_valid]
-            )
-        if pollinator_structured_term is not None:
-            loss = loss + 0.1 * pollinator_structured_term
-        environment_present = {
-            name: observed[name] if name in self.environment_names else torch.zeros_like(observed[name])
-            for name in self.names
-        }
-        environment_latent = self.encode(values, environment_present, context, detach_species=True)
-        environment_pool = self._pool(environment_latent, self.species_variable)
-        family_logits = environment_pool.float() \
-                        @ self._refined_species.detach().float().t()
-        target_species = values[self.species_variable].long()
-        family_valid = observed[self.species_variable]
-        niche_input = environment_pool if getattr(
-            self, "rank_aligned_expansion", False
-        ) else environment_pool.detach()
-        niche_logits = self._niche_species_logits(
-            niche_input, include_lens=False
-        )
-        species_error = F.cross_entropy(
-            niche_logits, target_species, reduction="none"
-        ) / math.log(max(self._refined_species.shape[0], 2))
-        loss = loss + 0.1 * (species_error * family_valid).sum() \
-                      / family_valid.sum().clamp_min(1)
-        if getattr(self, "reader_phase", False):
-            target_score = niche_logits.gather(1, target_species[:, None])
-            soft_rank = 0.5 + torch.sigmoid(
-                (niche_logits - target_score) / 0.25
-            ).sum(-1)
-            rank_error = soft_rank.clamp_min(1.0).log() \
-                         / math.log(max(niche_logits.shape[-1], 2))
-            loss = loss + 0.25 * (rank_error * family_valid).sum() \
-                          / family_valid.sum().clamp_min(1)
-            key = self._refined_species.detach().float() \
-                  + self.species_niche_key.detach().float()
-            lens_logits = niche_logits.detach() \
-                          + self._species_lens_residual(
-                              environment_pool.detach(), key
-                          )
-            lens_error = F.cross_entropy(
-                lens_logits, target_species, reduction="none"
-            ) / math.log(max(lens_logits.shape[-1], 2))
-            loss = loss + 0.1 * (lens_error * family_valid).sum() \
-                          / family_valid.sum().clamp_min(1)
-            lens_target = lens_logits.gather(1, target_species[:, None])
-            lens_rank = 0.5 + torch.sigmoid(
-                (lens_logits - lens_target) / 0.25
-            ).sum(-1)
-            lens_rank = lens_rank.clamp_min(1.0).log() \
-                        / math.log(max(lens_logits.shape[-1], 2))
-            loss = loss + 0.25 * (lens_rank * family_valid).sum() \
-                          / family_valid.sum().clamp_min(1)
-            lens_probability = lens_logits.softmax(-1)
-            lens_family_probability = lens_probability.new_zeros(
-                batch, self.family_count
-            )
-            lens_family_probability.scatter_add_(
-                1,
-                self.species_family.expand(batch, -1),
-                lens_probability,
-            )
-            lens_target_family = self.species_family[target_species]
-            lens_family_error = -lens_family_probability.gather(
-                1, lens_target_family[:, None]
-            ).squeeze(1).clamp_min(1e-8).log() \
-             / math.log(max(self.family_count, 2))
-            loss = loss + 0.25 * (lens_family_error * family_valid).sum() \
-                          / family_valid.sum().clamp_min(1)
-        probability = family_logits.softmax(-1)
-        family_probability = probability.new_zeros(batch, self.family_count)
-        family_probability.scatter_add_(1, self.species_family.expand(batch, -1), probability)
-        target_family = self.species_family[target_species]
-        family_error = -family_probability.gather(
-            1, target_family[:, None]
-        ).squeeze(1).clamp_min(1e-8).log()
-        family_term = (family_error * family_valid).sum() / family_valid.sum().clamp_min(1) \
-                      / math.log(max(self.family_count, 2))
-        loss = loss + 0.1 * family_term
-        if getattr(self, "reader_phase", False):
-            relation_logits = self._identity_detail_logits(environment_pool)
-            species_logits = niche_logits if getattr(
-                self, "rank_aligned_expansion", False
-            ) else family_logits.detach()
-            calibrated_logits = species_logits + relation_logits
-            target_family = self.species_family[target_species]
-            same_family = self.species_family.unsqueeze(0) == target_family.unsqueeze(1)
-            within_family = calibrated_logits.masked_fill(
-                ~same_family, -1e4
-            )
-            relation_error = F.cross_entropy(
-                within_family, target_species, reduction="none"
-            ) / math.log(max(self._refined_species.shape[0], 2))
-            loss = loss + 0.25 * (relation_error * family_valid).sum() \
-                          / family_valid.sum().clamp_min(1)
-            target_score = calibrated_logits.gather(1, target_species[:, None])
-            soft_rank = 0.5 + torch.sigmoid(
-                (calibrated_logits - target_score) / 0.25
-            ).sum(-1)
-            rank_error = soft_rank.clamp_min(1.0).log() \
-                         / math.log(max(self._refined_species.shape[0], 2))
-            loss = loss + 0.25 * (rank_error * family_valid).sum() \
-                          / family_valid.sum().clamp_min(1)
-        devices = [torch.cuda.current_device()] if loss.is_cuda else []
-        with torch.random.fork_rng(devices=devices):
-            mask = torch.rand(self._refined_species.shape[0], device=loss.device) < 0.15
-            reconstructed = self.species_graph(mask)
-            loss = loss + 0.1 * self.species_graph.masked_reconstruction_loss(
-                mask, self._refined_species.detach(), metric="mse",
-                reconstructed=reconstructed,
-            )
-            reference = self._refined_species.detach()[~mask]
-            reference_family = self.species_family[~mask]
-            prototypes = reference.new_zeros(self.family_count, self.d_model)
-            prototypes.index_add_(0, reference_family, reference)
-            counts = torch.bincount(
-                reference_family, minlength=self.family_count
-            ).to(reference.dtype)
-            prototypes = prototypes / counts[:, None].clamp_min(1.0)
-            logits = F.normalize(reconstructed[mask], dim=-1) \
-                     @ F.normalize(prototypes, dim=-1).t() / 0.1
-            logits = logits.masked_fill((counts == 0).unsqueeze(0), -1e4)
-            target_family = self.species_family[mask]
-            valid = counts[target_family] > 0
-            if valid.any():
-                family_loss = F.cross_entropy(logits[valid], target_family[valid]) \
-                              / math.log(max(self.family_count, 2))
-                loss = loss + 0.03 * family_loss
-        neighbor_identity = context["neighbor_values"].get("identity")
-        if neighbor_identity is not None:
-            query = self.community_metric(self._pool(latent, "community").detach())
-            logits = query @ self._refined_species.detach().t()
-            target = torch.zeros_like(logits)
-            target.scatter_(1, neighbor_identity.long(), 1.0)
-            target.scatter_(1, values[self.species_variable].long().unsqueeze(1), 1.0)
-            target = target / target.sum(-1, keepdim=True).clamp_min(1.0)
-            community = -(target * F.log_softmax(logits, -1)).sum(-1) / math.log(logits.shape[-1])
-            loss = loss + 0.5 * community.mean()
-
-            if getattr(self, "reader_phase", False):
-                masked_valid = family_valid * mask[values[self.species_variable].long()]
-                empty_present = {
-                    name: torch.zeros_like(observed[name]) for name in self.names
-                }
-                with torch.no_grad():
-                    empty_latent = self.encode(
-                        values, empty_present, context, detach_species=True, species_mask=mask
-                    )
-                    baseline = self.community_metric(self._pool(empty_latent, "community"))
-                identity_present = dict(empty_present)
-                identity_present[self.species_variable] = observed[self.species_variable]
-                identity_latent = self.encode(
-                    values, identity_present, context, detach_species=True, species_mask=mask
-                )
-                identity_query = self.community_metric(self._pool(identity_latent, "community"))
-                conditional_logits = (identity_query - baseline) @ self._refined_species.detach().t()
-                conditional_target = torch.zeros_like(conditional_logits)
-                conditional_target.scatter_(1, neighbor_identity.long(), 1.0)
-                conditional_target = conditional_target / conditional_target.sum(
-                    -1, keepdim=True
-                ).clamp_min(1.0)
-                conditional = -(conditional_target * F.log_softmax(
-                    conditional_logits, -1
-                )).sum(-1) / math.log(conditional_logits.shape[-1])
-                loss = loss + 0.1 * (conditional * masked_valid).sum() \
-                       / family_valid.sum().clamp_min(1)
-        if getattr(self, "reader_phase", False) and pollinator_target is not None:
-            pollinator_present = {
-                name: observed[name]
-                if name == self.species_variable or name in self.environment_names
-                else torch.zeros_like(observed[name])
-                for name in self.names
-            }
-            devices = [torch.cuda.current_device()] if loss.is_cuda else []
-            with torch.random.fork_rng(devices=devices), torch.no_grad():
-                pollinator_latent = self.encode(values, pollinator_present, context)
-            pollinator_logits = self.poll_head(
-                self._pollinator_pool(pollinator_latent, isolated=True)
-            )
-            interaction = -(
-                pollinator_target * F.log_softmax(pollinator_logits, -1)
-            ).sum(-1) / math.log(self.poll_head.out_features)
-            loss = loss + 0.25 * (interaction * pollinator_valid).sum() \
-                   / pollinator_valid.sum().clamp_min(1)
-        if getattr(self, "reader_phase", False):
-            photo_row = torch.arange(batch, device=loss.device).remainder(2).bool()
-            structured_present = {
-                name: observed[name] & photo_row
-                if name in {"vision_dino", "vision_bio"}
-                else torch.zeros_like(observed[name])
-                for name in self.names
-            }
-            structured_latent = self.encode(
-                values, structured_present, context, detach_species=True
-            )
-            identity_pool = self._pool(structured_latent, self.species_variable)
-            identity_logits = self._decode_pooled(
-                identity_pool, self.species_variable
-            ) + self._identity_detail_logits(identity_pool)
-            identity_error = F.cross_entropy(
-                identity_logits, target_species, reduction="none"
-            ) / math.log(max(identity_logits.shape[-1], 2))
-            structured_terms = [
-                (identity_error * family_valid).sum()
-                / family_valid.sum().clamp_min(1)
-            ]
-            probability = identity_logits.softmax(-1)
-            family_probability = probability.new_zeros(batch, self.family_count)
-            family_probability.scatter_add_(
-                1, self.species_family.expand(batch, -1), probability
-            )
-            family_error = -family_probability.gather(
-                1, self.species_family[target_species, None]
-            ).squeeze(1).clamp_min(1e-8).log() / math.log(max(self.family_count, 2))
-            structured_terms.append(
-                (family_error * family_valid).sum()
-                / family_valid.sum().clamp_min(1)
-            )
-            trait_names = {
-                "seasonality", "water", "soil_drainage", "form",
-                "plant_type", "growth_rate", "sun", "ease_of_care",
-            }
-            for variable in self.variables:
-                if variable.name not in trait_names:
-                    continue
-                valid = observed[variable.name] & photo_row
-                if valid.any():
-                    error = F.cross_entropy(
-                        self.decode(structured_latent, variable.name),
-                        values[variable.name].long(), reduction="none"
-                    ) / math.log(max(variable.num_classes, 2))
-                    structured_terms.append(
-                        (error * valid).sum() / valid.sum().clamp_min(1)
-                    )
-            if pollinator_target is not None:
-                pollinator_logits = self.poll_head(
-                    self._pollinator_pool(structured_latent)
-                )
-                error = -(pollinator_target * F.log_softmax(
-                    pollinator_logits, -1
-                )).sum(-1) / math.log(self.poll_head.out_features)
-                structured_terms.append(
-                    (error * pollinator_valid).sum()
-                    / pollinator_valid.sum().clamp_min(1)
-                )
-            structured_loss = 0.25 * torch.stack(structured_terms).mean()
-            return loss, structured_loss
-        return loss

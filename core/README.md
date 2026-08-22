@@ -1,9 +1,11 @@
 # DeepEarth core
 
-The production model has two explicit layers:
+The production model has four explicit layers:
 
 - `world_mesh.py` builds the typed, multiresolution Earth4D state.
-- `fusion.py` writes scientific evidence into that state and reads it for prediction.
+- `fusion.py` composes the model and writes observations into that state.
+- `reader.py` routes scientific queries through the shared mesh.
+- `objective.py` defines the self-supervised training objective.
 
 ```text
 coordinates + time -> multiresolution Earth4D cells
@@ -24,7 +26,9 @@ The recorded model uses 192-dimensional cells and 22,744,486 parameters. Across 
 `0.561834`.
 
 - `world_mesh.py`: Earth4D cells, relative fields, and fiber adapters.
-- `fusion.py`: graph integration, mesh updates, reader, and objectives.
+- `fusion.py`: graph integration, mesh updates, and model interface.
+- `reader.py`: query-conditioned fusion and scientific read paths.
+- `objective.py`: reconstruction and structured learning terms.
 - `data.py`: runtime California data contract.
 - `train.py`: fixed-step training and scoring entrypoint.
 
