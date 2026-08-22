@@ -6,6 +6,7 @@ import math
 import torch
 import torch.nn as nn
 
+from deepearth.core.layers import mlp, per_name, preserve_rng
 from deepearth.core.world_mesh import LENSES
 
 
@@ -91,26 +92,103 @@ class RoutedMeshReader(nn.Module):
         return pooled + self.residual(pooled, mesh, detach_mesh=isolated)
 
 
-class MeshReaderMixin:
-    """Read scientific targets from the mesh without owning model state."""
+class MeshQueryReader(nn.Module):
+    """Route task queries through the fibered mesh."""
+
+    def __init__(
+        self, names, d_model: int, levels: int, n_heads: int,
+        species_variable: str,
+    ):
+        super().__init__()
+        self.names = tuple(names)
+        self.d_model = d_model
+        self.levels = levels
+        self.species_variable = species_variable
+        self.mesh_read_query = per_name(
+            names, lambda _: torch.randn(d_model) * 0.02
+        )
+        self.mesh_read_gate = per_name(
+            names, lambda _: torch.tensor(0.05)
+        )
+        self.mesh_scale_read_gate = per_name(
+            names, lambda _: torch.tensor(0.05)
+        )
+        self.mesh_scale_attention_gate = per_name(
+            names, lambda _: torch.zeros(())
+        )
+        with preserve_rng():
+            self.task_mesh_reader = nn.MultiheadAttention(
+                d_model, n_heads, batch_first=True
+            )
+        with preserve_rng():
+            self.scale_mesh_reader = nn.MultiheadAttention(
+                d_model, n_heads, batch_first=True
+            )
+        with preserve_rng():
+            self.deep_mesh_reader = nn.ModuleList([
+                CrossFiberReaderBlock(d_model, n_heads) for _ in range(4)
+            ])
+            self.deep_mesh_reader_gate = per_name(
+                names, lambda _: torch.zeros(())
+            )
+            self.deep_mesh_reader_output_norm = nn.LayerNorm(d_model)
+        self.scale_mesh_reader_mix = per_name(
+            names,
+            lambda name: torch.tensor(
+                -2.0 if name == species_variable else 0.0
+            ),
+        )
+        with preserve_rng():
+            self.scale_mesh_reader_router = mlp(4 * d_model, 1)
+            nn.init.zeros_(self.scale_mesh_reader_router[-1].weight)
+            nn.init.zeros_(self.scale_mesh_reader_router[-1].bias)
+        self.task_mesh_reader_gate = per_name(
+            names, lambda _: torch.zeros(())
+        )
+        self.task_mesh_reader_norm = nn.LayerNorm(d_model)
+        self.task_mesh_reader_output_norm = nn.LayerNorm(d_model)
+        self.mesh_prior_read_gate = per_name(
+            names, lambda _: torch.zeros(())
+        )
+        with preserve_rng():
+            self.mesh_prior_information_gate = mlp(4 * d_model, 1, d_model)
+        conditioned = [name for name in ("pollinator",) if name in names]
+        self.mesh_condition_gate = per_name(
+            conditioned, lambda _: torch.tensor(0.05)
+        )
+        self.mesh_task_norm = nn.LayerNorm(d_model)
+        self.mesh_scale_task_norm = nn.LayerNorm(d_model)
+        self.mesh_prior_task_norm = nn.LayerNorm(d_model)
+        self.mesh_condition_norm = nn.LayerNorm(d_model)
+        self.mesh_cell_key = nn.Parameter(torch.zeros(2, d_model))
+        self.mesh_level_key = nn.Parameter(torch.zeros(levels, d_model))
+        self.mesh_lens_key = nn.Parameter(torch.zeros(len(LENSES), d_model))
+        self.bind(None, None, None)
+
+    def bind(self, summary, mesh, priors) -> None:
+        self.summary = summary
+        self.mesh = mesh
+        self.priors = priors
+        self.cache = {}
+        self.tokens = None
 
     def _reader_tokens(self) -> dict[str, torch.Tensor]:
-        if self._mesh_reader_cache is not None:
-            return self._mesh_reader_cache
-        fibers = self._fiber_summary.flatten(1, 2)
-        cells = self._fiber_mesh.shape[1]
+        if self.tokens is not None:
+            return self.tokens
+        fibers = self.summary.flatten(1, 2)
+        cells = self.mesh.shape[1]
         cell_key = torch.cat((
             self.mesh_cell_key[:1],
             self.mesh_cell_key[1:].expand(cells - 1, -1),
         ))
-        scale_fibers = self._fiber_mesh.flatten(1, 3)
+        scale_fibers = self.mesh.flatten(1, 3)
         scale_keys = (
-            self._fiber_mesh
+            self.mesh
             + cell_key.view(1, cells, 1, 1, self.d_model)
             + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
             + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
         ).flatten(1, 3)
-        prior_mesh = self._fiber_prior_mesh.detach()
+        prior_mesh = self.priors.detach()
         prior_fibers = prior_mesh.flatten(1, 3)
         prior_keys = (
             prior_mesh
@@ -118,7 +196,7 @@ class MeshReaderMixin:
             + self.mesh_level_key.view(1, 1, self.levels, 1, self.d_model)
             + self.mesh_lens_key.view(1, 1, 1, len(LENSES), self.d_model)
         ).flatten(1, 3)
-        self._mesh_reader_cache = {
+        self.tokens = {
             "fibers": fibers,
             "task_tokens": self.task_mesh_reader_norm(fibers),
             "scale_fibers": scale_fibers,
@@ -126,7 +204,7 @@ class MeshReaderMixin:
             "prior_fibers": prior_fibers,
             "prior_keys": prior_keys,
         }
-        return self._mesh_reader_cache
+        return self.tokens
 
     def _topk_read(
         self, scores: torch.Tensor, values: torch.Tensor, count: int
@@ -147,17 +225,6 @@ class MeshReaderMixin:
     def _gated_read(self, pooled, gates, names, read):
         return pooled + torch.tanh(self._task_parameters(gates, names)) * read
 
-    def _latent_pool(self, latent, names):
-        queries = torch.stack([
-            self.decode_query[self.names.index(
-                name if name in self.names else self.species_variable
-            )]
-            for name in names
-        ])
-        weights = torch.einsum("bld,td->btl", latent, queries)
-        weights = (weights / math.sqrt(self.d_model)).softmax(-1)
-        return torch.einsum("btl,bld->btd", weights, latent)
-
     def _conditioned_queries(self, query, names):
         gates = torch.stack([
             self.mesh_condition_gate[name]
@@ -166,7 +233,7 @@ class MeshReaderMixin:
         ]).view(1, len(names), 1)
         if not torch.count_nonzero(gates):
             return query
-        lenses = self._fiber_mesh[:, 0].mean(1)
+        lenses = self.mesh[:, 0].mean(1)
         score = torch.einsum("bld,btd->btl", lenses, query)
         condition = torch.einsum(
             "btl,bld->btd",
@@ -199,7 +266,7 @@ class MeshReaderMixin:
 
     def _scale_attention(self, reader, query, task_read, scale_score, names):
         batch, tasks = query.shape[:2]
-        cells = self._fiber_mesh.shape[1]
+        cells = self.mesh.shape[1]
         grid = scale_score.reshape(
             batch, tasks, cells, self.levels, len(LENSES)
         )
@@ -239,14 +306,11 @@ class MeshReaderMixin:
         ).unsqueeze(-1)
         return torch.lerp(shared, dedicated, mix), attention_query, keys, values
 
-    def _read_tasks(self, latent: torch.Tensor, names) -> None:
-        names = tuple(name for name in names if name not in self._pool_cache)
-        if not names:
-            return
-        batch, tasks = latent.shape[0], len(names)
-        pooled = self._latent_pool(latent, names)
-        if self._fiber_summary is None or self._fiber_mesh is None:
-            self._pool_cache.update({
+    def read(self, pooled: torch.Tensor, names) -> None:
+        names = tuple(names)
+        batch, tasks = pooled.shape[:2]
+        if self.summary is None or self.mesh is None:
+            self.cache.update({
                 name: pooled[:, index] for index, name in enumerate(names)
             })
             return
@@ -311,13 +375,36 @@ class MeshReaderMixin:
             pooled, self.mesh_prior_read_gate, names,
             confidence * self.mesh_prior_task_norm(prior_read),
         )
-        self._pool_cache.update({
+        self.cache.update({
             name: pooled[:, index] for index, name in enumerate(names)
         })
 
+    def missing(self, names):
+        return tuple(name for name in names if name not in self.cache)
+
+
+class ScientificReadoutMixin:
+    """Scientific predictions built on task-conditioned mesh reads."""
+
+    def _latent_pool(self, latent, names):
+        queries = torch.stack([
+            self.decode_query[self.names.index(
+                name if name in self.names else self.species_variable
+            )]
+            for name in names
+        ])
+        weights = torch.einsum("bld,td->btl", latent, queries)
+        weights = (weights / math.sqrt(self.d_model)).softmax(-1)
+        return torch.einsum("btl,bld->btd", weights, latent)
+
+    def _read_tasks(self, latent, names) -> None:
+        names = self.mesh_reader.missing(names)
+        if names:
+            self.mesh_reader.read(self._latent_pool(latent, names), names)
+
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
         self._read_tasks(latent, (name,))
-        return self._pool_cache[name]
+        return self.mesh_reader.cache[name]
 
     def _prime_pool_cache(self, latent: torch.Tensor) -> None:
         self._read_tasks(latent, self.mesh_read_names)

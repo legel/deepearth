@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import math
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Dict, Sequence
 
@@ -11,10 +10,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.core.objective import TrainingObjectiveMixin
+from deepearth.core.layers import mlp, per_name, preserve_rng
 from deepearth.core.reader import (
-    CrossFiberReaderBlock,
-    MeshReaderMixin,
+    MeshQueryReader,
     RoutedMeshReader,
+    ScientificReadoutMixin,
 )
 from deepearth.core.world_mesh import (
     FiberAdapter,
@@ -26,28 +26,6 @@ from deepearth.core.world_mesh import (
 )
 from deepearth.encoders.biological.phylogenomic import SpeciesGraph
 
-
-@contextmanager
-def preserve_rng():
-    state = torch.random.get_rng_state()
-    yield
-    torch.random.set_rng_state(state)
-
-
-def mlp(input_dim, output_dim, hidden_dim=None, *, normalize=True):
-    layers = [nn.LayerNorm(input_dim)] if normalize else []
-    if hidden_dim:
-        layers += [nn.Linear(input_dim, hidden_dim), nn.GELU()]
-        input_dim = hidden_dim
-    return nn.Sequential(*layers, nn.Linear(input_dim, output_dim))
-
-
-def per_name(names, factory):
-    return nn.ParameterDict({
-        name: nn.Parameter(factory(name)) for name in names
-    })
-
-
 @dataclass(frozen=True)
 class Variable:
     name: str
@@ -57,7 +35,7 @@ class Variable:
     reconstruct: bool = True
 
 
-class DeepEarth(MeshReaderMixin, TrainingObjectiveMixin, nn.Module):
+class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
     """All scientific evidence must enter fusion through a mesh-state update."""
 
     def __init__(
@@ -92,7 +70,10 @@ class DeepEarth(MeshReaderMixin, TrainingObjectiveMixin, nn.Module):
             variables, write_names, d_model, levels, n_latents, n_layers, n_heads
         )
         self._init_scientific_heads(source, d_model, levels, n_heads)
-        self._init_mesh_reader(variables, write_names, d_model, levels, n_heads)
+        with preserve_rng():
+            self._init_fiber_mesh(
+                variables, write_names, d_model, levels, n_heads
+            )
         self._reset_runtime_state()
 
     def _init_mesh(self, d_model: int, levels: int, log2_size: int) -> None:
@@ -240,7 +221,7 @@ class DeepEarth(MeshReaderMixin, TrainingObjectiveMixin, nn.Module):
             )
         self.community_metric = mlp(d_model, d_model, d_model)
 
-    def _init_mesh_reader(
+    def _init_fiber_mesh(
         self,
         variables: Sequence[Variable],
         write_names: Sequence[str],
@@ -253,7 +234,6 @@ class DeepEarth(MeshReaderMixin, TrainingObjectiveMixin, nn.Module):
             name: LENS_INDEX[signal_lens(name, variable_kind.get(name))]
             for name in write_names
         }
-        sidecar_rng = torch.random.get_rng_state()
         self.fiber_level_gate = per_name(
             write_names, lambda _: torch.zeros(levels)
         )
@@ -270,76 +250,20 @@ class DeepEarth(MeshReaderMixin, TrainingObjectiveMixin, nn.Module):
         self.fiber_query = nn.Parameter(
             torch.randn(len(LENSES), self.fiber_latents, d_model) * 0.02
         )
-        self.fiber_decode_query = nn.Parameter(torch.randn(len(variables), d_model) * 0.02)
-        scientific_reads = ["community"]
-        if self.poll_head is not None:
-            scientific_reads.append("pollinator")
-        if self.lfmc_head is not None:
-            scientific_reads.append("lfmc")
-        if self.myco_head is not None:
-            scientific_reads.append("myco")
-        if self.flower_head is not None:
-            scientific_reads.append("flower")
+        self.fiber_decode_query = nn.Parameter(
+            torch.randn(len(variables), d_model) * 0.02
+        )
+        scientific_reads = ["community"] + [
+            name for name, head in (
+                ("pollinator", self.poll_head), ("lfmc", self.lfmc_head),
+                ("myco", self.myco_head), ("flower", self.flower_head),
+            ) if head is not None
+        ]
         self.mesh_read_names = (*self.names, *scientific_reads)
-        self.mesh_read_query = per_name(
-            self.mesh_read_names, lambda _: torch.randn(d_model) * 0.02
+        self.mesh_reader = MeshQueryReader(
+            self.mesh_read_names, d_model, levels, n_heads,
+            self.species_variable,
         )
-        self.mesh_read_gate = per_name(
-            self.mesh_read_names, lambda _: torch.tensor(0.05)
-        )
-        self.mesh_scale_read_gate = per_name(
-            self.mesh_read_names, lambda _: torch.tensor(0.05)
-        )
-        self.mesh_scale_attention_gate = per_name(
-            self.mesh_read_names, lambda _: torch.zeros(())
-        )
-        with preserve_rng():
-            self.task_mesh_reader = nn.MultiheadAttention(
-                d_model, n_heads, batch_first=True
-            )
-        with preserve_rng():
-            self.scale_mesh_reader = nn.MultiheadAttention(
-                d_model, n_heads, batch_first=True
-            )
-        with preserve_rng():
-            self.deep_mesh_reader = nn.ModuleList([
-                CrossFiberReaderBlock(d_model, n_heads) for _ in range(4)
-            ])
-            self.deep_mesh_reader_gate = per_name(
-                self.mesh_read_names, lambda _: torch.zeros(())
-            )
-            self.deep_mesh_reader_output_norm = nn.LayerNorm(d_model)
-        self.scale_mesh_reader_mix = per_name(
-            self.mesh_read_names,
-            lambda name: torch.tensor(
-                -2.0 if name == self.species_variable else 0.0
-            ),
-        )
-        with preserve_rng():
-            self.scale_mesh_reader_router = mlp(4 * d_model, 1)
-            nn.init.zeros_(self.scale_mesh_reader_router[-1].weight)
-            nn.init.zeros_(self.scale_mesh_reader_router[-1].bias)
-        self.task_mesh_reader_gate = per_name(
-            self.mesh_read_names, lambda _: torch.zeros(())
-        )
-        self.task_mesh_reader_norm = nn.LayerNorm(d_model)
-        self.task_mesh_reader_output_norm = nn.LayerNorm(d_model)
-        self.mesh_prior_read_gate = per_name(
-            self.mesh_read_names, lambda _: torch.zeros(())
-        )
-        with preserve_rng():
-            self.mesh_prior_information_gate = mlp(4 * d_model, 1, d_model)
-        conditioned_reads = [name for name in ("pollinator",) if name in self.mesh_read_names]
-        self.mesh_condition_gate = per_name(
-            conditioned_reads, lambda _: torch.tensor(0.05)
-        )
-        self.mesh_task_norm = nn.LayerNorm(d_model)
-        self.mesh_scale_task_norm = nn.LayerNorm(d_model)
-        self.mesh_prior_task_norm = nn.LayerNorm(d_model)
-        self.mesh_condition_norm = nn.LayerNorm(d_model)
-        self.mesh_cell_key = nn.Parameter(torch.zeros(2, d_model))
-        self.mesh_level_key = nn.Parameter(torch.zeros(levels, d_model))
-        self.mesh_lens_key = nn.Parameter(torch.zeros(len(LENSES), d_model))
         self.fiber_read_norm = nn.LayerNorm(d_model)
         self.fiber_read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.fiber_fuse_norm = nn.LayerNorm(d_model)
@@ -360,15 +284,13 @@ class DeepEarth(MeshReaderMixin, TrainingObjectiveMixin, nn.Module):
         self.lens_exchange = nn.Parameter(
             torch.zeros(levels, len(LENSES), len(LENSES))
         )
-        torch.random.set_rng_state(sidecar_rng)
 
     def _reset_runtime_state(self) -> None:
         self._fiber_summary = None
         self._fiber_mesh = None
         self._fiber_prior_mesh = None
         self._latest_fiber_prior = None
-        self._pool_cache = {}
-        self._mesh_reader_cache = None
+        self.mesh_reader.bind(None, None, None)
 
     def _species(self, mask: torch.Tensor | None = None) -> torch.Tensor:
         refined = self.species_graph._seed() if self._ablate_species else self.species_graph(mask)
@@ -541,8 +463,9 @@ class DeepEarth(MeshReaderMixin, TrainingObjectiveMixin, nn.Module):
             latent.shape[0], len(LENSES), self.fiber_latents, self.d_model
         )
         self._fiber_summary = fiber_summary
-        self._pool_cache = {}
-        self._mesh_reader_cache = None
+        self.mesh_reader.bind(
+            fiber_summary, self._fiber_mesh, self._fiber_prior_mesh
+        )
         normalized = self.fiber_fuse_norm(fiber_summary.flatten(1, 2))
         latent = latent + torch.tanh(self.fiber_fusion_gate) * self.fiber_fuse(
             latent.detach(), normalized, normalized, need_weights=False

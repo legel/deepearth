@@ -100,23 +100,13 @@ READER_PARAMETERS = (
     "species_graph.",
     "poll_head.", "pollinator_reader.", "identity_detail_reader.",
     "lfmc_head.", "myco_head.", "species_myco_head.", "myco_relation_gate",
-    "flower_head.",
-    "mesh_read_query.", "mesh_read_gate.", "mesh_scale_read_gate.",
-    "mesh_scale_attention_gate.",
-    "task_mesh_reader.", "task_mesh_reader_gate.", "task_mesh_reader_norm.",
-    "task_mesh_reader_output_norm.", "scale_mesh_reader.",
-    "scale_mesh_reader_mix.", "scale_mesh_reader_router.",
-    "deep_mesh_reader.", "deep_mesh_reader_gate.",
-    "deep_mesh_reader_output_norm.",
-    "mesh_prior_read_gate.", "mesh_prior_information_gate.",
-    "mesh_task_norm.", "mesh_scale_task_norm.", "mesh_prior_task_norm.",
-    "mesh_condition_gate.", "mesh_condition_norm.",
-    "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
+    "flower_head.", "mesh_reader.",
     "species_niche_key", "species_niche_adapter.",
 )
 EXPANSION_PARAMETERS = (
-    "deep_mesh_reader.", "deep_mesh_reader_gate.",
-    "deep_mesh_reader_output_norm.",
+    "mesh_reader.deep_mesh_reader.",
+    "mesh_reader.deep_mesh_reader_gate.",
+    "mesh_reader.deep_mesh_reader_output_norm.",
 )
 SPECIES_LENS_PARAMETERS = (
     "species_lens_reader.", "species_lens_reader_norm."
@@ -208,14 +198,15 @@ def enter_reader_phase(model, optimizers, parameters, design, device, budget):
     model.reader_phase = True
     model.rank_aligned_expansion = design.reader_only
     for name, parameter in model.named_parameters():
-        trainable = name.startswith(READER_PARAMETERS) \
-                    or name.startswith(SPECIES_LENS_PARAMETERS) \
-                    or name.startswith(LFMC_LENS_PARAMETERS) \
-                    or name.startswith(CALIBRATION_PARAMETERS)
         if design.reader_only:
             trainable = name.startswith(EXPANSION_PARAMETERS)
-        if design.reader_only and name.startswith("species_graph."):
-            trainable = False
+        else:
+            trainable = (
+                name.startswith(READER_PARAMETERS)
+                or name.startswith(SPECIES_LENS_PARAMETERS)
+                or name.startswith(LFMC_LENS_PARAMETERS)
+                or name.startswith(CALIBRATION_PARAMETERS)
+            ) and not name.startswith(EXPANSION_PARAMETERS)
         parameter.requires_grad_(trainable)
 
     graph = matching_parameters(model, "species_graph.")
