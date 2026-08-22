@@ -11,6 +11,7 @@ import torch
 
 from deepearth.core import data as base_data
 from deepearth.core.fusion import DeepEarth, Variable
+from deepearth.core.optimization import Optimizers, adamw_group
 
 
 @dataclass(frozen=True)
@@ -139,8 +140,26 @@ RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
 CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
 
 
+@dataclass(frozen=True)
+class ParameterSets:
+    relation_ids: set[int]
+    lens: list
+    lens_ids: set[int]
+    calibration: list
+    calibration_ids: set[int]
 
-def build_model(source, variable_specs, always_dims, device: str, design: Experiment = EXPERIMENT) -> DeepEarth:
+
+def matching_parameters(model: DeepEarth, prefixes) -> list:
+    return [
+        parameter for name, parameter in model.named_parameters()
+        if name.startswith(prefixes)
+    ]
+
+
+def build_model(
+    source, variable_specs, always_dims, device: str,
+    design: Experiment = EXPERIMENT,
+) -> DeepEarth:
     variables = [Variable(**spec) for spec in variable_specs]
     return DeepEarth(
         variables,
@@ -154,24 +173,10 @@ def build_model(source, variable_specs, always_dims, device: str, design: Experi
     ).to(device)
 
 
-def train(
-    cache: str,
-    device: str,
-    design: Experiment = EXPERIMENT,
-    *,
-    checkpoint_steps: frozenset[int] = frozenset(),
-    checkpoint_dir: Path | None = None,
-):
-    if not design.reader_only and not 0 <= design.reader_steps < design.steps:
-        raise ValueError("reader_steps must fall between 0 and total steps")
-    if design.reader_only and not design.init_checkpoint:
-        raise ValueError("MESH_READER_ONLY requires MESH_INIT_CHECKPOINT")
-    torch.set_float32_matmul_precision("high")
-    torch.manual_seed(design.seed)
-    if device.startswith("cuda"):
-        torch.cuda.manual_seed_all(design.seed)
-    source, variable_specs, always_dims = load_data(cache, device)
-    if design.width != 128:
+def initialize_model(source, variable_specs, always_dims, device, design):
+    if design.width == 128:
+        model = build_model(source, variable_specs, always_dims, device, design)
+    else:
         candidate_rng = torch.random.get_rng_state()
         candidate_cuda_rng = torch.cuda.get_rng_state_all() \
             if device.startswith("cuda") else None
@@ -191,73 +196,229 @@ def train(
         torch.random.set_rng_state(control_rng)
         if device.startswith("cuda"):
             torch.cuda.set_rng_state_all(control_cuda_rng)
-    else:
-        model = build_model(source, variable_specs, always_dims, device, design)
     if design.init_checkpoint:
         checkpoint = Path(design.init_checkpoint).expanduser()
         state = torch.load(checkpoint, map_location=device, weights_only=True)
-        incompatible = model.load_state_dict(state, strict=False)
-        print(
-            f"initialized from {checkpoint}  "
-            f"missing={len(incompatible.missing_keys)}  "
-            f"unexpected={len(incompatible.unexpected_keys)}",
-            flush=True,
+        model.load_state_dict(state, strict=True)
+        print(f"initialized from {checkpoint}", flush=True)
+    return model
+
+
+def initialize_optimizers(model, design, device):
+    relation = matching_parameters(model, "species_myco_head.")
+    relation_ids = {
+        id(parameter) for parameter in matching_parameters(model, RELATION_PARAMETERS)
+    }
+    lens = matching_parameters(
+        model, SPECIES_LENS_PARAMETERS + LFMC_LENS_PARAMETERS
+    )
+    lens_ids = {id(parameter) for parameter in lens}
+    calibration = matching_parameters(model, CALIBRATION_PARAMETERS)
+    calibration_ids = {id(parameter) for parameter in calibration}
+    excluded = relation_ids | lens_ids | calibration_ids
+    base = [
+        parameter for parameter in model.parameters()
+        if id(parameter) not in excluded
+    ]
+    optimizers = Optimizers(
+        base=adamw_group(
+            base, lr=design.learning_rate,
+            weight_decay=design.weight_decay, steps=design.steps, device=device,
+        ),
+        relation=adamw_group(
+            relation, lr=design.learning_rate,
+            weight_decay=design.weight_decay, steps=design.steps, device=device,
+        ),
+    )
+    parameters = ParameterSets(
+        relation_ids, lens, lens_ids, calibration, calibration_ids
+    )
+    return optimizers, parameters
+
+
+def enter_reader_phase(model, optimizers, parameters, design, device, budget):
+    model.reader_phase = True
+    model.rank_aligned_expansion = design.reader_only
+    for name, parameter in model.named_parameters():
+        trainable = name.startswith(READER_PARAMETERS) \
+                    or name.startswith(SPECIES_LENS_PARAMETERS) \
+                    or name.startswith(LFMC_LENS_PARAMETERS) \
+                    or name.startswith(CALIBRATION_PARAMETERS)
+        if design.reader_only:
+            trainable = name.startswith(EXPANSION_PARAMETERS)
+        if design.reader_only and name.startswith("species_graph."):
+            trainable = False
+        parameter.requires_grad_(trainable)
+
+    graph = matching_parameters(model, "species_graph.")
+    graph = [parameter for parameter in graph if parameter.requires_grad]
+    graph_ids = {id(parameter) for parameter in graph}
+    detail = matching_parameters(model, IDENTITY_DETAIL_PARAMETERS)
+    detail_ids = {id(parameter) for parameter in detail}
+    excluded = (
+        detail_ids | parameters.relation_ids | parameters.lens_ids
+        | parameters.calibration_ids
+    )
+    readers = [
+        parameter for parameter in model.parameters()
+        if parameter.requires_grad
+        and id(parameter) not in graph_ids
+        and id(parameter) not in excluded
+    ]
+    base = [
+        parameter for parameter in model.parameters()
+        if parameter.requires_grad and id(parameter) not in excluded
+    ]
+    optimizers.add("base", adamw_group(
+        base,
+        lr=design.learning_rate * 0.2,
+        weight_decay=design.weight_decay,
+        steps=budget,
+        device=device,
+        parameter_groups=(
+            {"params": readers, "lr": design.learning_rate * 0.2},
+            {"params": graph,
+             "lr": design.learning_rate * design.graph_learning_rate_scale},
+        ),
+    ))
+    optimizers.add("detail", adamw_group(
+        detail, lr=design.learning_rate * 0.2,
+        weight_decay=design.weight_decay, steps=budget, device=device,
+    ))
+    optimizers.add("lens", adamw_group(
+        parameters.lens, lr=design.learning_rate * 0.4,
+        weight_decay=design.weight_decay, steps=budget, device=device,
+    ))
+    optimizers.add("calibration", adamw_group(
+        parameters.calibration, lr=design.learning_rate * 10.0,
+        weight_decay=0.0, steps=budget, device=device,
+    ))
+    print(
+        f"reader phase {budget} steps  "
+        f"parameters {sum(parameter.numel() for parameter in readers):,}  "
+        f"graph parameters {sum(parameter.numel() for parameter in graph):,}  "
+        f"detail parameters {sum(parameter.numel() for parameter in detail):,}  "
+        f"lens parameters {sum(parameter.numel() for parameter in parameters.lens):,}  "
+        f"graph lr scale {design.graph_learning_rate_scale:g}",
+        flush=True,
+    )
+
+
+def lfmc_correlation_loss(
+    model, source, train_index, design, device, step
+) -> torch.Tensor:
+    devices = [torch.cuda.current_device()] if device.startswith("cuda") else []
+    with torch.random.fork_rng(devices=devices):
+        auxiliary_seed = design.seed + 100_000 + step
+        torch.manual_seed(auxiliary_seed)
+        if devices:
+            torch.cuda.manual_seed_all(auxiliary_seed)
+        index = train_index[torch.randint(
+            len(train_index), (design.batch,), device=device
+        )]
+        values, observed, coords, neighbors, manifolds, neighbor_values = \
+            source.batch(index)
+        context = model.context(
+            coords, neighbors, manifolds, neighbor_values
         )
+        present = {
+            name: observed[name]
+            if name in model.environment_names
+            else torch.zeros_like(observed[name])
+            for name in model.names
+        }
+        latent = model.encode(
+            values, present, context, detach_species=True
+        )
+        pooled = model._pool(latent, "lfmc")
+        prediction = model.lfmc_head(
+            pooled.detach()
+        ).squeeze(-1).detach() + model._lfmc_lens_residual(
+            pooled.detach()
+        )
+        target = torch.log(values["_lfmc"].clamp_min(1.0))
+        valid = values["_lfmc_valid"].bool()
+        prediction = prediction[valid]
+        target = target[valid]
+        prediction = prediction - prediction.mean()
+        target = target - target.mean()
+        correlation = (prediction * target).sum() / (
+            prediction.square().sum().sqrt()
+            * target.square().sum().sqrt()
+        ).clamp_min(1e-8)
+    return 1.0 - correlation
+
+
+def backward(model, optimizers, loss, structured_loss):
+    optimizers.zero_grad()
+    if structured_loss is None:
+        loss.backward()
+        return None
+    trainable = [
+        parameter for parameter in model.parameters() if parameter.requires_grad
+    ]
+    loss.backward(retain_graph=True)
+    base_grad = {
+        id(parameter): parameter.grad.detach().clone()
+        for parameter in trainable if parameter.grad is not None
+    }
+    optimizers.zero_grad()
+    structured_loss.backward()
+    shared = [
+        parameter for parameter in trainable
+        if parameter.grad is not None and id(parameter) in base_grad
+    ]
+    dot = sum(
+        (parameter.grad * base_grad[id(parameter)]).sum()
+        for parameter in shared
+    )
+    base_norm = sum(
+        base_grad[id(parameter)].square().sum() for parameter in shared
+    ).clamp_min(1e-12)
+    structured_norm = sum(
+        parameter.grad.square().sum() for parameter in shared
+    ).clamp_min(1e-12)
+    cosine = float(dot / (base_norm.sqrt() * structured_norm.sqrt()))
+    projection = dot / base_norm if dot < 0 else dot.new_zeros(())
+    for parameter in trainable:
+        base = base_grad.get(id(parameter))
+        auxiliary = parameter.grad
+        if base is None:
+            continue
+        parameter.grad = base if auxiliary is None \
+            else base + auxiliary - projection * base
+    return cosine
+
+
+def train(
+    cache: str,
+    device: str,
+    design: Experiment = EXPERIMENT,
+    *,
+    checkpoint_steps: frozenset[int] = frozenset(),
+    checkpoint_dir: Path | None = None,
+):
+    if not design.reader_only and not 0 <= design.reader_steps < design.steps:
+        raise ValueError("reader_steps must fall between 0 and total steps")
+    if design.reader_only and not design.init_checkpoint:
+        raise ValueError("MESH_READER_ONLY requires MESH_INIT_CHECKPOINT")
+    torch.set_float32_matmul_precision("high")
+    torch.manual_seed(design.seed)
+    if device.startswith("cuda"):
+        torch.cuda.manual_seed_all(design.seed)
+    source, variable_specs, always_dims = load_data(cache, device)
+    model = initialize_model(
+        source, variable_specs, always_dims, device, design
+    )
     if checkpoint_steps:
         if checkpoint_dir is None:
-            raise ValueError("checkpoint_dir is required when checkpoint_steps are requested")
+            raise ValueError(
+                "checkpoint_dir is required when checkpoint_steps are requested"
+            )
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         if 0 in checkpoint_steps:
             torch.save(model.state_dict(), checkpoint_dir / "step_000000.pt")
-    relation_parameters = [
-        parameter for name, parameter in model.named_parameters()
-        if name.startswith("species_myco_head.")
-    ]
-    relation_ids = {
-        id(parameter) for name, parameter in model.named_parameters()
-        if name.startswith(RELATION_PARAMETERS)
-    }
-    lens_parameters = [
-        parameter for name, parameter in model.named_parameters()
-        if name.startswith(SPECIES_LENS_PARAMETERS + LFMC_LENS_PARAMETERS)
-    ]
-    lens_ids = {id(parameter) for parameter in lens_parameters}
-    calibration_parameters = [
-        parameter for name, parameter in model.named_parameters()
-        if name.startswith(CALIBRATION_PARAMETERS)
-    ]
-    calibration_ids = {id(parameter) for parameter in calibration_parameters}
-    base_parameters = [
-        parameter for parameter in model.parameters()
-        if id(parameter) not in relation_ids
-        and id(parameter) not in lens_ids
-        and id(parameter) not in calibration_ids
-    ]
-    optimizer = torch.optim.AdamW(
-        base_parameters,
-        lr=design.learning_rate,
-        weight_decay=design.weight_decay,
-        fused=device.startswith("cuda"),
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, design.steps)
-    relation_optimizer = None
-    relation_scheduler = None
-    if relation_parameters:
-        relation_optimizer = torch.optim.AdamW(
-            relation_parameters,
-            lr=design.learning_rate,
-            weight_decay=design.weight_decay,
-            fused=device.startswith("cuda"),
-        )
-        relation_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            relation_optimizer, design.steps
-        )
-    detail_optimizer = None
-    detail_scheduler = None
-    lens_optimizer = None
-    lens_scheduler = None
-    calibration_optimizer = None
-    calibration_scheduler = None
+    optimizers, parameters = initialize_optimizers(model, design, device)
     reader_budget = design.steps if design.reader_only else design.reader_steps
     reader_start = 0 if design.reader_only else design.steps - design.reader_steps
     lfmc_train_index = None
@@ -269,93 +430,8 @@ def train(
     started = time.time()
     for step in range(design.steps):
         if design.reader_steps and step == reader_start:
-            model.reader_phase = True
-            model.rank_aligned_expansion = design.reader_only
-            for name, parameter in model.named_parameters():
-                is_reader = name.startswith(READER_PARAMETERS) \
-                            or name.startswith(SPECIES_LENS_PARAMETERS) \
-                            or name.startswith(LFMC_LENS_PARAMETERS) \
-                            or name.startswith(CALIBRATION_PARAMETERS)
-                if design.reader_only:
-                    is_reader = name.startswith(EXPANSION_PARAMETERS)
-                if design.reader_only and name.startswith("species_graph."):
-                    is_reader = False
-                parameter.requires_grad_(is_reader)
-            graph_parameters = [
-                parameter for name, parameter in model.named_parameters()
-                if name.startswith("species_graph.") and parameter.requires_grad
-            ]
-            graph_ids = {id(parameter) for parameter in graph_parameters}
-            detail_parameters = [
-                parameter for name, parameter in model.named_parameters()
-                if name.startswith(IDENTITY_DETAIL_PARAMETERS)
-            ]
-            detail_ids = {id(parameter) for parameter in detail_parameters}
-            reader_parameters = [
-                parameter for parameter in model.parameters()
-                if parameter.requires_grad
-                and id(parameter) not in graph_ids
-                and id(parameter) not in detail_ids
-                and id(parameter) not in relation_ids
-                and id(parameter) not in lens_ids
-                and id(parameter) not in calibration_ids
-            ]
-            base_parameters = [
-                parameter for parameter in model.parameters()
-                if parameter.requires_grad
-                and id(parameter) not in detail_ids
-                and id(parameter) not in relation_ids
-                and id(parameter) not in lens_ids
-                and id(parameter) not in calibration_ids
-            ]
-            optimizer = torch.optim.AdamW(
-                (
-                    {"params": reader_parameters, "lr": design.learning_rate * 0.2},
-                    {"params": graph_parameters,
-                     "lr": design.learning_rate * design.graph_learning_rate_scale},
-                ),
-                lr=design.learning_rate * 0.2,
-                weight_decay=design.weight_decay,
-                fused=device.startswith("cuda"),
-            )
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, reader_budget
-            )
-            detail_optimizer = torch.optim.AdamW(
-                detail_parameters,
-                lr=design.learning_rate * 0.2,
-                weight_decay=design.weight_decay,
-                fused=device.startswith("cuda"),
-            )
-            detail_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                detail_optimizer, reader_budget
-            )
-            lens_optimizer = torch.optim.AdamW(
-                lens_parameters,
-                lr=design.learning_rate * 0.4,
-                weight_decay=design.weight_decay,
-                fused=device.startswith("cuda"),
-            )
-            lens_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                lens_optimizer, reader_budget
-            )
-            calibration_optimizer = torch.optim.AdamW(
-                calibration_parameters,
-                lr=design.learning_rate * 10.0,
-                weight_decay=0.0,
-                fused=device.startswith("cuda"),
-            )
-            calibration_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                calibration_optimizer, reader_budget
-            )
-            print(
-                f"reader phase {reader_budget} steps  "
-                f"parameters {sum(parameter.numel() for parameter in reader_parameters):,}  "
-                f"graph parameters {sum(parameter.numel() for parameter in graph_parameters):,}  "
-                f"detail parameters {sum(parameter.numel() for parameter in detail_parameters):,}  "
-                f"lens parameters {sum(parameter.numel() for parameter in lens_parameters):,}  "
-                f"graph lr scale {design.graph_learning_rate_scale:g}",
-                flush=True,
+            enter_reader_phase(
+                model, optimizers, parameters, design, device, reader_budget
             )
         index = source.train_index[torch.randint(len(source.train_index), (design.batch,), device=device)]
         values, observed, coords, neighbors, manifolds, neighbor_values = source.batch(index)
@@ -367,140 +443,19 @@ def train(
             loss, structured_loss = objective
         else:
             loss, structured_loss = objective, None
-        if getattr(model, "reader_phase", False) \
-                and lfmc_train_index is not None \
+        if model.reader_phase and lfmc_train_index is not None \
                 and len(lfmc_train_index) > 2:
-            devices = [torch.cuda.current_device()] \
-                      if device.startswith("cuda") else []
-            with torch.random.fork_rng(devices=devices):
-                auxiliary_seed = design.seed + 100_000 + step
-                torch.manual_seed(auxiliary_seed)
-                if devices:
-                    torch.cuda.manual_seed_all(auxiliary_seed)
-                lfmc_index = lfmc_train_index[torch.randint(
-                    len(lfmc_train_index), (design.batch,), device=device
-                )]
-                lfmc_values, lfmc_observed, lfmc_coords, lfmc_neighbors, \
-                    lfmc_manifolds, lfmc_neighbor_values = source.batch(
-                        lfmc_index
-                    )
-                lfmc_context = model.context(
-                    lfmc_coords, lfmc_neighbors, lfmc_manifolds,
-                    lfmc_neighbor_values
-                )
-                lfmc_present = {
-                    name: lfmc_observed[name]
-                    if name in model.environment_names
-                    else torch.zeros_like(lfmc_observed[name])
-                    for name in model.names
-                }
-                lfmc_latent = model.encode(
-                    lfmc_values, lfmc_present, lfmc_context,
-                    detach_species=True
-                )
-                lfmc_pool = model._pool(lfmc_latent, "lfmc")
-                prediction = model.lfmc_head(
-                    lfmc_pool.detach()
-                ).squeeze(-1).detach() + model._lfmc_lens_residual(
-                    lfmc_pool.detach()
-                )
-                target = torch.log(lfmc_values["_lfmc"].clamp_min(1.0))
-                valid = lfmc_values["_lfmc_valid"].bool()
-                prediction = prediction[valid]
-                target = target[valid]
-                prediction = prediction - prediction.mean()
-                target = target - target.mean()
-                correlation = (prediction * target).sum() / (
-                    prediction.square().sum().sqrt()
-                    * target.square().sum().sqrt()
-                ).clamp_min(1e-8)
-            loss = loss + 1.0 - correlation
+            loss = loss + lfmc_correlation_loss(
+                model, source, lfmc_train_index, design, device, step
+            )
         total_loss = loss if structured_loss is None else loss + structured_loss
         if not torch.isfinite(total_loss):
             raise FloatingPointError(f"non-finite loss at step {step}")
-        optimizer.zero_grad(set_to_none=True)
-        if relation_optimizer is not None:
-            relation_optimizer.zero_grad(set_to_none=True)
-        if detail_optimizer is not None:
-            detail_optimizer.zero_grad(set_to_none=True)
-        if lens_optimizer is not None:
-            lens_optimizer.zero_grad(set_to_none=True)
-        if calibration_optimizer is not None:
-            calibration_optimizer.zero_grad(set_to_none=True)
-        gradient_cosine = None
-        if structured_loss is None:
-            loss.backward()
-        else:
-            trainable = [
-                parameter for parameter in model.parameters()
-                if parameter.requires_grad
-            ]
-            loss.backward(retain_graph=True)
-            base_grad = {
-                id(parameter): parameter.grad.detach().clone()
-                for parameter in trainable if parameter.grad is not None
-            }
-            optimizer.zero_grad(set_to_none=True)
-            if relation_optimizer is not None:
-                relation_optimizer.zero_grad(set_to_none=True)
-            if detail_optimizer is not None:
-                detail_optimizer.zero_grad(set_to_none=True)
-            if lens_optimizer is not None:
-                lens_optimizer.zero_grad(set_to_none=True)
-            if calibration_optimizer is not None:
-                calibration_optimizer.zero_grad(set_to_none=True)
-            structured_loss.backward()
-            shared = [
-                parameter for parameter in trainable
-                if parameter.grad is not None and id(parameter) in base_grad
-            ]
-            dot = sum(
-                (parameter.grad * base_grad[id(parameter)]).sum()
-                for parameter in shared
-            )
-            base_norm = sum(
-                base_grad[id(parameter)].square().sum()
-                for parameter in shared
-            ).clamp_min(1e-12)
-            structured_norm = sum(
-                parameter.grad.square().sum() for parameter in shared
-            ).clamp_min(1e-12)
-            gradient_cosine = float(
-                dot / (base_norm.sqrt() * structured_norm.sqrt())
-            )
-            projection = dot / base_norm if dot < 0 else dot.new_zeros(())
-            for parameter in trainable:
-                base = base_grad.get(id(parameter))
-                auxiliary = parameter.grad
-                if base is None:
-                    continue
-                if auxiliary is None:
-                    parameter.grad = base
-                else:
-                    parameter.grad = base + auxiliary - projection * base
-        torch.nn.utils.clip_grad_norm_(base_parameters, 5.0)
-        if relation_optimizer is not None:
-            torch.nn.utils.clip_grad_norm_(relation_parameters, 5.0)
-        if detail_optimizer is not None:
-            torch.nn.utils.clip_grad_norm_(detail_parameters, 5.0)
-        if lens_optimizer is not None:
-            torch.nn.utils.clip_grad_norm_(lens_parameters, 5.0)
-        if calibration_optimizer is not None:
-            torch.nn.utils.clip_grad_norm_(calibration_parameters, 5.0)
-        optimizer.step()
-        scheduler.step()
-        if relation_optimizer is not None:
-            relation_optimizer.step()
-            relation_scheduler.step()
-        if detail_optimizer is not None:
-            detail_optimizer.step()
-            detail_scheduler.step()
-        if lens_optimizer is not None:
-            lens_optimizer.step()
-            lens_scheduler.step()
-        if calibration_optimizer is not None:
-            calibration_optimizer.step()
-            calibration_scheduler.step()
+        gradient_cosine = backward(
+            model, optimizers, loss, structured_loss
+        )
+        optimizers.clip_grad_norm(5.0)
+        optimizers.step()
         for module in model.modules():
             if hasattr(module, "clamp_per_level_scale"):
                 module.clamp_per_level_scale()
