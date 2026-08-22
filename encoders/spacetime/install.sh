@@ -34,6 +34,11 @@ else
 fi
 
 # Check for CUDA
+TORCH_CUDA=$(python3 -c "import torch; print(torch.version.cuda or '')" 2>/dev/null)
+if [ -n "$TORCH_CUDA" ] && [ -d "/usr/local/cuda-$TORCH_CUDA" ]; then
+    export CUDA_HOME="/usr/local/cuda-$TORCH_CUDA"
+    export PATH="$CUDA_HOME/bin:$PATH"
+fi
 if command -v nvcc &> /dev/null; then
     CUDA_VERSION=$(nvcc --version | grep "release" | awk '{print $6}' | cut -c2-)
     echo -e "${GREEN}[✓]${NC} CUDA $CUDA_VERSION detected"
