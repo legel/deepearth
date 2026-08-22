@@ -1,41 +1,47 @@
-# DeepCal champion report
+# DeepEarth champion report
 
-## 25.4M fixed-step hierarchical-family record
+## 22.7M wide-cell Earth4D mesh harmonic record
 
-The compact model improves both public aggregates over a seed-matched 24.9M control at exactly 2,291 optimizer
-steps. It retains the PR's central result: the 797.1M default is unnecessary. The candidate is 96.8% smaller and
-uses 48.4% less training VRAM. Its 2,291-step score is also 18.7% higher than the historical 797M receipt, which
-used 5,126 steps; that row is replacement context, not the matched promotion comparison.
+The production model replaces fusion-only modality mixing with a fibered Earth4D world state. Environmental, visual,
+biological, and ecological evidence is written into typed multiresolution cells; task-conditioned attention reads the
+shared mesh without a raw-modality bypass.
+
+The 192-dimensional mesh improves both public aggregates over the otherwise identical 128-dimensional mesh on both
+seeds at exactly 8,300 optimizer steps. It also sets a new public harmonic score relative to the registered 25.4M
+champion. Arithmetic remains below that champion, so this is explicitly a harmonic record rather than an
+across-the-board aggregate record.
 
 | Model | Seed | Steps | Harmonic | Arithmetic |
 |---|---:|---:|---:|---:|
-| Registered 797.1M reference | 1337 | 5,126 | 0.318693 | 0.570700 |
-| Fixed-step 24.9M control | 1337 | 2,291 | 0.367661 | 0.578883 |
-| Fixed-step 24.9M control | 1338 | 2,291 | 0.365992 | 0.581475 |
-| Prior 25.4M niche fusion | 2-seed mean | 2,291 | 0.373924 | 0.583204 |
-| Prior masked-pollinator record | 2-seed mean | 2,291 | 0.376617 | 0.586926 |
-| **Hierarchical family MAP** | **1337** | **2,291** | **0.377589** | **0.586005** |
-| **Hierarchical family MAP** | **1338** | **2,291** | **0.379225** | **0.588743** |
-| **Candidate mean** | **2 seeds** | **2,291** | **0.378407** | **0.587374** |
-| **Delta vs prior PR record** |  |  | **+0.001790 (+0.48%)** | **+0.000448** |
-| **Delta vs fixed-step control** |  |  | **+0.011581 (+3.16%)** | **+0.007195** |
-| **Difference vs historical reference** |  |  | **+0.059714 (+18.74%)** | **+0.016674** |
+| Registered 25.4M public champion | 2-seed mean | 2,291 | 0.378407 | **0.587374** |
+| 128-wide Earth4D mesh | 1337 | 8,300 | 0.377276 | 0.557451 |
+| 128-wide Earth4D mesh | 1338 | 8,300 | 0.381407 | 0.566217 |
+| **192-wide Earth4D mesh** | **1337** | **8,300** | **0.382631** | **0.572135** |
+| **192-wide Earth4D mesh** | **1338** | **8,300** | **0.388055** | **0.578847** |
+| **192-wide mesh mean** | **2 seeds** | **8,300** | **0.385343** | **0.575491** |
+| **Delta vs 128-wide mesh** |  |  | **+0.006002** | **+0.013657** |
+| **Delta vs registered champion** |  |  | **+0.006936** | **-0.011884** |
 
-When plant identity is hidden, the model now composes its species posterior through the empirical
-species-to-pollinator table and blends that distribution with the learned pollinator decoder. This makes the
-interaction prediction consistent with the model's own uncertain species belief instead of requiring a single
-guessed species. It implements science rule 27: plant-pollinator interactions carry biological signal.
+The matched width experiment attributes the gain to representation capacity: mesh cell width increases from 128 to
+192 while Earth4D levels, hash capacity, latent count, reader depth, data, evaluator, and optimizer-step budget remain
+fixed. The resulting production model has 22,744,486 parameters, 2.7M fewer than the registered public champion.
 
-The mechanism improves photo-only pollinator recall by 0.0892, photo-plus-environment recall by 0.0872,
-environment recall by 0.0054, and spacetime recall by 0.0043. Scores outside the pollinator pathway are identical
-because the validation replays the exact same trained checkpoints; no additional optimization steps are involved.
+The strongest human-capability gains over the registered champion are pollinator distribution quality (+0.187425),
+pollinator calibration MRR (+0.113272), community-from-species recall (+0.080498), mycorrhiza-from-environment
+(+0.079925), community-from-environment recall (+0.079493), and companion recall (+0.078959). The largest regressions
+are hydro reconstruction (-0.219633), topography reconstruction (-0.166664), climate reconstruction (-0.131405), CHM
+reconstruction (-0.095803), and form-trait F1 (-0.082358). Every active score and both seed receipts are recorded in
+`BENCHMARKS.md` and `champion_scores.json`.
 
-For masked species queries, the new decoder marginalizes the species posterior by botanical family and promotes
-the most likely species inside the family with the greatest total probability. It preserves every other species
-logit, so fine-grained evidence is retained while family-level decisions become coherent. On the exact same
-checkpoints it raises B6 family-from-environment from 0.159364 to 0.172357 and B8 family-from-spacetime from
-0.161352 to 0.170268, while increasing both public aggregates on both seeds. This implements science rules 17 and
-23: posterior evidence is composed probabilistically without collapsing the species distribution.
+The unchanged evaluator includes logistic-renormalized mechanism deltas in harmonic and excludes them from
+arithmetic. In particular, community phylogenetic gain rises by +0.234097. This helps explain why harmonic improves
+while the arithmetic mean of direct capabilities falls; the PR does not hide or reinterpret that tradeoff.
 
-The canonical configuration uses batch 512, dense hash optimization, learning rate `1e-3`, and exactly 2,291
-optimizer steps. The evaluator, aggregate definitions, spatial holdout, and extraction recipe are unchanged.
+The canonical design is
+`Design(width=192, levels=12, hash_log2=14, latents=16, layers=2)`. Training uses 8,000 mesh steps followed by a
+300-step frozen-graph reader fit. Both checkpoints strict-load into the production model. Peak training VRAM was
+41,970 MiB.
+
+Evaluation base: `bbbe6be6bf30a8d169605d67b0b6b9eec4d29b74`. Protocol:
+`public-main-bbbe6be6-fixed-8300-steps`. Public evaluator SHA-256:
+`59d37fbe2d5645c8169475ef61d298637638cc996403ba77da9b5ed20cdba99c`.
