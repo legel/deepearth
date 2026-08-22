@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from deepearth.core.objective import TrainingObjectiveMixin
-from deepearth.core.layers import mlp, per_name, preserve_rng
+from deepearth.core.layers import consume_rng, mlp, per_name, preserve_rng
 from deepearth.core.reader import (
     MeshQueryReader,
     RoutedMeshReader,
@@ -69,6 +69,7 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         self._init_backbone(
             variables, write_names, d_model, levels, n_latents, n_layers, n_heads
         )
+        consume_rng(nn.Linear(d_model, source.n_classes))
         self._init_scientific_heads(source, d_model, levels, n_heads)
         with preserve_rng():
             self._init_fiber_mesh(
@@ -269,6 +270,7 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         self.fiber_reconstruct = nn.ModuleDict({
             name: mlp(d_model, d_model) for name in reconstruct_names
         })
+        consume_rng(*(mlp(d_model, d_model) for _ in self.always_names))
         self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.sparse_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.coarse_scale_exchange = nn.Linear(d_model, d_model, bias=False)
@@ -279,6 +281,10 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
             name: nn.Linear(d_model, d_model, bias=False)
             for name in reconstruct_names
         })
+        consume_rng(*(
+            nn.Linear(d_model, d_model, bias=False)
+            for _ in self.always_names
+        ))
         self.lens_exchange_norm = nn.LayerNorm(d_model)
         self.lens_exchange = nn.Parameter(
             torch.zeros(levels, len(LENSES), len(LENSES))

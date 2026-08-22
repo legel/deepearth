@@ -24,3 +24,7 @@ def per_name(names, factory):
     return nn.ParameterDict({
         name: nn.Parameter(factory(name)) for name in names
     })
+
+
+def consume_rng(*_unused) -> None:
+    """Advance the published initialization stream without retaining dead weights."""
