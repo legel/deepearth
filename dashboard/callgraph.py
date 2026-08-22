@@ -1,19 +1,16 @@
-"""Static call-graph reachability under the ACTUAL config — proof of integration, not capability.
+"""Static call-graph reachability from the production entrypoint.
 
 Crawls every def/class/method in the model codebase, builds the reference graph, and BFS-walks it
-from the real entry points (train.py main). Config-gated branches are evaluated against the current
-yaml: code behind a false gate is GATED, not live. Code no root reaches is an ISLAND.
+from the real entry points in core.train. Code no root reaches is an ISLAND.
 
 Reach classes: live (on the champion train/eval path, gates evaluated) · gated (reachable only
 through a branch the config turns off, with the gate key) · data-pipeline / recipes / tests /
 tooling (reachable from those roots only) · island (nothing calls it).
 
-    python -m dashboard.callgraph [--config autoresearch/deepcal.yaml]
+    python -m dashboard.callgraph
 """
-import argparse, ast, json, subprocess, time
+import ast, json, subprocess, time
 from pathlib import Path
-
-import yaml
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
@@ -99,7 +96,7 @@ class Analyzer:
     def _attr_values(self):
         """model._x = m.get("k", d)  and  DeepEarth(k=m.get("k", d)) -> self.k = k  data flows."""
         out = {}
-        tr = self.mods.get("autoresearch/train.py")
+        tr = self.mods.get("core/train.py")
         if not tr:
             return out
         ctor_kwargs = {}
@@ -122,7 +119,7 @@ class Analyzer:
         return out
 
     def _get_value(self, node):
-        """Evaluate m.get("k", d) / config["s"]["k"]-style reads against the yaml; ... = unknown."""
+        """Evaluate config-style reads when the analyzer receives a value map."""
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" \
                 and node.args and isinstance(node.args[0], ast.Constant):
             k = node.args[0].value
@@ -246,16 +243,15 @@ class Analyzer:
             self.edges[src].add((dst, gate))
 
     def reach(self):
-        roots = {"live": ["autoresearch/train.py::main", "autoresearch/train.py::train_and_evaluate",
-                          "autoresearch/train.py::(cli)"],
+        roots = {"live": ["core/train.py::main", "core/train.py::train", "core/train.py::(cli)"],
                  "data-pipeline": [], "tests": [], "recipes": [], "tooling": []}
         for rel, m in self.mods.items():
             scope = ("data-pipeline" if rel.startswith("data/") else
                      "tests" if rel.startswith("tests/") else
                      "recipes" if rel.startswith("autoresearch/recipes/") else "tooling")
-            if rel != "autoresearch/train.py" and m.cli:
+            if rel != "core/train.py" and m.cli:
                 roots[scope].append(f"{rel}::(cli)")
-            elif rel != "autoresearch/train.py" and scope != "tooling" and m.toplevel:
+            elif rel != "core/train.py" and scope != "tooling" and m.toplevel:
                 roots[scope].append(f"{rel}::(module)")   # guard-less scripts run at import
 
             for q in m.defs:
@@ -315,17 +311,13 @@ class Analyzer:
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default=str(REPO / "autoresearch" / "deepcal.yaml"))
-    args = ap.parse_args()
-    config = yaml.safe_load(open(args.config))
-    a = Analyzer(config).build()
+    a = Analyzer({}).build()
     defs = a.reach()
     from collections import Counter
     stats = Counter(d["reach"] for d in defs)
     (ROOT / "state").mkdir(exist_ok=True)
     (ROOT / "state" / "callgraph.json").write_text(json.dumps(
-        {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": args.config,
+        {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": "core",
          "stats": dict(stats), "defs": defs}) + "\n")
     print(f"callgraph: {len(defs)} defs -> {dict(stats)}")
     for d in defs:

@@ -758,7 +758,7 @@ function armGraph() {
 async function vRuns() {
   const runs = await api("runs");
   if (!runs?.length) return `<h1>Runs</h1>` + empty(
-    `No runs yet. Launch one with <code>python -m dashboard.tracker autoresearch/deepcal.yaml</code> —
+    `No runs yet. Launch one with <code>python -m dashboard.tracker --cache /path/to/deepcal</code> —
      train.py output passes through untouched and streams here live.`);
   const done = runs.filter(r => r.last?.t === "final" && r.last.scores?.benchmarks
     && Object.keys(r.last.scores.benchmarks).length);

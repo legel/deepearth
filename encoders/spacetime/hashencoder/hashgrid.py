@@ -1,32 +1,37 @@
 import enum
-from math import ceil, isfinite
+from math import ceil
 from cachetools import cached
 import numpy as np
 
+import os
 import torch
 import torch.nn as nn
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
 
-# Use torch.amp instead of deprecated torch.cuda.amp
 try:
     from torch.amp import custom_bwd, custom_fwd
 except ImportError:
-    # Fallback for older PyTorch versions
-    from torch.cuda.amp import custom_bwd, custom_fwd 
+    from torch.cuda.amp import custom_bwd, custom_fwd
 
 from .backend import _backend
 
+# Fixed-point atomics make colliding gradient writes order-independent when explicitly enabled.
 _FIXED_POINT_BITS = 36
 
 
 def _fixed_scale(grad: torch.Tensor) -> float:
-    if not torch.are_deterministic_algorithms_enabled():
+    """Fixed-point scale for this backward, or 0.0 to keep the original float-atomic path."""
+    explicit = os.environ.get("EARTH4D_DETERMINISTIC", "") in ("1", "true", "True")
+    if not explicit and not torch.are_deterministic_algorithms_enabled():
         return 0.0
-    gmax = grad.detach().abs().max().item()
-    if not isfinite(gmax) or gmax <= 0.0:
+    gmax = grad.detach().abs().max()
+    if not torch.isfinite(gmax) or gmax.item() <= 0.0:
         return 0.0
-    return (2.0 ** _FIXED_POINT_BITS) / gmax
+    return float((2.0 ** _FIXED_POINT_BITS) / gmax.item())
+
+
+
 class _hash_encode(Function):
     @staticmethod
     @custom_fwd(cast_inputs=torch.half, device_type='cuda')
@@ -306,7 +311,6 @@ class _hash_encode_precomputed(Function):
         ctx.calc_grad_inputs = calc_grad_inputs
 
         return outputs
-
     @staticmethod
     @custom_bwd(device_type='cuda')
     def backward(ctx, grad):
@@ -329,8 +333,8 @@ class _hash_encode_precomputed(Function):
             grad, offsets,
             h1_used, h2_used, weights,
             probe_indices, index_logits, grad_index_logits, grad_embeddings,
-            B, D, C, L, N_p, N_c, _fixed_scale(grad)
-        )
+            B, D, C, L, N_p, N_c
+        , _fixed_scale(grad))
 
         # per_level_scale gradient: same formula as the standard backward, from the freshly recomputed dy_dx.
         # scale_l[d] = exp2(pls[l,d])*base[d]-1 ; d(out)/d(pls) = ln2*(scale+1)/scale * (dy_dx contracted with grad) * input
@@ -714,9 +718,8 @@ class HashEncoder(nn.Module):
             probe_indices, index_logits, grad_index_logits, self._adam_grad_buffer,
             B, self.input_dim, self.level_dim, self.num_levels,
             self.N_p if self.enable_learned_probing else 1,
-            self.N_c if self.enable_learned_probing else 0,
-            _fixed_scale(grad)
-        )
+            self.N_c if self.enable_learned_probing else 0
+        , _fixed_scale(grad))
 
     def adam_step(self, batch_indices):
         """

@@ -571,11 +571,11 @@
  "scoring": {
   "net_score": {
    "definition": "Harmonic mean (p = -1) of all active benchmark scores after delta logistic-renormalization",
-   "value": 0.37392445564359744
+   "value": null
   },
   "arithmetic_net": {
    "definition": "Arithmetic mean of active capability scores excluding ablation-delta benchmarks",
-   "value": 0.5832041629044415
+   "value": null
   }
  },
  "registry_location": "autoresearch/evaluate.py::BENCHMARKS"

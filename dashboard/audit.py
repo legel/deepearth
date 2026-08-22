@@ -289,7 +289,7 @@ SEEDS = {
 "measures": "<=12 words", "inputs": "<=8 words", "target": "<=8 words",
 "current_score": <float|null>}], "scoring": {"net_score": {...}, "arithmetic_net": {...}},
 "registry_location": "<where the registry lives>"}. Cover every benchmark."""),
-    "tokens": (["core/fusion.py", "autoresearch/champion.yaml"],
+    "tokens": (["core/fusion.py", "core/train.py"],
                """Trace the ACTUAL token structure of one training example through DeepEarth.encode/
 forward. Return JSON {"tokens": [{"token_type", "count_per_example", "dim",
 "composed_of", "origin"}], "context_window": {"formula_round0": "..."},

@@ -215,7 +215,6 @@ __global__ void kernel_grid(
     }
 }
 
-
 // BACKWARD KERNEL (EMBEDDING GRADIENTS)
 
 template <typename input_t, typename scalar_t, uint32_t D, uint32_t C, uint32_t N_C>
@@ -234,7 +233,7 @@ __global__ void kernel_grid_backward(
     const uint32_t N_f = 0,
     const uint32_t N_p = 1,
     const uint32_t N_c = 0,
-    // Non-null buffers enable order-independent fixed-point accumulation.
+    // Null fixed buffers preserve floating-point accumulation.
     long long * __restrict__ grad_grid_fixed = nullptr,
     long long * __restrict__ grad_logits_fixed = nullptr,
     const float fixed_scale = 0.0f
@@ -343,12 +342,12 @@ __global__ void kernel_grid_backward(
                     uint32_t probe_index = ((N_p * h1 + p) % hashmap_size) * C + ch;
                     float weight = w * weights[p];
 
-                    if (grad_grid_fixed != nullptr) {
-                        #pragma unroll
-                        for (uint32_t c = 0; c < N_C; c++) {
-                            atomicAddFixed(&grad_grid_fixed[probe_index + c], (float)(weight * grad_cur[c]), fixed_scale);
-                        }
-                    } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+                     if (grad_grid_fixed != nullptr) {
+                         #pragma unroll
+                         for (uint32_t c = 0; c < N_C; c++) {
+                             atomicAddFixed(&grad_grid_fixed[probe_index + c], (float)(weight * grad_cur[c]), fixed_scale);
+                         }
+                     } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                         #pragma unroll
                         for (uint32_t c = 0; c < N_C; c += 2) {
                             __half2 v = {(__half)(weight * grad_cur[c]), (__half)(weight * grad_cur[c + 1])};
@@ -393,12 +392,12 @@ __global__ void kernel_grid_backward(
             } else {
                 uint32_t index = (uint32_t)((index_direct % hashmap_size) * C + ch);
 
-                if (grad_grid_fixed != nullptr) {
-                    #pragma unroll
-                    for (uint32_t c = 0; c < N_C; c++) {
-                        atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
-                    }
-                } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+                 if (grad_grid_fixed != nullptr) {
+                     #pragma unroll
+                     for (uint32_t c = 0; c < N_C; c++) {
+                         atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
+                     }
+                 } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                     #pragma unroll
                     for (uint32_t c = 0; c < N_C; c += 2) {
                         __half2 v = {(__half)(w * grad_cur[c]), (__half)(w * grad_cur[c + 1])};
@@ -414,12 +413,12 @@ __global__ void kernel_grid_backward(
         } else {
             uint32_t index = get_grid_index<D, C>(ch, hashmap_size, resolution, pos_grid_local);
 
-            if (grad_grid_fixed != nullptr) {
-                #pragma unroll
-                for (uint32_t c = 0; c < N_C; c++) {
-                    atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
-                }
-            } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+             if (grad_grid_fixed != nullptr) {
+                 #pragma unroll
+                 for (uint32_t c = 0; c < N_C; c++) {
+                     atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
+                 }
+             } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                 #pragma unroll
                 for (uint32_t c = 0; c < N_C; c += 2) {
                     __half2 v = {(__half)(w * grad_cur[c]), (__half)(w * grad_cur[c + 1])};
@@ -668,7 +667,7 @@ void hash_encode_forward_cuda(const input_t *inputs, const scalar_t *embeddings,
 }
 
 
-// Convert once after all fixed-point atomics complete on this stream.
+// Convert once after fixed-point accumulation completes.
 template <typename scalar_t>
 __global__ void kernel_fixed_to_float(const long long * __restrict__ src, scalar_t * __restrict__ dst,
                                       const int64_t n, const float inv_scale) {
@@ -864,7 +863,7 @@ void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const 
         grad_index_logits_ptr = grad_index_logits.data_ptr<float>();
     }
 
-    // fixed_scale <= 0 preserves the original float-atomic path.
+    // Positive scale enables fixed-point accumulation; zero preserves float atomics.
     at::Tensor grad_fixed, logits_fixed;
     long long *grad_fixed_ptr = nullptr;
     long long *logits_fixed_ptr = nullptr;
@@ -889,6 +888,7 @@ void hash_encode_backward(const at::Tensor grad, const at::Tensor inputs, const 
         }));
     }
 
+    // Convert fixed-point sums after the accumulation kernels finish.
     if (grad_fixed_ptr != nullptr) {
         const float inv = (float)(1.0 / fixed_scale);
         const int64_t n = grad_embeddings.numel();
@@ -1262,7 +1262,7 @@ __global__ void kernel_grid_backward_precomputed(
     const uint32_t B, const uint32_t L,
     const uint32_t N_p,
     const uint32_t N_c,
-    // Non-null buffers enable order-independent fixed-point accumulation.
+    // Match the dense path's optional fixed-point accumulation.
     long long * __restrict__ grad_grid_fixed = nullptr,
     long long * __restrict__ grad_logits_fixed = nullptr,
     const float fixed_scale = 0.0f
@@ -1774,7 +1774,7 @@ void hash_encode_backward_precomputed(
     const uint32_t* h1_ptr = reinterpret_cast<const uint32_t*>(precomp_h1.data_ptr<int>());
     const uint32_t* h2_ptr = reinterpret_cast<const uint32_t*>(precomp_h2.data_ptr<int>());
 
-    // fixed_scale <= 0 preserves the original float-atomic path.
+    // Zero scale preserves the original float-atomic path.
     at::Tensor grad_fixed, logits_fixed;
     long long *grad_grid_fixed = nullptr;
     long long *grad_logits_fixed = nullptr;

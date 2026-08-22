@@ -307,7 +307,7 @@ class TreeMessagePassing(nn.Module):
     state, branch lengths gating how much signal survives each split — is the principled way to share information across
     species, above all for rare/held-out clades. A GNN over the phylogeny (cf. GraphCast, Science 2023; GenCast,
     Nature 2025 — phylogeny as the mesh, ancestral state as the propagated field); :class:`OrnsteinUhlenbeckAttention`
-    is an efficient approximation. See ``autoresearch/science.md``.
+    is an efficient approximation. See ``SCIENCE.md``.
 
     Args: ``n_species`` (tips), ``d_model`` (width), ``tree`` (buffers from :func:`build_tree_buffers`), ``n_layers``
     (upward+downward sweeps, each a :class:`_TreeRound`; more sweeps propagate further), ``hidden`` (message-MLP width).
@@ -451,16 +451,17 @@ class LatentCladeAttention(nn.Module):
         ``[n_species, d_model]``: in-tree rows from exact message passing, out-of-tree rows from clade cross-attention."""
         tree_mask = None if mask is None else mask[self.tip_row]
         tips, clades = self.tree(h0[self.tip_row], return_clades=True, mask=tree_mask)
-        clades = self.clade_norm(clades)                                    # bound the raw internal-node states (stability)
-        out = h0.index_copy(0, self.tip_row, tips.to(h0.dtype))             # autocast may promote the tree sweep
+        tips = tips.to(h0.dtype)
+        clades = self.clade_norm(clades).to(h0.dtype)                       # exact OU computes in fp32
+        out = h0.index_copy(0, self.tip_row, tips)                          # refined tips -> their vocab rows
         if self.has_oot and clades.shape[0] > 0:
             q = h0[self.oot_row]                                            # [M,d] out-of-tree seeds (queries)
             M, C, H, dh = q.shape[0], clades.shape[0], self.n_heads, self.d_head
             qh = self.q(q).view(M, H, dh); kh = self.k(clades).view(C, H, dh); vh = self.v(clades).view(C, H, dh)
             a = torch.softmax(torch.einsum("mhd,chd->mhc", qh, kh) / math.sqrt(dh), dim=-1)   # [M,H,C]
             att = torch.einsum("mhc,chd->mhd", a, vh).reshape(M, -1)        # attend to shared clade latents
-            update = self.norm(q + self.o(att)).to(out.dtype)
-            out = out.index_copy(0, self.oot_row, update)
+            attached = self.norm(q + self.o(att)).to(out.dtype)
+            out = out.index_copy(0, self.oot_row, attached)
         return out
 
 
@@ -478,14 +479,19 @@ class SpeciesGraph(nn.Module):
                  tree: dict = None, species_text: torch.Tensor = None, tip_row=None, mask_posterior: str = None):
         super().__init__()
         self.operator = operator
+        # Species seed (science.md rule 26): decode a FROZEN BioCLIP-2 text prior through a small learned probe, so the
+        # phylo/ecological geometry of the text space is preserved and the probe *discovers* structure in it.  With a
+        # scientific prior there is deliberately no private per-species residual: unseen species must use the same
+        # shared text->probe path, and masked reconstruction must predict transferable biology rather than memorize an
+        # arbitrary identity table. No text -> a plain discriminative free table.
         if species_text is not None:
-            self.register_buffer("species_text", species_text)
+            self.register_buffer("species_text", species_text)             # [N, text_dim], frozen (requires_grad False)
             self.probe = nn.Sequential(nn.Linear(species_text.shape[1], d_model), nn.LayerNorm(d_model),
                                        nn.GELU(), nn.Linear(d_model, d_model))
             self.register_parameter("free", None)
         else:
             self.register_buffer("species_text", None); self.probe = None
-            self.free = nn.Parameter(torch.randn(n_species, d_model) * 0.02)
+            self.free = nn.Parameter(torch.randn(n_species, d_model) * 0.02)  # discriminative component
         self.mask_token = nn.Parameter(torch.randn(d_model) * 0.02)          # rule 25: hides a species' seed -> reconstruct from relatives
         if operator in ("tree", "latent-clade"):
             assert tree is not None, f"operator='{operator}' requires the parsed tree buffers"
@@ -539,9 +545,31 @@ class SpeciesGraph(nn.Module):
         return d / (d.mean() + 1e-9)
 
     def _seed(self) -> torch.Tensor:
-        """Return shared text seeds or learned species seeds."""
-        # Do not cache a Parameter directly in fusion.
+        """Per-species base state (once per forward): probe(frozen BioCLIP-2 text) + residual, or the free table.
+        The no-probe branch returns `free + 0` (a plain tensor, grad still flows) rather than the raw Parameter, so
+        that caching it on the module (fusion `_refined_species = _seed()` under _ablate_species) never registers a
+        Parameter — otherwise the next non-ablated forward's plain-tensor assign raises a TypeError (eval-only path)."""
         return self.free + 0.0 if self.probe is None else self.probe(self.species_text)
+
+    def masked_reconstruction_loss(self, mask: torch.Tensor, target: torch.Tensor,
+                                   metric: str = "cosine",
+                                   reconstructed: torch.Tensor = None) -> torch.Tensor:
+        """Public rule-25 operation shared by standalone screens and production training.
+
+        The caller owns how the mask and target are selected; the graph owns how a hidden species is
+        reconstructed.  Keeping this operation on the production ``SpeciesGraph`` API prevents a probe
+        training helper from discovering a mechanism that fusion cannot actually execute.
+        """
+        if not mask.any():
+            return self._seed().sum() * 0.0
+        reconstructed = self(mask=mask) if reconstructed is None else reconstructed
+        reconstructed = reconstructed[mask]
+        expected = target[mask]
+        if metric == "cosine":
+            return (1.0 - F.cosine_similarity(reconstructed, expected, dim=-1)).mean()
+        if metric == "mse":
+            return F.mse_loss(reconstructed, expected)
+        raise ValueError(f"unknown masked reconstruction metric {metric!r}")
 
     def forward(self, mask: torch.Tensor = None) -> torch.Tensor:
         """Refine and return the species representations ``[n_species, d_model]``.
