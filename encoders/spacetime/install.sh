@@ -96,13 +96,11 @@ echo -e "${GREEN}[✓]${NC} Cleaned previous builds"
 echo
 echo "Building CUDA extension..."
 
-# Detect CUDA architecture from nvidia-smi
-if command -v nvidia-smi &> /dev/null; then
-    GPU_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.')
-    if [ ! -z "$GPU_ARCH" ]; then
-        export TORCH_CUDA_ARCH_LIST="${GPU_ARCH:0:1}.${GPU_ARCH:1}"
-        echo "  Detected GPU architecture: ${TORCH_CUDA_ARCH_LIST}"
-    fi
+# Use PyTorch's CUDA capability tuple so two-digit major versions remain intact.
+if python3 -c "import torch; assert torch.cuda.is_available()" &> /dev/null; then
+    export TORCH_CUDA_ARCH_LIST=$(python3 -c \
+        "import torch; major, minor = torch.cuda.get_device_capability(); print(f'{major}.{minor}')")
+    echo "  Detected GPU architecture: ${TORCH_CUDA_ARCH_LIST}"
 fi
 
 echo "  Compiling CUDA kernels (this takes 5-10 minutes)..."
