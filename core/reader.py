@@ -506,7 +506,7 @@ class ScientificReadoutMixin:
         myco = species_logits.softmax(-1) @ species_to_myco
         evidence = myco.clamp_min(1e-8).log() \
                    - self.species_myco_prior.clamp_min(1e-8).log()
-        return base + torch.tanh(self.myco_relation_gate) * evidence
+        return base + 0.75 * evidence
 
     def _pool_fiber(self, fiber: torch.Tensor, name: str) -> torch.Tensor:
         query = self.fiber_decode_query[self.names.index(name)]

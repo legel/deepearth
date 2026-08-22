@@ -99,7 +99,7 @@ READER_PARAMETERS = (
     "sparse_fusion_gate", "decode_query", "decoders.", "community_metric.",
     "species_graph.",
     "poll_head.", "pollinator_reader.", "identity_detail_reader.",
-    "lfmc_head.", "myco_head.", "species_myco_head.", "myco_relation_gate",
+    "lfmc_head.", "myco_head.", "species_myco_head.",
     "flower_head.", "mesh_reader.",
     "species_niche_key", "species_niche_adapter.",
 )
@@ -115,7 +115,7 @@ LFMC_LENS_PARAMETERS = (
     "lfmc_lens_reader.", "lfmc_lens_reader_norm.", "lfmc_lens_head."
 )
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
-RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
+RELATION_PARAMETERS = ("species_myco_head.",)
 CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
 
 
@@ -159,11 +159,20 @@ def initialize_model(source, variable_specs, always_dims, device, design):
         state = torch.load(checkpoint, map_location=device, weights_only=True)
         model.load_state_dict(state, strict=True)
         print(f"initialized from {checkpoint}", flush=True)
+    for name, parameter in model.named_parameters():
+        expansion = name.startswith(EXPANSION_PARAMETERS)
+        parameter.requires_grad_(
+            expansion if design.reader_only else not expansion
+        )
     return model
 
 
 def initialize_optimizers(model, design, device):
-    relation = matching_parameters(model, "species_myco_head.")
+    relation = [
+        parameter for parameter in matching_parameters(
+            model, "species_myco_head."
+        ) if parameter.requires_grad
+    ]
     relation_ids = {
         id(parameter) for parameter in matching_parameters(model, RELATION_PARAMETERS)
     }
@@ -176,7 +185,7 @@ def initialize_optimizers(model, design, device):
     excluded = relation_ids | lens_ids | calibration_ids
     base = [
         parameter for parameter in model.parameters()
-        if id(parameter) not in excluded
+        if parameter.requires_grad and id(parameter) not in excluded
     ]
     optimizers = Optimizers(
         base=adamw_group(

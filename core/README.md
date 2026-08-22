@@ -21,7 +21,7 @@ The mesh separates abiotic, visual, biological, and ecological fibers within eac
 temporal addressing, while `SpeciesGraph` supplies phylogenomic state. Cross-scale and cross-fiber operations compose
 the world state before task-conditioned attention reduces it to a prediction. Raw modalities do not bypass the mesh.
 
-The recorded model uses 192-dimensional cells and 21,851,282 parameters. Across two public-evaluator seeds it scores
+The recorded model uses 192-dimensional cells and 21,776,977 parameters. Across two public-evaluator seeds it scores
 `0.385343` harmonic and `0.575491` arithmetic. The matched 128-dimensional control scores `0.379341` and
 `0.561834`.
 
@@ -32,8 +32,8 @@ The recorded model uses 192-dimensional cells and 21,851,282 parameters. Across 
 - `data.py`: runtime California data contract.
 - `train.py`: fixed-step training and scoring entrypoint.
 
-The record uses 7,900 joint steps, 100 reader steps, then a 300-step frozen-graph reader expansion. Repeat both
-commands for seeds 1337 and 1338:
+The record uses 7,900 joint steps, 100 reader steps, then a 300-step frozen-graph reader expansion. Expansion layers
+remain frozen until the second command. Repeat both commands for seeds 1337 and 1338:
 
 ```text
 python -m deepearth.core.train --cache DATA --seed SEED --steps 8000 --reader-steps 100

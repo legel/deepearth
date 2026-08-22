@@ -203,9 +203,6 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
                 self.species_myco_head = mlp(
                     d_model, 5, d_model, normalize=False
                 )
-                self.myco_relation_gate = nn.Parameter(
-                    torch.tensor(math.atanh(0.75))
-                )
             train_species = torch.zeros(
                 source.n_classes, dtype=torch.bool, device=source.cls.device
             )
@@ -268,8 +265,9 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         self.fiber_read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.fiber_fuse_norm = nn.LayerNorm(d_model)
         self.fiber_fuse = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        reconstruct_names = [variable.name for variable in variables]
         self.fiber_reconstruct = nn.ModuleDict({
-            name: mlp(d_model, d_model) for name in write_names
+            name: mlp(d_model, d_model) for name in reconstruct_names
         })
         self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.sparse_fusion_gate = nn.Parameter(torch.tensor(0.05))
@@ -278,7 +276,8 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         self.scale_exchange_gate = nn.Parameter(torch.full((len(LENSES),), 0.05))
         self.scale_message_norm = nn.LayerNorm(d_model)
         self.mesh_linear_reconstruct = nn.ModuleDict({
-            name: nn.Linear(d_model, d_model, bias=False) for name in write_names
+            name: nn.Linear(d_model, d_model, bias=False)
+            for name in reconstruct_names
         })
         self.lens_exchange_norm = nn.LayerNorm(d_model)
         self.lens_exchange = nn.Parameter(
