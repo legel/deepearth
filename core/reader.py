@@ -104,33 +104,19 @@ class MeshQueryReader(nn.Module):
         self.d_model = d_model
         self.levels = levels
         self.species_variable = species_variable
-        self.mesh_read_query = per_name(
-            names, lambda _: torch.randn(d_model) * 0.02
-        )
-        self.mesh_read_gate = per_name(
-            names, lambda _: torch.tensor(0.05)
-        )
-        self.mesh_scale_read_gate = per_name(
-            names, lambda _: torch.tensor(0.05)
-        )
-        self.mesh_scale_attention_gate = per_name(
-            names, lambda _: torch.zeros(())
-        )
+        self.mesh_read_query = per_name(names, lambda _: torch.randn(d_model) * 0.02)
+        self.mesh_read_gate = per_name(names, lambda _: torch.tensor(0.05))
+        self.mesh_scale_read_gate = per_name(names, lambda _: torch.tensor(0.05))
+        self.mesh_scale_attention_gate = per_name(names, lambda _: torch.zeros(()))
         with preserve_rng():
-            self.task_mesh_reader = nn.MultiheadAttention(
-                d_model, n_heads, batch_first=True
-            )
+            self.task_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         with preserve_rng():
-            self.scale_mesh_reader = nn.MultiheadAttention(
-                d_model, n_heads, batch_first=True
-            )
+            self.scale_mesh_reader = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         with preserve_rng():
             self.deep_mesh_reader = nn.ModuleList([
                 CrossFiberReaderBlock(d_model, n_heads) for _ in range(4)
             ])
-            self.deep_mesh_reader_gate = per_name(
-                names, lambda _: torch.zeros(())
-            )
+            self.deep_mesh_reader_gate = per_name(names, lambda _: torch.zeros(()))
             self.deep_mesh_reader_output_norm = nn.LayerNorm(d_model)
         self.scale_mesh_reader_mix = per_name(
             names,
@@ -142,20 +128,14 @@ class MeshQueryReader(nn.Module):
             self.scale_mesh_reader_router = mlp(4 * d_model, 1)
             nn.init.zeros_(self.scale_mesh_reader_router[-1].weight)
             nn.init.zeros_(self.scale_mesh_reader_router[-1].bias)
-        self.task_mesh_reader_gate = per_name(
-            names, lambda _: torch.zeros(())
-        )
+        self.task_mesh_reader_gate = per_name(names, lambda _: torch.zeros(()))
         self.task_mesh_reader_norm = nn.LayerNorm(d_model)
         self.task_mesh_reader_output_norm = nn.LayerNorm(d_model)
-        self.mesh_prior_read_gate = per_name(
-            names, lambda _: torch.zeros(())
-        )
+        self.mesh_prior_read_gate = per_name(names, lambda _: torch.zeros(()))
         with preserve_rng():
             self.mesh_prior_information_gate = mlp(4 * d_model, 1, d_model)
         conditioned = [name for name in ("pollinator",) if name in names]
-        self.mesh_condition_gate = per_name(
-            conditioned, lambda _: torch.tensor(0.05)
-        )
+        self.mesh_condition_gate = per_name(conditioned, lambda _: torch.tensor(0.05))
         self.mesh_task_norm = nn.LayerNorm(d_model)
         self.mesh_scale_task_norm = nn.LayerNorm(d_model)
         self.mesh_prior_task_norm = nn.LayerNorm(d_model)

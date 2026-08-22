@@ -1,7 +1,10 @@
 """Production data for the California world model."""
 from __future__ import annotations
-import csv, glob
+
+import csv
+import glob
 from pathlib import Path
+
 import numpy as np
 import torch
 from scipy.spatial import cKDTree
@@ -17,9 +20,7 @@ def _normalize(a):
 
 
 class California:
-    """California observations. Each carries coordinates, two ground-image representations, a categorical
-    identity, an evolutionary-position vector, and several categorical descriptors. Builds a spatial hold-out
-    split (whole 0.5 degree cells) and a nearest-neighbor index."""
+    """California observations aligned by GBIF ID with held-out neighbors."""
 
     _traits = ["plant_type", "growth_rate", "seasonality", "sun", "water", "soil_drainage", "ease_of_care", "form"]
 
@@ -28,20 +29,23 @@ class California:
                       "_train_bool", "time_span_days", "time_cut",
                       "lat", "lon", "elev", "cls", "dino", "bio", "phylo", "traits", "coords", "class_group",
                       "species_text", "neighbors", "gbifID",
-                      "lfmc", "lfmc_valid", "flower", "flower_valid", "myco", "myco_valid",   # per-species/per-obs benchmark labels persist across prepared reloads
-                      "obs_month", "month_tnorm", "species_peak_month")   # B28 phenology-seasonality (per-obs month, per-month time anchor, per-species peak)
+                      "lfmc", "lfmc_valid", "flower", "flower_valid", "myco", "myco_valid",
+                      "obs_month", "month_tnorm", "species_peak_month")
 
     def __init__(self, cache_dir: str, n_neighbors: int = 24, device: str = "cuda", holdout_fraction: float = 1 / 6,
                  holdout: str = "spatial", subset: dict | None = None, time_axis: bool = False,
                  meta_path: str | None = None, time_km: float = 50.0, prepared: str | None = None,
                  clay_v2: bool = False):
         self._clay_v2 = clay_v2
-        if prepared and Path(prepared).exists():           # fast path: restore the assembled dataset from a cache
-            self._load_prepared(prepared, device); return
-        cache = Path(cache_dir); dev = self.device = device; self.n_neighbors = n_neighbors
+        if prepared and Path(prepared).exists():
+            self._load_prepared(prepared, device)
+            return
+        cache = Path(cache_dir)
+        dev = self.device = device
+        self.n_neighbors = n_neighbors
         self.reference_latitude_deg = 37.0
         self.time_axis = time_axis
-        self._time_km = float(time_km)                     # normalized-time -> km weight for the neighbor KD-tree
+        self._time_km = float(time_km)
         self._cache = cache
         self._meta_path = meta_path or self._find_meta(cache)
 
@@ -49,12 +53,12 @@ class California:
 
         if subset:
             gid, cls, lat, lon, elev = self._apply_subset(subset, gid, cls, lat, lon, elev, dev)
-        self.gbifID = gid                                  # per-observation GBIF id (post-subset order), for I/O bundles
-        self.binomial = vocab["binomial"]                  # species-local index -> binomial name (e.g. "Quercus agrifolia")
+        self.gbifID = gid
+        self.binomial = vocab["binomial"]
 
         self._split(cls, lat, lon, holdout, holdout_fraction, dev)
         self._load_scientific_data(cache, gid, dev)
-        if prepared:                                       # persist the assembled dataset for instant reload
+        if prepared:
             self._save_prepared(prepared)
 
     def _load_observations(self, cache, dev):
@@ -218,11 +222,13 @@ class California:
             v = getattr(self, k, None)
             blob[k] = v.detach().cpu() if torch.is_tensor(v) else v
         blob["extra"] = {n: (t.cpu(), h.cpu(), d) for n, (t, h, d) in self.extra.items()}
-        for k in ("poll_idx", "poll_frq", "poll_valid", "n_pollinators"):               # pollinator distribution (restored generically on load)
+        for k in ("poll_idx", "poll_frq", "poll_valid", "n_pollinators"):
             if hasattr(self, k):
-                v = getattr(self, k); blob[k] = v.cpu() if torch.is_tensor(v) else v
+                v = getattr(self, k)
+                blob[k] = v.cpu() if torch.is_tensor(v) else v
         blob["tree"] = self.tree
-        blob["lca_tree"] = self.lca_tree; blob["lca_tip_row"] = self.lca_tip_row
+        blob["lca_tree"] = self.lca_tree
+        blob["lca_tip_row"] = self.lca_tip_row
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         torch.save(blob, path)
 
@@ -238,8 +244,8 @@ class California:
         self.tree = blob["tree"]
         self.lca_tree = blob.get("lca_tree")
         self.lca_tip_row = blob["lca_tip_row"].to(device) if torch.is_tensor(blob.get("lca_tip_row")) else None
-        self.train_index = torch.tensor(self.train, device=device)     # derived: train row indices as a device tensor
-        self.has_vision = (self.dino.abs().sum(-1) > 1e-6)             # derived: occurrence-only obs (zeroed vision) are masked (rule 18)
+        self.train_index = torch.tensor(self.train, device=device)
+        self.has_vision = self.dino.abs().sum(-1) > 1e-6
 
     @staticmethod
     def _find_meta(cache: Path):
@@ -261,7 +267,8 @@ class California:
         if sidecar.exists():
             z = np.load(sidecar)
             lut_gid, lut_days = z["gbifID"], z["days"].astype(np.float64)
-            order = np.argsort(lut_gid); lut_gid, lut_days = lut_gid[order], lut_days[order]
+            order = np.argsort(lut_gid)
+            lut_gid, lut_days = lut_gid[order], lut_days[order]
             pos = np.searchsorted(lut_gid, gid).clip(max=len(lut_gid) - 1)
             hit = lut_gid[pos] == gid
             days = np.where(hit, lut_days[pos], np.nan)
@@ -318,7 +325,7 @@ class California:
         from deepearth.encoders.biological.phylogenomic import build_tree_buffers
         try:
             return build_tree_buffers(str(nwk), self._tip_labels)
-        except KeyError as e:                              # inductively-placed species (rules 25/26) aren't in the dated tree
+        except KeyError as e:
             print(f"tree operator unavailable ({e}); ou-attention uses the E1 distance, unaffected", flush=True)
             return None
 
@@ -354,12 +361,16 @@ class California:
         rows = np.nan_to_num(rows.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         if valid is None:
             valid = np.ones(len(ids), bool)
-        order = np.argsort(ids); ids, rows, valid = ids[order], rows[order], valid[order]
-        pos = np.searchsorted(ids, gid).clip(max=len(ids) - 1); have = (ids[pos] == gid) & valid[pos]
-        arr = np.zeros((len(gid), rows.shape[1]), np.float32); arr[have] = rows[pos[have]]
+        order = np.argsort(ids)
+        ids, rows, valid = ids[order], rows[order], valid[order]
+        pos = np.searchsorted(ids, gid).clip(max=len(ids) - 1)
+        have = (ids[pos] == gid) & valid[pos]
+        arr = np.zeros((len(gid), rows.shape[1]), np.float32)
+        arr[have] = rows[pos[have]]
         if zscore:
-            fit = have & getattr(self, "_train_bool", np.ones(len(gid), bool))   # normalize on train only (no test-stat leak)
-            m, s = arr[fit].mean(0), arr[fit].std(0) + 1e-6; arr = np.clip((arr - m) / s, -10.0, 10.0)
+            fit = have & getattr(self, "_train_bool", np.ones(len(gid), bool))
+            mean, std = arr[fit].mean(0), arr[fit].std(0) + 1e-6
+            arr = np.clip((arr - mean) / std, -10, 10)
         if normalize and have.any():
             arr[have] = arr[have] / (np.linalg.norm(arr[have], axis=1, keepdims=True) + 1e-9)
         self.extra[name] = (torch.tensor(arr, device=dev), torch.tensor(have, device=dev), rows.shape[1])
@@ -424,8 +435,11 @@ class California:
             )
 
     @staticmethod
-    def _norm_binom(s):                                                                 # genus+species, lowercased (matches build_pollinator.norm)
-        p = str(s).split(); return (p[0] + " " + p[1]).lower() if len(p) >= 2 else str(s).strip().lower()
+    def _norm_binom(s):
+        parts = str(s).split()
+        if len(parts) >= 2:
+            return f"{parts[0]} {parts[1]}".lower()
+        return str(s).strip().lower()
 
     def _load_pollinator(self, cache, dev, topk=40):
         """Per-species-class marginal pollinator distribution (GloBI): class -> top-k pollinator vocab indices + freqs.
@@ -435,41 +449,54 @@ class California:
             return
         z = np.load(pf)
         pidx, pfrq, npoll = z["marg_poll_idx"], z["marg_poll_frq"], z["marg_npoll"]
-        pt = cache / "pollinator_taxon_text_emb.npy"                         # BioCLIP-2.5 pollinator prior (rule 26/27)
+        pt = cache / "pollinator_taxon_text_emb.npy"
         self.pollinator_text = torch.tensor(np.load(pt).astype(np.float32), device=dev) if pt.exists() else None
         self.n_pollinators = max(int(pidx.max()) + 1, self.pollinator_text.shape[0] if self.pollinator_text is not None else 0)
-        b2p = {}                                                                         # normalized binomial -> plant_idx (species_index.csv idx field)
+        b2p = {}
         for r in csv.DictReader(open(cache / "derived/species_index.csv")):
             b2p[self._norm_binom(r["binomial"])] = int(r["idx"])
-        am = cache / "pollinator_animal_mask.npy"                            # exclude ~2% plant/fungi contamination (Animalia only)
+        am = cache / "pollinator_animal_mask.npy"
         animal = np.load(am) if am.exists() else np.ones(int(pidx.max()) + 1, bool)
         K = min(topk, pidx.shape[1])
-        ci = np.zeros((self.n_classes, K), np.int64); cf = np.zeros((self.n_classes, K), np.float32); cv = np.zeros(self.n_classes, bool)
+        ci = np.zeros((self.n_classes, K), np.int64)
+        cf = np.zeros((self.n_classes, K), np.float32)
+        cv = np.zeros(self.n_classes, bool)
         for c in range(self.n_classes):
             p = b2p.get(self._norm_binom(self.binomial[c]), -1)
-            if 0 <= p < len(npoll) and npoll[p] > 0:      # species added after the pollinator dist was built have no record
-                idx = pidx[p, :K]; f = pfrq[p, :K].astype(np.float32)
-                f[~animal[idx.clip(0, len(animal) - 1)]] = 0.0               # drop non-animal "pollinators" from the target
+            if 0 <= p < len(npoll) and npoll[p] > 0:
+                idx = pidx[p, :K]
+                f = pfrq[p, :K].astype(np.float32)
+                f[~animal[idx.clip(0, len(animal) - 1)]] = 0.0
                 s = f.sum()
-                if s > 0: ci[c] = idx; cf[c] = f / s; cv[c] = True
-        self.poll_idx = torch.tensor(ci, device=dev); self.poll_frq = torch.tensor(cf, device=dev)
+                if s > 0:
+                    ci[c] = idx
+                    cf[c] = f / s
+                    cv[c] = True
+        self.poll_idx = torch.tensor(ci, device=dev)
+        self.poll_frq = torch.tensor(cf, device=dev)
         self.poll_valid = torch.tensor(cv, device=dev)
         print(f"pollinator loaded: {int(cv.sum())}/{self.n_classes} species have GloBI pollinators; vocab {self.n_pollinators}", flush=True)
 
     def _frame(self, idx):
-        lat = self.lat.cpu().numpy()[idx]; lon = self.lon.cpu().numpy()[idx]; elev = self.elev.cpu().numpy()[idx]
+        lat = self.lat.cpu().numpy()[idx]
+        lon = self.lon.cpu().numpy()[idx]
+        elev = self.elev.cpu().numpy()[idx]
         t = self.coords[:, 3].cpu().numpy()[idx] * self._time_km if self.time_axis else np.zeros(len(idx), np.float32)
         return np.stack([lat * 111.0, lon * 111.0 * np.cos(np.radians(self.reference_latitude_deg)), elev / 50.0,
                          t], 1)
 
     def _build_neighbors(self):
         tree = cKDTree(self._frame(self.train))
-        _, a = tree.query(self._frame(self.train), k=self.n_neighbors + 4); cand = self.train[a]
+        _, a = tree.query(self._frame(self.train), k=self.n_neighbors + 4)
+        cand = self.train[a]
         is_self = cand == self.train[:, None]
         cand = np.take_along_axis(cand, np.argsort(is_self, axis=1, kind="stable"), axis=1)
         nn_tr = cand[:, : self.n_neighbors]
-        _, b = tree.query(self._frame(self.test), k=self.n_neighbors); nn_te = self.train[b]   # test uses train-only tree: no self
-        nbr = np.zeros((self.n, self.n_neighbors), np.int64); nbr[self.train] = nn_tr; nbr[self.test] = nn_te
+        _, b = tree.query(self._frame(self.test), k=self.n_neighbors)
+        nn_te = self.train[b]
+        nbr = np.zeros((self.n, self.n_neighbors), np.int64)
+        nbr[self.train] = nn_tr
+        nbr[self.test] = nn_te
         self.neighbors = torch.tensor(nbr, device=self.device)
 
     def variable_dims(self):
@@ -486,23 +513,33 @@ class California:
         values = {"vision_dino": self.dino[idx], "vision_bio": self.bio[idx], "identity": self.cls[idx],
                   "phylo": self.phylo[self.cls[idx]]}
         observed = {n: torch.ones(len(idx), dtype=torch.bool, device=self.device) for n in values}
-        observed["vision_dino"] = self.has_vision[idx]; observed["vision_bio"] = self.has_vision[idx]   # mask absent vision (occurrence-only obs)
+        observed["vision_dino"] = self.has_vision[idx]
+        observed["vision_bio"] = self.has_vision[idx]
         for k, t in enumerate(self.trait_classes):
             values[t] = (self.traits[self.cls[idx], k] - 1).clamp(0)
             observed[t] = self.traits[self.cls[idx], k] > 0
         for name, (vals, have, _) in self.extra.items():
-            values[name] = vals[idx]; observed[name] = have[idx]
+            values[name] = vals[idx]
+            observed[name] = have[idx]
         if hasattr(self, "sdist_idx"):                                    # local species distribution (KL/community aux loss)
-            values["_sdist_idx"] = self.sdist_idx[idx]; values["_sdist_frq"] = self.sdist_frq[idx]
+            values["_sdist_idx"] = self.sdist_idx[idx]
+            values["_sdist_frq"] = self.sdist_frq[idx]
         if hasattr(self, "poll_idx"):                                     # per-species pollinator distribution (GloBI aux loss)
-            c = self.cls[idx]; values["_poll_idx"] = self.poll_idx[c]; values["_poll_frq"] = self.poll_frq[c]
+            c = self.cls[idx]
+            values["_poll_idx"] = self.poll_idx[c]
+            values["_poll_frq"] = self.poll_frq[c]
             values["_poll_valid"] = self.poll_valid[c]
         if hasattr(self, "lfmc"):                                         # per-species live fuel moisture (B34 aux head)
-            c = self.cls[idx]; values["_lfmc"] = self.lfmc[c]; values["_lfmc_valid"] = self.lfmc_valid[c]
+            c = self.cls[idx]
+            values["_lfmc"] = self.lfmc[c]
+            values["_lfmc_valid"] = self.lfmc_valid[c]
         if hasattr(self, "myco"):                                         # per-species mycorrhizal type (B42 symbiosis head)
-            c = self.cls[idx]; values["_myco"] = self.myco[c]; values["_myco_valid"] = self.myco_valid[c]
+            c = self.cls[idx]
+            values["_myco"] = self.myco[c]
+            values["_myco_valid"] = self.myco_valid[c]
         if hasattr(self, "flower"):                                       # per-observation flowering label (B26 phenology head)
-            values["_flower"] = self.flower[idx]; values["_flower_valid"] = self.flower_valid[idx]
+            values["_flower"] = self.flower[idx]
+            values["_flower_valid"] = self.flower_valid[idx]
         manifold_positions = {"biological": self.phylo[self.cls[ci]]}   # neighbors' known positions only
         neighbor_values = {"identity": self.cls[ci], "vision_dino": self.dino[ci]}
         return values, observed, self.coords[idx], self.coords[ci], manifold_positions, neighbor_values
