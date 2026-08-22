@@ -479,8 +479,6 @@ class DeepEarth(MeshReaderMixin, TrainingObjectiveMixin, nn.Module):
         n_spatial, n_temporal = self.mesh.raw(neighbor_coords)
         neighbor = self.absolute_proj_s(n_spatial) + self.absolute_proj_t(n_temporal)
         relative = self.neighbors.space_time(query_coords, neighbor_coords)
-        # The fixed ablation returns one zero vector per neighbor; the live field
-        # retains a separate vector per resolution level.
         if relative.dim() == neighbor.dim() - 1:
             relative = relative.unsqueeze(-2)
         neighbor = neighbor + relative
