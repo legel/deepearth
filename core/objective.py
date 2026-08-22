@@ -101,11 +101,10 @@ class TrainingObjectiveMixin:
             mesh_terms.append(masked_mean(
                 1 - F.cosine_similarity(prediction, target, dim=-1), hidden
             ))
-        return torch.stack(terms).mean() \
-               + 0.05 * torch.stack(fiber_terms).mean() \
-               + 0.05 * torch.stack(mesh_terms).mean()
+        return terms, fiber_terms, mesh_terms
 
     def _scientific_terms(self, values, latent):
+        terms = []
         loss = latent.new_zeros(())
         pollinator = None
         if self.poll_head is not None and "_poll_idx" in values:
@@ -114,9 +113,9 @@ class TrainingObjectiveMixin:
                 1, values["_poll_idx"].clamp_min(0), values["_poll_frq"].float()
             )
             valid = values["_poll_valid"].float()
-            loss = loss + 0.1 * masked_mean(
+            terms.append(0.1 * masked_mean(
                 distribution_error(logits, target), valid
-            )
+            ))
             if self.reader_phase:
                 calibrated = self._calibrate_pollinator_logits(logits.detach())
                 loss = loss + masked_mean(
@@ -136,14 +135,16 @@ class TrainingObjectiveMixin:
             prediction = self.lfmc_head(
                 self._pool(latent, "lfmc")
             ).squeeze(-1)
-            loss = loss + 0.1 * masked_mean((prediction - target).square(), valid)
+            terms.append(
+                0.1 * masked_mean((prediction - target).square(), valid)
+            )
         if self.myco_head is not None and "_myco" in values:
             error = F.cross_entropy(
                 self._myco_logits(latent),
                 values["_myco"].long().clamp_min(0),
                 reduction="none",
             )
-            loss = loss + 0.1 * masked_mean(error, values["_myco_valid"])
+            terms.append(0.1 * masked_mean(error, values["_myco_valid"]))
         if self.flower_head is not None and "_flower" in values:
             prediction = self.flower_head(
                 self._pool(latent, "flower")
@@ -151,14 +152,14 @@ class TrainingObjectiveMixin:
             error = F.binary_cross_entropy_with_logits(
                 prediction, values["_flower"].float(), reduction="none"
             )
-            loss = loss + 0.1 * masked_mean(error, values["_flower_valid"])
+            terms.append(0.1 * masked_mean(error, values["_flower_valid"]))
         if self.species_myco_head is not None and self.species_myco_valid.any():
             prediction = self.species_myco_head(
                 self._refined_species.detach()[self.species_myco_valid]
             )
             target = self.species_myco[self.species_myco_valid]
             loss = loss + 0.1 * F.cross_entropy(prediction, target)
-        return loss, pollinator
+        return terms, loss, pollinator
 
     def _species_state(self, values, observed, context):
         present = {
@@ -361,9 +362,15 @@ class TrainingObjectiveMixin:
         )
         latent = self.encode(values, present, context)
         self._prime_pool_cache(latent)
-        loss = self._reconstruction_terms(values, observed, present, latent)
-        scientific, pollinator = self._scientific_terms(values, latent)
-        loss = loss + scientific
+        terms, fiber_terms, mesh_terms = self._reconstruction_terms(
+            values, observed, present, latent
+        )
+        scientific, auxiliary, pollinator = self._scientific_terms(
+            values, latent
+        )
+        loss = torch.stack(terms + scientific).mean() \
+               + 0.05 * torch.stack(fiber_terms).mean() \
+               + 0.05 * torch.stack(mesh_terms).mean() + auxiliary
 
         species = self._species_state(values, observed, context)
         loss = loss + self._species_loss(species)
