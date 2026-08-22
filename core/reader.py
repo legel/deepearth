@@ -39,6 +39,58 @@ class CrossFiberReaderBlock(nn.Module):
         return query + self.mlp(self.mlp_norm(query))
 
 
+class RoutedMeshReader(nn.Module):
+    def __init__(self, d_model: int, n_heads: int, levels: int):
+        super().__init__()
+        self.d_model = d_model
+        self.levels = levels
+        self.query = nn.Parameter(torch.randn(2, d_model) * 0.02)
+        self.norm = nn.LayerNorm(d_model)
+        self.attention = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.output_norm = nn.LayerNorm(d_model)
+        self.gate = nn.Parameter(torch.tensor(0.05))
+        self.cell_key = nn.Parameter(torch.zeros(2, d_model))
+        self.level_key = nn.Parameter(torch.zeros(levels, d_model))
+        self.lens_key = nn.Parameter(torch.zeros(len(LENSES), d_model))
+
+    def residual(self, pooled, mesh, *, detach_mesh=False):
+        cells = mesh.shape[1]
+        fibers = mesh.flatten(1, 3)
+        if detach_mesh:
+            fibers = fibers.detach()
+        keys = self.norm(fibers)
+        cell_key = torch.cat((
+            self.cell_key[:1], self.cell_key[1:].expand(cells - 1, -1)
+        ))
+        route_keys = (
+            keys.reshape(-1, cells, self.levels, len(LENSES), self.d_model)
+            + cell_key.view(1, cells, 1, 1, self.d_model)
+            + self.level_key.view(1, 1, self.levels, 1, self.d_model)
+            + self.lens_key.view(1, 1, 1, len(LENSES), self.d_model)
+        ).flatten(1, 3)
+        score = torch.einsum("bkd,bd->bk", route_keys, pooled)
+        score = score / math.sqrt(self.d_model)
+        weight, index = score.topk(min(16, score.shape[-1]), dim=-1)
+        selected = keys.gather(
+            1, index[..., None].expand(-1, -1, self.d_model)
+        )
+        routed = torch.einsum(
+            "bk,bkd->bd", weight.softmax(-1), selected
+        )
+        query = self.query[None] + pooled[:, None] + routed[:, None]
+        read = self.attention(
+            query, selected, selected, need_weights=False
+        )[0].mean(1)
+        return torch.tanh(self.gate) * self.output_norm(read)
+
+    def forward(self, pooled, mesh, *, isolated=False):
+        if isolated:
+            pooled = pooled.detach()
+        return pooled + self.residual(pooled, mesh, detach_mesh=isolated)
+
+
 class MeshReaderMixin:
     """Read scientific targets from the mesh without owning model state."""
 
@@ -255,43 +307,9 @@ class MeshReaderMixin:
         pooled = self._pool(latent, "pollinator")
         if self.pollinator_reader is None or self._fiber_mesh is None:
             return pooled
-        cells = self._fiber_mesh.shape[1]
-        fibers = self._fiber_mesh.flatten(1, 3)
-        if isolated:
-            pooled = pooled.detach()
-            fibers = fibers.detach()
-        keys = self.pollinator_reader_norm(fibers)
-        cell_key = torch.cat((
-            self.pollinator_reader_cell_key[:1],
-            self.pollinator_reader_cell_key[1:].expand(cells - 1, -1),
-        ))
-        route_keys = (
-            keys.reshape(-1, cells, self.levels, len(LENSES), self.d_model)
-            + cell_key.view(1, cells, 1, 1, self.d_model)
-            + self.pollinator_reader_level_key.view(
-                1, 1, self.levels, 1, self.d_model
-            )
-            + self.pollinator_reader_lens_key.view(
-                1, 1, 1, len(LENSES), self.d_model
-            )
-        ).flatten(1, 3)
-        score = torch.einsum(
-            "bkd,bd->bk", route_keys, pooled
-        ) / math.sqrt(self.d_model)
-        selected_score, selected_index = score.topk(
-            min(16, score.shape[-1]), dim=-1
+        return self.pollinator_reader(
+            pooled, self._fiber_mesh, isolated=isolated
         )
-        selected = keys.gather(
-            1, selected_index[..., None].expand(-1, -1, self.d_model)
-        )
-        routed = torch.einsum(
-            "bk,bkd->bd", selected_score.softmax(-1), selected
-        )
-        query = self.pollinator_reader_query.unsqueeze(0) \
-                + pooled.unsqueeze(1) + routed.unsqueeze(1)
-        read = self.pollinator_reader(query, selected, selected, need_weights=False)[0].mean(1)
-        return pooled + torch.tanh(self.pollinator_reader_gate) \
-                        * self.pollinator_reader_output_norm(read)
 
     def _calibrate_pollinator_logits(self, logits: torch.Tensor) -> torch.Tensor:
         temperature = self.pollinator_log_temperature.clamp(-2.0, 2.0).exp()
@@ -395,42 +413,9 @@ class MeshReaderMixin:
         return mixture.clamp_min(1e-8).log()
 
     def _identity_detail_logits(self, pooled: torch.Tensor) -> torch.Tensor:
-        cells = self._fiber_mesh.shape[1]
-        fibers = self._fiber_mesh.flatten(1, 3).detach()
-        keys = self.identity_detail_norm(fibers)
-        cell_key = torch.cat((
-            self.identity_detail_cell_key[:1],
-            self.identity_detail_cell_key[1:].expand(cells - 1, -1),
-        ))
-        route_keys = (
-            keys.reshape(-1, cells, self.levels, len(LENSES), self.d_model)
-            + cell_key.view(1, cells, 1, 1, self.d_model)
-            + self.identity_detail_level_key.view(
-                1, 1, self.levels, 1, self.d_model
-            )
-            + self.identity_detail_lens_key.view(
-                1, 1, 1, len(LENSES), self.d_model
-            )
-        ).flatten(1, 3)
-        score = torch.einsum(
-            "bkd,bd->bk", route_keys, pooled
-        ) / math.sqrt(self.d_model)
-        selected_score, selected_index = score.topk(
-            min(16, score.shape[-1]), dim=-1
+        read = self.identity_detail_reader.residual(
+            pooled, self._fiber_mesh, detach_mesh=True
         )
-        selected = keys.gather(
-            1, selected_index[..., None].expand(-1, -1, self.d_model)
-        )
-        routed = torch.einsum(
-            "bk,bkd->bd", selected_score.softmax(-1), selected
-        )
-        query = self.identity_detail_query.unsqueeze(0) \
-                + pooled.unsqueeze(1) + routed.unsqueeze(1)
-        read = self.identity_detail_reader(
-            query, selected, selected, need_weights=False
-        )[0].mean(1)
-        read = torch.tanh(self.identity_detail_gate) \
-               * self.identity_detail_output_norm(read)
         logits = read @ self._refined_species.detach().t()
         family = self.species_family.expand(logits.shape[0], -1)
         family_sum = logits.new_zeros(logits.shape[0], self.family_count)

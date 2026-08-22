@@ -13,6 +13,27 @@ LENSES = ("abiotic", "visual", "biological", "ecological")
 LENS_INDEX = {name: index for index, name in enumerate(LENSES)}
 
 
+def hash_field(levels, features, log2_size, resolution, scale):
+    return HashEncoder(
+        input_dim=3,
+        num_levels=levels,
+        level_dim=features,
+        base_resolution=resolution,
+        per_level_scale=scale,
+        log2_hashmap_size=log2_size,
+    )
+
+
+def project_fields(encoders, coords, axes, levels, features):
+    lead = coords.shape[:-1]
+    return torch.cat([
+        encoder(coords[..., dims].contiguous(), size=1).reshape(
+            *lead, levels, features
+        )
+        for encoder, dims in zip(encoders, axes)
+    ], -1)
+
+
 def signal_lens(name: str, kind: str | None = None) -> str:
     if name in {"climate", "soil", "clay", "topo", "hydro", "water", "soil_drainage"}:
         return "abiotic"
@@ -57,22 +78,11 @@ class WorldMesh(nn.Module):
         super().__init__()
         self.levels = levels
         self.features = features
-        self.spatial = HashEncoder(
-            input_dim=3,
-            num_levels=levels,
-            level_dim=features,
-            base_resolution=16,
-            per_level_scale=1.7,
-            log2_hashmap_size=log2_size,
-        )
+        self.spatial = hash_field(levels, features, log2_size, 16, 1.7)
         self.temporal = nn.ModuleList([
-            HashEncoder(
-                input_dim=3,
-                num_levels=levels,
-                level_dim=features,
-                base_resolution=(16, 16, 4),
-                per_level_scale=(1.7, 1.7, 1.5),
-                log2_hashmap_size=log2_size,
+            hash_field(
+                levels, features, log2_size,
+                (16, 16, 4), (1.7, 1.7, 1.5),
             )
             for _ in range(3)
         ])
@@ -80,22 +90,11 @@ class WorldMesh(nn.Module):
         self.temporal_projection = FieldProjection(3 * features, d_model)
 
         residual_rng = torch.random.get_rng_state()
-        self.spatial_residual = HashEncoder(
-            input_dim=3,
-            num_levels=levels,
-            level_dim=4,
-            base_resolution=16,
-            per_level_scale=1.7,
-            log2_hashmap_size=log2_size,
-        )
+        self.spatial_residual = hash_field(levels, 4, log2_size, 16, 1.7)
         self.temporal_residual = nn.ModuleList([
-            HashEncoder(
-                input_dim=3,
-                num_levels=levels,
-                level_dim=4,
-                base_resolution=(16, 16, 4),
-                per_level_scale=(1.7, 1.7, 1.5),
-                log2_hashmap_size=log2_size,
+            hash_field(
+                levels, 4, log2_size,
+                (16, 16, 4), (1.7, 1.7, 1.5),
             )
             for _ in range(3)
         ])
@@ -124,17 +123,12 @@ class WorldMesh(nn.Module):
             xyz.contiguous(), size=1.0
         ).reshape(*lead, self.levels, 4)
         projections = ((0, 1, 3), (1, 2, 3), (0, 2, 3))
-        temporal = torch.cat([
-            encoder(xyzt[..., axes].contiguous(), size=1.0).reshape(
-                *lead, self.levels, self.features)
-            for encoder, axes in zip(self.temporal, projections)
-        ], -1)
-        temporal_residual = torch.cat([
-            encoder(xyzt[..., axes].contiguous(), size=1.0).reshape(
-                *lead, self.levels, 4
-            )
-            for encoder, axes in zip(self.temporal_residual, projections)
-        ], -1)
+        temporal = project_fields(
+            self.temporal, xyzt, projections, self.levels, self.features
+        )
+        temporal_residual = project_fields(
+            self.temporal_residual, xyzt, projections, self.levels, 4
+        )
         return torch.cat((spatial, spatial_residual), -1), torch.cat(
             (temporal, temporal_residual), -1
         )
@@ -147,13 +141,8 @@ class MeshSpaceTimeField(nn.Module):
         super().__init__()
         self.levels = levels
         self.hash = nn.ModuleList([
-            HashEncoder(
-                input_dim=3,
-                num_levels=levels,
-                level_dim=2,
-                base_resolution=(8, 8, 4),
-                per_level_scale=(1.8, 1.8, 1.5),
-                log2_hashmap_size=log2_size,
+            hash_field(
+                levels, 2, log2_size, (8, 8, 4), (1.8, 1.8, 1.5)
             )
             for _ in range(4)
         ])
@@ -167,12 +156,9 @@ class MeshSpaceTimeField(nn.Module):
         offset = torch.stack((north, east, delta[..., 2], delta[..., 3]), -1)
         norm = (offset / self.window).clamp(-0.999, 0.999)
         projections = ((0, 1, 2), (0, 1, 3), (1, 2, 3), (0, 2, 3))
-        raw = torch.cat([
-            encoder(norm[..., axes].contiguous(), size=1.0).reshape(
-                *norm.shape[:-1], self.levels, 2)
-            for encoder, axes in zip(self.hash, projections)
-        ], -1)
-        return self.project(raw)
+        return self.project(project_fields(
+            self.hash, norm, projections, self.levels, 2
+        ))
 
 
 class MeshNeighborhood(nn.Module):
@@ -197,5 +183,4 @@ class FiberAdapter(nn.Module):
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         return self.net(value.float())
-
 
