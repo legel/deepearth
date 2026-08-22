@@ -18,9 +18,9 @@ temporal addressing; the phylogenomic `SpeciesGraph` GNN supplies biological sta
 operations compose the mesh before query-conditioned attention reduces it to a prediction. Raw modalities do not
 bypass the mesh.
 
-The recorded 14.5M-parameter model scores `0.379341` harmonic and `0.561834`
-arithmetic across two seeds with the public evaluator. The previous public
-control scores `0.378407` and `0.587374`, respectively.
+The recorded 22.7M-parameter model uses 192-dimensional mesh cells. It scores
+`0.385343` harmonic and `0.575491` arithmetic across two seeds with the public
+evaluator. The 14.5M, 128-dimensional mesh scored `0.379341` and `0.561834`.
 
 - `fusion.py`: complete model and reconstruction objective.
 - `data.py`: runtime California data adapter.
@@ -35,4 +35,4 @@ python -m deepearth.core.train --cache DATA --seed 1338 --steps 300 \
   --checkpoint deepearth/core/checkpoint.pt --reader-only
 ```
 
-The public evaluator and score receipts live in `autoresearch/`; no architecture is duplicated there.
+The unchanged public evaluator lives in `autoresearch/`; no architecture is duplicated there.

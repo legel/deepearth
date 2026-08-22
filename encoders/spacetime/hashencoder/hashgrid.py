@@ -1,9 +1,9 @@
 import enum
+import os
 from math import ceil
+
 from cachetools import cached
 import numpy as np
-
-import os
 import torch
 import torch.nn as nn
 from torch.autograd import Function
@@ -16,7 +16,7 @@ except ImportError:
 
 from .backend import _backend
 
-# Fixed-point atomics make colliding gradient writes order-independent when explicitly enabled.
+# Fixed-point atomics make colliding writes order-independent.
 _FIXED_POINT_BITS = 36
 
 
@@ -29,8 +29,6 @@ def _fixed_scale(grad: torch.Tensor) -> float:
     if not torch.isfinite(gmax) or gmax.item() <= 0.0:
         return 0.0
     return float((2.0 ** _FIXED_POINT_BITS) / gmax.item())
-
-
 
 class _hash_encode(Function):
     @staticmethod
@@ -333,8 +331,8 @@ class _hash_encode_precomputed(Function):
             grad, offsets,
             h1_used, h2_used, weights,
             probe_indices, index_logits, grad_index_logits, grad_embeddings,
-            B, D, C, L, N_p, N_c
-        , _fixed_scale(grad))
+            B, D, C, L, N_p, N_c, _fixed_scale(grad)
+        )
 
         # per_level_scale gradient: same formula as the standard backward, from the freshly recomputed dy_dx.
         # scale_l[d] = exp2(pls[l,d])*base[d]-1 ; d(out)/d(pls) = ln2*(scale+1)/scale * (dy_dx contracted with grad) * input
@@ -718,8 +716,9 @@ class HashEncoder(nn.Module):
             probe_indices, index_logits, grad_index_logits, self._adam_grad_buffer,
             B, self.input_dim, self.level_dim, self.num_levels,
             self.N_p if self.enable_learned_probing else 1,
-            self.N_c if self.enable_learned_probing else 0
-        , _fixed_scale(grad))
+            self.N_c if self.enable_learned_probing else 0,
+            _fixed_scale(grad),
+        )
 
     def adam_step(self, batch_indices):
         """

@@ -1,0 +1,113 @@
+condition_on:
+- vision_dino
+- vision_bio
+data:
+  adapter: california
+  cache_dir: data/deepcal
+  n_neighbors: 16
+  time_axis: true
+model:
+  absolute_log2_hashmap_size: 14
+  family_alphaearth_expert: true
+  family_env_expert: true
+  family_env_residual: true
+  ecological_family_map: true
+  task_occupancy_experts: true
+  task_niche_prior: true
+  continuous_calibration: true
+  capacity: 12
+  compile: false
+  contrastive_vars:
+  - vision_dino
+  - naip_rgb
+  - naip_ir
+  - clay
+  contrastive_weight: 0.3
+  d_model: 128
+  decoder_hidden: 512
+  densify_weight: 0.3
+  flower_weight: 0.1
+  lfmc_weight: 0.1
+  loss_weights:
+    phylo: 2.0
+    vision_dino: 2.0
+  manifolds:
+    biological: phylo
+  myco_weight: 0.1
+  n_latents: 24
+  n_layers: 2
+  orthogonal_blank_hidden: 512
+  phylo_mask_weight: 0.1
+  poll_weight: 0.1
+  poll_species_mixture: 0.5
+  poll_species_all_masked: true
+  pollinator_top_k: 64
+  relative_window:
+  - 8000
+  - 8000
+  - 300
+  - 130
+  relative_log2_hashmap_size: 16
+  rounds: 2
+  sdist_weight: 1.0
+  smooth_geo: true
+  smooth_geo_sigmas:
+  - 0.25
+  - 1.0
+  - 4.0
+  - 16.0
+  - 64.0
+  sparse_hash: false
+  species_graph:
+    bioclip_init: true
+    heads: 4
+    layers: 2
+    masked_posterior: exact-ou
+    operator: latent-clade
+    top_k: 128
+    variable: identity
+  neighbor_op: bind
+  token_op: film
+  alphaearth_geo: true
+  diffusion: true
+  mod_encoder: prenorm
+name: DeepCal
+training:
+  batch: 512
+  hide_prob: 0.5
+  lr: 0.001
+  precision: fp32
+  seed: 1337
+  steps: 2291
+  weight_decay: 0.001
+variables:
+- kind: continuous
+  name: vision_dino
+  neighbor: true
+- kind: continuous
+  name: vision_bio
+- classes: identity
+  kind: categorical
+  name: identity
+  neighbor: true
+- kind: continuous
+  name: phylo
+- expand: trait_classes
+- kind: continuous
+  name: climate
+- kind: continuous
+  name: soil
+- kind: continuous
+  name: naip_rgb
+- kind: continuous
+  name: naip_ir
+- kind: continuous
+  name: clay
+- kind: continuous
+  name: topo
+- kind: continuous
+  name: chm
+- kind: continuous
+  name: hydro
+- kind: continuous
+  name: phenology

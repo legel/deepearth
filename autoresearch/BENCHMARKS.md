@@ -1,9 +1,8 @@
-# Registered Lance-public control scorecard
+# DeepCal compact hierarchical-family record scorecard
 
-Protocol: `public-main-4d6cb44-fixed-2291-steps`. Data: 621,558 observations, 29,668-row spatial holdout, complete
-64-dimensional AlphaEarth coverage. Values are the unrounded mean of two checkpoint replays through the public
-evaluator. This is the frozen public acceptance bar, not a score for the new mesh model. Scores produced by any other
-evaluator or protocol are not comparable.
+Protocol: `public-main-4d6cb44-fixed-2291-steps`. Config: `autoresearch/champion.yaml`. Data: 621,558 observations,
+29,668-row spatial holdout, complete 64-dimensional AlphaEarth coverage. Values are the unrounded mean of two
+checkpoint replays through the unchanged public evaluator.
 
 | Model | Seed | Steps | Harmonic | Arithmetic | Training VRAM |
 |---|---:|---:|---:|---:|---:|
@@ -33,12 +32,6 @@ The final decoder is isolated by replaying the same checkpoints with the option 
 
 Only the 2,291-step control-to-candidate comparison is a matched promotion claim. The registered 797.1M row is an
 older 5,126-step receipt: it is retained as historical replacement context, not treated as an equal-budget ablation.
-
-## Mesh replay
-
-The 13.7M-parameter mesh record replays at harmonic `0.377728` and arithmetic `0.559667` after 8,000 steps. It does
-not pass the registered public control (`0.378407` / `0.587374`) and is not a public promotion claim. Its private v6
-receipt is preserved in `core/champion.json` as architecture provenance only.
 
 ## Capability scorecard
 

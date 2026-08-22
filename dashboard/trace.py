@@ -5,13 +5,14 @@ and one training-loss pass, and records what executed: module tree, classes, sou
 parameter counts, real input/output tensor shapes, sampled values, and the batch's real
 provenance (gbifIDs, species, coordinates). The Flow diagram renders this file verbatim.
 
-    python -m dashboard.trace checkpoint.pt --cache /path/to/cache [--n 8]
+    python -m dashboard.trace data/deepcal/ckpt_dash-e2e-noae.pt [--config ...] [--n 8]
 """
 import argparse, inspect, json, sys
 from pathlib import Path
 
 import numpy as np
 import torch
+import yaml
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
@@ -49,14 +50,32 @@ def sample(x):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("ckpt")
-    ap.add_argument("--cache", required=True)
+    ap.add_argument("--config", default=str(REPO / "autoresearch" / "deepcal.yaml"))
     ap.add_argument("--n", type=int, default=8)
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
 
-    from dashboard._shared import load_checkpoint
-    model, source = load_checkpoint(args.cache, args.ckpt, args.device)
+    from deepearth.autoresearch import train as T, evaluate as ev
+    from deepearth.core.fusion import DeepEarth
+    ev.evaluate_benchmarks = lambda *a, **k: {}           # trace run: skip the suite
+    T.evaluate = lambda *a, **k: {}
+    _load = DeepEarth.load_state_dict
+    DeepEarth.load_state_dict = lambda self, sd, strict=True: _load(self, sd, strict=False)
+
+    from dashboard._shared import normalize_config, prepared_path
+    config = normalize_config(yaml.safe_load(open(args.config)))
+    config["_eval_ckpt"] = args.ckpt
+    config["_tag"] = "trace"
+    model, _ = T.train_and_evaluate(config, args.device)
     model.eval()
+
+    d = config["data"]
+    from deepearth.autoresearch import data as data_module
+    source = data_module.build(d["adapter"], cache_dir=d["cache_dir"], n_neighbors=d.get("n_neighbors", 24),
+                               device=args.device, holdout=d.get("holdout", "spatial"), subset=d.get("subset"),
+                               time_axis=d.get("time_axis", False), meta_path=d.get("meta_path"),
+                               time_km=d.get("time_km", 50.0),
+                               prepared=prepared_path(config))
 
     obs = np.load(ROOT / "state" / "observations.npz")
     species = json.loads((ROOT / "state" / "species.json").read_text())["binomial"]
@@ -86,8 +105,7 @@ def main():
     phase[0] = "training-loss"
     model.train()
     try:
-        objective = model.reconstruction_loss(values, observed, ctx, 0.5)
-        loss = sum(objective) if isinstance(objective, tuple) else objective
+        loss = model.masked_loss(values, observed, observed, ctx)
     except Exception as e:
         print(f"[trace] training-loss pass skipped: {e}")
         loss = float("nan")

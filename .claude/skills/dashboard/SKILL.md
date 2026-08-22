@@ -18,7 +18,6 @@ repo-relative paths, and the shell's cwd is the number-one cause of phantom fail
 ```bash
 python -m dashboard.refresh            # registry -> callgraph -> flow -> audit, coherent
 python -m dashboard.refresh --graph-only   # what the post-commit hook runs (cheap)
-python -m dashboard.refresh --cache /path/to/deepcal --no-audit  # include data census
 ```
 
 State artifacts live in `dashboard/state/` (gitignored, regenerable — never edit by hand).
@@ -27,7 +26,7 @@ diverge — the fix is always `refresh`, never manual patching.
 
 ## Layered truth — respect the tiers
 
-1. **Deterministic** (free): `registry`, `callgraph` (reachability from the production entrypoint —
+1. **Deterministic** (free): `registry`, `callgraph` (reachability under the ACTUAL config —
    live / gated(key) / island), `flow` (dataset census from cache-file headers),
    `observations`. These are ground truth; LLM tiers consume them.
 2. **Gemini** (cached, `GEMINI_API_KEY` read from repo `.env` first, then env): `audit`
@@ -42,28 +41,33 @@ runs. Capability ≠ implementation.
 ## Experiments (rule-20 protocol)
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m dashboard.tracker \
-  --cache /path/to/deepcal --device cuda --steps 2291 --seed 1337 --tag <experiment-id>
+CUDA_VISIBLE_DEVICES=0 python -m dashboard.tracker <config.yaml> --tag <experiment-id>
 ```
 
-- The tracker wraps `deepearth.core.train`; runs stream live to the Runs tab.
-- Public comparisons use 2,291 steps and seeds 1337 and 1338.
-- Compare finished runs in the Runs tab and retain the full benchmark receipt.
+- The tracker wraps `autoresearch/train.py` untouched; runs stream live to the Runs tab.
+- Local runs on this box need the AlphaEarth-dependent flags off (`task_niche_prior`,
+  `family_alphaearth_expert`, `alphaearth_geo`, `orthogonal_blank_hidden: 0`) — see finding
+  F1. Tag such variants clearly (`*-noae`); they are not champion-comparable.
+- Compare any two finished runs in the Runs tab (A vs B, every benchmark), and record
+  conclusions as receipts appended to `dashboard/seed/findings.json` (append-only ledger).
 
 Per checkpoint, on a free GPU:
 
 ```bash
-python -m dashboard.trace <ckpt> --cache /path/to/deepcal
-python -m dashboard.reconstruct <ckpt> --cache /path/to/deepcal
+python -m dashboard.trace <ckpt> --config <yaml>        # executed-model Flow diagram
+python -m dashboard.reconstruct <ckpt> --config <yaml>  # posteriors vs truth + R23 invariant
 ```
 
 ## Pitfalls that have actually bitten
 
-- Dashboard checkpoint tools use the strict production loader in `dashboard/_shared.py`.
-- `autoresearch/evaluate.py` is fixed public measurement; architecture belongs in `core/`.
-- Install the package with `pip install -e .` before invoking module entrypoints.
-- After a torch upgrade or on a fresh clone, build the CUDA kernel with
-  `bash encoders/spacetime/install.sh` in the active environment.
+- **Prepared-cache tags**: the trainer absolutizes `cache_dir` before hashing its cache tag.
+  Any tool touching `train_and_evaluate` must use `dashboard/_shared.py`
+  (`normalize_config`, `prepared_path`) — never recompute the tag by hand.
+- `autoresearch/evaluate.py` and `prepare.py` are immutable ground truth. Do not edit them.
+- The package must be importable as `deepearth` (parent dir on sys.path); the tracker
+  handles this for subprocesses.
+- After a torch upgrade or on a fresh clone, rebuild the CUDA kernel:
+  `bash encoders/spacetime/install.sh` (finding F2 — the committed .so goes stale).
 - Deleting "dead" code: the callgraph misses some framework registrations; verify each island
   with a repo-wide grep AND read the def before deleting (a `@register_fake` kernel once
   looked dead and was not).

@@ -8,17 +8,17 @@ All training data is visible, down to single observations on a satellite map.
 
 ```
 registry.py      deterministic         repo tree/blocks, rules, benchmarks, scores -> state/registry.json
-callgraph.py     deterministic         static reachability from the production entrypoint: every def
+callgraph.py     deterministic         static reachability under the ACTUAL config: every def
                                        live | gated(key) | island | pipeline/tests/tooling -> state/callgraph.json
 flow.py          deterministic         modality census from cache-file headers + gbifID joins;
-                                       architecture dims from core dataclasses -> state/flow.json
+                                       architecture dims from the yaml -> state/flow.json
 audit.py         Gemini (cached)       connectivity edges + per-rule status; consumes reachability,
                                        run movers, and findings -> state/graph.json, state/status.json
-tracker.py       zero-code-change      wraps core.train, parses stdout -> runs/<id>.jsonl (live)
+tracker.py       zero-code-change      wraps train.py, parses its stdout -> runs/<id>.jsonl (live)
 trace.py         GPU, per checkpoint   forward hooks on every nn.Module, real batch -> state/trace.json
 reconstruct.py   GPU, per checkpoint   masked posteriors vs ground truth, 64 held-out obs
                                             -> state/reconstructions.json
-observations.py  deterministic         cache observation map + exact holdout replica -> state/observations.npz
+observations.py  deterministic         343k-obs map index, exact holdout replica -> state/observations.npz
 refresh.py       orchestrator          registry -> callgraph -> flow -> audit, in order (the
                                        post-commit hook runs it with --graph-only)
 server.py        thin Flask reader     serves state/, runs/, code content, static/
@@ -35,7 +35,7 @@ computes. `/api/meta` reports each artifact's build head; the header warns on sk
 - `state/callgraph.json` — per-def reachability verdicts + gates. The proof-of-integration
   layer: capability never counts as implementation.
 - `state/flow.json` — the dataset as it exists on disk (real shapes/dtypes/coverage) +
-  production architecture dimensions.
+  config-derived architecture dims.
 - `state/graph.json` — edges `{code block <-> rule/benchmark}` `{src, dst, s, note<=90ch}`;
   tier-2 verified hunt edges (✓✓) survive every rebuild.
 - `state/status.json` — per rule + system `{status, headline, evidence, next}`.
@@ -44,7 +44,8 @@ computes. `/api/meta` reports each artifact's build head; the header warns on sk
 - `state/reconstructions.json` — real masked posteriors vs ground truth per observation.
 - `state/cache/` — LLM response cache (content-hash keyed).
 - `runs/*.jsonl` — training events: `config`, `startup`, `step`, `transfer`, `final`.
-- `seed/findings.json` — committed, curated defects proven by running the current system.
+- `seed/findings.json` — committed, curated: defects proven by running the system (F1–F7),
+  each with receipts.
 
 ## LLM contract (efficiency is a requirement)
 

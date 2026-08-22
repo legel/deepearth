@@ -342,12 +342,12 @@ __global__ void kernel_grid_backward(
                     uint32_t probe_index = ((N_p * h1 + p) % hashmap_size) * C + ch;
                     float weight = w * weights[p];
 
-                     if (grad_grid_fixed != nullptr) {
-                         #pragma unroll
-                         for (uint32_t c = 0; c < N_C; c++) {
-                             atomicAddFixed(&grad_grid_fixed[probe_index + c], (float)(weight * grad_cur[c]), fixed_scale);
-                         }
-                     } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+                    if (grad_grid_fixed != nullptr) {
+                        #pragma unroll
+                        for (uint32_t c = 0; c < N_C; c++) {
+                            atomicAddFixed(&grad_grid_fixed[probe_index + c], (float)(weight * grad_cur[c]), fixed_scale);
+                        }
+                    } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                         #pragma unroll
                         for (uint32_t c = 0; c < N_C; c += 2) {
                             __half2 v = {(__half)(weight * grad_cur[c]), (__half)(weight * grad_cur[c + 1])};
@@ -392,12 +392,12 @@ __global__ void kernel_grid_backward(
             } else {
                 uint32_t index = (uint32_t)((index_direct % hashmap_size) * C + ch);
 
-                 if (grad_grid_fixed != nullptr) {
-                     #pragma unroll
-                     for (uint32_t c = 0; c < N_C; c++) {
-                         atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
-                     }
-                 } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+                if (grad_grid_fixed != nullptr) {
+                    #pragma unroll
+                    for (uint32_t c = 0; c < N_C; c++) {
+                        atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
+                    }
+                } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                     #pragma unroll
                     for (uint32_t c = 0; c < N_C; c += 2) {
                         __half2 v = {(__half)(w * grad_cur[c]), (__half)(w * grad_cur[c + 1])};
@@ -413,12 +413,12 @@ __global__ void kernel_grid_backward(
         } else {
             uint32_t index = get_grid_index<D, C>(ch, hashmap_size, resolution, pos_grid_local);
 
-             if (grad_grid_fixed != nullptr) {
-                 #pragma unroll
-                 for (uint32_t c = 0; c < N_C; c++) {
-                     atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
-                 }
-             } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
+            if (grad_grid_fixed != nullptr) {
+                #pragma unroll
+                for (uint32_t c = 0; c < N_C; c++) {
+                    atomicAddFixed(&grad_grid_fixed[index + c], (float)(w * grad_cur[c]), fixed_scale);
+                }
+            } else if (std::is_same<scalar_t, at::Half>::value && N_C % 2 == 0) {
                 #pragma unroll
                 for (uint32_t c = 0; c < N_C; c += 2) {
                     __half2 v = {(__half)(w * grad_cur[c]), (__half)(w * grad_cur[c + 1])};

@@ -18,7 +18,7 @@ class Experiment:
     seed: int = 1337
     steps: int = 2291
     batch: int = 256
-    width: int = 128
+    width: int = 192
     levels: int = 12
     hash_log2: int = 14
     latents: int = 16
@@ -171,7 +171,28 @@ def train(
     if device.startswith("cuda"):
         torch.cuda.manual_seed_all(design.seed)
     source, variable_specs, always_dims = load_data(cache, device)
-    model = build_model(source, variable_specs, always_dims, device, design)
+    if design.width != 128:
+        candidate_rng = torch.random.get_rng_state()
+        candidate_cuda_rng = torch.cuda.get_rng_state_all() \
+            if device.startswith("cuda") else None
+        control = build_model(
+            source, variable_specs, always_dims, device,
+            replace(design, width=128),
+        )
+        control_rng = torch.random.get_rng_state()
+        control_cuda_rng = torch.cuda.get_rng_state_all() \
+            if device.startswith("cuda") else None
+        del control
+        if device.startswith("cuda"):
+            torch.cuda.empty_cache()
+            torch.cuda.set_rng_state_all(candidate_cuda_rng)
+        torch.random.set_rng_state(candidate_rng)
+        model = build_model(source, variable_specs, always_dims, device, design)
+        torch.random.set_rng_state(control_rng)
+        if device.startswith("cuda"):
+            torch.cuda.set_rng_state_all(control_cuda_rng)
+    else:
+        model = build_model(source, variable_specs, always_dims, device, design)
     if design.init_checkpoint:
         checkpoint = Path(design.init_checkpoint).expanduser()
         state = torch.load(checkpoint, map_location=device, weights_only=True)

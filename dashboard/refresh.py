@@ -3,7 +3,7 @@
 Prevents artifact skew (a callgraph at one head joined against a registry at another).
 observations/trace/reconstruct are heavier and data/GPU-bound; run them explicitly.
 
-    python -m dashboard.refresh [--cache /path/to/deepcal] [--no-audit]
+    python -m dashboard.refresh [--no-audit]
 """
 import argparse, subprocess, sys
 from pathlib import Path
@@ -16,10 +16,8 @@ def main():
     ap.add_argument("--no-audit", action="store_true", help="skip the Gemini audit entirely")
     ap.add_argument("--graph-only", action="store_true",
                     help="audit connectivity only (cached; cheap per commit), skip status")
-    ap.add_argument("--cache", type=Path)
     args = ap.parse_args()
-    flow_args = ["--cache", str(args.cache)] if args.cache else []
-    steps = [("registry", []), ("callgraph", []), ("flow", flow_args)]
+    steps = [("registry", []), ("callgraph", []), ("flow", [])]
     if not args.no_audit:
         steps.append(("audit", ["--graph-only"] if args.graph_only else []))
     for s, extra in steps:
