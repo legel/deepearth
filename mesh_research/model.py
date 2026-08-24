@@ -9,6 +9,7 @@ file: architecture, writes, fusion, objectives, optimization, and training live 
 
 from __future__ import annotations
 
+import gc
 import math
 import os
 import sys
@@ -2575,6 +2576,10 @@ def train(
                 and id(parameter) not in lens_ids
                 and id(parameter) not in calibration_ids
             ]
+            del optimizer, scheduler
+            gc.collect()
+            if device.startswith("cuda"):
+                torch.cuda.empty_cache()
             optimizer = torch.optim.AdamW(
                 (
                     {"params": reader_parameters, "lr": design.learning_rate * 0.2},
