@@ -69,7 +69,7 @@ class TrainingObjectiveMixin:
                .clamp_min(1e-8).log() / math.log(max(self.family_count, 2))
 
     def _reconstruction_terms(self, values, observed, present, latent):
-        terms, fiber_terms, mesh_terms = [], [], []
+        terms, fiber_terms, mesh_terms, specialist_terms = [], [], [], []
         for variable in self.variables:
             name = variable.name
             hidden = ~present[name] & observed[name]
@@ -101,7 +101,13 @@ class TrainingObjectiveMixin:
             mesh_terms.append(masked_mean(
                 1 - F.cosine_similarity(prediction, target, dim=-1), hidden
             ))
-        return terms, fiber_terms, mesh_terms
+            prediction = self.specialist_reconstruct[name](
+                self._pool_specialist(name)
+            )
+            specialist_terms.append(masked_mean(
+                1 - F.cosine_similarity(prediction, target, dim=-1), hidden
+            ))
+        return terms, fiber_terms, mesh_terms, specialist_terms
 
     def _scientific_terms(self, values, latent):
         terms = []
@@ -121,9 +127,7 @@ class TrainingObjectiveMixin:
                 loss = loss + masked_mean(
                     distribution_error(calibrated, target), valid
                 )
-            structured = self.poll_head(
-                self._pollinator_pool(latent, isolated=True)
-            )
+            structured = self._pollinator_logits(latent, isolated=True)
             loss = loss + 0.1 * masked_mean(
                 distribution_error(structured, target), valid
             ) / math.log(self.poll_head.out_features)
@@ -291,11 +295,12 @@ class TrainingObjectiveMixin:
         return loss
 
     def _pollinator_interaction(
-        self, values, observed, context, pollinator: PollinatorState | None
+        self, values, observed, context, pollinator: PollinatorState | None,
+        mask,
     ):
         if not self.reader_phase or pollinator is None:
             return context["position"].new_zeros(())
-        present = {
+        ordinary_present = {
             name: observed[name]
             if name == self.species_variable or name in self.environment_names
             else torch.zeros_like(observed[name])
@@ -304,11 +309,42 @@ class TrainingObjectiveMixin:
         devices = [torch.cuda.current_device()] \
                   if context["position"].is_cuda else []
         with torch.random.fork_rng(devices=devices), torch.no_grad():
-            latent = self.encode(values, present, context)
+            latent = self.encode(values, ordinary_present, context)
         logits = self.poll_head(self._pollinator_pool(latent, isolated=True))
-        return 0.25 * masked_mean(
+        loss = 0.25 * masked_mean(
             distribution_error(logits, pollinator.target), pollinator.valid
         ) / math.log(self.poll_head.out_features)
+        route = self._pollinator_transfer_probability(
+            logits.shape[0], logits.device
+        ).squeeze(-1)
+        loss = loss - 0.25 * masked_mean(
+            torch.log1p(-route.clamp(max=1 - 1e-6)), pollinator.valid
+        )
+
+        masked_present = {
+            name: observed[name] if name == self.species_variable
+            else torch.zeros_like(observed[name])
+            for name in self.names
+        }
+        with torch.random.fork_rng(devices=devices):
+            latent = self.encode(
+                values, masked_present, context, species_mask=mask
+            )
+        pool = self._relation_pool(
+            self._pool(latent, "pollinator"), "pollinator_transfer"
+        )
+        logits = self.poll_transfer_head(pool)
+        target_species = values[self.species_variable].long()
+        valid = pollinator.valid * mask[target_species]
+        loss = loss + 0.25 * masked_mean(
+            distribution_error(logits, pollinator.target), valid
+        ) / math.log(self.poll_head.out_features)
+        route = self._pollinator_transfer_probability(
+            logits.shape[0], logits.device
+        ).squeeze(-1)
+        return loss - 0.25 * masked_mean(
+            route.clamp_min(1e-6).log(), valid
+        )
 
     def _structured_loss(
         self, values, observed, context, species, pollinator
@@ -347,7 +383,7 @@ class TrainingObjectiveMixin:
                     valid,
                 ))
         if pollinator is not None:
-            logits = self.poll_head(self._pollinator_pool(latent))
+            logits = self._pollinator_logits(latent)
             terms.append(masked_mean(
                 distribution_error(logits, pollinator.target), pollinator.valid
             ) / math.log(self.poll_head.out_features))
@@ -362,7 +398,7 @@ class TrainingObjectiveMixin:
         )
         latent = self.encode(values, present, context)
         self._prime_pool_cache(latent)
-        terms, fiber_terms, mesh_terms = self._reconstruction_terms(
+        terms, fiber_terms, mesh_terms, specialist_terms = self._reconstruction_terms(
             values, observed, present, latent
         )
         scientific, auxiliary, pollinator = self._scientific_terms(
@@ -370,7 +406,8 @@ class TrainingObjectiveMixin:
         )
         loss = torch.stack(terms + scientific).mean() \
                + 0.05 * torch.stack(fiber_terms).mean() \
-               + 0.05 * torch.stack(mesh_terms).mean() + auxiliary
+               + 0.05 * torch.stack(mesh_terms).mean() \
+               + 0.05 * torch.stack(specialist_terms).mean() + auxiliary
 
         species = self._species_state(values, observed, context)
         loss = loss + self._species_loss(species)
@@ -380,7 +417,7 @@ class TrainingObjectiveMixin:
             values, observed, context, latent, species, mask
         )
         loss = loss + self._pollinator_interaction(
-            values, observed, context, pollinator
+            values, observed, context, pollinator, mask
         )
         if self.reader_phase:
             return loss, self._structured_loss(
