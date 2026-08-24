@@ -98,6 +98,11 @@ READER_PARAMETERS = (
     "mesh_condition_gate.", "mesh_condition_norm.",
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
     "species_niche_key", "species_niche_adapter.",
+    "specialist_meshes.", "specialist_fusion.", "specialist_fusion_gate",
+    "specialist_aggregate_norm.", "specialist_output_norm.", "specialist_type",
+    "raw_residual_read.", "raw_residual_gate", "raw_residual_norm.",
+    "raw_residual_output_norm.", "specialist_decode_query",
+    "specialist_reconstruct.",
 )
 EXPANSION_PARAMETERS = (
     "deep_mesh_reader.", "deep_mesh_reader_gate.",
@@ -330,6 +335,39 @@ class CrossFiberReaderBlock(nn.Module):
         return query + self.mlp(self.mlp_norm(query))
 
 
+class SpecialistMesh(nn.Module):
+    """One independently parameterized graph and fusion stream over Earth4D cells."""
+
+    def __init__(self, d_model: int, n_heads: int, n_latents: int = 4):
+        super().__init__()
+        self.cell_message = nn.Linear(d_model, d_model, bias=False)
+        self.coarse_message = nn.Linear(d_model, d_model, bias=False)
+        self.fine_message = nn.Linear(d_model, d_model, bias=False)
+        self.graph_norm = nn.LayerNorm(d_model)
+        self.graph_gate = nn.Parameter(torch.tensor(0.1))
+        self.latents = nn.Parameter(torch.randn(n_latents, d_model) * 0.02)
+        self.read_norm = nn.LayerNorm(d_model)
+        self.read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.fuse = nn.TransformerEncoderLayer(
+            d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True
+        )
+
+    def forward(self, state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        query = state[:, :1]
+        neighbors = state[:, 1:]
+        neighbor_mean = neighbors.mean(1, keepdim=True) if neighbors.shape[1] else query
+        cell_context = torch.cat((neighbor_mean, query.expand(-1, neighbors.shape[1], -1, -1)), 1)
+        coarse = torch.cat((torch.zeros_like(state[:, :, :1]), state[:, :, :-1]), 2)
+        fine = torch.cat((state[:, :, 1:], torch.zeros_like(state[:, :, :1])), 2)
+        message = self.cell_message(cell_context) \
+                  + self.coarse_message(coarse) + self.fine_message(fine)
+        state = state + torch.tanh(self.graph_gate) * self.graph_norm(message)
+        tokens = self.read_norm(state.flatten(1, 2))
+        latent = self.latents.unsqueeze(0).expand(state.shape[0], -1, -1)
+        latent = latent + self.read(latent, tokens, tokens, need_weights=False)[0]
+        return state, self.fuse(latent)
+
+
 class MeshModel(nn.Module):
     """All scientific evidence must enter fusion through a mesh-state update."""
 
@@ -409,6 +447,7 @@ class MeshModel(nn.Module):
         )
 
         write_names = [*self.names, *self.always_names]
+        self.write_names = tuple(write_names)
         self.write_type = nn.ParameterDict({n: nn.Parameter(torch.randn(d_model) * 0.02) for n in write_names})
         residual_rng = torch.random.get_rng_state()
         self.fiber_residual = nn.ModuleDict({
@@ -655,6 +694,36 @@ class MeshModel(nn.Module):
         self._latest_fiber_prior = None
         self._pool_cache = {}
         self._mesh_reader_cache = None
+        specialist_rng = torch.random.get_rng_state()
+        self.specialist_meshes = nn.ModuleList([
+            SpecialistMesh(d_model, n_heads) for _ in LENSES
+        ])
+        self.specialist_type = nn.Parameter(
+            torch.randn(len(LENSES), d_model) * 0.02
+        )
+        self.specialist_aggregate_norm = nn.LayerNorm(d_model)
+        self.specialist_fusion = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.specialist_output_norm = nn.LayerNorm(d_model)
+        self.specialist_fusion_gate = nn.Parameter(torch.tensor(0.05))
+        self.raw_residual_norm = nn.LayerNorm(d_model)
+        self.raw_residual_read = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.raw_residual_output_norm = nn.LayerNorm(d_model)
+        self.raw_residual_gate = nn.Parameter(torch.tensor(0.05))
+        self.specialist_decode_query = nn.Parameter(
+            torch.randn(len(variables), d_model) * 0.02
+        )
+        self.specialist_reconstruct = nn.ModuleDict({
+            name: nn.Linear(d_model, d_model) for name in self.names
+        })
+        torch.random.set_rng_state(specialist_rng)
+        self._specialist_mesh = None
+        self._specialist_latents = None
+        self._raw_state_tokens = None
+        self._raw_state_mask = None
 
     def _species(self, mask: torch.Tensor | None = None) -> torch.Tensor:
         refined = self.species_graph._seed() if self._ablate_species else self.species_graph(mask)
@@ -667,6 +736,27 @@ class MeshModel(nn.Module):
         if name in self.adapters:
             return self.adapters[name](value)
         return self.category_inputs[name](value.long().clamp_min(0))
+
+    def _raw_residuals(
+        self,
+        state: torch.Tensor,
+        values: Dict[str, torch.Tensor],
+        present: Dict[str, torch.Tensor],
+        species: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Keep one situated residual per modality after specialist aggregation."""
+        address = state.mean(-2)
+        tokens, masks = [], []
+        for name in self.write_names:
+            if name not in values or name not in present:
+                continue
+            valid = present[name].bool()
+            token = (
+                self._adapt(name, values[name], species) + self.write_type[name] + address
+            ).detach()
+            tokens.append(token * valid.unsqueeze(-1).to(token.dtype))
+            masks.append(valid)
+        return torch.stack(tokens, 1), torch.stack(masks, 1)
 
     def _write(
         self,
@@ -794,6 +884,9 @@ class MeshModel(nn.Module):
         for name in self.always_names:
             if name in values:
                 write_mask[name] = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
+        self._raw_state_tokens, self._raw_state_mask = self._raw_residuals(
+            context["query_state"], values, write_mask, species
+        )
         query_fibers = self._fiber_write(context["query_state"], values, write_mask, species)
         query_priors = self._latest_fiber_prior
         query = self._write(context["query_state"], values, write_mask, species)
@@ -848,6 +941,32 @@ class MeshModel(nn.Module):
         route = sparse_weight.detach() + dense_weight - dense_weight.detach()
         mesh_read = torch.einsum("blk,bkd->bld", route, mesh_tokens)
         latent = latent + torch.tanh(self.sparse_fusion_gate) * mesh_read
+
+        specialist_states, specialist_latents = [], []
+        for lens, specialist in enumerate(self.specialist_meshes):
+            state, expert = specialist(fiber_mesh[..., lens, :])
+            specialist_states.append(state)
+            specialist_latents.append(expert)
+        self._specialist_mesh = torch.stack(specialist_states, 3)
+        self._specialist_latents = torch.stack(specialist_latents, 1)
+        expert_tokens = self._specialist_latents \
+                        + self.specialist_type.view(1, len(LENSES), 1, self.d_model)
+        expert_tokens = self.specialist_aggregate_norm(expert_tokens.flatten(1, 2))
+        expert_read = self.specialist_fusion(
+            latent.detach(), expert_tokens, expert_tokens, need_weights=False
+        )[0]
+        latent = latent + torch.tanh(self.specialist_fusion_gate) \
+                 * self.specialist_output_norm(expert_read)
+
+        raw_tokens = self.raw_residual_norm(self._raw_state_tokens)
+        raw_mask = self._raw_state_mask.clone()
+        raw_mask[:, 0] |= ~raw_mask.any(-1)
+        raw_read = self.raw_residual_read(
+            latent.detach(), raw_tokens, raw_tokens,
+            key_padding_mask=~raw_mask, need_weights=False,
+        )[0]
+        latent = latent + torch.tanh(self.raw_residual_gate) \
+                 * self.raw_residual_output_norm(raw_read)
         return latent
 
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
@@ -1446,6 +1565,13 @@ class MeshModel(nn.Module):
         weight = torch.softmax((fiber @ query) / math.sqrt(self.d_model), -1)
         return torch.einsum("bl,bld->bd", weight, fiber)
 
+    def _pool_specialist(self, name: str) -> torch.Tensor:
+        lens = self.write_lens[name]
+        expert = self._specialist_latents[:, lens]
+        query = self.specialist_decode_query[self.names.index(name)]
+        weight = torch.softmax((expert @ query) / math.sqrt(self.d_model), -1)
+        return torch.einsum("bl,bld->bd", weight, expert)
+
     def decode(self, latent: torch.Tensor, name: str) -> torch.Tensor:
         pooled = self._pool(latent, name)
         logits = self._decode_pooled(pooled, name)
@@ -1527,6 +1653,7 @@ class MeshModel(nn.Module):
         terms = []
         fiber_terms = []
         mesh_terms = []
+        specialist_terms = []
         pollinator_target = None
         pollinator_valid = None
         pollinator_structured_term = None
@@ -1558,6 +1685,15 @@ class MeshModel(nn.Module):
             mesh_prediction = self.mesh_linear_reconstruct[variable.name](mesh_state)
             mesh_error = 1.0 - F.cosine_similarity(mesh_prediction, fiber_target, dim=-1)
             mesh_terms.append((mesh_error * hidden).sum() / hidden.sum().clamp_min(1))
+            specialist_prediction = self.specialist_reconstruct[variable.name](
+                self._pool_specialist(variable.name)
+            )
+            specialist_error = 1.0 - F.cosine_similarity(
+                specialist_prediction, fiber_target, dim=-1
+            )
+            specialist_terms.append(
+                (specialist_error * hidden).sum() / hidden.sum().clamp_min(1)
+            )
 
         if self.poll_head is not None and "_poll_idx" in values:
             pooled = self._pool(latent, "pollinator")
@@ -1610,7 +1746,8 @@ class MeshModel(nn.Module):
             terms.append(0.1 * (error * valid).sum() / valid.sum().clamp_min(1))
         loss = torch.stack(terms).mean() \
                + 0.05 * torch.stack(fiber_terms).mean() \
-               + 0.05 * torch.stack(mesh_terms).mean()
+               + 0.05 * torch.stack(mesh_terms).mean() \
+               + 0.05 * torch.stack(specialist_terms).mean()
         if pollinator_calibration_term is not None:
             loss = loss + pollinator_calibration_term
         if self.species_myco_head is not None and self.species_myco_valid.any():
