@@ -99,13 +99,18 @@ READER_PARAMETERS = (
     "mesh_condition_gate.", "mesh_condition_norm.",
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
     "species_niche_key", "species_niche_adapter.",
-    "specialist_meshes.", "specialist_fusion.", "specialist_fusion_gate",
+    "specialist_meshes.", "specialist_pair_mix", "specialist_fusion.",
+    "specialist_fusion_gate",
     "specialist_aggregate_norm.", "specialist_output_norm.", "specialist_type",
     "raw_residual_read.", "raw_residual_gate", "raw_residual_norm.",
     "raw_residual_output_norm.", "specialist_decode_query",
     "specialist_reconstruct.",
-    "relation_meshes.", "relation_readers.", "relation_reader_norms.",
+    "relation_meshes.", "relation_pair_mix.", "relation_readers.",
+    "relation_reader_norms.",
     "relation_output_norms.", "relation_query.", "relation_gate.",
+    "segment_denoisers.", "segment_type.", "segment_gate.",
+    "segment_fusion.", "segment_fusion_norm.",
+    "segment_output_norm.", "segment_task_gate.",
 )
 EXPANSION_PARAMETERS = (
     "deep_mesh_reader.", "deep_mesh_reader_gate.",
@@ -369,6 +374,95 @@ class SpecialistMesh(nn.Module):
         latent = self.latents.unsqueeze(0).expand(state.shape[0], -1, -1)
         latent = latent + self.read(latent, tokens, tokens, need_weights=False)[0]
         return state, self.fuse(latent)
+
+
+class SegmentDenoiser(nn.Module):
+    """Retrieve and clean one query-local view without rewriting source state."""
+
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        levels: int,
+        *,
+        token_drop: float,
+        cell_drop: float,
+        level_drop: float,
+        jitter: float,
+        top_k: int = 8,
+    ):
+        super().__init__()
+        self.levels = levels
+        self.top_k = top_k
+        self.token_drop = token_drop
+        self.cell_drop = cell_drop
+        self.level_drop = level_drop
+        self.jitter = jitter
+        self.token_norm = nn.LayerNorm(d_model)
+        self.query_norm = nn.LayerNorm(d_model)
+        self.cell_key = nn.Parameter(torch.zeros(2, d_model))
+        self.level_key = nn.Parameter(torch.zeros(levels, d_model))
+        self.latents = nn.Parameter(torch.randn(2, d_model) * 0.02)
+        self.read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.blocks = nn.ModuleList([
+            nn.TransformerEncoderLayer(
+                d_model, n_heads, 4 * d_model,
+                dropout=0.1, batch_first=True, norm_first=True,
+            )
+            for _ in range(2)
+        ])
+        self.output = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+
+    def _keep_mask(
+        self, index: torch.Tensor, cells: int
+    ) -> torch.Tensor:
+        batch, selected = index.shape
+        device = index.device
+        token = torch.rand(batch, selected, device=device) >= self.token_drop
+        cell = torch.rand(batch, cells, device=device) >= self.cell_drop
+        level = torch.rand(batch, self.levels, device=device) >= self.level_drop
+        keep = token \
+               & cell.gather(1, index.div(self.levels, rounding_mode="floor")) \
+               & level.gather(1, index.remainder(self.levels))
+        keep[:, 0] = True
+        return keep
+
+    def forward(self, state: torch.Tensor, query: torch.Tensor) -> torch.Tensor:
+        batch, cells, levels, width = state.shape
+        tokens = self.token_norm(state.flatten(1, 2))
+        cell_type = (torch.arange(cells, device=state.device) > 0).long()
+        address = (
+            self.cell_key[cell_type].view(1, cells, 1, width)
+            + self.level_key.view(1, 1, levels, width)
+        ).flatten(1, 2)
+        keys = tokens + address
+        score = torch.einsum(
+            "bkd,bd->bk", keys, self.query_norm(query)
+        ) / math.sqrt(width)
+        _, index = score.topk(min(self.top_k, score.shape[-1]), dim=-1)
+        gather = index[..., None].expand(-1, -1, width)
+        selected_keys = keys.gather(1, gather)
+        selected_values = tokens.gather(1, gather)
+        keep = None
+        if self.training:
+            keep = self._keep_mask(index, cells)
+            selected_values = selected_values + self.jitter * torch.randn_like(
+                selected_values
+            )
+        latent = query.unsqueeze(1) + self.latents.unsqueeze(0)
+        latent = latent + self.read(
+            latent, selected_keys, selected_values,
+            key_padding_mask=None if keep is None else ~keep,
+            need_weights=False,
+        )[0]
+        increment = self.jitter / math.sqrt(len(self.blocks))
+        for block in self.blocks:
+            latent = block(latent)
+            if self.training:
+                latent = latent + increment * torch.randn_like(latent)
+        return self.output(
+            query.unsqueeze(1), latent, latent, need_weights=False
+        )[0].squeeze(1)
 
 
 class MeshModel(nn.Module):
@@ -707,8 +801,15 @@ class MeshModel(nn.Module):
         self._mesh_reader_cache = None
         specialist_rng = torch.random.get_rng_state()
         self.specialist_meshes = nn.ModuleList([
-            SpecialistMesh(d_model, n_heads) for _ in LENSES
+            nn.ModuleList([
+                SpecialistMesh(d_model, n_heads, n_latents=2)
+                for _ in range(2)
+            ])
+            for _ in LENSES
         ])
+        self.specialist_pair_mix = nn.Parameter(
+            torch.zeros(len(LENSES), 2)
+        )
         self.specialist_type = nn.Parameter(
             torch.randn(len(LENSES), d_model) * 0.02
         )
@@ -737,7 +838,14 @@ class MeshModel(nn.Module):
             relation_names.append("myco")
         self.relation_names = tuple(relation_names)
         self.relation_meshes = nn.ModuleDict({
-            name: SpecialistMesh(d_model, n_heads)
+            name: nn.ModuleList([
+                SpecialistMesh(d_model, n_heads, n_latents=2)
+                for _ in range(2)
+            ])
+            for name in self.relation_names
+        })
+        self.relation_pair_mix = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(2))
             for name in self.relation_names
         })
         self.relation_readers = nn.ModuleDict({
@@ -758,14 +866,69 @@ class MeshModel(nn.Module):
             name: nn.Parameter(torch.tensor(0.05))
             for name in self.relation_names
         })
+        corruption = {
+            "abiotic": (0.05, 0.05, 0.15, 0.010),
+            "visual": (0.15, 0.10, 0.10, 0.020),
+            "biological": (0.08, 0.08, 0.10, 0.010),
+            "ecological": (0.15, 0.12, 0.15, 0.020),
+            "identity": (0.08, 0.08, 0.10, 0.010),
+            "pollinator": (0.15, 0.12, 0.15, 0.020),
+            "pollinator_transfer": (0.10, 0.10, 0.12, 0.015),
+            "myco": (0.10, 0.10, 0.12, 0.015),
+        }
+        segment_names = (*LENSES, *self.relation_names)
+        self.segment_denoisers = nn.ModuleDict({
+            name: SegmentDenoiser(
+                d_model, n_heads, levels,
+                token_drop=corruption[name][0],
+                cell_drop=corruption[name][1],
+                level_drop=corruption[name][2],
+                jitter=corruption[name][3],
+            )
+            for name in segment_names
+        })
+        self.segment_type = nn.ParameterDict({
+            name: nn.Parameter(torch.randn(d_model) * 0.02)
+            for name in segment_names
+        })
+        self.segment_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(math.atanh(0.5)))
+            for name in segment_names
+        })
+        self.segment_fusion_norm = nn.LayerNorm(d_model)
+        self.segment_fusion = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.segment_output_norm = nn.LayerNorm(d_model)
+        self.segment_task_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.1))
+            for name in self.mesh_read_names
+        })
         torch.random.set_rng_state(specialist_rng)
         self._specialist_mesh = None
         self._specialist_latents = None
+        self._relation_mesh = {}
         self._relation_latents = {}
+        self._denoised_pool_cache = {}
         self._identity_graph_uncertainty = None
         self._pollinator_route = None
         self._raw_state_tokens = None
         self._raw_state_mask = None
+
+    @staticmethod
+    def _mesh_pair(
+        meshes: nn.ModuleList,
+        state: torch.Tensor,
+        mix: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        branches = [mesh(state) for mesh in meshes]
+        weight = mix.softmax(0)
+        combined = state + sum(
+            weight[index] * (branch_state - state)
+            for index, (branch_state, _) in enumerate(branches)
+        )
+        latent = torch.cat([branch_latent for _, branch_latent in branches], 1)
+        return combined, latent
 
     def _species(self, mask: torch.Tensor | None = None) -> torch.Tensor:
         refined = self.species_graph._seed() if self._ablate_species else self.species_graph(mask)
@@ -978,6 +1141,7 @@ class MeshModel(nn.Module):
         )
         self._fiber_summary = fiber_summary
         self._pool_cache = {}
+        self._denoised_pool_cache = {}
         self._mesh_reader_cache = None
         normalized = self.fiber_fuse_norm(fiber_summary.flatten(1, 2))
         latent = latent + torch.tanh(self.fiber_fusion_gate) * self.fiber_fuse(
@@ -998,8 +1162,12 @@ class MeshModel(nn.Module):
         latent = latent + torch.tanh(self.sparse_fusion_gate) * mesh_read
 
         specialist_states, specialist_latents = [], []
-        for lens, specialist in enumerate(self.specialist_meshes):
-            state, expert = specialist(fiber_mesh[..., lens, :])
+        for lens, specialists in enumerate(self.specialist_meshes):
+            state, expert = self._mesh_pair(
+                specialists,
+                fiber_mesh[..., lens, :],
+                self.specialist_pair_mix[lens],
+            )
             specialist_states.append(state)
             specialist_latents.append(expert)
         self._specialist_mesh = torch.stack(specialist_states, 3)
@@ -1013,10 +1181,16 @@ class MeshModel(nn.Module):
         if "myco" in self.relation_meshes:
             abiotic = self._specialist_mesh[..., LENS_INDEX["abiotic"], :]
             relation_sources["myco"] = 0.5 * (biological + abiotic)
-        self._relation_latents = {
-            name: self.relation_meshes[name](state)[1]
-            for name, state in relation_sources.items()
-        }
+        self._relation_mesh = {}
+        self._relation_latents = {}
+        for name, state in relation_sources.items():
+            relation_state, relation_latent = self._mesh_pair(
+                self.relation_meshes[name],
+                state,
+                self.relation_pair_mix[name],
+            )
+            self._relation_mesh[name] = relation_state
+            self._relation_latents[name] = relation_latent
         expert_tokens = self._specialist_latents \
                         + self.specialist_type.view(1, len(LENSES), 1, self.d_model)
         expert_tokens = self.specialist_aggregate_norm(expert_tokens.flatten(1, 2))
@@ -1037,16 +1211,80 @@ class MeshModel(nn.Module):
                  * self.raw_residual_output_norm(raw_read)
         return latent
 
+    def _task_segments(self, name: str) -> tuple[str, ...]:
+        traits = {
+            "seasonality", "water", "soil_drainage", "form",
+            "plant_type", "growth_rate", "sun", "ease_of_care",
+        }
+        if name == self.species_variable:
+            return "abiotic", "visual", "biological", "identity"
+        if name == "pollinator":
+            return "biological", "ecological", "pollinator", "pollinator_transfer"
+        if name == "community":
+            return "biological", "ecological"
+        if name == "myco":
+            return "abiotic", "biological", "myco"
+        if name == "lfmc":
+            return "abiotic", "biological"
+        if name == "flower":
+            return "abiotic", "ecological"
+        if name in traits:
+            return "visual", "biological"
+        lens = LENSES[self.write_lens.get(name, LENS_INDEX["ecological"])]
+        return (lens,)
+
+    def _segment_state(self, name: str) -> torch.Tensor | None:
+        if name in LENS_INDEX and self._specialist_mesh is not None:
+            return self._specialist_mesh[..., LENS_INDEX[name], :]
+        return self._relation_mesh.get(name)
+
+    def _query_denoised_pool(
+        self, pooled: torch.Tensor, name: str
+    ) -> torch.Tensor:
+        if name in self._denoised_pool_cache:
+            return self._denoised_pool_cache[name]
+        query = pooled + self.mesh_read_query[name]
+        reads = []
+        for segment in self._task_segments(name):
+            state = self._segment_state(segment)
+            if state is None or segment not in self.segment_denoisers:
+                continue
+            read = self.segment_denoisers[segment](state, query)
+            read = torch.tanh(self.segment_gate[segment]) * read
+            if self.training:
+                keep = 0.9
+                path = (
+                    torch.rand(read.shape[0], 1, device=read.device) < keep
+                ).to(read.dtype) / keep
+                read = read * path
+            reads.append(read + self.segment_type[segment])
+        if not reads:
+            self._denoised_pool_cache[name] = pooled
+            return pooled
+        tokens = self.segment_fusion_norm(torch.stack(reads, 1))
+        update = self.segment_fusion(
+            self.segment_fusion_norm(query).unsqueeze(1),
+            tokens,
+            tokens,
+            need_weights=False,
+        )[0].squeeze(1)
+        pooled = pooled + torch.tanh(self.segment_task_gate[name]) \
+                          * self.segment_output_norm(update)
+        self._denoised_pool_cache[name] = pooled
+        return pooled
+
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
+        if name in self._denoised_pool_cache:
+            return self._denoised_pool_cache[name]
         if name in self._pool_cache:
-            return self._pool_cache[name]
+            return self._query_denoised_pool(self._pool_cache[name], name)
         base_name = name if name in self.names else self.species_variable
         query = self.decode_query[self.names.index(base_name)]
         weight = torch.softmax((latent @ query) / math.sqrt(self.d_model), -1)
         pooled = torch.einsum("bl,bld->bd", weight, latent)
         if self._fiber_summary is None or name not in self.mesh_read_query:
             self._pool_cache[name] = pooled
-            return pooled
+            return self._query_denoised_pool(pooled, name)
         if self._mesh_reader_cache is None:
             fibers = self._fiber_summary.flatten(1, 2)
             cells = self._fiber_mesh.shape[1]
@@ -1115,7 +1353,7 @@ class MeshModel(nn.Module):
         pooled = pooled + torch.tanh(self.mesh_read_gate[name]) * self.mesh_task_norm(mesh_read)
         if self._fiber_mesh is None:
             self._pool_cache[name] = pooled
-            return pooled
+            return self._query_denoised_pool(pooled, name)
         cells = self._fiber_mesh.shape[1]
         scale_fibers = self._mesh_reader_cache["scale_fibers"]
         scale_keys = self._mesh_reader_cache["scale_keys"]
@@ -1213,7 +1451,7 @@ class MeshModel(nn.Module):
         pooled = pooled + torch.tanh(self.mesh_prior_read_gate[name]) * confidence \
                           * self.mesh_prior_task_norm(prior_read)
         self._pool_cache[name] = pooled
-        return pooled
+        return self._query_denoised_pool(pooled, name)
 
     def _prime_pool_cache(self, latent: torch.Tensor) -> None:
         names = tuple(
