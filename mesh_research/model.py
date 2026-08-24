@@ -21,6 +21,7 @@ from typing import Dict, Sequence
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -900,9 +901,18 @@ class MeshModel(nn.Module):
             d_model, n_heads, batch_first=True
         )
         self.segment_output_norm = nn.LayerNorm(d_model)
+        trait_reads = {
+            "seasonality", "water", "soil_drainage", "form",
+            "plant_type", "growth_rate", "sun", "ease_of_care",
+        }
+        denoised_reads = {
+            self.species_variable, "community", "pollinator",
+            "lfmc", "myco", "flower", *trait_reads,
+        }
         self.segment_task_gate = nn.ParameterDict({
             name: nn.Parameter(torch.tensor(0.1))
             for name in self.mesh_read_names
+            if name in denoised_reads
         })
         torch.random.set_rng_state(specialist_rng)
         self._specialist_mesh = None
@@ -1241,6 +1251,8 @@ class MeshModel(nn.Module):
     def _query_denoised_pool(
         self, pooled: torch.Tensor, name: str
     ) -> torch.Tensor:
+        if name not in self.segment_task_gate:
+            return pooled
         if name in self._denoised_pool_cache:
             return self._denoised_pool_cache[name]
         query = pooled + self.mesh_read_query[name]
@@ -1249,7 +1261,10 @@ class MeshModel(nn.Module):
             state = self._segment_state(segment)
             if state is None or segment not in self.segment_denoisers:
                 continue
-            read = self.segment_denoisers[segment](state, query)
+            denoiser = self.segment_denoisers[segment]
+            read = checkpoint(
+                denoiser, state, query, use_reentrant=False
+            ) if self.training else denoiser(state, query)
             read = torch.tanh(self.segment_gate[segment]) * read
             if self.training:
                 keep = 0.9
