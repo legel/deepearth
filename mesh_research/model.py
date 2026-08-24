@@ -80,6 +80,7 @@ READER_PARAMETERS = (
     "pollinator_reader_norm.", "pollinator_reader_output_norm.",
     "pollinator_reader_gate", "pollinator_reader_cell_key",
     "pollinator_reader_level_key", "pollinator_reader_lens_key",
+    "poll_transfer_head.", "pollinator_transfer_router.",
     "identity_detail_query", "identity_detail_reader.",
     "identity_detail_norm.", "identity_detail_output_norm.",
     "identity_detail_gate", "identity_detail_cell_key",
@@ -483,7 +484,15 @@ class MeshModel(nn.Module):
         self.community_head = nn.Linear(d_model, source.n_classes)
         self.poll_head = nn.Linear(d_model, source.n_pollinators) if hasattr(source, "n_pollinators") else None
         self.pollinator_reader = None
+        self.poll_transfer_head = None
         if self.poll_head is not None:
+            transfer_rng = torch.random.get_rng_state()
+            self.poll_transfer_head = nn.Linear(d_model, source.n_pollinators)
+            self.poll_transfer_head.load_state_dict(self.poll_head.state_dict())
+            self.pollinator_transfer_router = nn.Linear(2, 1)
+            nn.init.zeros_(self.pollinator_transfer_router.weight)
+            nn.init.constant_(self.pollinator_transfer_router.bias, -4.0)
+            torch.random.set_rng_state(transfer_rng)
             self.pollinator_log_temperature = nn.Parameter(
                 torch.zeros(()), requires_grad=False
             )
@@ -723,7 +732,7 @@ class MeshModel(nn.Module):
         })
         relation_names = ["identity"]
         if self.poll_head is not None:
-            relation_names.append("pollinator")
+            relation_names.extend(("pollinator", "pollinator_transfer"))
         if self.myco_head is not None:
             relation_names.append("myco")
         self.relation_names = tuple(relation_names)
@@ -753,6 +762,8 @@ class MeshModel(nn.Module):
         self._specialist_mesh = None
         self._specialist_latents = None
         self._relation_latents = {}
+        self._identity_graph_uncertainty = None
+        self._pollinator_route = None
         self._raw_state_tokens = None
         self._raw_state_mask = None
 
@@ -909,6 +920,19 @@ class MeshModel(nn.Module):
         species_mask: torch.Tensor | None = None,
     ):
         species = self._species(species_mask)
+        identity = values.get(self.species_variable)
+        identity_present = present.get(self.species_variable)
+        if identity is not None and identity_present is not None:
+            index = identity.long().clamp(0, species.shape[0] - 1)
+            seed = self.species_graph._seed().detach()[index]
+            uncertainty = 1.0 - F.cosine_similarity(
+                species.detach()[index], seed, dim=-1
+            )
+            self._identity_graph_uncertainty = uncertainty.mul(
+                identity_present.to(uncertainty.dtype)
+            ).unsqueeze(-1)
+        else:
+            self._identity_graph_uncertainty = None
         if detach_species:
             species = species.detach()
         write_mask = dict(present)
@@ -985,6 +1009,7 @@ class MeshModel(nn.Module):
         if "pollinator" in self.relation_meshes:
             ecological = self._specialist_mesh[..., LENS_INDEX["ecological"], :]
             relation_sources["pollinator"] = 0.5 * (biological + ecological)
+            relation_sources["pollinator_transfer"] = biological
         if "myco" in self.relation_meshes:
             abiotic = self._specialist_mesh[..., LENS_INDEX["abiotic"], :]
             relation_sources["myco"] = 0.5 * (biological + abiotic)
@@ -1443,6 +1468,31 @@ class MeshModel(nn.Module):
                           * self.pollinator_reader_output_norm(read)
         return self._relation_pool(pooled, "pollinator", isolated=isolated)
 
+    def _pollinator_logits(
+        self, latent: torch.Tensor, *, isolated: bool = False
+    ) -> torch.Tensor:
+        ordinary_pool = self._pollinator_pool(latent, isolated=isolated)
+        transfer_pool = self._relation_pool(
+            self._pool(latent, "pollinator"),
+            "pollinator_transfer",
+            isolated=isolated,
+        )
+        ordinary = F.log_softmax(self.poll_head(ordinary_pool), -1)
+        transfer = F.log_softmax(self.poll_transfer_head(transfer_pool), -1)
+        uncertainty = self._identity_graph_uncertainty
+        if uncertainty is None:
+            uncertainty = ordinary.new_zeros((ordinary.shape[0], 1))
+        features = torch.cat((
+            uncertainty,
+            (uncertainty + 1e-4).log(),
+        ), -1)
+        route = torch.sigmoid(self.pollinator_transfer_router(features))
+        self._pollinator_route = route
+        return torch.logaddexp(
+            ordinary + torch.log1p(-route.clamp(max=1.0 - 1e-6)),
+            transfer + route.clamp_min(1e-6).log(),
+        )
+
     def _calibrate_pollinator_logits(self, logits: torch.Tensor) -> torch.Tensor:
         temperature = self.pollinator_log_temperature.clamp(-2.0, 2.0).exp()
         return logits / temperature
@@ -1677,8 +1727,7 @@ class MeshModel(nn.Module):
                 pooled = self._pool(latent, "community")
                 out[name] = self.community_metric(pooled) @ self._refined_species.t()
             elif name == "pollinator":
-                pooled = self._pollinator_pool(latent)
-                prediction = self.poll_head(pooled)
+                prediction = self._pollinator_logits(latent)
                 if pollinator_species is None:
                     prediction = self._calibrate_pollinator_logits(prediction)
                 else:
@@ -1779,9 +1828,7 @@ class MeshModel(nn.Module):
                 pollinator_calibration_term = (
                     calibration_error * pollinator_valid
                 ).sum() / pollinator_valid.sum().clamp_min(1)
-            structured = self.poll_head(
-                self._pollinator_pool(latent, isolated=True)
-            )
+            structured = self._pollinator_logits(latent, isolated=True)
             structured_error = -(
                 pollinator_target * F.log_softmax(structured, -1)
             ).sum(-1)
@@ -1997,14 +2044,19 @@ class MeshModel(nn.Module):
                 ordinary_latent = self.encode(
                     values, ordinary_present, context
                 )
-            ordinary_logits = self.poll_head(
-                self._pollinator_pool(ordinary_latent, isolated=True)
+            ordinary_logits = self._pollinator_logits(
+                ordinary_latent, isolated=True
             )
             ordinary = -(
                 pollinator_target * F.log_softmax(ordinary_logits, -1)
             ).sum(-1) / math.log(self.poll_head.out_features)
             loss = loss + 0.25 * (ordinary * pollinator_valid).sum() \
                    / pollinator_valid.sum().clamp_min(1)
+            ordinary_route = self._pollinator_route.squeeze(-1)
+            loss = loss - 0.05 * (
+                torch.log1p(-ordinary_route.clamp(max=1.0 - 1e-6))
+                * pollinator_valid
+            ).sum() / pollinator_valid.sum().clamp_min(1)
 
             masked_present = {
                 name: observed[name] if name == self.species_variable
@@ -2015,15 +2067,17 @@ class MeshModel(nn.Module):
                 pollinator_latent = self.encode(
                     values, masked_present, context, species_mask=mask
                 )
-            pollinator_logits = self.poll_head(
-                self._pollinator_pool(pollinator_latent)
-            )
+            pollinator_logits = self._pollinator_logits(pollinator_latent)
             interaction = -(
                 pollinator_target * F.log_softmax(pollinator_logits, -1)
             ).sum(-1) / math.log(self.poll_head.out_features)
             masked_valid = pollinator_valid * mask[target_species]
             loss = loss + 0.25 * (interaction * masked_valid).sum() \
                    / masked_valid.sum().clamp_min(1)
+            masked_route = self._pollinator_route.squeeze(-1)
+            loss = loss - 0.05 * (
+                masked_route.clamp_min(1e-6).log() * masked_valid
+            ).sum() / masked_valid.sum().clamp_min(1)
         if getattr(self, "reader_phase", False):
             photo_row = torch.arange(batch, device=loss.device).remainder(2).bool()
             structured_present = {
@@ -2075,9 +2129,7 @@ class MeshModel(nn.Module):
                         (error * valid).sum() / valid.sum().clamp_min(1)
                     )
             if pollinator_target is not None:
-                pollinator_logits = self.poll_head(
-                    self._pollinator_pool(structured_latent)
-                )
+                pollinator_logits = self._pollinator_logits(structured_latent)
                 error = -(pollinator_target * F.log_softmax(
                     pollinator_logits, -1
                 )).sum(-1) / math.log(self.poll_head.out_features)
