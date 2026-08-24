@@ -489,9 +489,9 @@ class MeshModel(nn.Module):
             transfer_rng = torch.random.get_rng_state()
             self.poll_transfer_head = nn.Linear(d_model, source.n_pollinators)
             self.poll_transfer_head.load_state_dict(self.poll_head.state_dict())
-            self.pollinator_transfer_router = nn.Linear(2, 1)
+            self.pollinator_transfer_router = nn.Linear(1, 1)
             nn.init.zeros_(self.pollinator_transfer_router.weight)
-            nn.init.constant_(self.pollinator_transfer_router.bias, -4.0)
+            nn.init.constant_(self.pollinator_transfer_router.bias, -2.0)
             torch.random.set_rng_state(transfer_rng)
             self.pollinator_log_temperature = nn.Parameter(
                 torch.zeros(()), requires_grad=False
@@ -1479,18 +1479,23 @@ class MeshModel(nn.Module):
         )
         ordinary = F.log_softmax(self.poll_head(ordinary_pool), -1)
         transfer = F.log_softmax(self.poll_transfer_head(transfer_pool), -1)
-        uncertainty = self._identity_graph_uncertainty
-        if uncertainty is None:
-            uncertainty = ordinary.new_zeros((ordinary.shape[0], 1))
-        features = torch.cat((
-            uncertainty,
-            (uncertainty + 1e-4).log(),
-        ), -1)
-        route = torch.sigmoid(self.pollinator_transfer_router(features))
+        route = self._pollinator_transfer_probability(
+            ordinary.shape[0], ordinary.device
+        )
         self._pollinator_route = route
         return torch.logaddexp(
             ordinary + torch.log1p(-route.clamp(max=1.0 - 1e-6)),
             transfer + route.clamp_min(1e-6).log(),
+        )
+
+    def _pollinator_transfer_probability(
+        self, batch: int, device: torch.device
+    ) -> torch.Tensor:
+        uncertainty = self._identity_graph_uncertainty
+        if uncertainty is None:
+            uncertainty = torch.zeros((batch, 1), device=device)
+        return torch.sigmoid(
+            self.pollinator_transfer_router(10.0 * uncertainty)
         )
 
     def _calibrate_pollinator_logits(self, logits: torch.Tensor) -> torch.Tensor:
@@ -2044,16 +2049,18 @@ class MeshModel(nn.Module):
                 ordinary_latent = self.encode(
                     values, ordinary_present, context
                 )
-            ordinary_logits = self._pollinator_logits(
-                ordinary_latent, isolated=True
+            ordinary_logits = self.poll_head(
+                self._pollinator_pool(ordinary_latent, isolated=True)
             )
             ordinary = -(
                 pollinator_target * F.log_softmax(ordinary_logits, -1)
             ).sum(-1) / math.log(self.poll_head.out_features)
             loss = loss + 0.25 * (ordinary * pollinator_valid).sum() \
                    / pollinator_valid.sum().clamp_min(1)
-            ordinary_route = self._pollinator_route.squeeze(-1)
-            loss = loss - 0.05 * (
+            ordinary_route = self._pollinator_transfer_probability(
+                batch, loss.device
+            ).squeeze(-1)
+            loss = loss - 0.25 * (
                 torch.log1p(-ordinary_route.clamp(max=1.0 - 1e-6))
                 * pollinator_valid
             ).sum() / pollinator_valid.sum().clamp_min(1)
@@ -2067,15 +2074,21 @@ class MeshModel(nn.Module):
                 pollinator_latent = self.encode(
                     values, masked_present, context, species_mask=mask
                 )
-            pollinator_logits = self._pollinator_logits(pollinator_latent)
+            transfer_pool = self._relation_pool(
+                self._pool(pollinator_latent, "pollinator"),
+                "pollinator_transfer",
+            )
+            pollinator_logits = self.poll_transfer_head(transfer_pool)
             interaction = -(
                 pollinator_target * F.log_softmax(pollinator_logits, -1)
             ).sum(-1) / math.log(self.poll_head.out_features)
             masked_valid = pollinator_valid * mask[target_species]
             loss = loss + 0.25 * (interaction * masked_valid).sum() \
                    / masked_valid.sum().clamp_min(1)
-            masked_route = self._pollinator_route.squeeze(-1)
-            loss = loss - 0.05 * (
+            masked_route = self._pollinator_transfer_probability(
+                batch, loss.device
+            ).squeeze(-1)
+            loss = loss - 0.25 * (
                 masked_route.clamp_min(1e-6).log() * masked_valid
             ).sum() / masked_valid.sum().clamp_min(1)
         if getattr(self, "reader_phase", False):
