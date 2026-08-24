@@ -1987,22 +1987,24 @@ class MeshModel(nn.Module):
                        / family_valid.sum().clamp_min(1)
         if getattr(self, "reader_phase", False) and pollinator_target is not None:
             pollinator_present = {
-                name: observed[name]
-                if name == self.species_variable or name in self.environment_names
+                name: observed[name] if name == self.species_variable
                 else torch.zeros_like(observed[name])
                 for name in self.names
             }
             devices = [torch.cuda.current_device()] if loss.is_cuda else []
-            with torch.random.fork_rng(devices=devices), torch.no_grad():
-                pollinator_latent = self.encode(values, pollinator_present, context)
+            with torch.random.fork_rng(devices=devices):
+                pollinator_latent = self.encode(
+                    values, pollinator_present, context, species_mask=mask
+                )
             pollinator_logits = self.poll_head(
-                self._pollinator_pool(pollinator_latent, isolated=True)
+                self._pollinator_pool(pollinator_latent)
             )
             interaction = -(
                 pollinator_target * F.log_softmax(pollinator_logits, -1)
             ).sum(-1) / math.log(self.poll_head.out_features)
-            loss = loss + 0.25 * (interaction * pollinator_valid).sum() \
-                   / pollinator_valid.sum().clamp_min(1)
+            masked_valid = pollinator_valid * mask[target_species]
+            loss = loss + 0.25 * (interaction * masked_valid).sum() \
+                   / masked_valid.sum().clamp_min(1)
         if getattr(self, "reader_phase", False):
             photo_row = torch.arange(batch, device=loss.device).remainder(2).bool()
             structured_present = {
