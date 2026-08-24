@@ -103,6 +103,8 @@ READER_PARAMETERS = (
     "raw_residual_read.", "raw_residual_gate", "raw_residual_norm.",
     "raw_residual_output_norm.", "specialist_decode_query",
     "specialist_reconstruct.",
+    "relation_meshes.", "relation_readers.", "relation_reader_norms.",
+    "relation_output_norms.", "relation_query.", "relation_gate.",
 )
 EXPANSION_PARAMETERS = (
     "deep_mesh_reader.", "deep_mesh_reader_gate.",
@@ -719,9 +721,38 @@ class MeshModel(nn.Module):
         self.specialist_reconstruct = nn.ModuleDict({
             name: nn.Linear(d_model, d_model) for name in self.names
         })
+        relation_names = ["identity"]
+        if self.poll_head is not None:
+            relation_names.append("pollinator")
+        if self.myco_head is not None:
+            relation_names.append("myco")
+        self.relation_names = tuple(relation_names)
+        self.relation_meshes = nn.ModuleDict({
+            name: SpecialistMesh(d_model, n_heads)
+            for name in self.relation_names
+        })
+        self.relation_readers = nn.ModuleDict({
+            name: nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+            for name in self.relation_names
+        })
+        self.relation_reader_norms = nn.ModuleDict({
+            name: nn.LayerNorm(d_model) for name in self.relation_names
+        })
+        self.relation_output_norms = nn.ModuleDict({
+            name: nn.LayerNorm(d_model) for name in self.relation_names
+        })
+        self.relation_query = nn.ParameterDict({
+            name: nn.Parameter(torch.randn(d_model) * 0.02)
+            for name in self.relation_names
+        })
+        self.relation_gate = nn.ParameterDict({
+            name: nn.Parameter(torch.tensor(0.05))
+            for name in self.relation_names
+        })
         torch.random.set_rng_state(specialist_rng)
         self._specialist_mesh = None
         self._specialist_latents = None
+        self._relation_latents = {}
         self._raw_state_tokens = None
         self._raw_state_mask = None
 
@@ -949,6 +980,18 @@ class MeshModel(nn.Module):
             specialist_latents.append(expert)
         self._specialist_mesh = torch.stack(specialist_states, 3)
         self._specialist_latents = torch.stack(specialist_latents, 1)
+        biological = self._specialist_mesh[..., LENS_INDEX["biological"], :]
+        relation_sources = {"identity": biological}
+        if "pollinator" in self.relation_meshes:
+            ecological = self._specialist_mesh[..., LENS_INDEX["ecological"], :]
+            relation_sources["pollinator"] = 0.5 * (biological + ecological)
+        if "myco" in self.relation_meshes:
+            abiotic = self._specialist_mesh[..., LENS_INDEX["abiotic"], :]
+            relation_sources["myco"] = 0.5 * (biological + abiotic)
+        self._relation_latents = {
+            name: self.relation_meshes[name](state)[1]
+            for name, state in relation_sources.items()
+        }
         expert_tokens = self._specialist_latents \
                         + self.specialist_type.view(1, len(LENSES), 1, self.d_model)
         expert_tokens = self.specialist_aggregate_norm(expert_tokens.flatten(1, 2))
@@ -1360,7 +1403,7 @@ class MeshModel(nn.Module):
     def _pollinator_pool(self, latent: torch.Tensor, *, isolated: bool = False) -> torch.Tensor:
         pooled = self._pool(latent, "pollinator")
         if self.pollinator_reader is None or self._fiber_mesh is None:
-            return pooled
+            return self._relation_pool(pooled, "pollinator", isolated=isolated)
         cells = self._fiber_mesh.shape[1]
         fibers = self._fiber_mesh.flatten(1, 3)
         if isolated:
@@ -1396,8 +1439,9 @@ class MeshModel(nn.Module):
         query = self.pollinator_reader_query.unsqueeze(0) \
                 + pooled.unsqueeze(1) + routed.unsqueeze(1)
         read = self.pollinator_reader(query, selected, selected, need_weights=False)[0].mean(1)
-        return pooled + torch.tanh(self.pollinator_reader_gate) \
-                        * self.pollinator_reader_output_norm(read)
+        pooled = pooled + torch.tanh(self.pollinator_reader_gate) \
+                          * self.pollinator_reader_output_norm(read)
+        return self._relation_pool(pooled, "pollinator", isolated=isolated)
 
     def _calibrate_pollinator_logits(self, logits: torch.Tensor) -> torch.Tensor:
         temperature = self.pollinator_log_temperature.clamp(-2.0, 2.0).exp()
@@ -1548,7 +1592,8 @@ class MeshModel(nn.Module):
         return logits - family_mean.gather(1, family)
 
     def _myco_logits(self, latent: torch.Tensor) -> torch.Tensor:
-        base = self.myco_head(self._pool(latent, "myco"))
+        pooled = self._relation_pool(self._pool(latent, "myco"), "myco")
+        base = self.myco_head(pooled)
         if self.species_myco_head is None or self.training:
             return base
         species_logits = self.decode(latent, self.species_variable)
@@ -1572,8 +1617,27 @@ class MeshModel(nn.Module):
         weight = torch.softmax((expert @ query) / math.sqrt(self.d_model), -1)
         return torch.einsum("bl,bld->bd", weight, expert)
 
+    def _relation_pool(
+        self, pooled: torch.Tensor, name: str, *, isolated: bool = False
+    ) -> torch.Tensor:
+        expert = self._relation_latents.get(name)
+        if expert is None:
+            return pooled
+        if isolated:
+            pooled = pooled.detach()
+            expert = expert.detach()
+        tokens = self.relation_reader_norms[name](expert)
+        query = pooled.unsqueeze(1) + self.relation_query[name].view(1, 1, -1)
+        read = self.relation_readers[name](
+            query, tokens, tokens, need_weights=False
+        )[0].squeeze(1)
+        return pooled + torch.tanh(self.relation_gate[name]) \
+                        * self.relation_output_norms[name](read)
+
     def decode(self, latent: torch.Tensor, name: str) -> torch.Tensor:
         pooled = self._pool(latent, name)
+        if name == self.species_variable:
+            pooled = self._relation_pool(pooled, "identity")
         logits = self._decode_pooled(pooled, name)
         if name == self.species_variable and not self.training \
                 and self._fiber_mesh is not None:
