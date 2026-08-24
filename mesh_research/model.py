@@ -1986,15 +1986,34 @@ class MeshModel(nn.Module):
                 loss = loss + 0.1 * (conditional * masked_valid).sum() \
                        / family_valid.sum().clamp_min(1)
         if getattr(self, "reader_phase", False) and pollinator_target is not None:
-            pollinator_present = {
-                name: observed[name] if name == self.species_variable
+            ordinary_present = {
+                name: observed[name]
+                if name == self.species_variable or name in self.environment_names
                 else torch.zeros_like(observed[name])
                 for name in self.names
             }
             devices = [torch.cuda.current_device()] if loss.is_cuda else []
+            with torch.random.fork_rng(devices=devices), torch.no_grad():
+                ordinary_latent = self.encode(
+                    values, ordinary_present, context
+                )
+            ordinary_logits = self.poll_head(
+                self._pollinator_pool(ordinary_latent, isolated=True)
+            )
+            ordinary = -(
+                pollinator_target * F.log_softmax(ordinary_logits, -1)
+            ).sum(-1) / math.log(self.poll_head.out_features)
+            loss = loss + 0.25 * (ordinary * pollinator_valid).sum() \
+                   / pollinator_valid.sum().clamp_min(1)
+
+            masked_present = {
+                name: observed[name] if name == self.species_variable
+                else torch.zeros_like(observed[name])
+                for name in self.names
+            }
             with torch.random.fork_rng(devices=devices):
                 pollinator_latent = self.encode(
-                    values, pollinator_present, context, species_mask=mask
+                    values, masked_present, context, species_mask=mask
                 )
             pollinator_logits = self.poll_head(
                 self._pollinator_pool(pollinator_latent)
