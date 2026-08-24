@@ -14,16 +14,20 @@ neighbors ----------> relative mesh cells
                        |
                fibered world state
                        |
-task query ----------> reader/fusion -> prediction
+               paired lens GNNs
+                       |
+               relation meshes
+                       |
+task query ----------> sparse denoiser -> prediction
 ```
 
-The mesh separates abiotic, visual, biological, and ecological fibers within each cell. Earth4D supplies spatial and
-temporal addressing, while `SpeciesGraph` supplies phylogenomic state. Cross-scale and cross-fiber operations compose
-the world state before task-conditioned attention reduces it to a prediction. Raw modalities do not bypass the mesh.
+The mesh separates abiotic, visual, biological, and ecological fibers within each cell. Paired graph streams refine
+each lens, relation meshes join the fibers needed for identity, pollination, and mycorrhiza, and a task query denoises
+only the relevant local segments. Raw modalities do not bypass the mesh.
 
-The recorded model uses 192-dimensional cells and 21,776,977 parameters. Across two public-evaluator seeds it scores
-`0.385343` harmonic and `0.575491` arithmetic. The matched 128-dimensional control scores `0.379341` and
-`0.561834`.
+The model uses 192-dimensional cells and 45,977,005 active parameters. At seed 1337 and 8,000 steps, Lance's public
+evaluator scores it at `0.384141` harmonic and `0.577218` arithmetic, improving the prior seed-matched mesh from
+`0.382631` and `0.572135`. The published two-seed harmonic record remains `0.385343` pending a second run.
 
 - `world_mesh.py`: Earth4D cells, relative fields, and fiber adapters.
 - `fusion.py`: graph integration, mesh updates, and model interface.

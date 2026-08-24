@@ -1,5 +1,22 @@
 # DeepEarth champion report
 
+## Sparse specialist mesh candidate
+
+The current production candidate splits the fibered Earth4D state into paired abiotic, visual, biological, and
+ecological graph streams. Identity, pollination, and mycorrhiza receive relation meshes; each task retrieves and
+denoises only its query-local segments before prediction.
+
+| Model | Seed | Steps | Harmonic | Arithmetic |
+|---|---:|---:|---:|---:|
+| Prior 192-wide mesh | 1337 | 8,300 | 0.382631 | 0.572135 |
+| **Sparse specialist mesh** | **1337** | **8,000** | **0.384141** | **0.577218** |
+| **Matched-seed delta** |  |  | **+0.001510** | **+0.005083** |
+| Published 192-wide mean | 2 seeds | 8,300 | **0.385343** | 0.575491 |
+
+This is a matched-seed advancement, not a new two-seed champion. It remains 0.001202 below the published harmonic
+mean while improving arithmetic by 0.001728. The implementation has 45,977,005 active parameters; its complete
+58-benchmark receipt is in `BENCHMARKS.md`.
+
 ## 22.7M wide-cell Earth4D mesh harmonic record
 
 The production model replaces fusion-only modality mixing with a fibered Earth4D world state. Environmental, visual,
