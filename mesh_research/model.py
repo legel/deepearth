@@ -130,7 +130,7 @@ CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
 
 
 def signal_lens(name: str, kind: str | None = None) -> str:
-    if name in {"climate", "soil", "clay", "topo", "hydro", "water", "soil_drainage"}:
+    if name in {"climate", "worldclim", "soil", "clay", "topo", "hydro", "water", "soil_drainage"}:
         return "abiotic"
     if name in {"vision_dino", "naip_rgb", "naip_ir", "alphaearth"}:
         return "visual"
@@ -489,7 +489,8 @@ class MeshModel(nn.Module):
         self.d_model = d_model
         self.levels = levels
         self.species_variable = "identity"
-        self.always_names = tuple(always_dims)
+        has_worldclim = "worldclim" in source.extra
+        self.always_names = (*always_dims, *(("worldclim",) if has_worldclim else ()))
         self._ablate_species = False
 
         self.mesh = WorldMesh(d_model, levels, log2_size)
@@ -506,6 +507,12 @@ class MeshModel(nn.Module):
                 self.category_inputs[v.name] = nn.Embedding(v.num_classes, d_model)
         for name, dim in always_dims.items():
             self.adapters[name] = SignalAdapter(dim, d_model)
+        if has_worldclim:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20260824)
+                self.adapters["worldclim"] = SignalAdapter(
+                    int(source.extra["worldclim"][2]), d_model
+                )
 
         graph_args = dict(n_species=source.n_classes, d_model=d_model, n_layers=2, n_heads=4)
         if source.lca_tree is not None:
@@ -545,9 +552,19 @@ class MeshModel(nn.Module):
             if name in self.names
         )
 
-        write_names = [*self.names, *self.always_names]
+        base_write_names = [*self.names, *always_dims]
+        write_names = [*base_write_names, *(("worldclim",) if has_worldclim else ())]
         self.write_names = tuple(write_names)
-        self.write_type = nn.ParameterDict({n: nn.Parameter(torch.randn(d_model) * 0.02) for n in write_names})
+        self.write_type = nn.ParameterDict({
+            n: nn.Parameter(torch.randn(d_model) * 0.02)
+            for n in base_write_names
+        })
+        if has_worldclim:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20260825)
+                self.write_type["worldclim"] = nn.Parameter(
+                    torch.randn(d_model) * 0.02
+                )
         residual_rng = torch.random.get_rng_state()
         self.fiber_residual = nn.ModuleDict({
             name: nn.Linear(d_model, d_model, bias=False)
@@ -779,8 +796,14 @@ class MeshModel(nn.Module):
         self.fiber_fuse = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.fiber_reconstruct = nn.ModuleDict({
             name: nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, d_model))
-            for name in write_names
+            for name in base_write_names
         })
+        if has_worldclim:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20260826)
+                self.fiber_reconstruct["worldclim"] = nn.Sequential(
+                    nn.LayerNorm(d_model), nn.Linear(d_model, d_model)
+                )
         self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.sparse_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.coarse_scale_exchange = nn.Linear(d_model, d_model, bias=False)
@@ -788,8 +811,15 @@ class MeshModel(nn.Module):
         self.scale_exchange_gate = nn.Parameter(torch.full((len(LENSES),), 0.05))
         self.scale_message_norm = nn.LayerNorm(d_model)
         self.mesh_linear_reconstruct = nn.ModuleDict({
-            name: nn.Linear(d_model, d_model, bias=False) for name in write_names
+            name: nn.Linear(d_model, d_model, bias=False)
+            for name in base_write_names
         })
+        if has_worldclim:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20260827)
+                self.mesh_linear_reconstruct["worldclim"] = nn.Linear(
+                    d_model, d_model, bias=False
+                )
         self.lens_exchange_norm = nn.LayerNorm(d_model)
         self.lens_exchange = nn.Parameter(
             torch.zeros(levels, len(LENSES), len(LENSES))
@@ -1112,7 +1142,10 @@ class MeshModel(nn.Module):
         write_mask = dict(present)
         for name in self.always_names:
             if name in values:
-                write_mask[name] = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
+                valid = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
+                if name == "worldclim":
+                    valid &= present.get("climate", torch.zeros_like(valid))
+                write_mask[name] = valid
         self._raw_state_tokens, self._raw_state_mask = self._raw_residuals(
             context["query_state"], values, write_mask, species
         )
