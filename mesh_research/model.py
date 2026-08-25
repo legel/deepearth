@@ -994,6 +994,8 @@ class MeshModel(nn.Module):
         address = state.mean(-2)
         tokens, masks = [], []
         for name in self.write_names:
+            if name == "worldclim":
+                continue
             if name not in values or name not in present:
                 continue
             valid = present[name].bool()
@@ -1014,6 +1016,8 @@ class MeshModel(nn.Module):
         updates = torch.zeros_like(state)
         count = state.new_zeros((*state.shape[:-2], 1, 1))
         for name, mask in present.items():
+            if name == "worldclim":
+                continue
             if name not in values or name not in self.write_gate:
                 continue
             edit = self._adapt(name, values[name], species) + self.write_type[name]
