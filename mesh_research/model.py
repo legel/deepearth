@@ -1148,6 +1148,7 @@ class MeshModel(nn.Module):
             if name in values:
                 valid = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
                 if name == "worldclim":
+                    valid &= present.get(name, torch.zeros_like(valid))
                     valid &= present.get("climate", torch.zeros_like(valid))
                 write_mask[name] = valid
         self._raw_state_tokens, self._raw_state_mask = self._raw_residuals(
@@ -2000,6 +2001,7 @@ class MeshModel(nn.Module):
         for name in given:
             if name in present:
                 present[name] = observed.get(name, torch.ones_like(present[name]))
+        present = self._with_worldclim_observed(present, observed)
         latent = self.encode(values, present, context)
         environment_species = None
         if tuple(given) == self.environment_names \
@@ -2050,6 +2052,13 @@ class MeshModel(nn.Module):
                 out[name] = prediction
         return out
 
+    def _with_worldclim_observed(self, present, observed):
+        if "worldclim" not in self.always_names or "worldclim" not in observed:
+            return present
+        present = dict(present)
+        present["worldclim"] = observed["worldclim"]
+        return present
+
     def reconstruction_loss(self, values, observed, context, hide_probability: float = 0.5):
         batch = context["position"].shape[0]
         present = {name: (torch.rand(batch, device=context["position"].device) > hide_probability) & observed[name]
@@ -2057,6 +2066,7 @@ class MeshModel(nn.Module):
         blank = torch.rand(batch, device=context["position"].device) < 0.15
         for name in present:
             present[name] &= ~blank
+        present = self._with_worldclim_observed(present, observed)
         latent = self.encode(values, present, context)
         self._prime_pool_cache(latent)
         terms = []
@@ -2170,6 +2180,9 @@ class MeshModel(nn.Module):
             name: observed[name] if name in self.environment_names else torch.zeros_like(observed[name])
             for name in self.names
         }
+        environment_present = self._with_worldclim_observed(
+            environment_present, observed
+        )
         environment_latent = self.encode(values, environment_present, context, detach_species=True)
         environment_pool = self._pool(environment_latent, self.species_variable)
         family_logits = environment_pool.float() \
@@ -2306,6 +2319,9 @@ class MeshModel(nn.Module):
                 empty_present = {
                     name: torch.zeros_like(observed[name]) for name in self.names
                 }
+                empty_present = self._with_worldclim_observed(
+                    empty_present, observed
+                )
                 with torch.no_grad():
                     empty_latent = self.encode(
                         values, empty_present, context, detach_species=True, species_mask=mask
@@ -2335,6 +2351,9 @@ class MeshModel(nn.Module):
                 else torch.zeros_like(observed[name])
                 for name in self.names
             }
+            ordinary_present = self._with_worldclim_observed(
+                ordinary_present, observed
+            )
             devices = [torch.cuda.current_device()] if loss.is_cuda else []
             with torch.random.fork_rng(devices=devices), torch.no_grad():
                 ordinary_latent = self.encode(
@@ -2361,6 +2380,9 @@ class MeshModel(nn.Module):
                 else torch.zeros_like(observed[name])
                 for name in self.names
             }
+            masked_present = self._with_worldclim_observed(
+                masked_present, observed
+            )
             with torch.random.fork_rng(devices=devices):
                 pollinator_latent = self.encode(
                     values, masked_present, context, species_mask=mask
@@ -2390,6 +2412,9 @@ class MeshModel(nn.Module):
                 else torch.zeros_like(observed[name])
                 for name in self.names
             }
+            structured_present = self._with_worldclim_observed(
+                structured_present, observed
+            )
             structured_latent = self.encode(
                 values, structured_present, context, detach_species=True
             )
@@ -2703,6 +2728,9 @@ def train(
                     else torch.zeros_like(lfmc_observed[name])
                     for name in model.names
                 }
+                lfmc_present = model._with_worldclim_observed(
+                    lfmc_present, lfmc_observed
+                )
                 lfmc_latent = model.encode(
                     lfmc_values, lfmc_present, lfmc_context,
                     detach_species=True
