@@ -73,6 +73,7 @@ EXPERIMENT = Experiment()
 ACTIVATION_CHECKPOINTING = os.environ.get(
     "MESH_ACTIVATION_CHECKPOINT", "1"
 ) == "1"
+TRAIN_BFLOAT16 = os.environ.get("MESH_BFLOAT16", "0") == "1"
 
 LENSES = ("abiotic", "visual", "biological", "ecological")
 LENS_INDEX = {name: index for index, name in enumerate(LENSES)}
@@ -2697,10 +2698,16 @@ def train(
             )
         index = source.train_index[torch.randint(len(source.train_index), (design.batch,), device=device)]
         values, observed, coords, neighbors, manifolds, neighbor_values = source.batch(index)
-        context = model.context(coords, neighbors, manifolds, neighbor_values)
-        objective = model.reconstruction_loss(
-            values, observed, context, design.hide_probability
-        )
+        with torch.autocast(
+            device_type="cuda", dtype=torch.bfloat16,
+            enabled=TRAIN_BFLOAT16 and device.startswith("cuda"),
+        ):
+            context = model.context(
+                coords, neighbors, manifolds, neighbor_values
+            )
+            objective = model.reconstruction_loss(
+                values, observed, context, design.hide_probability
+            )
         if isinstance(objective, tuple):
             loss, structured_loss = objective
         else:
