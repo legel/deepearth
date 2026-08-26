@@ -52,6 +52,7 @@ SR417_DEM_RAW = os.path.join(PROJ_DIR, "dem", "data", "sr417_corridor_dem.tif")
 SOIL_JSON    = os.path.join(PROJ_DIR, "soil", "data", "soil_parameters.json")
 MUKEY_MAP    = os.path.join(PROJ_DIR, "soil", "data", "mukey_map.tif")
 MUKEY_LEGEND = os.path.join(PROJ_DIR, "soil", "data", "mukey_map_legend.csv")
+SOIL_STORAGE_CSV = os.path.join(PROJ_DIR, "soil", "data", "soil_storage.csv")
 ROADS_PATH     = os.path.join(PROJ_DIR, "infrastructure", "data", "roads.geojson")
 BUILDINGS_PATH = os.path.join(PROJ_DIR, "infrastructure", "data", "buildings.geojson")
 NLCD_IMPERVIOUS_PATH = os.path.join(PROJ_DIR, "soil", "data", "nlcd_impervious.tif")
@@ -132,6 +133,65 @@ def _load_horton_params():
 
 
 HORTON = _load_horton_params()
+
+
+# Drainable (air-filled) porosity between field capacity and saturation for the fine sands that
+# dominate this landscape. The water a saturating profile can still accept is the depth to the
+# seasonal-high water table times this, NOT total porosity — the profile below field capacity is
+# already wet. 0.25 is mid-range for fine sand; it is the one tunable in this term.
+DRAINABLE_POROSITY = 0.25
+
+# Depth assumed for soils SSURGO reports no water table for (excessively drained, water table
+# below the 200 cm observation limit). Deeper than any storm can fill, so the exact value only
+# has to be large.
+NO_WATER_TABLE_DEPTH_CM = 150.0
+
+
+def load_soil_storage_capacity(z_shape, dst_transform, dst_crs, storage_csv=None):
+    """Per-cell finite soil storage [m] — the "maximum deficit" of the Deficit and Constant method.
+
+    Derived from SSURGO's muaggatt.wtdepannmin (depth to the seasonal-high water table, cm) as
+
+        storage = water_table_depth * DRAINABLE_POROSITY
+
+    which is the standard construction (effective porosity x active layer depth). Depressional
+    soils report a water table at the surface and therefore get zero storage: they generate
+    runoff immediately, which is correct for them.
+
+    Returns None if the storage table has not been fetched, in which case the solver falls back
+    to unbounded infiltration and behaves exactly as before.
+    """
+    path = storage_csv or SOIL_STORAGE_CSV
+    if not (os.path.exists(path) and os.path.exists(MUKEY_MAP) and os.path.exists(MUKEY_LEGEND)):
+        return None
+
+    import csv as _csv
+    wt_cm = {}
+    with open(path, newline="") as fh:
+        for row in _csv.DictReader(fh):
+            raw = (row.get("wtdepannmin") or "").strip()
+            wt_cm[str(row["mukey"])] = float(raw) if raw else NO_WATER_TABLE_DEPTH_CM
+
+    key_to_int = {}
+    with open(MUKEY_LEGEND, newline="") as fh:
+        for row in _csv.DictReader(fh):
+            key_to_int[str(row["mukey"])] = int(row["mukey_int"])
+
+    with rasterio.open(MUKEY_MAP) as src:
+        mk = np.zeros(z_shape, dtype=np.float32)
+        reproject(src.read(1).astype(np.float32), mk,
+                  src_transform=src.transform, src_crs=src.crs,
+                  dst_transform=dst_transform, dst_crs=dst_crs,
+                  resampling=Resampling.nearest)
+    mk = mk.astype(np.int32)
+
+    # Domain mean is the sensible default for cells whose map unit has no storage record.
+    known = [wt_cm[k] * 0.01 * DRAINABLE_POROSITY for k in wt_cm]
+    out = np.full(z_shape, float(np.mean(known)) if known else 0.0, dtype=np.float32)
+    for mukey, ival in key_to_int.items():
+        if mukey in wt_cm:
+            out[mk == ival] = wt_cm[mukey] * 0.01 * DRAINABLE_POROSITY   # cm -> m
+    return out
 
 
 def load_spatial_horton(z_shape, dst_transform, dst_crs):
@@ -392,12 +452,15 @@ def load_dem_for_sim(cell_size_m):
 # ── LISFLOOD-FP solver with optional frame capture ────────────────────────────
 
 def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
-            use_infiltration=True, horton_arrays=None):
+            use_infiltration=True, horton_arrays=None, max_deficit_m=None):
     """
     Bates et al. (2010) local inertia solver.
     use_infiltration=False sets Horton inf=0 so Pe=rain (all rain stays on surface).
     horton_arrays: optional {'f0','fc','k'} dict of 2D arrays (SI units) for spatially-varying
     infiltration (see load_spatial_horton); falls back to the scalar global HORTON mean if None.
+    max_deficit_m: optional 2D array of finite soil storage [m]. Once a cell's cumulative
+    infiltration reaches it, infiltration stops and further rain becomes runoff (saturation
+    excess). None reproduces the previous unbounded-infiltration behaviour exactly.
     Returns:
       h_max, cum_infil, flooded_ha_ts, frame_data
       where frame_data = {'frames': [...], 'infil_frames': [...], 'times_min': [...],
@@ -458,6 +521,27 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
     for step in range(n_steps):
         P   = rain_sim[step]
         inf = horton_rate(t_s, f0_si, fc_si, k_si) if use_infiltration else 0.0
+
+        # Storage-limited infiltration (saturation excess).
+        #
+        # Horton alone gives a RATE that decays to fc and then stays there indefinitely, so a
+        # cell can absorb water forever. Over a 72-hour event at site3's fc_eff of 23.3 mm/hr
+        # that is 1,678 mm of capacity against 392 mm of rain, and essentially all rainfall
+        # infiltrates: the simulated runoff coefficient came out at 1.0% against 19.6% measured
+        # at the Gee Creek gauge for Hurricane Ian.
+        #
+        # Real soil has finite storage. Once the profile fills, infiltration stops and further
+        # rain becomes runoff — saturation excess, which dominates over infiltration excess on
+        # flat terrain with a shallow water table, i.e. exactly this landscape.
+        #
+        # This is the "maximum deficit" of HEC-RAS/HEC-HMS's Deficit and Constant loss method,
+        # conventionally taken as effective porosity x active layer depth and then calibrated.
+        # Here max_deficit_m is derived per cell from SSURGO (depth to seasonal-high water table
+        # x drainable porosity); see load_soil_storage_capacity().
+        if use_infiltration and max_deficit_m is not None:
+            remaining = np.maximum(max_deficit_m - cum_infil, 0.0)
+            inf = np.minimum(inf, remaining / dt)   # cannot infiltrate more than is left
+
         Pe  = np.maximum(P - inf, 0.0)
 
         h_max_local = float(h.max())
@@ -611,6 +695,9 @@ def main():
     ap.add_argument("--uniform-infiltration", action="store_true",
                     help="Use the single global-mean Horton params instead of the per-cell "
                          "SSURGO-derived mukey_map.tif (legacy behavior)")
+    ap.add_argument("--no-soil-storage", action="store_true",
+                    help="Disable the finite soil-storage cap, restoring the previous "
+                         "unbounded-infiltration behaviour (for comparison runs)")
     ap.add_argument("--no-impervious-mask", action="store_true",
                     help="Don't force zero infiltration under OSM roads/buildings "
                          "(legacy behavior: hard surfaces get soil-derived infiltration too)")
@@ -678,11 +765,25 @@ def main():
     # [3] Solver
     print(f"\n[3/4] Running solver …")
     t0 = time.time()
+    # Finite soil storage, so infiltration stops once the profile fills (saturation excess).
+    # Absent the SSURGO storage table this stays None and behaviour is unchanged.
+    max_deficit_m = None
+    if use_infiltration and not getattr(args, "no_soil_storage", False):
+        max_deficit_m = load_soil_storage_capacity(z.shape, profile["transform"], profile["crs"])
+        if max_deficit_m is not None:
+            print(f"  Soil storage cap: mean {1000*float(max_deficit_m.mean()):.0f} mm, "
+                  f"range {1000*float(max_deficit_m.min()):.0f}-{1000*float(max_deficit_m.max()):.0f} mm, "
+                  f"{100*float((max_deficit_m == 0).mean()):.0f}% of cells depressional (zero storage)")
+        else:
+            print("  Soil storage table absent — infiltration UNBOUNDED "
+                  "(run soil/fetch_soil_storage.py to enable the cap)")
+
     h_max, cum_infil, flooded_ha_ts, rain_ts, Pe_ts, mean_depth_ts, frame_data = run_sim(
         z, dx, rain_sim, args.dt,
         frame_interval_min=args.frame_interval,
         use_infiltration=use_infiltration,
         horton_arrays=horton_arrays,
+        max_deficit_m=max_deficit_m,
     )
     elapsed = time.time() - t0
 
