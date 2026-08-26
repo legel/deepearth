@@ -796,6 +796,17 @@ def run_scenario(scenario_key, scenario_label, hyetograph_path, soil_params,
     save_raster(h_peak,   profile, depth_path, dtype=np.float32)
     save_raster(vel_peak, profile, vel_path,   dtype=np.float32)
 
+    # NOTE — two distinct "flooded area" figures exist, and they are not interchangeable:
+    #
+    #   this one          area whose PEAK depth over the whole run crossed the threshold,
+    #                     i.e. the union of everything that flooded at any point.
+    #   hydrograph's      area flooded at a SINGLE timestep. Its maximum over the run is the
+    #   flooded_ha        largest instantaneous extent, which is what the viewer plots.
+    #
+    # The union is always >= the instantaneous maximum, because cells peak at different times.
+    # Measured here: the instantaneous max is 79-88% of the union across scenarios. Both are
+    # correct; reporting either as an unqualified "peak flooded area" is what caused the
+    # viewer and this summary to disagree by up to 21% on the same-named quantity.
     flood_mask = (h_peak > DEPTH_THRESHOLD).astype(np.uint8)
     flooded_ha_peak = float(flood_mask.sum()) * cell_m**2 / 1e4
     save_geojson(flood_mask, profile, geojson_path, properties={
@@ -813,7 +824,7 @@ def run_scenario(scenario_key, scenario_label, hyetograph_path, soil_params,
 
     print(f"\n── Results: {scenario_label} ─────────────────────────────")
     print(f"  Total rainfall     : {total_rain_mm:.1f} mm")
-    print(f"  Peak flooded area  : {flooded_ha_peak:.2f} ha")
+    print(f"  Flooded extent (union over run) : {flooded_ha_peak:.2f} ha")
     print(f"  Max water depth    : {max_depth:.2f} m")
     print(f"  Max flow velocity  : {max_vel:.2f} m/s")
     print(f"  Max lake rise      : {peak_lake_rise:+.3f} m")
@@ -823,7 +834,7 @@ def run_scenario(scenario_key, scenario_label, hyetograph_path, soil_params,
     return {
         "scenario": scenario_key,
         "total_rain_mm": total_rain_mm,
-        "flooded_ha_peak": flooded_ha_peak,
+        "flooded_ha_union": flooded_ha_peak,   # see the note above on the two metrics
         "max_depth_m": max_depth,
         "max_velocity_ms": max_vel,
         "max_lake_rise_m": peak_lake_rise,

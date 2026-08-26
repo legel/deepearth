@@ -150,7 +150,12 @@ def export_scenario_frames(scenario_key, bounds, src_transform, crs):
             (hydro["time_min"].iloc[1] - hydro["time_min"].iloc[0]) / 60
             if len(hydro) > 1 else 1
         )), 1),
-        "peak_flooded_ha": round(float(hydro["flooded_ha"].max()), 2),
+        # Largest extent at a SINGLE instant. Deliberately NOT the same as the solver
+        # summary's flooded_ha_union (the union over the whole run), which is 13-27%
+        # larger because cells peak at different times. Named explicitly so the two
+        # cannot be confused for one another.
+        "peak_flooded_ha_instantaneous": round(float(hydro["flooded_ha"].max()), 2),
+        "peak_flooded_ha": round(float(hydro["flooded_ha"].max()), 2),  # back-compat alias
         "peak_lake_rise_m": round(float(hydro["lake_rise_m"].max()), 3),
     }
     json_path = os.path.join(DATA_DIR, f"simulation_{scenario_key}_hydrograph.json")
