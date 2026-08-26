@@ -55,17 +55,15 @@ MUKEY_LEGEND = os.path.join(PROJ_DIR, "soil", "data", "mukey_map_legend.csv")
 ROADS_PATH     = os.path.join(PROJ_DIR, "infrastructure", "data", "roads.geojson")
 BUILDINGS_PATH = os.path.join(PROJ_DIR, "infrastructure", "data", "buildings.geojson")
 NLCD_IMPERVIOUS_PATH = os.path.join(PROJ_DIR, "soil", "data", "nlcd_impervious.tif")
-# Same per-highway-type buffer widths as viewer/preprocess/export_overlays.py's
-# _ROAD_BUFFER_M, so the "impervious" mask used by the solver matches what the viewer draws.
-ROAD_BUFFER_M = {
-    "motorway": 16, "motorway_link": 12, "trunk": 14, "trunk_link": 10,
-    "primary": 10, "primary_link": 8, "secondary": 8, "secondary_link": 6,
-    "tertiary": 6, "tertiary_link": 5, "residential": 5, "unclassified": 5,
-    "service": 3, "track": 3, "path": 2, "footway": 2, "pedestrian": 3,
-    "proposed": 3, "construction": 3,
-}
-ROAD_BUFFER_DEFAULT_M = 5.0
-IMPERVIOUS_FC_MM_HR = 0.0   # hard surfaces (roads/buildings) — no infiltration at all
+# Road buffer widths, gravity and the friction exponent come from the shared physics module,
+# so the "impervious" mask used by the solver is by construction the same footprint
+# viewer/preprocess/export_overlays.py draws.
+_MODELS_DIR = os.path.dirname(PROJ_DIR)   # .../models
+if _MODELS_DIR not in sys.path:
+    sys.path.insert(0, _MODELS_DIR)
+from floodtwin.physics import (   # noqa: E402
+    ROAD_BUFFER_M, ROAD_BUFFER_DEFAULT_M, IMPERVIOUS_FC_MM_HR,
+)
 ASOS_CSV     = os.path.join(PROJ_DIR, "precipitation", "data", "asos_hourly_MCO.csv")
 
 G          = 9.81

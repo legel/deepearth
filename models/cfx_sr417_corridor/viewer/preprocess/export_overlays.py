@@ -18,7 +18,7 @@ Outputs (512x512 PNG, north-up, covering the full DEM extent):
 Usage:
     python3 viewer/preprocess/export_overlays.py
 """
-import os, json
+import os, sys, json
 import numpy as np
 import rasterio
 import pandas as pd
@@ -316,13 +316,14 @@ def export_boundary(bounds, dem_crs):
     print(f"  boundary.png saved ({SIZE}x{SIZE})  polygons={len(gdf)}")
 
 
-_ROAD_BUFFER_M = {
-    "motorway": 16, "motorway_link": 12, "trunk": 14, "trunk_link": 10,
-    "primary": 10, "primary_link": 8, "secondary": 8, "secondary_link": 6,
-    "tertiary": 6, "tertiary_link": 5, "residential": 5, "unclassified": 5,
-    "service": 3, "track": 3, "path": 2, "footway": 2, "pedestrian": 3,
-    "proposed": 3, "construction": 3,
-}
+# Road buffer widths come from the shared physics module so the overlay drawn here is exactly
+# the impervious footprint the solver masks. These used to be two separate tables whose
+# fallback widths had drifted apart (5.0 m in the solver, 4 m here).
+_MODELS_DIR = os.path.dirname(PROJ_DIR)   # .../models
+if _MODELS_DIR not in sys.path:
+    sys.path.insert(0, _MODELS_DIR)
+from floodtwin.physics import ROAD_BUFFER_M as _ROAD_BUFFER_M          # noqa: E402
+from floodtwin.physics import ROAD_BUFFER_DEFAULT_M as _ROAD_BUFFER_DEFAULT_M  # noqa: E402
 
 
 def export_roads_buildings(bounds, dem_crs):
@@ -344,7 +345,7 @@ def export_roads_buildings(bounds, dem_crs):
     if not roads_gdf.empty:
         roads_proj = roads_gdf.to_crs(dem_crs)
         buffer_m = roads_proj.get("highway", pd.Series(["residential"] * len(roads_proj))).apply(
-            lambda h: _ROAD_BUFFER_M.get(str(h), 4)
+            lambda h: _ROAD_BUFFER_M.get(str(h), _ROAD_BUFFER_DEFAULT_M)
         )
         buffered = [geom.buffer(w) for geom, w in zip(roads_proj.geometry, buffer_m) if geom is not None]
         mask = rasterize(
