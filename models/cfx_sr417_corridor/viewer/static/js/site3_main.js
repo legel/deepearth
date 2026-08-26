@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createTerrain, createFixedExagGeometry } from './terrain.js';
+import { initStaticSections } from './panelSections.js';
 import { createDrapedOverlay } from './overlays.js';
 import { createFloodLayer } from './floodLayer.js';
 import { createRainSystem } from './rainParticles.js';
@@ -22,6 +23,12 @@ const hoverInfo  = document.getElementById('hover-info');
 function setStatus(msg) { loadingTxt.textContent = msg; }
 
 async function init() {
+  // Upgrade the panel's HTML-authored sections to the same collapsible behaviour
+  // the main AOI page uses. Done first so the panel stays usable even if a layer
+  // below fails to load.
+  const nSections = initStaticSections(document);
+  if (nSections !== 6) console.warn(`site3 panel: expected 6 sections, wired ${nSections}`);
+
   const canvas = document.getElementById('canvas');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));

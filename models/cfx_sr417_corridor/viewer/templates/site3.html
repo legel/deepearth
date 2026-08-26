@@ -51,48 +51,84 @@
       </div>
 
       <div class="panel-divider"></div>
-      <div class="section-header">Layers</div>
-      <label class="layer-row"><input type="checkbox" id="site3-wireframe-cb" checked>
-        <span class="layer-label">Terrain wireframe</span></label>
+      <!-- Same six-tier hierarchy as the main AOI page. Sections are authored here rather
+           than generated because these controls carry bespoke sliders and status lines, but
+           panelSections.js upgrades them to the identical collapsible behaviour. -->
 
-      <div id="vert-exag-control">
-        <label for="site3-vert-exag-slider">Vertical Exaggeration: <span id="site3-vert-exag-value">2.0×</span></label>
-        <input type="range" id="site3-vert-exag-slider" min="1" max="8" step="0.5" value="2" style="width:100%;">
-        <div class="exag-preset-row" id="site3-exag-preset-row">
-          <button type="button" class="exag-preset-btn" data-val="1">1×</button>
-          <button type="button" class="exag-preset-btn active" data-val="2">2×</button>
-          <button type="button" class="exag-preset-btn" data-val="4">4×</button>
-          <button type="button" class="exag-preset-btn" data-val="8">8×</button>
+      <!-- 1. BASE MAP -->
+      <div class="section-header" data-section
+           data-note="Imagery and the elevation surface everything else drapes onto.">Base Map</div>
+      <div class="section-body">
+        <label class="layer-row"><input type="checkbox" id="site3-naip-cb">
+          <span class="layer-label">Aerial Imagery (NAIP, draped)</span></label>
+        <label class="layer-row"><input type="checkbox" id="site3-wireframe-cb" checked>
+          <span class="layer-label">Terrain Wireframe</span></label>
+        <div id="vert-exag-control">
+          <label for="site3-vert-exag-slider">Vertical Exaggeration: <span id="site3-vert-exag-value">2.0×</span></label>
+          <input type="range" id="site3-vert-exag-slider" min="1" max="8" step="0.5" value="2" style="width:100%;">
+          <div class="exag-preset-row" id="site3-exag-preset-row">
+            <button type="button" class="exag-preset-btn" data-val="1">1×</button>
+            <button type="button" class="exag-preset-btn active" data-val="2">2×</button>
+            <button type="button" class="exag-preset-btn" data-val="4">4×</button>
+            <button type="button" class="exag-preset-btn" data-val="8">8×</button>
+          </div>
         </div>
       </div>
 
-      <label class="layer-row"><input type="checkbox" id="site3-naip-cb">
-        <span class="layer-label">NAIP aerial (draped)</span></label>
-      <label class="layer-row"><input type="checkbox" id="site3-hydro-cb">
-        <span class="layer-label">Hydrography (3DHP) — Gee/Howell/Soldier Creek + 167 waterbodies</span></label>
-      <label class="layer-row"><input type="checkbox" id="site3-ssurgo-cb">
-        <span class="layer-label">SSURGO soils (draped)</span></label>
-      <label class="layer-row"><input type="checkbox" id="site3-fema-cb">
-        <span class="layer-label">FEMA flood zones — SFHA + regulatory floodway</span></label>
-      <label class="layer-row"><input type="checkbox" id="site3-roads-cb">
-        <span class="layer-label">Roads &amp; buildings (OSM) — 3,193 segments / 11,241 footprints</span></label>
-      <label class="layer-row"><input type="checkbox" id="site3-flood-cb">
-        <span class="layer-label">Hurricane Ian flood animation (real event, real rain)</span></label>
-      <label class="layer-row"><input type="checkbox" id="site3-rain-cb">
-        <span class="layer-label">Rain particles</span></label>
-      <label class="layer-row"><input type="checkbox" id="site3-pointcloud-cb">
-        <span class="layer-label">Dense point cloud, raw LiDAR (NAIP colors, ~30.5M pts, heavy, ~436MB)</span></label>
-      <div id="site3-pointcloud-status" style="font-size:10.5px; color:#7ab8ff; margin-top:2px; display:none;">Loading…</div>
-      <label class="layer-row"><input type="checkbox" id="site3-1house-swe-cb">
-        <span class="layer-label">3D shallow-water sim: falling rain + physics-driven flow (1-house demo)</span></label>
-      <div id="site3-1house-swe-status" style="font-size:10.5px; color:#7ab8ff; margin-top:2px; display:none;">Loading…</div>
-      <div class="sub-controls" style="margin:2px 0 6px 0;">
-        <label for="site3-1house-swe-speed-slider">Playback speed: <span id="site3-1house-swe-speed-value">1.0×</span></label>
-        <input type="range" id="site3-1house-swe-speed-slider" min="0.1" max="8" step="0.1" value="1" style="width:100%;">
+      <!-- 2. GROUND & BUILT -->
+      <div class="section-header" data-section
+           data-note="Drives infiltration: soil sets how fast water soaks in, roads and roofs set where it cannot.">Ground &amp; Built</div>
+      <div class="section-body">
+        <label class="layer-row"><input type="checkbox" id="site3-ssurgo-cb">
+          <span class="layer-label">Soils (SSURGO, draped)</span></label>
+        <label class="layer-row"><input type="checkbox" id="site3-roads-cb">
+          <span class="layer-label">Roads &amp; Buildings — 3,193 segments / 11,241 footprints</span></label>
       </div>
-      <label class="layer-row"><input type="checkbox" id="site3-1house-cloud-cb">
-        <span class="layer-label">Dense point cloud, raw LiDAR, NAIP colors (1-house crop, ~261K pts, no decimation)</span></label>
-      <div id="site3-1house-cloud-status" style="font-size:10.5px; color:#7ab8ff; margin-top:2px; display:none;">Loading…</div>
+
+      <!-- 3. WATER -->
+      <div class="section-header" data-section
+           data-note="Mapped channels and waterbodies for the gauged Gee Creek system.">Water</div>
+      <div class="section-body">
+        <label class="layer-row"><input type="checkbox" id="site3-hydro-cb">
+          <span class="layer-label">Surface Water (3DHP) — Gee/Howell/Soldier Creek + 167 waterbodies</span></label>
+      </div>
+
+      <!-- 4. FLOOD HAZARD (FEMA) -->
+      <div class="section-header" data-section
+           data-note="FEMA's published 1%-annual-chance floodplain and floodway — independent of this model.">Flood Hazard (FEMA)</div>
+      <div class="section-body">
+        <label class="layer-row"><input type="checkbox" id="site3-fema-cb">
+          <span class="layer-label">FEMA Flood Zones — SFHA + regulatory floodway</span></label>
+      </div>
+
+      <!-- 5. FLOOD SIMULATION -->
+      <div class="section-header" data-section
+           data-note="This project's solver output, validated against the real USGS gauge below.">Flood Simulation</div>
+      <div class="section-body">
+        <label class="layer-row"><input type="checkbox" id="site3-flood-cb">
+          <span class="layer-label">Hurricane Ian — Flood Animation (real event, real rain)</span></label>
+        <label class="layer-row"><input type="checkbox" id="site3-rain-cb">
+          <span class="layer-label">Rain Particles</span></label>
+        <label class="layer-row"><input type="checkbox" id="site3-1house-swe-cb">
+          <span class="layer-label">3D shallow-water sim — rain + flow (1-house demo)</span></label>
+        <div id="site3-1house-swe-status" style="font-size:10.5px; color:#7ab8ff; margin-top:2px; display:none;">Loading…</div>
+        <div class="sub-controls" style="margin:2px 0 6px 0;">
+          <label for="site3-1house-swe-speed-slider">Playback speed: <span id="site3-1house-swe-speed-value">1.0×</span></label>
+          <input type="range" id="site3-1house-swe-speed-slider" min="0.1" max="8" step="0.1" value="1" style="width:100%;">
+        </div>
+      </div>
+
+      <!-- 6. SOURCE DATA -->
+      <div class="section-header" data-section data-collapsed
+           data-note="Raw inputs behind the layers above. Heavy, loaded on demand.">Source Data</div>
+      <div class="section-body">
+        <label class="layer-row"><input type="checkbox" id="site3-pointcloud-cb">
+          <span class="layer-label">Dense LiDAR point cloud (~30.5M pts, ~436MB)</span></label>
+        <div id="site3-pointcloud-status" style="font-size:10.5px; color:#7ab8ff; margin-top:2px; display:none;">Loading…</div>
+        <label class="layer-row"><input type="checkbox" id="site3-1house-cloud-cb">
+          <span class="layer-label">Dense LiDAR point cloud (1-house crop, ~261K pts)</span></label>
+        <div id="site3-1house-cloud-status" style="font-size:10.5px; color:#7ab8ff; margin-top:2px; display:none;">Loading…</div>
+      </div>
 
       <div id="site3-anim-controls" class="sub-controls" style="margin-top:8px; display:none;">
         <button id="site3-play-btn" class="exag-preset-btn active" style="width:100%;">Play</button>

@@ -17,25 +17,18 @@
  * A layer belongs to exactly one section. Splitting one dataset across two sections (as FEMA
  * and the water layers previously were) makes related layers look unrelated.
  */
+import { createSection } from './panelSections.js';
+
 export function setupLayerPanel(config) {
   const list = document.getElementById('layer-list');
   if (!list) return;
 
-  // Sections are ordered as a data hierarchy, not an arbitrary list:
-  //
-  //   1. BASE MAP        what the place looks like        (observed imagery + terrain)
-  //   2. GROUND          what the surface is made of      (soil, built surface)
-  //   3. WATER           where water is and where it goes (mapped + DEM-derived)
-  //   4. FLOOD HAZARD    the regulatory answer            (FEMA)
-  //   5. SIMULATION      our modelled answer              (solver output)
-  //   6. SOURCE DATA     the raw inputs behind the above  (LiDAR, satellite scenes)
-  //
-  // Each tier depends only on the tiers above it, so reading top to bottom follows how the
-  // twin is actually built. Everything is collapsible because the panel carries ~35 controls.
+  // Section order and behaviour are defined in panelSections.js, which the site pages
+  // share so every page's panel reads the same.
 
   // ── 1. BASE MAP ────────────────────────────────────────────────────────────
   {
-    const s = _section(list, 'Base Map', { open: true,
+    const s = createSection(list, 'Base Map', { open: true,
       note: 'Imagery and the elevation surface everything else drapes onto.' });
     for (const item of config.base.filter(i => i.group === 'basemap')) _row(s, item);
     _toggleRow(s, 'Terrain Surface',   config.terrain.solidMesh, false, '#1e5a3a');
@@ -46,7 +39,7 @@ export function setupLayerPanel(config) {
 
   // ── 2. GROUND & BUILT SURFACE ──────────────────────────────────────────────
   {
-    const s = _section(list, 'Ground & Built', { open: true,
+    const s = createSection(list, 'Ground & Built', { open: true,
       note: 'Drives infiltration: soil sets how fast water soaks in, roads and roofs '
           + 'set where it cannot.' });
     for (const item of config.base.filter(i => i.group === 'ground')) _row(s, item);
@@ -54,7 +47,7 @@ export function setupLayerPanel(config) {
 
   // ── 3. WATER ───────────────────────────────────────────────────────────────
   {
-    const s = _section(list, 'Water', { open: true,
+    const s = createSection(list, 'Water', { open: true,
       note: 'Mapped channels plus DEM-derived drainage. Low height-above-drainage '
           + 'floods first.' });
     for (const item of config.hydrology) _row(s, item);
@@ -62,7 +55,7 @@ export function setupLayerPanel(config) {
 
   // ── 4. FLOOD HAZARD (regulatory) ───────────────────────────────────────────
   {
-    const s = _section(list, 'Flood Hazard (FEMA)', { open: true,
+    const s = createSection(list, 'Flood Hazard (FEMA)', { open: true,
       note: 'FEMA\'s published 1%-annual-chance floodplain and floodway — independent '
           + 'of this model.' });
     for (const item of config.regulatory) _row(s, item);
@@ -70,7 +63,7 @@ export function setupLayerPanel(config) {
 
   // ── 5. FLOOD SIMULATION ────────────────────────────────────────────────────
   {
-    const s = _section(list, 'Flood Simulation', { open: true,
+    const s = createSection(list, 'Flood Simulation', { open: true,
       note: 'This project\'s solver output. Compare with the regulatory layer above; '
           + 'neither is ground truth.' });
     for (const item of config.simulation) _row(s, item);
@@ -83,7 +76,7 @@ export function setupLayerPanel(config) {
 
   // ── 6. SOURCE DATA (advanced) ──────────────────────────────────────────────
   {
-    const s = _section(list, 'Source Data', { open: false,
+    const s = createSection(list, 'Source Data', { open: false,
       note: 'Raw inputs behind the layers above. Heavy, loaded on demand.' });
     _toggleRow(s, 'LiDAR Bridge Correction',      config.terrain.lidarBridges, false, '#ff5533');
     _toggleRow(s, 'LiDAR Point Cloud (full AOI)', config.terrain.lidarCloud,   false, '#909090');
@@ -104,67 +97,6 @@ function _row(parent, item) {
   } else {
     _toggleRow(parent, item.name, item.mesh, item.on, item.swatch);
   }
-}
-
-/**
- * Collapsible section. Returns the body element that rows should be appended to, so callers
- * add rows to the section rather than to the flat list.
- */
-function _section(list, title, { open = true, note = '' } = {}) {
-  const header = document.createElement('div');
-  header.className = 'section-header collapsible' + (open ? ' open' : '');
-  header.tabIndex = 0;
-  header.setAttribute('role', 'button');
-  header.setAttribute('aria-expanded', String(open));
-
-  const chevron = document.createElement('span');
-  chevron.className = 'section-chevron';
-  chevron.textContent = '▼';
-  chevron.setAttribute('aria-hidden', 'true');
-
-  const label = document.createElement('span');
-  label.textContent = title;
-
-  const count = document.createElement('span');
-  count.className = 'section-count';
-
-  header.append(chevron, label, count);
-
-  const body = document.createElement('div');
-  body.className = 'section-body';
-  body.hidden = !open;
-
-  if (note) {
-    const n = document.createElement('div');
-    n.className = 'section-note';
-    n.textContent = note;
-    body.appendChild(n);
-  }
-
-  function toggle() {
-    const nowOpen = body.hidden;
-    body.hidden = !nowOpen;
-    header.classList.toggle('open', nowOpen);
-    header.setAttribute('aria-expanded', String(nowOpen));
-  }
-  header.addEventListener('click', toggle);
-  header.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
-  });
-
-  list.append(header, body);
-
-  // "2 / 5 on" tells you at a glance whether a collapsed section is doing anything.
-  const refresh = () => {
-    const boxes = body.querySelectorAll('input[type="checkbox"]');
-    if (!boxes.length) { count.textContent = ''; return; }
-    const on = [...boxes].filter(b => b.checked).length;
-    count.textContent = on ? `${on}/${boxes.length} on` : `${boxes.length}`;
-  };
-  body.addEventListener('change', refresh);
-  queueMicrotask(refresh);
-
-  return body;
 }
 
 // ── Private helpers ─────────────────────────────────────────────────────────
