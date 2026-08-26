@@ -2698,13 +2698,13 @@ def train(
             )
         index = source.train_index[torch.randint(len(source.train_index), (design.batch,), device=device)]
         values, observed, coords, neighbors, manifolds, neighbor_values = source.batch(index)
+        context = model.context(
+            coords, neighbors, manifolds, neighbor_values
+        )
         with torch.autocast(
             device_type="cuda", dtype=torch.bfloat16,
             enabled=TRAIN_BFLOAT16 and device.startswith("cuda"),
         ):
-            context = model.context(
-                coords, neighbors, manifolds, neighbor_values
-            )
             objective = model.reconstruction_loss(
                 values, observed, context, design.hide_probability
             )
