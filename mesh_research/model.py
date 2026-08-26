@@ -1208,7 +1208,7 @@ class MeshModel(nn.Module):
         dense_weight = score.softmax(-1)
         selected_score, selected = score.topk(min(16, score.shape[-1]), dim=-1)
         sparse_weight = torch.zeros_like(score).scatter(
-            -1, selected, selected_score.softmax(-1)
+            -1, selected, selected_score.softmax(-1).to(score.dtype)
         )
         route = sparse_weight.detach() + dense_weight - dense_weight.detach()
         mesh_read = torch.einsum("blk,bkd->bld", route, mesh_tokens)
