@@ -284,6 +284,45 @@ and gauge sources — full methodology and numbers in `ground_truth/README.md`. 
   lake-level variation.
 - **AOI under-coverage** (see Consistency check above) was found and confirmed this way: real
   lake area ~1,044 ha vs. 144.47 ha currently modeled.
+### What is NOT validated: the solver's storm response
+
+Everything above validates the **lake mask and DEM** — static quantities. None of it validates
+how the solver responds to a storm, and no such validation currently exists for this site. That
+is a limitation of the observational record, not of the model.
+
+**The lake gauge is too sparse for event validation.** 1,830 readings over 67 years, median
+interval ~27 days since 2015. Across the entire record only **two** consecutive pairs are
+≤10 days apart with a rise ≥0.10 m (2004-09-10, +0.375 m; 2016-10-13, +0.143 m). A storm's lake
+response is smeared out long before the next reading. Contrast site3 in the sibling project,
+whose USGS gauge reports discharge every 15 minutes and supports a real timing comparison.
+
+**The one satellite-flagged candidate is not a rainfall event.** The Sentinel-2 series (153
+observations, 15-day median gap) contains exactly one pair ≤10 days apart with an area jump
+≥10 ha: 2024-02-12, +17.05 ha in 5 days to 140.3 ha, the archive maximum. `historical_20240212`
+exists to reproduce it. It cannot, and the reason is not the solver:
+
+| station | distance | rainfall, 2024-02-05..16 |
+|---|---|---|
+| CoCoRaHS US1FLLK0036 | 8 km | 1.3 mm |
+| ASOS MCO | 29 km | 1.1 mm |
+| ASOS ORL | 25 km | 3.9 mm |
+| ASOS LEE | 35 km | 3.2 mm |
+| ASOS ISM | 32 km | 2.3 mm |
+
+Five independent stations agree that essentially no rain fell. The local gauge did **not** fail
+— this is not the sensor-outage failure mode documented for ASOS ISM in the sibling project.
+The scenario correctly produces 0.0 ha flooded because ~0 mm of rain is the correct forcing.
+
+**The 140.3 ha reading is itself doubtful.** The series runs 126.3 → 123.2 → **140.3** → 126.2 ha:
+up 17 ha and back down 14 ha within ten days, with no rain. It also sits above OmniWaterMask's
+entire NHD-validated range (95–131 ha), and the other three segmentation methods do not
+reproduce the spike — WatNet's area *falls* across the same dates. Treat it as an outlier, not
+an event.
+
+**Consequence:** `historical_20240212` should not be read as a validation case. Until a storm is
+found that is captured by both the rainfall network and a dense enough lake observation, this
+site's solver response is unvalidated.
+
 - **Clay Foundation Model** was scoped as a 5th segmentation method and deprioritized — it
   ships embeddings only (no water-segmentation head), so adding it would mean training a
   decoder from scratch, and it would still run on the same 10m Sentinel-2 input, so it can't
