@@ -228,12 +228,21 @@ These are real and documented rather than hidden:
   stay on the surface — but that water does not reach a boundary. Runoff coefficient moved only
   1.0 → 1.7 %, leaving an 11.5x gap. **Infiltration was a real error but not the dominant one.**
 
-  What this isolates is routing and connectivity: on terrain this flat, saturation-excess runoff
-  ponds in place rather than draining. That is the same phenomenon as the D8 under-capture
-  (11.65 of 33.15 km²), seen from the water side rather than the delineation side, and it points
-  at depression storage — which the literature treats as first-class in exactly this setting,
-  and which stream-burning and depression breaching deliberately remove from the DEM before the
-  solver ever sees it. Reconciling those two is the open problem.
+  **What this isolates is conveyance, not storage** — measured, not assumed. Three checks:
+
+  - The water is not trapped in depressions. The conditioned DEM contains **240 true pits**
+    (0.00% of cells); depression breaching worked. What it does contain is **11.02% flats** —
+    cells whose lowest neighbour is at exactly equal elevation.
+  - Twenty-four hours after rain stops, flooded area is still **rising** (+0.13 ha/hr), not
+    falling. Water is spreading laterally under its own surface gradient, seeking an outlet.
+  - Extrapolated, draining the standing 244 ha would take **~80 days**. Within any realistic
+    event window the water is immobile, though not strictly trapped.
+
+  So the limiting factor is the rate at which water can be conveyed across near-zero gradient to
+  an outlet, not how much the ground can hold. That is the D8 under-capture (11.65 of
+  33.15 km²) seen from the water side: if the channel network in the DEM is not continuous,
+  water has nowhere efficient to go regardless of how much runoff is generated. Restoring
+  connectivity — not adding storage — is the open problem.
 
   A cap of ~315 mm would reproduce the observed 19.6 % arithmetically, but that is calibration
   against a single event with the routing error still present, so it would be fitting one bug
