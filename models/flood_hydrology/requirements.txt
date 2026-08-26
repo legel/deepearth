@@ -1,0 +1,64 @@
+# flood_hydrology — Johns Lake flood digital twin
+#
+# Derived by scanning every import in the project, then split into the tiers the pipeline
+# actually needs. Core versions are pinned to match the sibling cfx_sr417_corridor project so
+# the two twins can share one environment and the shared ../floodtwin library.
+#
+#   python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+# ── Core numerics and I/O ────────────────────────────────────────────────────────────────
+numpy==2.4.6
+scipy==1.17.1
+pandas==3.0.5
+matplotlib==3.11.1
+Pillow==12.3.0
+
+# ── Geospatial ───────────────────────────────────────────────────────────────────────────
+rasterio==1.4.4
+geopandas==1.1.4
+shapely==2.1.2
+pyproj==3.7.2
+rioxarray
+
+# ── Hydrology / terrain services ─────────────────────────────────────────────────────────
+py3dep==0.19.0
+pynhd==0.20.0
+pysheds==0.5
+
+# ── LiDAR ────────────────────────────────────────────────────────────────────────────────
+laspy[lazrs]==2.7.0
+
+# ── Web / viewer ─────────────────────────────────────────────────────────────────────────
+requests==2.34.2
+flask==3.1.3
+
+# ── Satellite imagery (sentinel2/) ───────────────────────────────────────────────────────
+# Required only for the Sentinel-2 ingestion and water-segmentation stack, not for the DEM →
+# solver → viewer pipeline.
+pystac-client
+planetary-computer
+s2cloudless
+scikit-image
+
+# ── Optional: DEM conditioning ───────────────────────────────────────────────────────────
+# See the note in ../cfx_sr417_corridor/requirements.txt — richdem does not build against
+# several modern C++ toolchains. Only dem/dem_process.py needs it.
+# richdem
+
+# ── Optional: water-segmentation model comparison ────────────────────────────────────────
+# Four segmentation methods are compared in sentinel2/compare_methods.py. Each brings a heavy,
+# mutually-conflicting dependency tree (TensorFlow for WatNet, terratorch/PyTorch for
+# Prithvi-EO-2.0), so they are deliberately NOT installed together. Install only the one you
+# intend to run, ideally in a separate environment.
+# torch==2.13.0            # Prithvi-EO-2.0
+# terratorch               # Prithvi-EO-2.0
+# huggingface_hub          # Prithvi-EO-2.0
+# einops                   # Prithvi-EO-2.0
+# albumentations           # Prithvi-EO-2.0
+# tensorflow               # WatNet (vendored under WatNet/, gitignored)
+# omniwatermask            # OmniWaterMask
+
+# ── Optional: GSDR sub-daily rainfall module (gsdr/) ─────────────────────────────────────
+# plotly                   # interactive extreme-rainfall maps
+# seaborn
+# h5py

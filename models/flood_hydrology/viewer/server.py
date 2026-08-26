@@ -79,10 +79,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--reprocess", action="store_true", help="Re-run preprocessing even if data exists")
     parser.add_argument("--port", type=int, default=5050)
+    # Binds to localhost by default: this dev server has no authentication, so exposing
+    # it on all interfaces would publish the AOI data to the whole local network.
+    # Pass --host 0.0.0.0 deliberately if you need access from another device.
+    parser.add_argument("--host", type=str, default="127.0.0.1")
     args = parser.parse_args()
 
     if args.reprocess or not data_ready():
         run_preprocessing()
 
     print(f"\nStarting viewer at http://localhost:{args.port}/\n")
-    app.run(host="0.0.0.0", port=args.port, debug=False)
+    app.run(host=args.host, port=args.port, debug=False)
