@@ -1,0 +1,75 @@
+{
+  "site": "site3",
+  "cell_size_m": 25.0,
+  "duration_hr": 24.0,
+  "dt_s": 20.0,
+  "frame_interval_min": 20.0,
+  "storms": [
+    {
+      "return_period_yr": 1,
+      "split": "held_out",
+      "n_frames": 145,
+      "grid_shape": [
+        272,
+        274
+      ],
+      "peak_depth_m": 0.900499165058136,
+      "file": "storm_T0001yr.npz"
+    },
+    {
+      "return_period_yr": 2,
+      "split": "train",
+      "n_frames": 145,
+      "grid_shape": [
+        272,
+        274
+      ],
+      "peak_depth_m": 0.9097391366958618,
+      "file": "storm_T0002yr.npz"
+    },
+    {
+      "return_period_yr": 10,
+      "split": "train",
+      "n_frames": 145,
+      "grid_shape": [
+        272,
+        274
+      ],
+      "peak_depth_m": 1.1383142471313477,
+      "file": "storm_T0010yr.npz"
+    },
+    {
+      "return_period_yr": 25,
+      "split": "train",
+      "n_frames": 145,
+      "grid_shape": [
+        272,
+        274
+      ],
+      "peak_depth_m": 1.2662911415100098,
+      "file": "storm_T0025yr.npz"
+    },
+    {
+      "return_period_yr": 100,
+      "split": "train",
+      "n_frames": 145,
+      "grid_shape": [
+        272,
+        274
+      ],
+      "peak_depth_m": 1.4631389379501343,
+      "file": "storm_T0100yr.npz"
+    },
+    {
+      "return_period_yr": 500,
+      "split": "held_out",
+      "n_frames": 145,
+      "grid_shape": [
+        272,
+        274
+      ],
+      "peak_depth_m": 1.709822177886963,
+      "file": "storm_T0500yr.npz"
+    }
+  ]
+}

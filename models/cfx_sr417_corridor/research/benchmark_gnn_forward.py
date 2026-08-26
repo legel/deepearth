@@ -20,6 +20,7 @@ from torch_geometric.data import Data
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJ_DIR = os.path.dirname(BASE_DIR)
 sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, os.path.join(os.path.dirname(BASE_DIR), "simulation"))  # sibling solver modules (flood_sim_ian, mesh_shallow_water)
 from physicsnemo.models.meshgraphnet.meshgraphkan import MeshGraphKAN  # noqa: E402
 
 def main():

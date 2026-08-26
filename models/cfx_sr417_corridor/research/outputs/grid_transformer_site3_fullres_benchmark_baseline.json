@@ -1,0 +1,42 @@
+{
+  "native_grid_shape": [
+    1363,
+    1372
+  ],
+  "native_cells": 1870036,
+  "n_params": 450849,
+  "results": {
+    "cpu": {
+      "status": "ok",
+      "passes_s": [
+        0.219,
+        0.2352,
+        0.2356,
+        0.2403,
+        0.2271
+      ],
+      "mean_s_per_pass": 0.2314
+    },
+    "mps": {
+      "status": "ok",
+      "passes_s": [
+        0.1253,
+        0.1279,
+        0.1274,
+        0.125,
+        0.0945
+      ],
+      "mean_s_per_pass": 0.12
+    }
+  },
+  "grid_solver_full_ian_wall_s": 397.0,
+  "grid_solver_full_ian_steps": 12960,
+  "frame_interval_min": 20.0,
+  "grid_solver_wall_s_per_frame_interval": 1.838,
+  "mesh_gnn_cpu_s_per_pass": 304.8,
+  "mesh_gnn_mps_oom": true,
+  "speedup_vs_mesh_gnn_cpu_cpu": 1317.2,
+  "speedup_vs_grid_solver_equivalent_cpu": 7.94,
+  "speedup_vs_mesh_gnn_cpu_mps": 2540.0,
+  "speedup_vs_grid_solver_equivalent_mps": 15.32
+}

@@ -1,0 +1,86 @@
+{
+  "crop_baseline_s0": {
+    "one_step": {
+      "1": {
+        "one_step_rmse_mean_m": 0.00968,
+        "one_step_rmse_max_m": 0.01272
+      },
+      "500": {
+        "one_step_rmse_mean_m": 0.02398,
+        "one_step_rmse_max_m": 0.03227
+      }
+    },
+    "rollout": {
+      "1": {
+        "final_volume_drift_pct": -99.79,
+        "volume_drift_pct_at_10pct_steps": -98.57,
+        "volume_drift_pct_at_50pct_steps": -99.79,
+        "final_frame_rmse_m": 0.01485,
+        "rollout_rmse_at_10pct_steps_m": 0.00279,
+        "rollout_rmse_at_50pct_steps_m": 0.01365,
+        "rollout_rmse_at_100pct_steps_m": 0.01485,
+        "final_wet_iou": 0.0,
+        "final_wet_precision": null,
+        "final_wet_recall": 0.0,
+        "final_wet_f1": null,
+        "real_wet_cells_final": 123
+      },
+      "500": {
+        "final_volume_drift_pct": -99.94,
+        "volume_drift_pct_at_10pct_steps": -98.98,
+        "volume_drift_pct_at_50pct_steps": -99.94,
+        "final_frame_rmse_m": 0.03537,
+        "rollout_rmse_at_10pct_steps_m": 0.00703,
+        "rollout_rmse_at_50pct_steps_m": 0.03211,
+        "rollout_rmse_at_100pct_steps_m": 0.03537,
+        "final_wet_iou": 0.0,
+        "final_wet_precision": null,
+        "final_wet_recall": 0.0,
+        "final_wet_f1": null,
+        "real_wet_cells_final": 413
+      }
+    }
+  },
+  "crop_volloss_e20_s0": {
+    "one_step": {
+      "1": {
+        "one_step_rmse_mean_m": 0.00845,
+        "one_step_rmse_max_m": 0.01044
+      },
+      "500": {
+        "one_step_rmse_mean_m": 0.02304,
+        "one_step_rmse_max_m": 0.03148
+      }
+    },
+    "rollout": {
+      "1": {
+        "final_volume_drift_pct": -85.52,
+        "volume_drift_pct_at_10pct_steps": -56.71,
+        "volume_drift_pct_at_50pct_steps": -85.6,
+        "final_frame_rmse_m": 0.01451,
+        "rollout_rmse_at_10pct_steps_m": 0.00324,
+        "rollout_rmse_at_50pct_steps_m": 0.01332,
+        "rollout_rmse_at_100pct_steps_m": 0.01451,
+        "final_wet_iou": 0.024,
+        "final_wet_precision": 0.6,
+        "final_wet_recall": 0.0244,
+        "final_wet_f1": 0.0469,
+        "real_wet_cells_final": 123
+      },
+      "500": {
+        "final_volume_drift_pct": -95.88,
+        "volume_drift_pct_at_10pct_steps": -83.2,
+        "volume_drift_pct_at_50pct_steps": -95.91,
+        "final_frame_rmse_m": 0.03501,
+        "rollout_rmse_at_10pct_steps_m": 0.00686,
+        "rollout_rmse_at_50pct_steps_m": 0.03173,
+        "rollout_rmse_at_100pct_steps_m": 0.03501,
+        "final_wet_iou": 0.0097,
+        "final_wet_precision": 0.8,
+        "final_wet_recall": 0.0097,
+        "final_wet_f1": 0.0191,
+        "real_wet_cells_final": 413
+      }
+    }
+  }
+}

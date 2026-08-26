@@ -35,6 +35,7 @@ import os, sys, json, pickle, time, argparse
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJ_DIR = os.path.dirname(BASE_DIR)
 sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, os.path.join(os.path.dirname(BASE_DIR), "simulation"))  # sibling solver modules (flood_sim_ian, mesh_shallow_water)
 sys.path.insert(0, os.path.join(PROJ_DIR, "lidar"))
 
 from mesh_shallow_water import (  # noqa: E402

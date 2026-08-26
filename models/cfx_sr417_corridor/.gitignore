@@ -41,3 +41,10 @@ __pycache__/
 
 # OS artifacts
 .DS_Store
+
+# Trained model weights — large, regenerable by research/train_*.py
+*.pt
+
+# Private planning document: contains third-party names, contact details and
+# editor correspondence. Kept local, deliberately not published.
+HYDROLINK_PAPER_PLAN.md
