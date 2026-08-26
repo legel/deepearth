@@ -3,7 +3,7 @@ Re-export dense_test_area_mesh_site3.obj with site3's OWN geo_meta (not the main
 and real per-vertex NAIP color (added 2026-07-27, same session, per direct request: "why is
 the dense LiDAR green, can we not use NAIP's color for ground and roof like site2?")
 ==========================================================================================
-Real bug found 2026-07-27 while wiring up the site3 viewer page: build_site3_mesh_checkpointed
+Why this exists: build_site3_mesh_checkpointed
 .py's export_mesh_obj() call used the imported GEO_META constant from build_lidar_pointcloud.py,
 which points at viewer/data/geo_meta.json -- the MAIN AOI's own scene metadata (origin_x,
 origin_y, width_m, height_m, z_min). geo_meta_site3.json didn't exist yet at the time that mesh

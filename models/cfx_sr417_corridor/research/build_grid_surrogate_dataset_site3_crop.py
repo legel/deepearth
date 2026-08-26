@@ -13,7 +13,7 @@ GNN study picked), at 5m — this project's PRODUCTION cell size, not an arbitra
 since the crop is small enough that production resolution is cheap here (~100×100 cells,
 comparable in count to the GNN's own ~6,500-7,000 training nodes). This directly tests: does the
 grid-transformer's own accuracy profile (rollout collapse, near-zero spatial IoU — see
-HYDROLINK_PAPER_PLAN.md §5b/§5d) hold at a small-area, full-production-resolution scale too, or
+research/README.md) hold at a small-area, full-production-resolution scale too, or
 was the full-domain-coarsened setup itself contributing to the failure?
 
 DEM windowing note: `flood_sim_ian.load_dem_for_sim()` has no bounding-box-clipping capability
@@ -23,7 +23,7 @@ site3 script in this project uses), then calls `fsi.run_sim()`/`fsi.load_spatial
 directly with the resulting clipped z/profile, which is all those functions actually need. Uses
 4-CORNER bbox reprojection into the DEM's native EPSG:5070 CRS, not 2 corners — this project has
 already hit real meridian-convergence-skew bugs from the 2-corner shortcut at this exact
-longitude (see CLAUDE.md's 2026-07-21 "second, deeper bug" entry) — not repeating that mistake.
+longitude — not repeating that mistake.
 """
 import os
 import sys
@@ -86,8 +86,7 @@ def load_cropped_dem(cell_size_m):
     Uses the raster's own INVERSE transform to convert world coords -> pixel row/col directly,
     not rasterio.windows.from_bounds (which assumes standard north-up orientation) — site3's DEM
     has a positive y-resolution (transform.e > 0, bounds.bottom > bounds.top), the same real
-    orientation quirk this project has hit and fixed the same way multiple times before (see
-    CLAUDE.md's droplet_flow_test.py / load_dem_for_sim entries)."""
+    orientation quirk this project has hit and fixed the same way multiple times before."""
     west, south, east, north = bbox_from_center(site["lat"], site["lon"], site["radius_km"])
     with rasterio.open(fsi.DEM_COND) as src:
         native_res = abs(src.transform.a)

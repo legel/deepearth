@@ -8,7 +8,7 @@ non-invasive pattern as every other site3 script, so this never overwrites the m
 floodplain/data/fema_flood_zones.geojson.
 
 Real gap this fills: site3_gee_creek/ has never had a floodplain/ directory at all (flagged in
-CLAUDE.md's 2026-07-27 dataset-selection-logic audit) -- site3 is the site actually being
+the dataset-selection-logic audit) -- site3 is the site actually being
 compared against a real USGS gauge, so a mapped FEMA layer is directly relevant there too.
 
 Usage:

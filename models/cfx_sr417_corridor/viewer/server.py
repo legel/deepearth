@@ -12,7 +12,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
 # Files that must exist before we consider preprocessing done. No voxels
-# at this stage — see CLAUDE.md Future work.
+# at this stage —.
 REQUIRED = [
     "dem.bin",
     "geo_meta.json",

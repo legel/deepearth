@@ -13,7 +13,7 @@ Scenes are organised by precipitation category matching the GHCND NOAA analysis:
   AVG — 4 representative wet/dry season weeks
   MIN — 3 dry-streak baseline periods
 
-Ground-truth link (CLAUDE.md hydrology chain):
+Ground-truth link (hydrology chain):
   Max_Precipitation_1 (2022-09-30) aligns with the Hurricane Ian NWIS 02263800
   peak of 3,500 cfs / 11.43 ft on Shingle Creek — the calibration target for
   any flood model built for this AOI.

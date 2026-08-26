@@ -1,9 +1,7 @@
 """
 Multi-scenario GNN training-data sweep on site3_crop — GPU (torch/MPS), checkpointed
 =========================================================================================
-Generates the real per-point 3D shallow-water training data the GNN surrogate needs (see
-CLAUDE.md's 2026-07-27 "how do we combine/scale the 3D mesh solver with a full watershed"
-entries for the full plan this is step 1-2 of). Runs run_sim_gpu() (verified 2026-07-27 via
+Generates the real per-point 3D shallow-water training data the GNN surrogate needs. Runs run_sim_gpu() (verified 2026-07-27 via
 benchmark_gpu_solver.py: mass balance matches the CPU solver to -0.000% residual, ~3.95x
 faster) across several rain scenarios on site3_crop -- a small crop directly at site3's own
 pour point, chosen specifically so this training data comes from site3's own soil/terrain
@@ -61,8 +59,7 @@ MESH_CKPT = os.path.join(CKPT_DIR, "mesh_and_masks.pkl")
 # site1/2's Low/Medium/High 40/100/180 convention) AND duration/total-time (short sharp bursts
 # vs. longer sustained rain) -- a GNN trained only on one duration shape would risk not
 # generalizing to the real Ian event's very different (72-hour) temporal profile; this can't
-# fully solve that gap (see CLAUDE.md's honest caveat about training/deployment temporal
-# mismatch) but real duration variety here is a partial, real mitigation, not nothing.
+# fully solve that gap but real duration variety here is a partial, real mitigation, not nothing.
 SCENARIOS = [
     dict(name="low_short",       peak_mm_hr=40,  rain_duration_min=4,  total_min=10),
     dict(name="mediumlow_short", peak_mm_hr=70,  rain_duration_min=4,  total_min=10),

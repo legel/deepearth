@@ -37,7 +37,7 @@ from train_grid_transformer_surrogate import N_CONTEXT, get_device  # noqa: E402
 
 DEPTH_TIF = os.path.join(PROJ_DIR, "analysis", "data", "flood_depth_by_return_period_site3.tif")
 
-# Real full-solver wall-time figures already established in this project (CLAUDE.md), reused
+# Real full-solver wall-time figures already established in this project, reused
 # here rather than re-derived, so the comparison table below is self-contained.
 GRID_SOLVER_FULL_IAN_WALL_S = 397.0     # run_site3_ian.py, 72hr real Ian event, 1.87M cells
 GRID_SOLVER_FULL_IAN_STEPS = 12960      # same run: 72hr @ dt_s=20s fixed step spacing

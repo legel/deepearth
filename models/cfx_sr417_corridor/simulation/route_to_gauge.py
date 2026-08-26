@@ -12,7 +12,7 @@ cannot manufacture the ~44x additional watershed area (231 km^2 vs. this AOI's o
 that the gauge's real flow also integrates. This script answers "does real channel-routing
 physics, on top of what we already simulate, move the timing closer to what's observed" — not
 "does our simulated volume match 3,500 cfs," which remains a fundamentally different, harder
-question (see CLAUDE.md's 2026-07-23/24 entry).
+question.
 
 K (travel time) is NOT calibrated — there's no dye-tracer/travel-time study for this specific
 reach on record. Estimated instead from reach length (7.2 km, this project's own documented

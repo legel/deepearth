@@ -2,7 +2,7 @@
 """
 KSFB (ASOS, Orlando Sanford Intl) reliability cross-check for site3.
 ================================================================================
-Closes a real, documented gap (CLAUDE.md's 2026-07-27 dataset-selection-logic audit):
+Closes a real, documented gap (the dataset-selection-logic audit):
 site3's precipitation source (KSFB) was picked on proximity alone (10.8km, vs the main AOI's
 own KMCO at 29.1km) and never got the reliability cross-check the main AOI's own precipitation
 choice DID get. The main AOI's MCO-vs-ISM cross-check found a REAL problem via this method —
@@ -131,7 +131,7 @@ def main():
 
     summary = dict(
         generated="2026-08-04",
-        purpose="Closes the site3 precipitation-reliability gap flagged in CLAUDE.md's "
+        purpose="Closes the site3 precipitation-reliability gap flagged in the "
                 "2026-07-27 dataset-selection-logic audit",
         ksfb_station="SFB", ksfb_dist_km=KSFB_DIST_KM,
         reference_station=ref["id"], reference_name=ref["name"],

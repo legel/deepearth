@@ -9,7 +9,7 @@ for no benefit.
 
 This site is much larger than site1/site2 (5.7M total triangles vs. site2's largest at 682,768,
 ~8.4x), and mesh_shallow_water.py's run_sim() is a single uninterrupted Python while-loop with
-no internal checkpointing — a kill mid-run (see this project's CLAUDE.md on the never-fully-
+no internal checkpointing — a kill mid-run (see the never-fully-
 diagnosed "long background process gets killed" environment behavior) would lose all progress.
 Added --total-min/--smoke-test support here specifically to measure REAL per-step wall time at
 this mesh's actual scale before committing to a long run, rather than extrapolating from site2's

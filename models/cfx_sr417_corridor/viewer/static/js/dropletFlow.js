@@ -4,7 +4,7 @@ import * as THREE from 'three';
  * createDropletFlow(url) → { mesh, tick(dt), setSpeed(x), setWaterAmount(0-1), setRainSpread(s) }
  *
  * Renders the droplet-based rainfall/runoff test (lidar/droplet_flow_test.py) — the "dumb
- * version" 3D water-flow prototype from simulation/PLAN_3D_DROPLET_PROTOTYPE.md. Real 3D flow
+ * version" 3D water-flow prototype. Real 3D flow
  * (gravity projected onto each mesh triangle's own plane, walking triangle-to-triangle) on a
  * small, fine-resolution test area — deliberately NOT the grid-based 2.5D shallow-water solver
  * used for the full-AOI Hurricane Ian simulation.
@@ -42,7 +42,7 @@ const BASE_STEPS_PER_SECOND = 30;   // baseline playback speed at speed=1
 // the LiDAR points forming that surface — when the "dense point cloud" layer is also on, the
 // two literally occupy near-identical depth values, so standard depth-tested rendering
 // z-fights and the dense, opaque point cloud (many more points, similar/larger size) visually
-// buries the thin droplet trail (2026-07-21: "current roof top layer covers the droplet").
+// buries the thin droplet trail: the roof-top point layer covers the droplet entirely.
 // Fix: droplet materials disable depth testing/writing and get a high renderOrder so they
 // always draw after — visually on top of — the point cloud, regardless of true depth. That's
 // the right trade here (there's no real scenario where something should legitimately occlude

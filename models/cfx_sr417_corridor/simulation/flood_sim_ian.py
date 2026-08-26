@@ -405,9 +405,9 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
       discharge (m^3/s), added 2026-07-24 as the real "civil engineering hydrograph" signal
       for comparing against the observed NWIS 02263800 gauge record. South-edge-only is the
       physically relevant direction (both Shingle Creek gauges sit south of the AOI); total
-      (all 4 edges) is also tracked as a mass-balance sanity check. See CLAUDE.md's
-      2026-07-23/24 entry for why this is a shape/timing comparison, not a magnitude one — the
-      gauge's contributing watershed (231 km^2) is ~44x this AOI's own area (5.24 km^2).
+      (all 4 edges) is also tracked as a mass-balance sanity check. This is a shape/timing
+      comparison, not a magnitude one: the gauge's contributing watershed (231 km^2) is ~44x
+      this AOI's own area (5.24 km^2).
     """
     nrows, ncols = z.shape
     valid = np.isfinite(z)
@@ -434,8 +434,8 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
     flooded_ha_ts   = []    # one entry per sim step
     outflow_south_cms_ts = []   # m^3/s leaving the south domain edge only — the direction
                                  # both Shingle Creek gauges sit in; the signal to compare
-                                 # shape/timing against (not magnitude — see CLAUDE.md's
-                                 # 2026-07-23/24 entry on the real watershed-area mismatch)
+                                 # shape/timing against (not magnitude — the gauge's
+                                 # watershed is ~44x this AOI, see run_sim's docstring)
     outflow_total_cms_ts = []   # m^3/s leaving all 4 domain edges combined — mass-balance check
     rain_mm_hr_ts   = []
     Pe_mm_hr_ts     = []

@@ -74,9 +74,9 @@ def search_naip(bbox, years=None):
     catalog = pystac_client.Client.open(
         PC_STAC_URL, modifier=planetary_computer.sign_inplace)
 
-    # Build date range for each year. Upper bound was a hardcoded 2022 (real bug found
-    # 2026-07-28: silently missed a real, confirmed-available 2023 0.3m acquisition for both
-    # this AOI and site3, since the search loop never even checked that year) -- now derived
+    # Build date range for each year. A hardcoded 2022 upper bound silently missed a real,
+    # confirmed-available 2023 0.3m acquisition for both this AOI and site3, because the search
+    # loop never checked that year. The bound is now derived
     # from the real current date so it can't go stale the same way again.
     all_items = []
     current_year = datetime.date.today().year

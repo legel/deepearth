@@ -7,8 +7,8 @@ Every learned-surrogate experiment this project has run so far (`train_mesh_gnn_
 `validate_gnn_rollout.py`, `benchmark_gnn_forward.py`) operated on the from-scratch UNSTRUCTURED
 MESH solver (`mesh_shallow_water.py`) and found a real negative result at full site3 scale: a
 per-edge message-passing GNN is ~56x SLOWER than the physics solver once the graph reaches
-site3's true resolution (8.67M edges) — see CLAUDE.md's "GNN INFERENCE benchmarked at full site3
-scale" entry. A 2026-08-24 literature review (HYDROLINK_PAPER_PLAN.md §4) found that every
+site3's true resolution (8.67M edges) — see research/README.md's "GNN inference at full site3
+scale" section. A literature review (research/LITERATURE_REVIEW.md) found that every
 published "AI surrogate beats the physics solver" result reviewed operates on a COARSER or
 fundamentally different representation than a per-edge mesh graph — most directly, FloodSformer
 (Pianforini et al. 2025, Environmental Modelling & Software) trains a CNN-autoencoder +
@@ -16,8 +16,7 @@ Transformer directly on GRID-based shallow-water solver output (images, not a me
 reports ~90x speedup.
 
 This script builds the training corpus for a FloodSformer-style ablation on OUR OWN grid solver
-(`flood_sim_ian.py`, the same solver family already calibrated and gauge-validated for site3 —
-see CLAUDE.md's "real Hurricane Ian event run for site3" entry), so the eventual comparison is:
+(`flood_sim_ian.py`, the same solver family already calibrated and gauge-validated for site3, so the eventual comparison is:
 same project, same physical system, two different learned-surrogate architectures, apples to
 apples. Mirrors the GNN study's own experimental design deliberately: TRAIN at a small/coarse
 scale (here: a coarse cell size, not a mesh crop), then separately BENCHMARK inference cost at

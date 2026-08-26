@@ -6,7 +6,7 @@ total-boundary outflow, from run_site3_ian.py) with the real USGS NWIS instantan
 record for Gee Creek gauge 02234400
 (site3_gee_creek/infrastructure/data/gee_creek_ian_discharge.csv, fetched 2026-07-27) into one
 JSON the site3.html viewer page renders as a live chart -- the actual validation deliverable
-this whole site3 effort was built for. See CLAUDE.md's 2026-07-27 "real Hurricane Ian event"
+this whole site3 effort was built for. See the "real Hurricane Ian event"
 entry for the full comparison writeup and honest caveats (outflow_total sums all 4 box edges,
 not a single channel; site3's mesh captures 35.1% of the gauge's documented drainage area).
 

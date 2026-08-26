@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Evaluate one or more trained GridTransformerSurrogate checkpoints on the site3 held-out
-storms, reporting BOTH diagnostics the mesh-GNN study found it necessary to separate (CLAUDE.md:
+storms, reporting BOTH diagnostics the mesh-GNN study found it necessary to separate (
 "a model can have low single-step loss and still fail badly once its own predictions are fed
 back in"):
 

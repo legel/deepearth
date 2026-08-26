@@ -56,7 +56,7 @@ def search_naip(bbox, years=None):
     catalog = pystac_client.Client.open(
         PC_STAC_URL, modifier=planetary_computer.sign_inplace)
 
-    # Build date range for each year. Upper bound was a hardcoded 2022 (real bug found
+    # Build date range for each year. Upper bound was a hardcoded 2022 (which
     # 2026-07-28 while auditing the sibling CFX project's own copy of this script) -- now
     # derived from the real current date so it can't go stale the same way again.
     all_items = []
@@ -86,7 +86,7 @@ def search_naip(bbox, years=None):
 def _download_asset_to_local(url, dest_path, retries=5, chunk_size=1 << 20):
     """Stream a NAIP asset to a local file with retry+backoff.
 
-    Real bug found/fixed 2026-07-28: this function didn't exist here at all --
+    Note: this function did not originally exist here --
     download_naip_mosaic() below used to open each tile's REMOTE signed URL directly via
     rasterio (GDAL vsicurl streaming) and read from it during rio_merge(). On this network
     that produced a real crash mid-run (confirmed via traceback): "TIFFFillTile: Read error

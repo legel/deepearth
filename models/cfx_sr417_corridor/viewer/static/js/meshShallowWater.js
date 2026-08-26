@@ -63,8 +63,8 @@ const FALL_SPEED = 45;           // scene units/s — slower than the full-AOI r
                                   // fall reads as a blur at this zoom level.
 const MAX_INTENSITY_MM_HR = 150;
 
-// Real bug found 2026-07-21: passing the TRUE physical rain duration (summary.rain_duration_min
-// * 60 = 240s) to tracerFlow.setRainSpread() made dropletFlow.js stagger each of the 2,500
+// Do NOT pass the true physical rain duration (summary.rain_duration_min * 60 = 240s) to
+// tracerFlow.setRainSpread(). Doing so makes dropletFlow.js stagger each of the 2,500
 // tracers' start times across a 240-real-second window; combined with each particle's own
 // ~18s of travel time, the full animation cycle was ~258 real seconds long. At 1x playback the
 // overwhelming majority of tracers simply hadn't reached their start time within any normal

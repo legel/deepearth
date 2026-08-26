@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The real-Hurricane-Ian rollout test both surrogates (mesh-GNN and grid-transformer) have been
-missing since the 2026-08-24 ablation started — flagged repeatedly (HYDROLINK_PAPER_PLAN.md §5c,
-CLAUDE.md's 2026-08-25 entries) and finally built here. Every rollout result so far, for either
+missing since the ablation started — flagged repeatedly (see
+research/README.md) and finally built here. Every rollout result so far, for either
 surrogate architecture, has been synthetic-Atlas-14-design-storm-only; this produces the first
 REAL, gauge-relevant event at the grid-transformer's own training resolution.
 

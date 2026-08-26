@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Train GridTransformerSurrogate on the site3 multi-storm grid dataset, then validate via a
 real autoregressive rollout on the 2 held-out storms — same "don't trust single-step loss alone"
-discipline `validate_gnn_rollout.py` already established for the mesh-GNN experiment (see
-CLAUDE.md's "real autoregressive-rollout validation of the trained GNN surrogate" entry): a
+discipline `validate_gnn_rollout.py` already established for the mesh-GNN experiment: a
 model can have low single-step loss and still fail badly once its own predictions are fed back
 in as the next input. Reports the same class of diagnostic here (predicted vs. real total
 water volume trajectory, plus final-frame RMSE — the latter chosen specifically to be
@@ -121,7 +120,7 @@ def train(model, storms, device, epochs, batch_size, lr, loss_weight_alpha=0.0, 
     print(f"  frame grid {hw} padded to {tuple(X_pad.shape[-2:])} (mult. of {DOWNSAMPLE})")
 
     # Per-pixel target-diff magnitude (step-1 only), for optional loss reweighting — the same
-    # fix that closed the mesh-GNN's own volume-collapse failure (CLAUDE.md: alpha=8.0, "per-
+    # fix that closed the mesh-GNN's own volume-collapse failure (alpha=8.0, "per-
     # node loss reweighting ... worked, adopted"). Kept available here (rollout_steps=1 +
     # loss_weight_alpha>0 reproduces that exact experiment on this architecture); combining it
     # with rollout_steps>1 is not implemented (the two fixes target the same failure via
@@ -160,7 +159,7 @@ def train(model, storms, device, epochs, batch_size, lr, loss_weight_alpha=0.0, 
                     # mean depth. Pointwise MSE alone has no incentive to get the domain-wide
                     # total right as long as it gets most pixels' small errors right — this term
                     # penalizes exactly the aggregate quantity that collapsed in the unweighted
-                    # baseline (CLAUDE.md/HYDROLINK_PAPER_PLAN.md: rollout volume drift up to
+                    # baseline (see research/README.md: rollout volume drift up to
                     # -99.9% despite near-identical RMSE). Same spirit as the domain-wise volume-
                     # conservation loss FloodTransformer's own authors name as their unbuilt
                     # future work (Gu, Kang et al. 2026) — built here as a real, tested attempt,
@@ -238,7 +237,7 @@ def main():
     ap.add_argument("--loss-weight-alpha", type=float, default=0.0,
                     help="Per-pixel loss reweighting by target-diff magnitude (0 = plain MSE, "
                          "the mesh-GNN study's own baseline). alpha=8.0 is what fixed that "
-                         "study's volume-collapse failure — see CLAUDE.md.")
+                         "study's volume-collapse failure —.")
     ap.add_argument("--rollout-steps", type=int, default=1,
                     help="Train through an R-step autoregressive rollout (R=1 = plain "
                          "single-step training). The direct fix for exposure bias — see train().")

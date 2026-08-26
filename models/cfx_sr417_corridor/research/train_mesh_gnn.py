@@ -1,7 +1,7 @@
 """
 MeshGraphKAN surrogate — proof-of-concept training on OUR OWN Ian data
 =========================================================================
-Per the 2026-07-23/24 strategic reflection (see CLAUDE.md): the highest-value use of
+Per the 2026-07-23/24 strategic reflection: the highest-value use of
 HydroGraphNet's architecture for THIS project isn't reproducing NVIDIA's literal model on the
 White River (Indiana) reference dataset — that geography/physics doesn't transfer here at all —
 it's training a fast learned surrogate of OUR OWN from-scratch solver to accelerate future

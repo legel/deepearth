@@ -3,7 +3,7 @@ Build (and cache) the mesh+masks bundle for the FULL site3 registry entry (groun
 the same production mesh flood_sim/mesh_shallow_water already use for real Ian runs) -- WITHOUT
 running any GPU physics scenarios. Purpose: get the real full-scale edge count and mesh
 structure so GNN INFERENCE (not training) tractability can be benchmarked before attempting a
-full-scale surrogate run, per CLAUDE.md's 2026-07-27 GNN-rollout-validation entry's "not yet
+full-scale surrogate run, per the GNN rollout validation's "not yet
 done" list. Mirrors run_gnn_training_sweep.py's build_mesh_and_masks() exactly, just pointed at
 the real "site3" site (not the training-only site3_crop/site3_crop_coarse crops) and with the
 scenario-sweep step skipped entirely.

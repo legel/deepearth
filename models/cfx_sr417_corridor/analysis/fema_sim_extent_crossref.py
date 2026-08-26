@@ -6,8 +6,7 @@ project's long-standing watershed-area-mismatch problem entirely: FEMA's mapped 
 zones are a SPATIAL product (where flooding is expected/regulated), not a discharge/gauge
 record, so comparing them against the simulator's own flood-EXTENT polygon (flood_extent_ian
 .geojson) needs no watershed-area scaling at all — apples-to-apples in a way the Shingle Creek
-gauge comparison structurally can't be (see CLAUDE.md's 2026-07-23/24 entry: the AOI is 44x
-smaller than gauge 02263800's real drainage area).
+gauge comparison structurally can't be.
 
 This is NOT a perfect ground truth either, and that's stated plainly in the output, not hidden:
 FEMA NFHL zones represent a regulatory 1%-annual-chance (100-yr) design-storm floodplain, a
@@ -70,7 +69,7 @@ def main():
     print(f"  Simulated Ian flood extent: {sim_area_ha:.2f} ha")
 
     # Real bug caught before trusting the numbers: fetch_fema_nfhl.py (like this project's own
-    # NHD fetch, per CLAUDE.md's earlier documented finding) returns each FEMA feature's FULL,
+    # NHD fetch) returns each FEMA feature's FULL,
     # un-clipped geometry if any part intersects the query bbox -- some AE/floodway polygons here
     # run the full length of Shingle Creek (~7km), and Zone X "AREA OF MINIMAL FLOOD HAZARD" is
     # 53,715 ha, vastly larger than the 523.75 ha AOI. Comparing simulated (AOI-only) area against

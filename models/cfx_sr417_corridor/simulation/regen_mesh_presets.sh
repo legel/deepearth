@@ -1,8 +1,8 @@
 #!/bin/bash
 # Regenerate the mesh-solver viewer presets after the 2026-08-04 Manning friction fix
-# (4/3 -> 7/3, see CLAUDE.md's 2026-08-04 entry). Every number these files produce was computed
+# (4/3 -> 7/3. Every number these files produce was computed
 # under the OLD, dimensionally-wrong exponent -- this reruns them under the corrected one, exact
-# same convention CLAUDE.md already documents for these presets (Low=40mm/hr, Medium=100mm/hr,
+# same convention already established for these presets (Low=40mm/hr, Medium=100mm/hr,
 # High=180mm/hr per site). Idempotent: safe to rerun.
 #
 # No associative arrays (macOS ships bash 3.2, which doesn't support -A) -- mm/hr looked up via

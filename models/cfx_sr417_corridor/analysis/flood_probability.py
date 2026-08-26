@@ -56,8 +56,7 @@ What this is NOT
 - **Not calibrated on observed flood frequency.** The depth→probability mapping inherits every
   caveat already documented for the solver itself — notably that this AOI has no inflow boundary
   condition, so it reproduces direct rainfall-runoff ponding, NOT channel overtopping driven by
-  the 231 km² upstream watershed (see CLAUDE.md and the FEMA extent cross-reference, which found
-  only 11% overlap for exactly this reason). Probabilities here are for PLUVIAL (rain-driven
+  the 231 km² upstream watershed. Probabilities here are for PLUVIAL (rain-driven
   surface) flooding only. That is a real scope limit, not a bug.
 
 Usage
@@ -443,7 +442,7 @@ def main():
             "Pluvial (direct rainfall-runoff) flooding only. The solver has no inflow boundary "
             "condition, so channel/riverine overtopping driven by the 231 km^2 upstream Shingle "
             "Creek watershed is NOT represented — see the FEMA extent cross-reference (11% "
-            "overlap) and CLAUDE.md's 2026-07-23/24 entry.",
+            "overlap).",
             "Stationary: Atlas 14 is a historical frequency analysis with no climate trend, so "
             "a future-dated query carries no climate-change signal.",
             "AEP is clamped at 1/%d (the most frequent return period simulated); cells flooding "

@@ -109,7 +109,7 @@ class GridTransformerSurrogate(nn.Module):
     embedding). A scalar forcing value (design-storm rain rate, mm/hr, log1p-scaled) is added to
     the query tokens — FloodSformer's own "inflow discharge" cross-attention conditioning,
     adapted to this solver's actual boundary forcing (rain rate, not inflow discharge — this
-    project's grid solver has no inflow boundary condition, see CLAUDE.md's watershed-mismatch
+    project's grid solver has no inflow boundary condition; see the watershed-mismatch
     entries)."""
 
     def __init__(self, n_context=4, d_model=64, nhead=4, num_layers=2):

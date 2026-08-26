@@ -21,7 +21,7 @@ Real, honest caveats carried from this project's own established convention (not
     entry), not south the way both Shingle Creek gauges sit relative to the original AOI. Using
     the total across all edges is a defensible, honest simplification for a first exploratory
     run rather than picking one edge without checking which one actually faces the gauge.
-  - This is a SHAPE/TIMING comparison, not magnitude — this project's own 2026-07-23/24 CLAUDE.md
+  - This is a SHAPE/TIMING comparison, not magnitude — this project's own
     entry established that principle for the original AOI's ~44x watershed-area mismatch; site3
     has its own, smaller (but still real) mismatch: 11.65 km^2 delineated vs 33.15 km^2
     documented gauge drainage area (35% capture — see test_sites.py's site3 comment).

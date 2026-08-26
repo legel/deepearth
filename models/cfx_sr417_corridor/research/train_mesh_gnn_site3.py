@@ -8,7 +8,7 @@ per-triangle area/elevation/soil/impervious data) and REAL multi-scenario shallo
 from run_gnn_training_sweep.py (8 distinct rain scenarios at site3's own pour point, GPU-solved,
 mass-conservative to ~0.000% residual on every run).
 
-Held-out validation (added 2026-07-27, the "step 4" of the corrected GNN plan -- see CLAUDE.md):
+Held-out validation:
 2 of the 8 scenarios are held out ENTIRELY from training, not just individual timesteps within
 seen scenarios -- this tests real generalization to unseen rain intensity/duration, not just
 interpolation within a seen event. "mediumhigh_short" (130mm/hr, interpolated intensity between

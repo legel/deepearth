@@ -213,7 +213,7 @@ async function init() {
   // house, lidar/test_sites.py's "site3_1house"), since site3's own registered crops
   // (site3_crop/site3_crop_coarse) were built for GNN training-data volume, not a clean
   // single-building demo. Mass balance closed to -0.00% on this run (see swe_mesh_summary
-  // json / CLAUDE.md).
+  // json).
   let sweHouseInstance = null;
   const sweHouseCb = document.getElementById('site3-1house-swe-cb');
   const sweHouseStatus = document.getElementById('site3-1house-swe-status');
@@ -349,7 +349,7 @@ async function init() {
   });
 
   // Frame advancement runs on setInterval, NOT inside the requestAnimationFrame render loop —
-  // real bug found 2026-07-27: with the heavy 8M-point cloud and the flood animation both on
+  // With the heavy 8M-point cloud and the flood animation both on
   // at once, actual render FPS drops enough that rAF itself fires rarely, and gating the frame
   // advance on "time since last rAF tick" throttled WITH it (observed: 1 frame advanced in ~4
   // real seconds instead of the intended 2 frames/sec) — reported as "still very slow, numbers

@@ -40,7 +40,7 @@ SITES = {
         # landscape — it's a real USGS-gauged watershed picked SPECIFICALLY so this project's
         # own simulated outflow can be compared against a REAL observed discharge record, for
         # the first time without the ~44x watershed-area mismatch that made the original
-        # 02263800 Shingle Creek gauge comparison invalid (see CLAUDE.md's 2026-07-23/24 entry).
+        # 02263800 Shingle Creek gauge comparison invalid.
         #
         # Selection process: started from (28.64627,-81.23725) on SR417, an example of
         # sloping terrain with engineered drainage — searched USGS NWIS for
@@ -126,7 +126,7 @@ SITES = {
         # The 3D mesh solver (mesh_shallow_water.py) provides the real per-point
         # physics, but is confirmed intractable at full site3
         # scale (2.5hr wall time for an 8-minute synthetic event, 0.02% boundary outflow — see
-        # CLAUDE.md's 2026-07-27 "real Hurricane Ian event" entries). The fix is a learned GNN
+        # the real Hurricane Ian event runs). The fix is a learned GNN
         # surrogate trained on the mesh solver's own output — but that surrogate needs REAL
         # training data from site3's own domain, not reused from site1/site2 (different
         # location near the ORIGINAL AOI, different soil/land-cover — training there and

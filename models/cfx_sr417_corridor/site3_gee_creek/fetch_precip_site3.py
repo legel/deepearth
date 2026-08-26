@@ -8,10 +8,10 @@ saved invocation.
 
 Station choice: KSFB (Orlando Sanford Intl), 10.8km from site3, chosen on PROXIMITY only, unlike
 the main AOI's MCO station (chosen after a real reliability cross-check that rejected the
-closer ISM station). Per CLAUDE.md's dataset-selection-logic audit (2026-07-27), site3 still has
+closer ISM station). Per the dataset-selection-logic audit, site3 still has
 no equivalent local-gauge reliability check -- this script fetches the same window that's
 already in use, it does not add that missing cross-validation (tracked as future-work item 21
-in CLAUDE.md).
+in the project README).
 
 Reuses `fetch_iem_asos()` / `extract_hourly()` directly -- both are already station-agnostic
 (take a station code + date range), so no monkey-patching is needed, just a different station

@@ -62,8 +62,7 @@ def load_cached_points(lon_min, lat_min, lon_max, lat_max, cache_dir, classifica
     keeps peak memory bounded by the much-smaller building-only subset instead of the full raw
     cloud. Pass None to disable (get everything, the old behavior) if a future caller needs it.
 
-    Real bug found/fixed 2026-07-27, building the site3_crop GNN-training site: the
-    lon_min/lat_min/lon_max/lat_max parameters were accepted but never actually used to filter
+    Note: the lon_min/lat_min/lon_max/lat_max parameters were once accepted but never used to filter
     anything — every call loaded and returned ALL of cache_dir's points regardless of the
     requested box. Not a correctness bug (build_building_surfaces() still spatially filters
     correctly downstream via its own cKDTree query), but a real efficiency one: a small-area

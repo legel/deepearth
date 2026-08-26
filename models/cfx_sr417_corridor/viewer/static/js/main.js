@@ -161,7 +161,7 @@ async function init() {
   // no FEMA overlap, green = simulated AND FEMA agree. Sidesteps the watershed-area-mismatch
   // problem that makes the Shingle Creek gauge comparison invalid — both are spatial extents at
   // the SAME AOI. Real finding: only ~11% of the simulated extent falls inside a mapped SFHA
-  // (~1% of the SFHA area itself) — see CLAUDE.md for the honest interpretation.
+  // (~1% of the SFHA area itself) —.
   const femaSimExtent = flatPlane('/data/fema_sim_extent_overlay.png', 4.7, 0.85, W, H);
 
   // HYDROLOGY
