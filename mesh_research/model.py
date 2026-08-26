@@ -70,6 +70,9 @@ class Experiment:
 
 
 EXPERIMENT = Experiment()
+ACTIVATION_CHECKPOINTING = os.environ.get(
+    "MESH_ACTIVATION_CHECKPOINT", "1"
+) == "1"
 
 LENSES = ("abiotic", "visual", "biological", "ecological")
 LENS_INDEX = {name: index for index, name in enumerate(LENSES)}
@@ -1303,7 +1306,8 @@ class MeshModel(nn.Module):
             denoiser = self.segment_denoisers[segment]
             read = checkpoint(
                 denoiser, state, query, use_reentrant=False
-            ) if self.training else denoiser(state, query)
+            ) if self.training and ACTIVATION_CHECKPOINTING \
+              else denoiser(state, query)
             read = torch.tanh(self.segment_gate[segment]) * read
             if self.training:
                 keep = 0.9
