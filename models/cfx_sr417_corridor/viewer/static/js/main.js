@@ -220,32 +220,45 @@ async function init() {
       lidarBridges: lidarBridges.mesh,
       lidarCloud:   lidarCloud.mesh,
     },
+    // ── 3. WATER: mapped channels + DEM-derived drainage structure ───────────
     hydrology: [
-      { name: 'HAND',              mesh: handMesh,  on: false, swatch: '#2255cc' },
-      { name: 'Stream Network',    mesh: streams,   on: false, swatch: '#00ccff' },
-      { name: 'Flow Accumulation', mesh: flowAccum, on: false, swatch: '#004499' },
+      { name: 'Surface Water (3DHP)',  mesh: hydrography, on: false, swatch: '#00aaff' },
+      { name: 'Stream Network (D8)',   mesh: streams,     on: false, swatch: '#00ccff' },
+      { name: 'Height Above Drainage', mesh: handMesh,    on: false, swatch: '#2255cc' },
+      { name: 'Flow Accumulation',     mesh: flowAccum,   on: false, swatch: '#004499' },
     ],
+
+    // ── 1 & 2. BASE MAP and GROUND, tagged by `group` ────────────────────────
     base: [
       {
-        // On + Draped by default (2026-07-20, per request) — the other page-load default is
-        // Wireframe (set in layerControls.js); everything else in this panel defaults off.
-        name: 'NAIP Aerial', mesh: naip, on: true, swatch: '#8a8a70',
+        // The one layer on at page load: aerial imagery draped on the terrain, so the scene
+        // reads as a real place before any analysis layer is added.
+        group: 'basemap',
+        name: 'Aerial Imagery (NAIP)', mesh: naip, on: true, swatch: '#8a8a70',
         drape: true, drapedMesh: naipDraped, drapedOn: true,
       },
       {
-        name: 'SSURGO Soils', mesh: ssurgoFlat, on: false, swatch: '#7a9a5a',
+        group: 'ground',
+        name: 'Soils (SSURGO)', mesh: ssurgoFlat, on: false, swatch: '#7a9a5a',
         drape: true, drapedMesh: ssurgoDraped, drapedOn: false,
         legendUrl: '/data/ssurgo_legend.json',
       },
-      { name: 'Hydrography (3DHP)',    mesh: hydrography, on: false, swatch: '#00aaff' },
-      { name: 'FEMA Flood Zones',      mesh: fema,        on: false, swatch: '#c04040' },
-      { name: 'Roads & Buildings',     mesh: roadsBuildings, on: false, swatch: '#c99b5f' },
-      { name: 'CFX Corridor Boundary', mesh: boundary,    on: false, swatch: '#ffc81e' },
+      { group: 'ground', name: 'Roads & Buildings',     mesh: roadsBuildings, on: false, swatch: '#c99b5f' },
+      { group: 'ground', name: 'CFX Corridor Boundary', mesh: boundary,       on: false, swatch: '#ffc81e' },
     ],
-    risk: [
-      { name: 'FEMA × HAND Risk Map', mesh: femaHand,           on: false, swatch: '#e02020' },
-      { name: 'Ian Sim vs. FEMA Extent', mesh: femaSimExtent,   on: false, swatch: '#30d090' },
-      { name: 'Ian Flood Animation',  mesh: floodLayerObj.mesh, on: false, swatch: '#2060cc' },
+
+    // ── 4. FLOOD HAZARD: FEMA's published answer ─────────────────────────────
+    // Both FEMA layers live together. They used to be split across two sections, so the
+    // mapped floodplain and the risk classes derived from it appeared unrelated.
+    regulatory: [
+      { name: 'FEMA Flood Zones',      mesh: fema,     on: false, swatch: '#c04040' },
+      { name: 'FEMA × HAND Risk',      mesh: femaHand, on: false, swatch: '#e02020' },
+    ],
+
+    // ── 5. FLOOD SIMULATION: this project's own solver output ────────────────
+    simulation: [
+      { name: 'Hurricane Ian — Flood Animation', mesh: floodLayerObj.mesh, on: false, swatch: '#2060cc' },
+      { name: 'Simulated vs. FEMA Extent',       mesh: femaSimExtent,      on: false, swatch: '#30d090' },
     ],
     planetscope: {
       slotA:        psSlotA,

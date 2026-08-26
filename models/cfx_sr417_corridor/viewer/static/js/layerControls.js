@@ -1,63 +1,170 @@
 /**
- * layerControls.js — grouped layer panel with sections, dropdowns, and
- * a two-slot PlanetScope scene selector.
+ * layerControls.js — the digital-twin layer panel: collapsible sections ordered as a data
+ * hierarchy, a mutually-exclusive terrain-analysis dropdown, and two satellite scene slots.
  *
- * setupLayerPanel(config, scene)
- *   config.terrain   — { solidMesh, wireMesh, analysisMeshes{key→mesh},
- *                        lidarBridges, lidarCloud }
- *   config.hydrology — Array<{ name, mesh, on }>
- *   config.base      — Array<{ name, mesh, on, swatch, drape?, drapedMesh?, drapedOn?, legendUrl? }>
- *   config.risk      — Array<{ name, mesh, on, swatch }>
- *   config.planetscope — { scenes[], slotA_mesh, slotB_mesh }
+ * setupLayerPanel(config)
+ *   config.terrain     — { solidMesh, wireMesh, analysisMeshes{name→mesh},
+ *                          lidarBridges, lidarCloud }
+ *   config.base        — Array<LayerItem>, each tagged group:'basemap' | 'ground'
+ *   config.hydrology   — Array<LayerItem>   water: mapped channels + DEM-derived drainage
+ *   config.regulatory  — Array<LayerItem>   FEMA's published flood-hazard mapping
+ *   config.simulation  — Array<LayerItem>   this project's own solver output
+ *   config.planetscope — { scenes[], slotA, slotB, slotA_draped, slotB_draped }
+ *
+ * LayerItem = { name, mesh, on, swatch,
+ *               drape?, drapedMesh?, drapedOn?, legendUrl?, group? }
+ *
+ * A layer belongs to exactly one section. Splitting one dataset across two sections (as FEMA
+ * and the water layers previously were) makes related layers look unrelated.
  */
 export function setupLayerPanel(config) {
   const list = document.getElementById('layer-list');
   if (!list) return;
 
-  // ── TOPOGRAPHY ─────────────────────────────────────────────────────────────
-  _sectionHeader(list, 'TOPOGRAPHY');
+  // Sections are ordered as a data hierarchy, not an arbitrary list:
+  //
+  //   1. BASE MAP        what the place looks like        (observed imagery + terrain)
+  //   2. GROUND          what the surface is made of      (soil, built surface)
+  //   3. WATER           where water is and where it goes (mapped + DEM-derived)
+  //   4. FLOOD HAZARD    the regulatory answer            (FEMA)
+  //   5. SIMULATION      our modelled answer              (solver output)
+  //   6. SOURCE DATA     the raw inputs behind the above  (LiDAR, satellite scenes)
+  //
+  // Each tier depends only on the tiers above it, so reading top to bottom follows how the
+  // twin is actually built. Everything is collapsible because the panel carries ~35 controls.
 
-  _toggleRow(list, 'Surface',   config.terrain.solidMesh, false, '#1e5a3a');
-  _toggleRow(list, 'Wireframe', config.terrain.wireMesh,  false, '#3aaa60');
-  _vertExagRow(list);
-
-  // Mutually-exclusive analysis layer dropdown
-  _selectorRow(list, 'Analysis Layer', config.terrain.analysisMeshes, '', '#8866cc');
-
-  // Raw LiDAR — the actual point-cloud/mesh data the DEM above is derived from
-  _toggleRow(list, 'LiDAR Bridge Correction',    config.terrain.lidarBridges, false, '#ff5533');
-  _toggleRow(list, 'LiDAR Point Cloud (full AOI)', config.terrain.lidarCloud, false, '#909090');
-
-  // ── HYDROLOGY ──────────────────────────────────────────────────────────────
-  _sectionHeader(list, 'HYDROLOGY');
-  for (const item of config.hydrology) {
-    _toggleRow(list, item.name, item.mesh, item.on, item.swatch);
+  // ── 1. BASE MAP ────────────────────────────────────────────────────────────
+  {
+    const s = _section(list, 'Base Map', { open: true,
+      note: 'Imagery and the elevation surface everything else drapes onto.' });
+    for (const item of config.base.filter(i => i.group === 'basemap')) _row(s, item);
+    _toggleRow(s, 'Terrain Surface',   config.terrain.solidMesh, false, '#1e5a3a');
+    _toggleRow(s, 'Terrain Wireframe', config.terrain.wireMesh,  false, '#3aaa60');
+    _vertExagRow(s);
+    _selectorRow(s, 'Terrain Analysis', config.terrain.analysisMeshes, '', '#8866cc');
   }
 
-  // ── BASE LAYERS ────────────────────────────────────────────────────────────
-  _sectionHeader(list, 'BASE LAYERS');
-  for (const item of config.base) {
-    if (item.drape) {
-      _flatDrapedRow(list, item.name, item.mesh, item.on, item.swatch,
-                      item.drapedMesh, item.drapedOn, item.legendUrl);
-    } else {
-      _toggleRow(list, item.name, item.mesh, item.on, item.swatch);
-    }
+  // ── 2. GROUND & BUILT SURFACE ──────────────────────────────────────────────
+  {
+    const s = _section(list, 'Ground & Built', { open: true,
+      note: 'Drives infiltration: soil sets how fast water soaks in, roads and roofs '
+          + 'set where it cannot.' });
+    for (const item of config.base.filter(i => i.group === 'ground')) _row(s, item);
   }
 
-  // ── RISK ANALYSIS ──────────────────────────────────────────────────────────
-  _sectionHeader(list, 'RISK ANALYSIS');
-  for (const item of config.risk) {
-    _toggleRow(list, item.name, item.mesh, item.on, item.swatch);
+  // ── 3. WATER ───────────────────────────────────────────────────────────────
+  {
+    const s = _section(list, 'Water', { open: true,
+      note: 'Mapped channels plus DEM-derived drainage. Low height-above-drainage '
+          + 'floods first.' });
+    for (const item of config.hydrology) _row(s, item);
   }
 
-  // ── PLANETSCOPE ────────────────────────────────────────────────────────────
-  _sectionHeader(list, 'PLANETSCOPE');
-  // Was defaulted to 'max1' (Hurricane Ian) — changed to off (2026-07-20, per request) so the
-  // page loads with only NAIP Aerial Draped visible (Wireframe also defaulted on until
-  // 2026-07-27, when it was turned off too per direct request).
-  _planetScopeSlot(list, 'Scene A', config.planetscope.slotA, config.planetscope.slotA_draped, config.planetscope.scenes, '', 'rgb');
-  _planetScopeSlot(list, 'Scene B', config.planetscope.slotB, config.planetscope.slotB_draped, config.planetscope.scenes, '', 'rgb');
+  // ── 4. FLOOD HAZARD (regulatory) ───────────────────────────────────────────
+  {
+    const s = _section(list, 'Flood Hazard (FEMA)', { open: true,
+      note: 'FEMA\'s published 1%-annual-chance floodplain and floodway — independent '
+          + 'of this model.' });
+    for (const item of config.regulatory) _row(s, item);
+  }
+
+  // ── 5. FLOOD SIMULATION ────────────────────────────────────────────────────
+  {
+    const s = _section(list, 'Flood Simulation', { open: true,
+      note: 'This project\'s solver output. Compare with the regulatory layer above; '
+          + 'neither is ground truth.' });
+    for (const item of config.simulation) _row(s, item);
+    // The per-test-site sub-panels are authored in the template (they carry playback and
+    // rain-intensity controls); they are relocated into this section so every modelled
+    // layer lives in one place.
+    const siteBlock = document.getElementById('site-sim-controls');
+    if (siteBlock) { siteBlock.hidden = false; s.appendChild(siteBlock); }
+  }
+
+  // ── 6. SOURCE DATA (advanced) ──────────────────────────────────────────────
+  {
+    const s = _section(list, 'Source Data', { open: false,
+      note: 'Raw inputs behind the layers above. Heavy, loaded on demand.' });
+    _toggleRow(s, 'LiDAR Bridge Correction',      config.terrain.lidarBridges, false, '#ff5533');
+    _toggleRow(s, 'LiDAR Point Cloud (full AOI)', config.terrain.lidarCloud,   false, '#909090');
+    const heavy = document.getElementById('heavy-lidar-control');
+    if (heavy) { heavy.hidden = false; s.appendChild(heavy); }
+    _planetScopeSlot(s, 'Satellite Scene A', config.planetscope.slotA,
+                     config.planetscope.slotA_draped, config.planetscope.scenes, '', 'rgb');
+    _planetScopeSlot(s, 'Satellite Scene B', config.planetscope.slotB,
+                     config.planetscope.slotB_draped, config.planetscope.scenes, '', 'rgb');
+  }
+}
+
+/** Render one config item, choosing the flat/draped variant when it has one. */
+function _row(parent, item) {
+  if (item.drape) {
+    _flatDrapedRow(parent, item.name, item.mesh, item.on, item.swatch,
+                   item.drapedMesh, item.drapedOn, item.legendUrl);
+  } else {
+    _toggleRow(parent, item.name, item.mesh, item.on, item.swatch);
+  }
+}
+
+/**
+ * Collapsible section. Returns the body element that rows should be appended to, so callers
+ * add rows to the section rather than to the flat list.
+ */
+function _section(list, title, { open = true, note = '' } = {}) {
+  const header = document.createElement('div');
+  header.className = 'section-header collapsible' + (open ? ' open' : '');
+  header.tabIndex = 0;
+  header.setAttribute('role', 'button');
+  header.setAttribute('aria-expanded', String(open));
+
+  const chevron = document.createElement('span');
+  chevron.className = 'section-chevron';
+  chevron.textContent = '▼';
+  chevron.setAttribute('aria-hidden', 'true');
+
+  const label = document.createElement('span');
+  label.textContent = title;
+
+  const count = document.createElement('span');
+  count.className = 'section-count';
+
+  header.append(chevron, label, count);
+
+  const body = document.createElement('div');
+  body.className = 'section-body';
+  body.hidden = !open;
+
+  if (note) {
+    const n = document.createElement('div');
+    n.className = 'section-note';
+    n.textContent = note;
+    body.appendChild(n);
+  }
+
+  function toggle() {
+    const nowOpen = body.hidden;
+    body.hidden = !nowOpen;
+    header.classList.toggle('open', nowOpen);
+    header.setAttribute('aria-expanded', String(nowOpen));
+  }
+  header.addEventListener('click', toggle);
+  header.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+  });
+
+  list.append(header, body);
+
+  // "2 / 5 on" tells you at a glance whether a collapsed section is doing anything.
+  const refresh = () => {
+    const boxes = body.querySelectorAll('input[type="checkbox"]');
+    if (!boxes.length) { count.textContent = ''; return; }
+    const on = [...boxes].filter(b => b.checked).length;
+    count.textContent = on ? `${on}/${boxes.length} on` : `${boxes.length}`;
+  };
+  body.addEventListener('change', refresh);
+  queueMicrotask(refresh);
+
+  return body;
 }
 
 // ── Private helpers ─────────────────────────────────────────────────────────

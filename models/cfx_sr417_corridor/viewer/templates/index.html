@@ -22,19 +22,25 @@
       <div class="panel-title">CFX SR417 Corridor · Digital Twin</div>
       <div class="panel-subtitle">Lake Nona / south Orlando, FL — 28.367°N 81.433°W</div>
       <div id="layer-list"></div>
-      <div class="panel-divider"></div>
-      <div id="heavy-lidar-control">
-        <div class="panel-hint" style="margin-bottom:4px;">Heavy LiDAR (loaded on demand):</div>
+
+      <!-- These two blocks are authored here because they carry real controls (playback,
+           rain intensity) rather than plain toggles, but they are MOVED into the generated
+           panel by layerControls.js: heavy LiDAR into "Source Data", the site simulations
+           into "Flood Simulation". They start hidden so they never flash in this position
+           before that relocation happens. -->
+      <div id="heavy-lidar-control" hidden>
         <label class="layer-row"><input type="checkbox" id="lidar-full-cb">
           <span class="layer-label">Full-res cloud (70.9M pts, ~1GB)</span></label>
+      </div>
 
+      <div id="site-sim-controls" hidden>
         <div class="section-header">Test Site 1 — 5-House Cluster</div>
         <label class="layer-row"><input type="checkbox" id="dense-cloud-site1-cb">
-          <span class="layer-label">Dense point cloud, NAIP colors</span></label>
+          <span class="layer-label">Dense LiDAR point cloud</span></label>
         <label class="layer-row"><input type="checkbox" id="hydro-site1-cb">
-          <span class="layer-label">Hydrography (3DHP) — same AOI-wide layer, shortcut toggle</span></label>
+          <span class="layer-label">Surface water here (shortcut to the AOI layer)</span></label>
         <label class="layer-row"><input type="checkbox" id="mesh-swe-site1-cb">
-          <span class="layer-label">3D shallow-water sim: falling rain + physics-driven flow</span></label>
+          <span class="layer-label">3D shallow-water sim — rain + physics-driven flow</span></label>
         <div id="mesh-swe-controls-site1" class="sub-controls" style="margin-top:6px;">
           <label for="mesh-swe-speed-site1-slider">Playback speed: <span id="mesh-swe-speed-site1-value">1.0×</span></label>
           <input type="range" id="mesh-swe-speed-site1-slider" min="0.1" max="8" step="0.1" value="1">
@@ -48,11 +54,11 @@
 
         <div class="section-header">Test Site 2 — Pond + 3 Houses</div>
         <label class="layer-row"><input type="checkbox" id="dense-cloud-site2-cb">
-          <span class="layer-label">Dense point cloud, NAIP colors</span></label>
+          <span class="layer-label">Dense LiDAR point cloud</span></label>
         <label class="layer-row"><input type="checkbox" id="hydro-site2-cb">
-          <span class="layer-label">Hydrography (3DHP) — same AOI-wide layer, shortcut toggle (shows the pond itself)</span></label>
+          <span class="layer-label">Surface water here — shows the pond (shortcut to the AOI layer)</span></label>
         <label class="layer-row"><input type="checkbox" id="mesh-swe-site2-cb">
-          <span class="layer-label">3D shallow-water sim: falling rain + physics-driven flow + lake</span></label>
+          <span class="layer-label">3D shallow-water sim — rain, flow + lake level</span></label>
         <div id="mesh-swe-controls-site2" class="sub-controls" style="margin-top:6px;">
           <label for="mesh-swe-speed-site2-slider">Playback speed: <span id="mesh-swe-speed-site2-value">1.0×</span></label>
           <input type="range" id="mesh-swe-speed-site2-slider" min="0.1" max="8" step="0.1" value="1">
