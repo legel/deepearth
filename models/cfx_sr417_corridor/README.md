@@ -179,6 +179,44 @@ and would make every percentage meaningless.
 
 These are real and documented rather than hidden:
 
+- **Infiltration is unbounded — this is the dominant source of error, and it is diagnosed.**
+  `horton_rate()` returns `fc + (f0-fc)*exp(-k*t)`: the rate decays to `fc` and stays there
+  indefinitely. `cum_infil` is tracked but never limits anything, so the soil can absorb water
+  forever. At site3's `fc_eff` of 23.3 mm/hr over a 72-hour event that is 1,678 mm of capacity
+  against 392 mm of rain, so essentially all rainfall infiltrates.
+
+  Measured against the Gee Creek gauge for Hurricane Ian:
+
+  | | runoff coefficient |
+  |---|---|
+  | observed (2.54 of 12.98 million m³) | **19.6 %** |
+  | simulated (0.19 of 18.31 million m³) | **1.0 %** |
+
+  The 19.3x gap fully accounts for the 13x peak-discharge shortfall (91.4 vs 1,190 cfs); the
+  35% D8 watershed capture would only explain ~2.9x. **The error is parameterisation, not
+  geometry.**
+
+  Physically, the model implements *infiltration-excess* (Hortonian) runoff only. Central
+  Florida's flat terrain and shallow water table generate runoff mainly by *saturation-excess*:
+  the profile fills, then everything runs off. The model's soil never fills. This also explains
+  the validation pattern exactly — the rising limb matches (0.47 h), because early runoff comes
+  from impervious and already-saturated ground, which the model does capture; magnitude and
+  recession fail, because the bulk saturation-excess response is absent entirely.
+
+  Two standard methods bracket the truth, and neither is right as parameterised here:
+
+  | method | runoff coefficient, P = 392 mm |
+  |---|---|
+  | current Horton, uncapped | 1.0 % |
+  | **observed** | **19.6 %** |
+  | SCS-CN with the on-disk mean CN of 54.5 | 55.4 % |
+
+  Capping cumulative infiltration at ~315 mm of available soil storage reproduces the observed
+  19.6 % — about 31 % porosity over a 1 m profile, which is plausible for a spodosol. That
+  figure is **calibrated to one event, not derived**: SSURGO publishes available water capacity
+  and depth-to-water-table, but those fields were never fetched, so a physically-derived cap
+  remains to be checked against it.
+
 - **Pluvial only.** No inflow boundary condition, so no channel overtopping at any site.
 - **D8 under-capture.** 11.65 / 33.15 km² at Gee Creek. Central Florida's isolated wetlands and
   cypress domes only connect to the channel network during high-water events.
