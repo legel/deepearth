@@ -58,6 +58,9 @@ fsi.MUKEY_LEGEND = site["mukey_legend_path"]
 fsi.ROADS_PATH   = site["roads_path"]
 fsi.BUILDINGS_PATH = site["buildings_path"]
 fsi.NLCD_IMPERVIOUS_PATH = site["nlcd_path"]
+# Storage table for the finite-infiltration cap. Not in site["..."] because it postdates the
+# registry entry; derived from the same soil/data directory as the other soil inputs.
+fsi.SOIL_STORAGE_CSV = os.path.join(os.path.dirname(site["soil_json_path"]), "soil_storage.csv")
 fsi.ASOS_CSV     = os.path.join(SITE3_DIR, "precipitation", "data", "asos_hourly_SFB.csv")
 
 # fsi.HORTON was computed at import time from the ORIGINAL AOI's SOIL_JSON — re-derive it now
@@ -111,9 +114,20 @@ def main():
 
     print(f"\n[4/4] Running solver ({z.shape[0]}x{z.shape[1]} cells @ {dx:.1f}m) …")
     t0 = time.time()
+    # Finite soil storage (saturation excess). This driver calls run_sim directly rather than
+    # going through fsi.main(), so it has to load the cap itself.
+    max_deficit_m = fsi.load_soil_storage_capacity(z.shape, profile["transform"], profile["crs"])
+    if max_deficit_m is not None:
+        print(f"  Soil storage cap: mean {1000*float(max_deficit_m.mean()):.0f} mm, "
+              f"range {1000*float(max_deficit_m.min()):.0f}-{1000*float(max_deficit_m.max()):.0f} mm, "
+              f"{100*float((max_deficit_m == 0).mean()):.0f}% of cells depressional (zero storage)")
+    else:
+        print(f"  WARNING: no soil storage table at {fsi.SOIL_STORAGE_CSV} — "
+              f"infiltration is UNBOUNDED (run soil/fetch_soil_storage.py --site site3)")
+
     h_max, cum_infil, flooded_ha_ts, rain_ts, Pe_ts, mean_depth_ts, frame_data = fsi.run_sim(
         z, dx, rain_sim, args.dt, frame_interval_min=args.frame_interval, use_infiltration=True,
-        horton_arrays=horton_arrays,
+        horton_arrays=horton_arrays, max_deficit_m=max_deficit_m,
     )
     elapsed = time.time() - t0
 

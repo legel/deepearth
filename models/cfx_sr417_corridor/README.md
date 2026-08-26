@@ -211,11 +211,33 @@ These are real and documented rather than hidden:
   | **observed** | **19.6 %** |
   | SCS-CN with the on-disk mean CN of 54.5 | 55.4 % |
 
-  Capping cumulative infiltration at ~315 mm of available soil storage reproduces the observed
-  19.6 % — about 31 % porosity over a 1 m profile, which is plausible for a spodosol. That
-  figure is **calibrated to one event, not derived**: SSURGO publishes available water capacity
-  and depth-to-water-table, but those fields were never fetched, so a physically-derived cap
-  remains to be checked against it.
+  **Implemented, and it is not sufficient on its own.** `soil/fetch_soil_storage.py` now pulls
+  SSURGO's `wtdepannmin` and the solver caps cumulative infiltration at
+  water-table-depth x drainable porosity (`--no-soil-storage` restores the old behaviour). For
+  site3 that is a mean cap of 206 mm, with 26 % of cells depressional and therefore zero-storage.
+
+  Measured effect on the Ian run:
+
+  | | before | after | observed |
+  |---|---|---|---|
+  | runoff coefficient | 1.0 % | **1.7 %** | **19.6 %** |
+  | peak outflow | 91.4 cfs | 129.8 cfs | 1,190 cfs |
+  | peak flooded area | 127.6 ha | **246.1 ha** | — |
+
+  The mechanism works — flooded area nearly doubled, so the cap is genuinely forcing water to
+  stay on the surface — but that water does not reach a boundary. Runoff coefficient moved only
+  1.0 → 1.7 %, leaving an 11.5x gap. **Infiltration was a real error but not the dominant one.**
+
+  What this isolates is routing and connectivity: on terrain this flat, saturation-excess runoff
+  ponds in place rather than draining. That is the same phenomenon as the D8 under-capture
+  (11.65 of 33.15 km²), seen from the water side rather than the delineation side, and it points
+  at depression storage — which the literature treats as first-class in exactly this setting,
+  and which stream-burning and depression breaching deliberately remove from the DEM before the
+  solver ever sees it. Reconciling those two is the open problem.
+
+  A cap of ~315 mm would reproduce the observed 19.6 % arithmetically, but that is calibration
+  against a single event with the routing error still present, so it would be fitting one bug
+  with another. The physically-derived 206 mm is kept deliberately.
 
 - **Pluvial only.** No inflow boundary condition, so no channel overtopping at any site.
 - **D8 under-capture.** 11.65 / 33.15 km² at Gee Creek. Central Florida's isolated wetlands and

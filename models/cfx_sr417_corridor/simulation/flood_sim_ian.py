@@ -520,6 +520,13 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
 
     for step in range(n_steps):
         P   = rain_sim[step]
+
+        # The adaptive timestep is computed first: it depends only on the current depth field,
+        # and the storage cap below needs it to convert remaining capacity into a rate.
+        h_max_local = float(h.max())
+        dt = min(dt_s, CFL_ALPHA * dx / np.sqrt(G * h_max_local)) \
+             if h_max_local > MIN_DEPTH else dt_s
+
         inf = horton_rate(t_s, f0_si, fc_si, k_si) if use_infiltration else 0.0
 
         # Storage-limited infiltration (saturation excess).
@@ -543,10 +550,6 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
             inf = np.minimum(inf, remaining / dt)   # cannot infiltrate more than is left
 
         Pe  = np.maximum(P - inf, 0.0)
-
-        h_max_local = float(h.max())
-        dt = min(dt_s, CFL_ALPHA * dx / np.sqrt(G * h_max_local)) \
-             if h_max_local > MIN_DEPTH else dt_s
 
         eta = z_work + h
 
