@@ -89,6 +89,9 @@ import argparse
 import time
 import warnings
 import numpy as np
+
+# models/ on the path for the shared floodtwin library
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import pandas as pd
 from scipy import ndimage
 
@@ -169,6 +172,19 @@ SCENARIOS = {
     "historical_gsdr":      ("hyetograph_historical_gsdr.csv",       "Historical: GSDR extreme event (pre-1985, US_086638)", "GSDR US_086638"),
     "historical_gsdr_extreme": ("hyetograph_historical_gsdr_extreme.csv", "Historical: biggest storm in GSDR record (1945-09-16, 245.6mm/24hr)", "GSDR US_086638"),
 }
+
+# The cross-site standard scenario set: NOAA Atlas 14 return periods at a 24-hour duration,
+# the same T and duration every site in models/ runs, so flood-probability surfaces are
+# directly comparable between twins. The flash/sustained scenarios above stay as an optional
+# duration axis specific to this site; these are the ones to compare across sites.
+# Generated from this AOI's own live-fetched IDF table — see floodtwin/probability.py.
+from floodtwin.probability import RETURN_PERIODS_YR as _RP  # noqa: E402
+SCENARIOS.update({
+    f"atlas14_24hr_{T}yr": (f"atlas14_hyetograph_24hr_{T}yr.csv",
+                            f"Design storm: 24-hr, {T}-year return period",
+                            "NOAA Atlas 14")
+    for T in _RP
+})
 
 
 # ── Raster I/O ────────────────────────────────────────────────────────────────
