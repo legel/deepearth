@@ -55,11 +55,11 @@ class Experiment:
     seed: int = int(os.environ.get("MESH_SEED", "1337"))
     steps: int = int(os.environ.get("MESH_STEPS", "1000"))
     batch: int = 256
-    width: int = 192
-    levels: int = 12
-    hash_log2: int = 14
-    latents: int = 16
-    layers: int = 2
+    width: int = int(os.environ.get("MESH_WIDTH", "192"))
+    levels: int = int(os.environ.get("MESH_LEVELS", "12"))
+    hash_log2: int = int(os.environ.get("MESH_HASH_LOG2", "14"))
+    latents: int = int(os.environ.get("MESH_LATENTS", "16"))
+    layers: int = int(os.environ.get("MESH_LAYERS", "2"))
     hide_probability: float = 0.5
     learning_rate: float = 5e-4
     weight_decay: float = 1e-3
