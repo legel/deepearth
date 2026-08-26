@@ -395,14 +395,13 @@ async function init() {
       instance?.setSpeed(parseFloat(speedSlider.value));
     });
 
-    // ── Pre-computed rain-intensity presets (2026-07-21) ──────────────────────────────────
+    // ── Pre-computed rain-intensity presets ───────────────────────────────────────────────
     // Low/Medium/High are real, physically distinct solver runs done ahead of time (see
     // simulation/mesh_shallow_water.py --peak-rain-mm-hr 40/100/180, one run per level per
-    // site) — NOT a live re-simulation. An earlier build of this feature triggered the actual
-    // ~4-13min solver run on click; correctly rejected for a live-audience demo ("the audience
-    // dont need to wait there with the button"). Switching levels here just disposes the
-    // current instance and fetches the already-computed files for the new level — a fetch of a
-    // precomputed binary over localhost, not a physics run.
+    // site) — NOT a live re-simulation. Triggering the solver on click was tried and rejected:
+    // it blocks the UI for ~4-13 min. Switching levels here just disposes the current instance
+    // and fetches the already-computed files for the new level — a fetch of a precomputed
+    // binary over localhost, not a physics run.
     presetButtons.forEach(btn => {
       btn.addEventListener('click', async () => {
         const newLevel = btn.dataset.level;

@@ -206,7 +206,7 @@ def fetch_sfwmd_structures(lat, lon, radius_km):
     Found the replacement by searching for their current service tree: SFWMD now serves this
     from geoweb.sfwmd.gov under a differently-named service, "All_Structures" (confirmed live,
     HTTP 200, 2026-07-24). Its own service description explicitly states it also includes
-    "project culverts" — layer 7 below — which is directly relevant to Lance's separate
+    "project culverts" — layer 7 below — which is directly relevant to the separate
     "engineered waterway" ask (see CLAUDE.md's 2026-07-23/24 entry), not just structures.
     Queries layer 4 (All WMS Structures) + layer 7 (Project Culverts) — both confirmed to
     return real features for a wider 30km search, though (also confirmed) genuinely 0 features

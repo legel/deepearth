@@ -5,8 +5,8 @@ Real gap this fills: `dem/dem_download.py` was almost certainly invoked by hand 
 coordinates to produce the DEM already on disk (`site3_gee_creek/dem/data/site3_dem.tif`,
 confirmed via its own `site3_dem_meta.json`: lat=28.690514, lon=-81.287539, radius_km=2.99,
 resolution=1, EPSG:5070, 7810x7819) -- but that invocation was never saved as a script, so
-site3's DEM was not reproducible from scratch (flagged in the 2026-08-03 project audit,
-INTERNSHIP_AUDIT_2026-08-03.md). This script closes that gap the same non-invasive way every
+site3's DEM was not reproducible from scratch. This script closes that gap the same
+non-invasive way every
 other site3 fetch script does: reuse the main-AOI function directly, monkey-patch nothing (the
 function already takes an explicit out_path), and read coordinates from the single source of
 truth (`lidar/test_sites.py`) instead of retyping them a second time.

@@ -8,7 +8,7 @@ anywhere in this codebase. The original 6 tiles were fetched via some ad hoc, un
 This script is the actual, permanent, reusable fetch step that was missing.
 
 Built with resume + retry specifically because a plain requests.get(stream=True) already failed
-once this session on a much smaller file (an 8.28GB reference dataset died at 67%/4hrs from a
+once on a much smaller file (an 8.28GB reference dataset died at 67%/4hrs from a
 dropped connection, with no way to resume other than starting over from zero). For a 9.51GB,
 25-tile fetch, that failure mode is a real risk, not a hypothetical one:
   - Each tile resumes from its own existing partial-file byte offset via an HTTP Range request,

@@ -1,11 +1,14 @@
 import * as THREE from 'three';
 
-// Default vertical exaggeration. Was 8, then 4 — team-lead review (2026-07-20) flagged SR417
-// as looking implausibly tall/steep ("like a hill"). Investigated: the highway's real
-// embankment relief (4-9m rise, confirmed directly from the uncorrected bare-earth 1m LiDAR
-// DEM, i.e. not a data bug) is a large fraction of this already-flat AOI's total natural relief
-// (14.1m). Lowered further to 2x same session, per direct request, for an even more
-// conservative default read of the real relief. Still adjustable live via the slider (max 8x).
+// Default vertical exaggeration for the live terrain view.
+// Kept low (2x) because SR417's real embankment relief (4-9m rise, confirmed directly from the
+// uncorrected bare-earth 1m LiDAR DEM — not a data artifact) is a large fraction of this
+// already-flat AOI's total natural relief (14.1m); at 8x the highway reads as an implausible
+// hill. Adjustable live via the slider (max 8x).
+//
+// NOTE: this is the VIEW default only. Layers whose geometry is pre-baked on disk (LiDAR point
+// clouds/meshes, flood layers, rain particles) use a fixed BAKED exaggeration of 8 and are
+// rescaled at load by (currentExag / 8). Do not conflate the two constants.
 let VERT_EXAG = 2;
 
 /**

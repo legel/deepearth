@@ -4,8 +4,8 @@ FEMA National Flood Hazard Layer (NFHL) — Flood Zones & Floodway for the SR417
 Pulls FEMA NFHL flood hazard zone polygons intersecting the 2x2 km AOI around
 28.36687N, -81.43299W, via the public NFHL ArcGIS REST MapServer, and flags
 which (if any) are the regulatory floodway — the as-engineered hydrological
-constraint Lance Legel's guidance specifically called out studying alongside
-3DHP, ahead of any erosion/slope-stabilization design work.
+constraint, studied alongside 3DHP ahead of any erosion/slope-stabilization
+design work.
 
 Service: https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer
   Layer 28 = Flood Hazard Zones (polygons; FLD_ZONE, ZONE_SUBTY, SFHA_TF, STATIC_BFE)
@@ -41,8 +41,8 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 # Makes `--site <name>` resolve lat/lon/radius AND the output directory from the ONE registry
 # (site_registry.py -> lidar/test_sites.py) instead of hand-typed coordinates. Purely additive:
 # with no --site flag this script behaves exactly as it always has. See site_registry.py's
-# docstring for why (INTERNSHIP_AUDIT_2026-08-03.md §4: site3's data existed on disk with no
-# script that could reproduce it, because coordinates were typed by hand per-invocation).
+# docstring for why: hand-typed per-invocation coordinates leave fetched data on disk with no
+# script that can reproduce it.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import site_registry  # noqa: E402
 

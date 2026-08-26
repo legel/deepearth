@@ -3,7 +3,7 @@ Fetch SSURGO soils + NLCD impervious for site3 (Gee Creek) -> site3_gee_creek/so
 ==========================================================================================
 Real gap this fills: site3's `soil/data/` already has real outputs on disk (mukey_map.tif +
 legend, soil_parameters.json, cn_by_hsg.csv, nlcd_impervious.tif) but no committed script ever
-produced them -- flagged in the 2026-08-03 project audit (INTERNSHIP_AUDIT_2026-08-03.md).
+produced them.
 `export_ssurgo_overlay_site3.py`'s own docstring assumes this fetch already happened; this
 script is the fetch that docstring was assuming existed.
 

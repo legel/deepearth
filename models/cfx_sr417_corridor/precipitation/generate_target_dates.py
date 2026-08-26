@@ -2,7 +2,7 @@
 Target-Date Generator for PlanetScope Imagery Selection
 ========================================================
 Reads existing downloaded precipitation data and identifies specific dates
-for Lance Legel (team lead) to use as PlanetScope imagery pull targets:
+for use as PlanetScope imagery pull targets:
 
   MAX  — top single-day events + multi-day wet sequences (2021-present)
   AVG  — representative weeks near the seasonal mean (2021-present)
@@ -506,7 +506,7 @@ def main():
     plot_full_timeseries(ghcnd_monthly)
     plot_2021_present(ghcnd_daily, mco_daily, max_dates, avg_dates, min_dates)
 
-    # Print summary table for Lance's email
+    # Print summary table
     print("\n" + "=" * 60)
     print("SUMMARY: Target dates for PlanetScope imagery")
     print("=" * 60)

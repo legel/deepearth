@@ -5,7 +5,7 @@ Downloads the NLCD 2021 developed impervious surface descriptor raster (30 m)
 for the 2x2 km CFX SR417 corridor test-landscape AOI (28.36687N, -81.43299W,
 near Lake Nona / south Orlando, FL) and resamples it onto the project's 1m
 LiDAR DEM grid for use as the "roads and buildings" mask — i.e. the
-complement of the natural-ground / landcover layer requested by Lance
+complement of the natural-ground / landcover layer
 (everything that ISN'T impervious is the natural-ground surface that the
 soil/vegetation layers in this project already describe).
 
@@ -38,8 +38,8 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 # Makes `--site <name>` resolve lat/lon/radius AND the output directory from the ONE registry
 # (site_registry.py -> lidar/test_sites.py) instead of hand-typed coordinates. Purely additive:
 # with no --site flag this script behaves exactly as it always has. See site_registry.py's
-# docstring for why (INTERNSHIP_AUDIT_2026-08-03.md §4: site3's data existed on disk with no
-# script that could reproduce it, because coordinates were typed by hand per-invocation).
+# docstring for why: hand-typed per-invocation coordinates leave fetched data on disk with no
+# script that can reproduce it.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import site_registry  # noqa: E402
 

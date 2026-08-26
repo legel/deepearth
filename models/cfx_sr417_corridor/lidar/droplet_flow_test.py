@@ -1,11 +1,11 @@
 """
 Droplet-based rainfall/runoff test — dense test area (DEM/LiDAR fusion)
 ==========================================================================
-The "dumb version" 3D water-flow prototype scoped in simulation/PLAN_3D_DROPLET_PROTOTYPE.md:
+A deliberately minimal 3D water-flow prototype:
 Lagrangian particle tracing across a real 3D surface — NOT the grid-based 2.5D shallow-water
 solver used elsewhere in this project (simulation/flood_sim_ian.py).
 
-v2 — DEM/LiDAR fusion, per team-lead feedback (Lance, 2026-07-07): v1 built one Delaunay mesh
+v2 — DEM/LiDAR fusion. v1 built one Delaunay mesh
 from raw ground+building LiDAR points together, which let droplets get numerically "stuck" on
 rooftops (a false local minimum from LiDAR point noise in what should be a sloped, shedding
 roof) — physically wrong; water essentially never just sits on a raised structure. v2 fixes
@@ -13,7 +13,7 @@ this with two distinct surfaces, fused with an explicit transition rule instead 
 
   - GROUND = the project's own hydro-conditioned DEM (dem/data/hydro/dem_conditioned.tif),
     not raw LiDAR ground points. The DEM is the modeled, smoothed bare-earth surface — using
-    it directly (rather than noisier raw point returns) is what the team-lead flagged as
+    it directly (rather than noisier raw point returns) is preferable because it is
     "less noise ... in how water flows on the ground." Droplets CAN settle here — that's a
     real depression in the modeled terrain, a real puddle.
   - BUILDINGS = per-building local meshes built from LiDAR building-classified (class 6)
@@ -28,7 +28,7 @@ at seeding, by whether its starting (x,y) falls inside a building footprint poly
 droplet transitions off a roof onto the ground, it stays on the ground for the rest of its run
 — it does not re-ascend onto a roof it happens to pass under.
 
-Physics on either surface (same "dumb version" as v1 — no depth field, no droplet-droplet
+Physics on either surface (same minimal model as v1 — no depth field, no droplet-droplet
 interaction, no infiltration): per triangle, downhill direction = gravity (0,0,-1) projected
 onto that triangle's own plane.
 

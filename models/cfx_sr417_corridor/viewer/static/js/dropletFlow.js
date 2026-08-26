@@ -60,10 +60,9 @@ const DROPLET_RENDER_ORDER = 50;
 // itself produced.
 const COMET_STEPS = 12;   // ~0.4s of real path history at BASE_STEPS_PER_SECOND
 
-// 2026-07-21: a same-day attempt to fix low motion-legibility by scaling each path's
-// post-landing (x,z) displacement away from its landing point was tried here and REVERTED —
-// user report: "they literally run over trees and rooftops... water cannot flow across a tree
-// horizontally." That's correct and it was a real bug, not an acceptable visual liberty:
+// DO NOT scale a path's post-landing (x,z) displacement to improve motion legibility. That was
+// tried and reverted: it makes droplets visibly travel over trees and rooftops, which water
+// cannot do. It is a correctness bug, not an acceptable visual liberty —
 // unlike vertical exaggeration (which only lifts a point straight up off the surface it's
 // already correctly tracking), scaling horizontal displacement moves the point to an (x,z) the
 // water never actually reached — off its real mesh triangle, potentially through/over

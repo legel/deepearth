@@ -58,7 +58,7 @@ SITE2_FILES = [
 # as SITE2_FILES above.
 #
 # 2026-07-21: the viewer's rain-intensity control moved from a live on-demand re-simulation
-# (rejected — a demo audience shouldn't wait 4-13min for a solver run) to 3 pre-computed
+# (rejected — it blocks the UI for 4-13min on a solver run) to 3 pre-computed
 # presets per site (Low=40mm/hr, Medium=100mm/hr, High=180mm/hr — see
 # simulation/build_rain_presets.sh or the individual mesh_shallow_water.py --peak-rain-mm-hr
 # invocations). main.js only ever fetches the *_low/_medium/_high-suffixed filenames now — the

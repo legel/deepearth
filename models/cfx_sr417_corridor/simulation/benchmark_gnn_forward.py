@@ -6,7 +6,7 @@ node grid, specifically for training speed. site3_crop's real mesh is 710,302 tr
 1,065,089 edges -- ~120x more nodes than that proof-of-concept. Rather than assume this needs
 coarsening (more engineering, another real approximation), benchmark ONE real forward+backward
 pass on the actual graph first -- same "measure before committing" discipline as every other
-step this session (the GPU solver port, the training-scenario count, etc).
+step (the GPU solver port, the training-scenario count, etc).
 
 Usage:
     .venv/bin/python3 simulation/benchmark_gnn_forward.py

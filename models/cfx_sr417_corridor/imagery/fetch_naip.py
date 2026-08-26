@@ -7,7 +7,7 @@ aerial photography for the 2x2 km AOI centered on (28.36687, -81.43299).
 NAIP provides sub-meter resolution 4-band (R, G, B, NIR) imagery collected
 by USDA FSA over the continental US. Used here as the higher-resolution
 land-surface counterpart to PlanetScope (which is retained for water/flood
-extent) — Task 3 from the 2026-06-29 Lance meeting notes.
+extent).
 
 Data source: Microsoft Planetary Computer STAC API
 Collection : naip (USDA NAIP, most recent available for Florida)
@@ -45,8 +45,8 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 # Makes `--site <name>` resolve lat/lon/radius AND the output directory from the ONE registry
 # (site_registry.py -> lidar/test_sites.py) instead of hand-typed coordinates. Purely additive:
 # with no --site flag this script behaves exactly as it always has. See site_registry.py's
-# docstring for why (INTERNSHIP_AUDIT_2026-08-03.md §4: site3's data existed on disk with no
-# script that could reproduce it, because coordinates were typed by hand per-invocation).
+# docstring for why: hand-typed per-invocation coordinates leave fetched data on disk with no
+# script that can reproduce it.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import site_registry  # noqa: E402
 

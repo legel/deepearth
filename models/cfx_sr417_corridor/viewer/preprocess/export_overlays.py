@@ -4,7 +4,7 @@ Export overlay textures aligned to the DEM grid → viewer/data/
 Outputs (512x512 PNG, north-up, covering the full DEM extent):
   naip_rgb.png     — NAIP true-color aerial imagery (imagery/fetch_naip.py output),
                       a directly georeferenced GeoTIFF reprojected onto the DEM grid
-                      (Task 3, 2026-06-29 Lance meeting notes; higher-res land-surface
+                      (higher-res land-surface
                       counterpart to PlanetScope, which stays focused on water/flood extent)
   ssurgo.png       — SSURGO soil map units, colorized by canonical soil series
   hydrography.png  — USGS 3DHP flowlines (line, buffered for visibility) +
@@ -327,8 +327,7 @@ _ROAD_BUFFER_M = {
 
 def export_roads_buildings(bounds, dem_crs):
     """OSM roads (dark gray, buffered by highway type) + building footprints (warm
-    tan) — the geometric mask for separating built surfaces from natural ground
-    (Task 1 from the 2026-06-29 Lance meeting notes)."""
+    tan) — the geometric mask for separating built surfaces from natural ground."""
     roads_path = os.path.join(INFRA_DIR, "roads.geojson")
     buildings_path = os.path.join(INFRA_DIR, "buildings.geojson")
     roads_gdf = _read_geojson_or_empty(roads_path)

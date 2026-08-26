@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """ONE resolver every fetch script and solver uses to answer "where am I fetching, and where
-does the output go?" — closing the reproducibility gap found in INTERNSHIP_AUDIT_2026-08-03.md §4.
+does the output go?"
 
 The problem this fixes
 ----------------------

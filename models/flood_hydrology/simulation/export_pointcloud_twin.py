@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Export the FULL raw LiDAR point cloud (every real point in the 25x25m box, all
-classes except noise) for 17801 Champagne Dr — a direct visual cross-check layer so
-Lance can see whether the solved ground/roof MESH actually lines up with the raw
-scattered LiDAR returns it was built from.
+classes except noise) for 17801 Champagne Dr — a direct visual cross-check layer for
+confirming that the solved ground/roof MESH lines up with the raw scattered LiDAR
+returns it was built from.
 
 Uses the exact same coordinate pipeline as build_mesh_twin.py (same LAZ file, same
 property-center transform, same HALF_M box, same FT2M, same x=east/y=north/z=up local

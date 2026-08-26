@@ -9,7 +9,7 @@ measurable "lake level" the way a real stormwater retention pond would?).
 
 site2 was chosen by directly querying hydrography/data/3dhp_waterbodies.geojson +
 infrastructure/data/buildings.geojson for small (<1 ha) ponds near SR417 with a SMALL number
-of nearby houses (not a whole subdivision) — see chat history 2026-07-20 for the search. The
+of nearby houses (not a whole subdivision). The
 box radius (0.196 km) is the smallest that fully contains the pond's own ~182x175m footprint
 plus exactly 3 nearby houses (149-224m from the pond) without sweeping in the denser
 subdivision that starts appearing past ~250m from this particular pond.
@@ -35,21 +35,20 @@ SITES = {
     "site3": dict(
         label="Gauge-matched validation site — Gee Creek near Longwood (USGS 02234400)",
         lat=28.690514, lon=-81.287539, radius_km=2.99,
-        # Added 2026-07-27, direct response to Lance's repeated "reconstruct a real flood" /
-        # ground-truth ask. Unlike site1/site2, this is NOT a candidate erosion/planting test
+        # A ground-truth reconstruction site. Unlike site1/site2, this is NOT a candidate
+        # erosion/planting test
         # landscape — it's a real USGS-gauged watershed picked SPECIFICALLY so this project's
         # own simulated outflow can be compared against a REAL observed discharge record, for
         # the first time without the ~44x watershed-area mismatch that made the original
         # 02263800 Shingle Creek gauge comparison invalid (see CLAUDE.md's 2026-07-23/24 entry).
         #
-        # Selection process (see CLAUDE.md's 2026-07-26/27 entries for the full search): started
-        # from Lance's own June 21 2026 kickoff email, which named (28.64627,-81.23725) on SR417
-        # as an example of "sloping terrain with engineered drainage" — searched USGS NWIS for
+        # Selection process: started from (28.64627,-81.23725) on SR417, an example of
+        # sloping terrain with engineered drainage — searched USGS NWIS for
         # small-drainage-area stream gauges near THAT coordinate specifically (not just near the
         # original AOI), filtered for ones with real Hurricane Ian-window discharge data (most
         # small FL gauges are either discontinued or lake/canal-chain structures whose real
         # contributing area can't be D8-traced — both checked and ruled out for closer
-        # candidates). Gee Creek (02234400) is 8.3km from Lance's own flagged coordinate,
+        # candidates). Gee Creek (02234400) is 8.3km from that flagged coordinate,
         # documented drainage area 12.80 sq mi (33.15 km^2).
         #
         # CORRECTED 2026-07-27: the "~9x Ian flood response (baseflow ~4 cfs -> peak 35.4 cfs
@@ -123,9 +122,9 @@ SITES = {
     ),
     "site3_crop": dict(
         label="Site3 GNN-training crop — near Gee Creek pour point (USGS 02234400)",
-        # Added 2026-07-27, direct response to the "how do we combine/scale the 3D mesh solver
-        # with a full watershed" question. The 3D mesh solver (mesh_shallow_water.py) is the
-        # real per-point physics Lance asked about, but is confirmed intractable at full site3
+        # Addresses how to combine/scale the 3D mesh solver with a full watershed.
+        # The 3D mesh solver (mesh_shallow_water.py) provides the real per-point
+        # physics, but is confirmed intractable at full site3
         # scale (2.5hr wall time for an 8-minute synthetic event, 0.02% boundary outflow — see
         # CLAUDE.md's 2026-07-27 "real Hurricane Ian event" entries). The fix is a learned GNN
         # surrogate trained on the mesh solver's own output — but that surrogate needs REAL

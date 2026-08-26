@@ -91,7 +91,7 @@ from flask import Flask, send_from_directory, render_template
 app = Flask(__name__, template_folder="templates", static_folder="static")
 # Without this, Flask caches the compiled index.html in memory for the life of the process —
 # template edits (unlike static JS/CSS, read fresh from disk each request) silently never take
-# effect until the server is restarted. Bit us once this session; worth keeping on for a
+# effect until the server is restarted, which is an easy-to-miss trap; worth keeping on for a
 # long-running local dev viewer that gets iterated on.
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 

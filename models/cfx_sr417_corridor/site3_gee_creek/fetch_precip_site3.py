@@ -4,7 +4,7 @@ Fetch ASOS KSFB hourly precipitation for site3 (Gee Creek) -> site3_gee_creek/pr
 Real gap this fills: `asos_hourly_SFB.csv` already exists on disk (120 hourly rows,
 2022-09-26 00:00 - 2022-09-30 23:00 UTC, the Hurricane Ian window `run_site3_ian.py` reads) but
 was fetched ad hoc via `precipitation/fetch_asos_hourly.py`'s underlying functions with no
-saved invocation -- flagged in the 2026-08-03 project audit (INTERNSHIP_AUDIT_2026-08-03.md).
+saved invocation.
 
 Station choice: KSFB (Orlando Sanford Intl), 10.8km from site3, chosen on PROXIMITY only, unlike
 the main AOI's MCO station (chosen after a real reliability cross-check that rejected the

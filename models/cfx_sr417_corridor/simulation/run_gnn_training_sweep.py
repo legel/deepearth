@@ -195,7 +195,7 @@ def main():
     done = [s["name"] for s in SCENARIOS if os.path.exists(os.path.join(SCENARIO_DIR, f"{s['name']}.pkl"))]
     print(f"{len(done)}/{len(SCENARIOS)} scenario files present in {SCENARIO_DIR}")
 
-    # Compute/memory report — direct answer to Lance's 2026-07-12 meeting-notes ask ("what
+    # Compute/memory report ("what
     # compute/memory does a full simulation need"). Real numbers from this actual sweep, not
     # estimated: per-scenario MPS allocator usage + process RSS, plus an honest note that
     # Apple Silicon's unified memory means there's no separate "GPU VRAM" budget the way a

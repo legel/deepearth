@@ -115,9 +115,9 @@ AREA_MIN_ACTIVE  = 1e-3    # m^2 — triangles smaller than this (near-duplicate
                             # negligible, invisible in the rendered mesh either way.
 POND_OUTLET_ORIFICE_D_M = 0.10   # m — 4-inch bleeder orifice, a typical small FL residential/
                                    # roadside stormwater-detention-pond low-flow control riser
-                                   # size. Added 2026-07-24 per Lance's "engineered waterway"
-                                   # ask: site2's pond previously behaved as a passive natural
-                                   # depression (same generic edge-flux as everywhere else) —
+                                   # size. Without this, a detention pond behaves as a passive
+                                   # natural depression (same generic edge-flux as everywhere
+                                   # else) —
                                    # a real detention pond releases through a SIZED, ENGINEERED
                                    # outlet that deliberately holds back peak flow, not however
                                    # fast the terrain allows. Demo-scale caveat: real bleeder
@@ -126,8 +126,7 @@ POND_OUTLET_ORIFICE_D_M = 0.10   # m — 4-inch bleeder orifice, a typical small
                                    # events are only ~8 minutes, so the outlet's effect within
                                    # one demo run is necessarily small BY DESIGN, not a bug.
 POND_OUTLET_CD   = 0.61          # standard sharp-edged-orifice discharge coefficient
-ROOF_POND_MAX_M  = 0.02    # m — per Lance's team-lead feedback on the earlier droplet tracer
-                            # ("water should rarely, if ever, just sit on raised surfaces"):
+ROOF_POND_MAX_M  = 0.02    # m — water should rarely, if ever, simply sit on a raised surface:
                             # a real roof can hold a thin film before finding a gutter/downspout,
                             # but a LiDAR-noise pit shouldn't become a standing puddle. Depth
                             # above this on any roof triangle is drained straight to the ground
@@ -158,7 +157,7 @@ TRACER_SKY_HEIGHT_M     = 15.0          # real-world meters above the landing po
 def compute_ground_impervious_mask(ground_xy, roads_path=None):
     """Boolean per ground-triangle-centroid, True under an OSM road (buffered by
     ROAD_BUFFER_M's real per-highway-type width, same table flood_sim_ian.py uses for the
-    full-AOI solver). Team-lead meeting note: "classify hard materials so no infiltration" —
+    full-AOI solver). Hard materials are classified so they do not infiltrate — this was
     already implemented for the full-AOI solver (apply_impervious_mask in flood_sim_ian.py)
     but this small-area mesh solver only ever zeroed infiltration on BUILDINGS (via is_roof),
     never on roads/driveways running through the ground mesh itself — a real gap, fixed here.
@@ -202,10 +201,10 @@ def load_spatial_horton_points(ground_xy, mukey_map_path=None, mukey_legend_path
     """Point-sampled equivalent of flood_sim_ian.load_spatial_horton() — that function is
     raster-shaped (reprojects mukey_map.tif onto a regular grid), which doesn't apply here since
     this solver's ground triangles are irregular Delaunay centroids, not grid cells. Added
-    2026-07-24: this small-area mesh solver previously used a single project-wide Horton mean
-    everywhere non-impervious (see module docstring's "Deliberate simplifications") — real gap
-    per Lance's repeated ask to show different soil types absorbing water differently, not just
-    a binary hard/soft split. Reuses the exact same mukey_map.tif + legend + soil_parameters.json
+    This small-area mesh solver previously used a single project-wide Horton mean everywhere
+    non-impervious (see module docstring's "Deliberate simplifications"), which cannot show
+    different soil types absorbing water at different rates — only a binary hard/soft split.
+    Reuses the exact same mukey_map.tif + legend + soil_parameters.json
     + AMC3_FACTOR the full-AOI Ian solver already uses (same soil survey, no new data needed) —
     just samples it at each ground triangle's own (x,y) instead of reprojecting onto a grid.
     Returns None (caller falls back to the scalar HORTON dict) if the required files are missing.
@@ -404,10 +403,9 @@ def build_combined_mesh(ground, buildings):
 
     roof_below_ground = []   # per GLOBAL roof triangle index -> ground triangle beneath its
                               # own centroid (not just eave/boundary triangles) — the anti-
-                              # ponding drain path (see POND_MAX_M in run_sim): Lance's original
-                              # feedback on the droplet tracer was that a false local minimum
-                              # from LiDAR point noise on a roof (a "gutter" that isn't real)
-                              # must not become a puddle — the droplet tracer enforced that by
+                              # ponding drain path (see POND_MAX_M in run_sim). A false local
+                              # minimum from LiDAR point noise on a roof (a "gutter" that isn't
+                              # real) must not become a puddle — the droplet tracer enforced that by
                               # handing a single point straight to the ground on any roof local
                               # min; a continuous depth field needs the equivalent: any roof
                               # triangle ponding past a small physical cap dumps its excess onto
@@ -653,7 +651,7 @@ def run_sim(mesh, dt_target, total_s, rain_duration_s, peak_mm_hr, frame_interva
         if n_capped:
             n_capped_total[0] += n_capped
 
-        # ── Roof anti-ponding drain (Lance's "water shouldn't sit on raised surfaces") ──
+        # ── Roof anti-ponding drain (water shouldn't sit on raised surfaces) ──
         h_roof_below = h[roof_below_tri]
         roof_excess = np.maximum(h_roof_below - ROOF_POND_MAX_M, 0.0)
         if roof_excess.any():
@@ -750,9 +748,9 @@ def run_sim(mesh, dt_target, total_s, rain_duration_s, peak_mm_hr, frame_interva
 # ── GNN-training-data sweep (2026-07-27) ────────────────────────────────────────────────
 # Added specifically because generating many training scenarios on CPU is genuinely expensive
 # (measured: 1414.2s / 44,618 steps = 31.7ms/step on site3_crop's 710,228-triangle mesh) — a
-# real per-step FLOPS cost over ~1M edges, unlike the earlier one-off "should we GPU-port"
-# question this session, where the actual bottleneck turned out to be a CPU algorithmic bug,
-# not compute. This is a literal line-by-line port of run_sim()'s physics (same formulas, same
+# real per-step FLOPS cost over ~1M edges. (An earlier GPU-port evaluation found the bottleneck
+# was instead a CPU algorithmic bug, not compute — that is no longer the case here.)
+# This is a literal line-by-line port of run_sim()'s physics (same formulas, same
 # order of operations) to torch tensors on MPS (this machine's only GPU backend — no CUDA),
 # using scatter_add_ in place of np.bincount(). MPS does NOT support float64 (PyTorch raises on
 # most float64 ops on this backend), so this runs in float32 throughout — a real precision
@@ -774,9 +772,8 @@ def run_sim_gpu(mesh, dt_target, total_s, rain_duration_s, peak_mm_hr, frame_int
     dev = torch.device(device)
     f32 = torch.float32
 
-    # Memory instrumentation — added 2026-07-27, explicitly for the compute/memory report
-    # Lance asked about (2026-07-12 meeting notes: "what compute/memory does a full simulation
-    # need"). Apple Silicon uses UNIFIED memory (no separate discrete-GPU VRAM pool the way a
+    # Memory instrumentation, for reporting what compute/memory a full simulation needs.
+    # Apple Silicon uses UNIFIED memory (no separate discrete-GPU VRAM pool the way a
     # CUDA machine would have) — torch.mps has no CUDA-style max_memory_allocated() peak
     # tracker, so peak is tracked manually here by sampling at the same cadence as the existing
     # verbose step print. Reports both the MPS allocator's own bookkeeping (current_allocated_
@@ -1457,7 +1454,7 @@ def main():
                 fh.write(f"{t:.2f},{lv:.5f},{lv*100:.3f}\n")
         print(f"  lake_hydrograph{suffix}.csv  ({len(result['lake_time_ts'])} rows)")
 
-    # ── One-house sanity check (meeting note: "reduce to one house... cubic centimeter") ──
+    # ── One-house sanity check: peak standing water on a single building, in cm^3 ──
     # Reuses this same full run rather than a separate reduced-scope simulation. Picks the
     # SMALLEST-roof-area meshed building, not just building_id==0 — a raw box crop can catch
     # non-house structures too (confirmed at site2: one building in-box is a ~16,900 m^2

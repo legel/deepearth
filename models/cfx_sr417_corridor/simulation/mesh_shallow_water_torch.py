@@ -1,7 +1,7 @@
 """
 GPU (PyTorch) port of mesh_shallow_water.py's solver loop — benchmark-only companion script.
 =============================================================================================
-Answers the team-lead question "has PyTorch + GPU been evaluated?" directly: this ports the
+Evaluates whether PyTorch + GPU helps: this ports the
 same Bates et al. (2010) local-inertial time-stepping loop (identical physics, identical mesh,
 identical per-edge Froude cap + per-cell volume limiter + roof anti-pond drain) from NumPy/CPU
 to torch tensors, runnable on Apple's MPS backend (this machine has no CUDA GPU — an M-series

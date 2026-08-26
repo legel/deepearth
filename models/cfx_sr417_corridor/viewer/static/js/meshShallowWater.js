@@ -21,8 +21,8 @@ import { createDropletFlow } from './dropletFlow.js';
  *      which advects particles using the solver's own reconstructed velocity field instead
  *      of a fixed step — fast on an actively-draining roof, slow/stopped in a real puddle —
  *      with a synthetic sky-fall lead-in and start times staggered across the real rain
- *      event. This is now the primary "watch it flow" visual — see chat history 2026-07-21
- *      for why the old fixed-step droplet layer doesn't show this alongside it anymore.
+ *      event. This is the primary "watch it flow" visual; it supersedes the older fixed-step
+ *      droplet layer, which is no longer shown alongside it.
  *   3. A depth-film overlay on the SAME triangle mesh dense_test_area_mesh.obj already
  *      uses (loaded again here as an independent copy so it can carry its own per-triangle
  *      vertex colors) — additive-blended, so dry triangles (color -> black) are effectively
@@ -54,10 +54,9 @@ import { createDropletFlow } from './dropletFlow.js';
 const DEPTH_VISUAL_SCALE = 35;   // extra exaggeration on top of the baked 8x VERT_EXAG (was 15)
 const BASE_VERT_EXAG = 8;        // matches the convention baked into the OBJ export
 
-// 2026-07-21: N_RAIN/size/opacity turned back down from the 2026-07-20 "denser rain" bump —
-// user report: "the rain is very disturbing." 1500 large (4.5px), bright (0.85 opacity)
-// particles competes for attention with the tracer flow underneath it and reads as visual
-// noise rather than a legible cue. This tunes toward "clearly raining, not overwhelming."
+// Rain particle count/size/opacity are deliberately restrained: 1500 large (4.5px), bright
+// (0.85 opacity) particles compete for attention with the tracer flow underneath and read as
+// visual noise rather than a legible cue. Tuned for "clearly raining, not overwhelming."
 const N_RAIN = 700;               // was 1500 (before that, 900)
 const FALL_SPEED = 45;           // scene units/s — slower than the full-AOI rainParticles.js
                                   // (180) since this test area is only ~160m across; a fast
@@ -79,9 +78,9 @@ const MAX_INTENSITY_MM_HR = 150;
 // demo-legibility tuning (DEPTH_VISUAL_SCALE etc. above).
 const DEMO_TRACER_SPREAD_S = 10;
 
-// Second real issue found the same evening, after the above fix landed: user report "when they
-// move they only move vertically following the vertical line... no more kinematic water flows
-// down slope." Root cause: real, solver-driven horizontal creep after landing is genuinely
+// A second issue, distinct from the stagger fix above: tracers can appear to move only
+// vertically, following the sky-fall line, with no visible downslope flow.
+// Root cause: real, solver-driven horizontal creep after landing is genuinely
 // small (median ~4 scene units for the majority "still-moving" tracers) next to the 15m-real
 // sky-fall lead-in's ~120 scene-unit drop (15m x the 8x baked-in VERT_EXAG convention) — a ~30x
 // scale mismatch, not a stuck/frozen path. First attempted fix — exaggerating each path's
@@ -103,9 +102,9 @@ function synthticRainRateMmHr(tS, rainDurationS, peakMmHr) {
 // 2026-07-21: replaced with a discrete multi-hue bucket palette matching floodLayer.js's
 // Hurricane Ian depthToRGBA() — same exact RGB/alpha values per bucket, just remapped to much
 // shallower meter thresholds (real depths here top out ~0.11-0.58m across all 6 rain-intensity
-// presets, vs Ian's flood reaching well past 1m). User feedback: the old single-hue brightness
-// ramp read as much less "distinguishable by patches and colors" than Ian's layer — a real,
-// explainable difference: human vision reads hue changes far more readily than brightness
+// presets, vs Ian's flood reaching well past 1m). A single-hue brightness ramp is much less
+// distinguishable by patch and color than Ian's layer, for an explainable reason:
+// human vision reads hue changes far more readily than brightness
 // changes of the same hue, and Ian's discrete if/else buckets create visible boundary lines
 // between depth classes (a de facto contour map) that a continuous ramp can't produce no matter
 // how it's tuned. One shared scale across all 6 site/intensity presets (not rescaled per
@@ -115,8 +114,8 @@ function synthticRainRateMmHr(tS, rainDurationS, peakMmHr) {
 // changed, same category as the earlier SAT_DEPTH/DEPTH_VISUAL_SCALE demo-legibility tuning.
 // Alpha is baked into RGB brightness (not a real alpha channel) because this mesh uses additive
 // blending (dry -> black -> invisible), not standard alpha blending — see class comment above.
-// 2026-07-21, same evening, minutes later: user report "its too bright to see" — real issue,
-// not a preference call. Additive blending means these colors get added directly on top of the
+// Without BRIGHTNESS_SCALE the palette is too bright to read — a real optical issue, not a
+// preference call. Additive blending means these colors get added directly on top of the
 // already-lit point cloud/terrain beneath them (no alpha-multiply against the destination), and
 // the mid-range buckets (sky-blue/strong-blue) that cover most of the *typical* wet area — not
 // just isolated peaks — were pushing toward 0.8+ in the blue channel. Over a large mesh area
@@ -128,7 +127,7 @@ const BRIGHTNESS_SCALE = 0.45;
 
 function depthColor(depthM) {
   // "Trace shimmer" bucket (was: depthM < 0.002, color 100/220/255 — high across all three
-  // channels, reads as near-white) removed per user request — any barely-wet cell triggered
+  // channels, reads as near-white) was removed: any barely-wet cell triggered
   // it, and across a large mesh area that washed the ground pale/white and made it hard to
   // see. Below its old 0.002m threshold now just renders as dry (invisible) instead — the
   // remaining 5 tiers (bright cyan through indigo) keep their original thresholds/colors
@@ -305,9 +304,9 @@ export async function createMeshShallowWater(urls = {}) {
   function setSpeed(x) { speed = x; tracerFlow.setSpeed(x); }
 
   // Same rescale-in-place technique main.js's generic rescaleY() uses, applied here to the
-  // tracer sub-layer specifically (dropletFlow.js's own paths array is safe to rescale this
-  // way — see chat history 2026-07-21 for why that layer never had the film's snap-back bug:
-  // its playback reads straight from this same array every tick, no separate stale copy).
+  // tracer sub-layer specifically. dropletFlow.js's own paths array is safe to rescale this
+  // way — unlike the depth film, it never had a snap-back bug, because its playback reads
+  // straight from this same array every tick rather than from a separate stale copy.
   function rescaleTracerY(ratio) {
     tracerFlow.mesh.traverse(child => {
       const geo = child.geometry;

@@ -2,7 +2,7 @@
 """
 Fetch roads and building footprints for the CFX SR417 corridor AOI.
 
-Meeting-note "Task 1": roads/buildings become the geometric mask for
+Roads/buildings become the geometric mask for
 separating built surfaces from natural ground in later analysis
 (soil/landcover work, and eventually a generalized flood solver that
 treats roads/roofs differently from bare ground).
@@ -52,8 +52,8 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 # Makes `--site <name>` resolve lat/lon/radius AND the output directory from the ONE registry
 # (site_registry.py -> lidar/test_sites.py) instead of hand-typed coordinates. Purely additive:
 # with no --site flag this script behaves exactly as it always has. See site_registry.py's
-# docstring for why (INTERNSHIP_AUDIT_2026-08-03.md §4: site3's data existed on disk with no
-# script that could reproduce it, because coordinates were typed by hand per-invocation).
+# docstring for why: hand-typed per-invocation coordinates leave fetched data on disk with no
+# script that can reproduce it.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import site_registry  # noqa: E402
 

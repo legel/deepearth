@@ -2,12 +2,12 @@
 """
 torch_swe_benchmark.py — GPU (PyTorch/MPS) real-physics rainfall-flow benchmark.
 
-Purpose (2026-07-28 meeting direction, Lance): stop building learned surrogates;
-instead run the ACTUAL shallow-water physics as pure PyTorch tensor ops on the GPU,
+Purpose: rather than a learned surrogate, run the ACTUAL shallow-water physics
+as pure PyTorch tensor ops on the GPU,
 at TRUE physical resolution with NO downsampling, over a SMALL real domain (one house
 + yard), and measure WALL-CLOCK time per second of simulated real-world physics.
 
-Domain: 25x25 m box centered on the ecodash / Dix.Hite digital-twin property
+Domain: 25x25 m box centered on the reference digital-twin property
     17801 Champagne Dr, Winter Garden FL  (28.5217321, -81.6570725)
     https://digitaltwin.ecodash.ai/  (github.com/legel/digitaltwin, demo-site)
 Terrain: real 2018 USGS QL2 LiDAR (~40 pts/m^2), ground+building returns, no downsample.

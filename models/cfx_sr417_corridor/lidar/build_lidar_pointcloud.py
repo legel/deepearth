@@ -45,7 +45,11 @@ DEFAULT_LAT, DEFAULT_LON, DEFAULT_RADIUS_KM = 28.36687, -81.43299, 1.0
 DEM_COND = os.path.join(PROJ_DIR, "dem", "data", "hydro", "dem_conditioned.tif")
 GEO_META = os.path.join(PROJ_DIR, "viewer", "data", "geo_meta.json")
 
-VERT_EXAG = 8   # must match viewer/static/js/terrain.js's VERT_EXAG exactly
+# Exaggeration BAKED into exported point/mesh coordinates. This is deliberately NOT the
+# viewer's live default (terrain.js's VERT_EXAG, currently 2) — the viewer rescales baked
+# geometry by (currentExag / 8) at load. Changing this constant requires re-exporting every
+# baked artifact, so treat it as a file-format version, not a display preference.
+VERT_EXAG = 8
 
 # LAS files from this acquisition don't carry a machine-readable CRS VLR (parse_crs() -> None);
 # coordinate magnitudes (~5.1e5, ~1.47e6) match Florida East state plane in US survey feet —
@@ -182,7 +186,7 @@ def fill_and_smooth(grid, dilate_iters=10, sigma=1.5):
     coarser 256x256 grid, cells whose interpolation kernel straddles that hole go back to NaN
     (falls back to bare-earth ~26m) right next to cells that land solidly on a deck band
     (~34m) — a checkerboard of correct/uncorrected cells instead of one continuous elevated
-    roadway, which is what the team-lead flagged as the highway's slope/scale "looking wrong"
+    roadway. Without it the highway's slope/scale reads as visibly wrong
     at the two crossings. 10 cells (~10m) safely bridges the median gap without merging
     unrelated, far-apart classification noise elsewhere in the tile."""
     from scipy.ndimage import distance_transform_edt, gaussian_filter, binary_dilation
