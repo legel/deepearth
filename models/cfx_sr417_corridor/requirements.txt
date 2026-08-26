@@ -1,47 +1,76 @@
 # cfx_sr417_corridor — flood digital-twin pipeline
 #
-# Versions are pinned to the environment this pipeline is verified against (Python 3.11).
-# They are not arbitrary: numpy 2.x, pandas 3.x and geopandas 1.x all carry breaking changes
-# that rasterio/pysheds are sensitive to, so an unpinned install is not reproducible.
+# TWO ENVIRONMENTS, deliberately. The split is forced by richdem, not by preference:
 #
-#   python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#   Python 3.9  — the twin pipeline (fetch -> condition -> simulate -> viewer).
+#                 This is the environment every existing result was produced in.
+#                 richdem installs here; it does NOT build on 3.11 (its vendored pybind11
+#                 predates Python 3.11, where PyFrameObject became an opaque type, so the
+#                 build fails with "member access into incomplete type 'PyFrameObject'").
+#
+#   Python 3.11 — research/ only (learned surrogates; needs torch).
+#                 pysheds does NOT work here with numpy >= 2: pysheds 0.5 still calls
+#                 np.in1d, removed in numpy 2.0, in nine places. 0.5 is the latest release
+#                 and there is no upstream fix, hence the numpy<2 pin below.
+#
+# Do NOT "simplify" this to one environment by dropping richdem. Its depression breaching is
+# not interchangeable — see the note at the bottom of this file.
+#
+#   python3.9  -m pip install --user -r requirements.txt      # pipeline
+#   python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # research
 
 # ── Core numerics and I/O ────────────────────────────────────────────────────────────────
-numpy==2.4.6
-scipy==1.17.1
-pandas==3.0.5
-matplotlib==3.11.1
-Pillow==12.3.0
+# numpy is capped below 2.0 for pysheds (see above). Every other package here accepts
+# >=1.26.4, so this cap constrains nothing else.
+numpy>=1.26.4,<2
+scipy
+pandas
+matplotlib
+Pillow
 
 # ── Geospatial ───────────────────────────────────────────────────────────────────────────
-rasterio==1.4.4
-geopandas==1.1.4
-shapely==2.1.2
-pyproj==3.7.2
+rasterio
+geopandas
+shapely
+pyproj
 
-# ── Hydrology / terrain services ─────────────────────────────────────────────────────────
-py3dep==0.19.0        # USGS 3DEP DEM download
-pynhd==0.20.0         # NHDPlus HR hydrography
-pysheds==0.5          # D8 flow routing, accumulation, HAND
+# ── Hydrology / terrain ──────────────────────────────────────────────────────────────────
+py3dep               # USGS 3DEP DEM download
+pynhd                # NHDPlus HR hydrography
+pysheds              # D8 flow routing, accumulation, HAND
+richdem              # depression breaching + terrain attributes. PYTHON 3.9 ONLY.
 
 # ── LiDAR ────────────────────────────────────────────────────────────────────────────────
-laspy[lazrs]==2.7.0   # LAZ point-cloud reading
+laspy[lazrs]
 
 # ── Web ──────────────────────────────────────────────────────────────────────────────────
-requests==2.34.2
-flask==3.1.3
+requests
+flask
 
-# ── Optional: DEM conditioning ───────────────────────────────────────────────────────────
-# richdem provides the Lindsay (2016) depression-breaching used by dem/dem_hydro.py and the
-# geomorphometric derivatives in dem/dem_terrain.py. It is NOT installed by default because it
-# fails to build against several modern C++ toolchains (its pybind11 wrapper does not compile
-# on recent macOS clang). Everything else in the pipeline runs without it; only re-running
-# those two conditioning scripts requires it. Install separately if you need them:
-#     pip install richdem
-# richdem
-
-# ── Optional: learned-surrogate research (research/) ─────────────────────────────────────
-# Not required by the digital-twin pipeline. See research/README.md.
-# torch==2.13.0
+# ── research/ only — NOT needed for the twin pipeline ────────────────────────────────────
+# torch
 # torch_geometric
 # torch_scatter
+
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# On replacing richdem
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# WhiteboxTools (`pip install whitebox`) installs as a precompiled binary on Python 3.11 and
+# offers breach_depressions_least_cost by the same author as the algorithm richdem
+# implements, so it looks like a clean substitute. It was measured, and it is not:
+#
+#   Conditioning the same DEM, then routing both with pysheds:
+#     richdem vs itself          flow-dir 100.00% identical, stream IoU 1.0000  (deterministic)
+#     richdem vs whitebox        flow-dir  87.87% identical, stream IoU 0.2875
+#     richdem vs unconditioned   flow-dir  81.24% identical, stream IoU 0.2223
+#
+# Elevations agree within 1 mm on 98.3% of cells, but that is not the product. This AOI has
+# ~14 m of relief over 2 km, and on terrain that flat D8 routing is decided by sub-millimetre
+# differences at pits and flats — so two legitimate breaching algorithms produce substantially
+# different stream networks. Swapping would silently rewrite every stream network, watershed
+# and HAND surface, and invalidate the Gee Creek gauge validation, which was done with richdem.
+#
+# Worth noting on its own terms: an IoU of 0.29 between two defensible algorithms means the
+# delineated stream network carries far more uncertainty than it is usually treated as having.
+# That is relevant to this project's documented D8 under-capture at Gee Creek (11.65 of
+# 33.15 km²), which may be less about missing wetland connectivity than it appears.

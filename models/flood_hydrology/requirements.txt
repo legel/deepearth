@@ -1,36 +1,42 @@
 # flood_hydrology — Johns Lake flood digital twin
 #
 # Derived by scanning every import in the project, then split into the tiers the pipeline
-# actually needs. Core versions are pinned to match the sibling cfx_sr417_corridor project so
-# the two twins can share one environment and the shared ../floodtwin library.
+# actually needs.
 #
-#   python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# Use PYTHON 3.9 for the pipeline, matching the sibling cfx_sr417_corridor project. richdem
+# (needed by dem/dem_process.py for depression breaching) does not build on 3.11, and
+# pysheds 0.5 still calls np.in1d, which numpy 2.0 removed. See
+# ../cfx_sr417_corridor/requirements.txt for the full explanation of both constraints.
+#
+#   python3.9 -m pip install --user -r requirements.txt
 
 # ── Core numerics and I/O ────────────────────────────────────────────────────────────────
-numpy==2.4.6
-scipy==1.17.1
-pandas==3.0.5
-matplotlib==3.11.1
-Pillow==12.3.0
+# numpy capped below 2.0 for pysheds; nothing else here is constrained by it.
+numpy>=1.26.4,<2
+scipy
+pandas
+matplotlib
+Pillow
 
 # ── Geospatial ───────────────────────────────────────────────────────────────────────────
-rasterio==1.4.4
-geopandas==1.1.4
-shapely==2.1.2
-pyproj==3.7.2
+rasterio
+geopandas
+shapely
+pyproj
 rioxarray
 
 # ── Hydrology / terrain services ─────────────────────────────────────────────────────────
-py3dep==0.19.0
-pynhd==0.20.0
-pysheds==0.5
+py3dep
+pynhd
+pysheds
+richdem              # depression breaching. PYTHON 3.9 ONLY — see the sibling project's notes.
 
 # ── LiDAR ────────────────────────────────────────────────────────────────────────────────
-laspy[lazrs]==2.7.0
+laspy[lazrs]
 
 # ── Web / viewer ─────────────────────────────────────────────────────────────────────────
-requests==2.34.2
-flask==3.1.3
+requests
+flask
 
 # ── Satellite imagery (sentinel2/) ───────────────────────────────────────────────────────
 # Required only for the Sentinel-2 ingestion and water-segmentation stack, not for the DEM →
@@ -39,11 +45,6 @@ pystac-client
 planetary-computer
 s2cloudless
 scikit-image
-
-# ── Optional: DEM conditioning ───────────────────────────────────────────────────────────
-# See the note in ../cfx_sr417_corridor/requirements.txt — richdem does not build against
-# several modern C++ toolchains. Only dem/dem_process.py needs it.
-# richdem
 
 # ── Optional: water-segmentation model comparison ────────────────────────────────────────
 # Four segmentation methods are compared in sentinel2/compare_methods.py. Each brings a heavy,

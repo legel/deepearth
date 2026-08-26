@@ -53,8 +53,13 @@ coordinate
 
 ### Quick start
 
+> **Use Python 3.9 for the pipeline.** `richdem`, which performs the depression breaching the
+> solver depends on, does not build on 3.11 — its vendored pybind11 predates the Python 3.11
+> change that made `PyFrameObject` opaque. A separate 3.11 venv serves `research/` only, which
+> needs torch. `requirements.txt` documents both constraints.
+
 ```bash
-pip install -r requirements.txt
+python3.9 -m pip install --user -r requirements.txt
 
 # 1. Fetch everything for a site
 python3 dem/dem_download.py            --site main_aoi
@@ -156,6 +161,14 @@ These are real and documented rather than hidden:
 - **Sub-grid pit trapping.** At native (~0.9 m) resolution the solver traps water in 1–2 cell
   pits. Trust the wet-cell percentile depths (median ~7–8 cm, p90 ~14 cm), not the absolute peak.
 - **Stationary.** Atlas 14 carries no climate trend, so these are present-day probabilities.
+- **Stream delineation is unstable on this terrain.** Conditioning the same DEM with two
+  defensible depression-breaching algorithms (richdem vs WhiteboxTools) and routing both with
+  pysheds gives stream networks agreeing at only **IoU 0.29**, despite elevations matching
+  within 1 mm on 98.3% of cells — because with ~14 m of relief over 2 km, D8 routing is decided
+  by sub-millimetre differences at pits and flats. The delineated network therefore carries
+  more uncertainty than a single run suggests, which is worth weighing against the documented
+  D8 under-capture at Gee Creek. Everything shipped here uses richdem throughout, so results
+  are internally consistent; see `requirements.txt` for the measurements.
 - **Mesh solver does not scale.** Excellent at the ~160–400 m demo sites; ~2.5 h of wall time
   for an 8-minute synthetic event at site3's full extent. Use the raster solver for real events.
 

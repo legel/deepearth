@@ -49,7 +49,7 @@
   <div id="load">building digital twin…</div>
   <div id="hud" class="panel" hidden>
     <div class="ey">DeepEarth · Rainfall Digital Twin</div>
-    <h1>17801 Champagne Dr</h1>
+    <h1>17801 Champagne Dr · 28.5217°N, 81.6571°W</h1>
     <p>25×25 m domain · LiDAR terrain · solved shallow-water physics · observed extreme rainfall event.</p>
     <div class="stat"><span>rain <b id="rain">–</b> mm/hr</span><span>peak <b id="hmax">–</b></span>
       <span>mass Δ <b id="resid">–</b></span></div>
@@ -107,8 +107,8 @@ const DATA = {"n": 112, "veln": 36, "ext_m": 25.0, "dx": 0.1, "z_min": 31.349, "
       `= <b>${rainM3.toFixed(2)} m³ (${(rainM3*1000).toFixed(0)} L)</b> total rain input`;
     document.getElementById('srcbox').innerHTML =
       `<b>data sources</b><br>`+
-      `Terrain — 2018 USGS LiDAR, ~40 pts/m², this exact 25×25m box<br>`+
-      `Rain — GSDR station US_086638 (31.77km away), real 1-hr max<br>`+
+      `Terrain — 2018 USGS LiDAR, ~40 pts/m², 25×25m box<br>`+
+      `Rain — GSDR station US_086638 (31.77km away), 1-hr max<br>`+
       `observed in 1960, cross-checked vs NOAA Atlas 14 IDF curve<br>`+
       `Physics — Bates et al. 2010 local-inertial shallow water,<br>`+
       `solved on GPU (PyTorch/MPS), no infiltration modeled`;
