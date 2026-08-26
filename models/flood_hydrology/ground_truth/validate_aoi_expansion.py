@@ -1,5 +1,5 @@
 """
-AOI-expansion scoping/validation — see CLAUDE.md "Future work" item 2.
+AOI-expansion scoping/validation.
 
 1. Fetch Johns Lake's real shoreline geometry from USGS NHDPlus HR (via pynhd)
    and derive a bounding box (+250 m buffer) that should fully contain it.

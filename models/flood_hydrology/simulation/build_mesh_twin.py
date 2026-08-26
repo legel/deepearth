@@ -12,18 +12,27 @@ shallow-water physics from scratch under time pressure.
 import os, sys, json, base64
 import numpy as np
 
-CFX_DIR = "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor"
+# All paths resolve from this file's own location, so the script runs on any checkout.
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))          # flood_hydrology/simulation
+PROJ_DIR   = os.path.dirname(BASE_DIR)                            # flood_hydrology
+MODELS_DIR = os.path.dirname(PROJ_DIR)                            # models
+
+# This script reuses the sibling project's mesh shallow-water solver rather than duplicating it.
+CFX_DIR = os.path.join(MODELS_DIR, "cfx_sr417_corridor")
+if not os.path.isdir(CFX_DIR):
+    raise SystemExit(f"Sibling project not found at {CFX_DIR}; this script reuses its mesh solver.")
 sys.path.insert(0, os.path.join(CFX_DIR, "lidar"))
 sys.path.insert(0, os.path.join(CFX_DIR, "simulation"))
 sys.path.insert(0, CFX_DIR)
 
 PROP_LAT, PROP_LON = 28.5217321, -81.6570725
-LAZ = "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/lidar/data/raw/USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_258656_E.laz"
+LAZ = os.path.join(PROJ_DIR, "lidar", "data", "raw",
+                   "USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_258656_E.laz")
 HALF_M = 12.5          # 25x25m box, same domain as the grid version
 FT2M = 0.3048006096012192
-RAIN_MM_HR = 143.5      # real observed extreme, GSDR US_086638, 1960 (see CLAUDE.md)
+RAIN_MM_HR = 143.5      # real observed extreme, GSDR US_086638, 1960
 TOTAL_S = 180.0
-OUT_DIR = "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/simulation/outputs"
+OUT_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 

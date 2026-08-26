@@ -11,7 +11,7 @@ Service: https://3dhp.nationalmap.gov/arcgis/rest/services/usgs_3dhp_all/Feature
   Layer 50 = Flowline
   Layer 60 = Waterbody
   (Layer 80 = Catchment — confirmed EMPTY for this whole region as of 2026-07-27,
-  see TASK_3DHP_FLOW_NETWORK_DERIVATIVES.md; not queried here.)
+  not queried here.)
 
 Switched 2026-07-27 from the older `hydro.nationalmap.gov/.../3DHP_all/MapServer` endpoint
 (same layer IDs, confirmed via `?f=pjson`) — the older MapServer returns real geometry but

@@ -2,7 +2,7 @@
 Resumable, retrying LAZ tile downloader — USGS TNM LPC products
 ==================================================================
 Fills a real gap found 2026-07-27: build_lidar_pointcloud.py's load_points_in_bbox() only
-READS existing .laz files in lidar/data/raw/ — despite this project's own CLAUDE.md claiming
+READS existing .laz files in lidar/data/raw/ — despite earlier notes claiming
 that script "downloads 6 LAZ tiles on first run," there is (and was) no download logic
 anywhere in this codebase. The original 6 tiles were fetched via some ad hoc, unsaved process.
 This script is the actual, permanent, reusable fetch step that was missing.

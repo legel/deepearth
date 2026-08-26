@@ -17,13 +17,18 @@ import numpy as np
 import rasterio
 from pyproj import Transformer
 
+# All paths resolve from this file's own location, so the script runs on any checkout.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # flood_hydrology/simulation
+PROJ_DIR = os.path.dirname(BASE_DIR)                     # flood_hydrology
+
 PROP_LAT, PROP_LON = 28.5217321, -81.6570725
-LAZ = "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/lidar/data/raw/USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_258656_E.laz"
+LAZ = os.path.join(PROJ_DIR, "lidar", "data", "raw",
+                   "USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_258656_E.laz")
 HALF_M = 12.5
 FT2M = 0.3048006096012192
-OUT_DIR = "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/simulation/outputs"
-VIEWER_HTML = "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/simulation/twin_mesh_viewer.html"
-NAIP_PATH = "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/soil/data/naip_2021_RGB.tif"
+OUT_DIR = os.path.join(BASE_DIR, "outputs")
+VIEWER_HTML = os.path.join(BASE_DIR, "twin_mesh_viewer.html")
+NAIP_PATH = os.path.join(PROJ_DIR, "soil", "data", "naip_2021_RGB.tif")
 
 # fallback only, if NAIP doesn't cover a point for some reason
 CLASS_COLOR_FALLBACK = {

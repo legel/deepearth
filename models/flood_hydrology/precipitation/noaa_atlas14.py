@@ -296,7 +296,7 @@ def main(lat=DEFAULT_LAT, lon=DEFAULT_LON):
     # Provenance sidecar (added 2026-08-04). The whole point: a downstream reader must be able
     # to tell live site-specific PFDS data from the regional hard-coded fallback WITHOUT having
     # seen the terminal output. Previously the only signal was a UserWarning at run time, so
-    # fallback numbers were written to this exact CSV and then cited in CLAUDE.md/README.md as
+    # fallback numbers were written to this exact CSV and then cited downstream as
     # site-specific Atlas 14 for months.
     prov = {
         "generated": __import__("datetime").date.today().isoformat(),
