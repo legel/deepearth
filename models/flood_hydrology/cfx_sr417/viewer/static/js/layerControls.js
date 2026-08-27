@@ -17,7 +17,7 @@
  * A layer belongs to exactly one section. Splitting one dataset across two sections (as FEMA
  * and the water layers previously were) makes related layers look unrelated.
  */
-import { createSection } from './panelSections.js';
+import { createSection } from '/shared/panelSections.js';
 
 export function setupLayerPanel(config) {
   const list = document.getElementById('layer-list');

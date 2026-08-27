@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createTerrain, createFixedExagGeometry } from './terrain.js';
-import { initStaticSections } from './panelSections.js';
+import { initStaticSections } from '/shared/panelSections.js';
 import { createDrapedOverlay } from './overlays.js';
 import { createFloodLayer } from './floodLayer.js';
 import { createRainSystem } from './rainParticles.js';
@@ -27,6 +27,15 @@ async function init() {
   // the main AOI page uses. Done first so the panel stays usable even if a layer
   // below fails to load.
   const nSections = initStaticSections(document);
+
+  // Apply each layer checkbox's initial checked state to its mesh. Without this the markup's
+  // `checked` attribute is cosmetic — the mesh stays at whatever visibility it was created
+  // with until the user toggles it.
+  function syncInitial(id, mesh) {
+    const cb = document.getElementById(id);
+    if (cb && mesh) mesh.visible = cb.checked;
+  }
+
   if (nSections !== 6) console.warn(`site3 panel: expected 6 sections, wired ${nSections}`);
 
   const canvas = document.getElementById('canvas');
@@ -133,6 +142,10 @@ async function init() {
   scene.add(roadsBuildingsMesh);
 
   // ── Layer checkboxes ──────────────────────────────────────────────────────
+  // Honour the markup's initial checked state before wiring change handlers.
+  syncInitial('site3-naip-cb', naipMesh);
+  syncInitial('site3-wireframe-cb', terrain.wireMesh || terrain.mesh);
+
   document.getElementById('site3-wireframe-cb').addEventListener('change', e => {
     terrain.wireMesh.visible = e.target.checked;
   });

@@ -498,64 +498,6 @@ body {
   padding-top: 0;
 }
 
-/* ── Collapsible section header ──────────────────────────────────
-   The panel carries ~35 controls. Without collapsing, finding a layer means
-   scrolling past every other one. Sections are ordered base map -> ground ->
-   water -> regulatory hazard -> simulation, so the list reads as a data
-   hierarchy rather than an arbitrary list. */
-.section-header.collapsible {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  user-select: none;
-  transition: color 0.12s ease;
-}
-
-.section-header.collapsible:hover { color: #5a9ad0; }
-
-.section-header.collapsible:focus-visible {
-  outline: 1px solid #4a8ac0;
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
-/* Chevron rotates to point down when the section is open. */
-.section-chevron {
-  display: inline-block;
-  width: 8px;
-  flex: 0 0 8px;
-  font-size: 8px;
-  line-height: 1;
-  transition: transform 0.15s ease;
-  transform: rotate(-90deg);   /* collapsed: pointing right */
-}
-
-.section-header.open .section-chevron { transform: rotate(0deg); }
-
-.section-header .section-count {
-  margin-left: auto;
-  font-size: 8px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: #2f567f;
-}
-
-.section-body {
-  overflow: hidden;
-}
-
-.section-body[hidden] { display: none; }
-
-/* A short, non-uppercase note under a section header explaining what the group
-   contains — the section titles alone do not say what "HAND" or "TPI" mean. */
-.section-note {
-  font-size: 9px;
-  line-height: 1.4;
-  color: #4a6a8a;
-  margin: 0 0 5px 14px;
-}
-
 /* ── Layer selector row (Analysis Layer dropdown) ────────────── */
 .selector-row {
   display: flex;

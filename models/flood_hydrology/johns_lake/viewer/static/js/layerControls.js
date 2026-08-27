@@ -9,39 +9,74 @@
  *   config.base      — Array<{ name, mesh, on, swatch, drape?, drapedMesh?, drapedOn?, legendUrl? }>
  *   config.risk      — Array<{ name, mesh, on, swatch }>
  */
+import { createSection } from '/shared/panelSections.js';
+
 export function setupLayerPanel(config) {
   const list = document.getElementById('layer-list');
   if (!list) return;
 
-  // ── TOPOGRAPHY ─────────────────────────────────────────────────────────────
-  _sectionHeader(list, 'TOPOGRAPHY');
-  _toggleRow(list, 'Surface',   config.terrain.solidMesh, false, '#1e5a3a');
-  _toggleRow(list, 'Wireframe', config.terrain.wireMesh,  false, '#3aaa60');
-  _vertExagRow(list, config.terrain.onExagChange);
-  _toggleRow(list, 'Lake Voxels',   config.terrain.voxelMesh, true, '#3a6abf');
-  _toggleRow(list, 'Water Surface', config.terrain.waterMesh, true, '#1a5aaf');
+  // Same six-tier hierarchy as the sibling CFX site, built with the shared
+  // /shared/panelSections.js so both viewers behave identically. Order is a data
+  // hierarchy: what the place looks like -> what the ground is -> where water is ->
+  // the regulatory answer -> our modelled answer -> the raw inputs.
 
-  // ── HYDROLOGY ──────────────────────────────────────────────────────────────
-  _sectionHeader(list, 'HYDROLOGY');
-  for (const item of config.hydrology) {
-    _toggleRow(list, item.name, item.mesh, item.on, item.swatch);
+  // ── 1. BASE MAP ────────────────────────────────────────────────────────────
+  {
+    const sec = createSection(list, 'Base Map', { open: true,
+      note: 'Imagery and the elevation surface everything else drapes onto.' });
+    for (const item of config.base.filter(i => i.group === 'basemap')) _row(sec, item);
+    _toggleRow(sec, 'Terrain Surface',   config.terrain.solidMesh, false, '#1e5a3a');
+    _toggleRow(sec, 'Terrain Wireframe', config.terrain.wireMesh,  false, '#3aaa60');
+    _vertExagRow(sec, config.terrain.onExagChange);
   }
 
-  // ── BASE LAYERS ────────────────────────────────────────────────────────────
-  _sectionHeader(list, 'BASE LAYERS');
-  for (const item of config.base) {
-    if (item.drape) {
-      _flatDrapedRow(list, item.name, item.mesh, item.on, item.swatch,
-                      item.drapedMesh, item.drapedOn, item.legendUrl);
-    } else {
-      _toggleRow(list, item.name, item.mesh, item.on, item.swatch);
-    }
+  // ── 2. GROUND & BUILT ──────────────────────────────────────────────────────
+  {
+    const sec = createSection(list, 'Ground & Built', { open: true,
+      note: 'Drives infiltration: soil sets how fast water soaks in, roads and roofs '
+          + 'set where it cannot.' });
+    for (const item of config.base.filter(i => i.group === 'ground')) _row(sec, item);
   }
 
-  // ── SIMULATION LAYERS ──────────────────────────────────────────────────────
-  _sectionHeader(list, 'SIMULATION LAYERS');
-  for (const item of config.risk) {
-    _toggleRow(list, item.name, item.mesh, item.on, item.swatch);
+  // ── 3. WATER ───────────────────────────────────────────────────────────────
+  {
+    const sec = createSection(list, 'Water', { open: true,
+      note: 'The lake itself plus mapped channels. Voxels show its modelled volume.' });
+    _toggleRow(sec, 'Water Surface', config.terrain.waterMesh, true, '#1a5aaf');
+    _toggleRow(sec, 'Lake Voxels',   config.terrain.voxelMesh, false, '#3a6abf');
+    for (const item of config.hydrology) _row(sec, item);
+  }
+
+  // ── 4. FLOOD HAZARD (FEMA) ─────────────────────────────────────────────────
+  {
+    const sec = createSection(list, 'Flood Hazard (FEMA)', { open: true,
+      note: "FEMA's published 1%-annual-chance floodplain — independent of this model." });
+    for (const item of config.base.filter(i => i.group === 'regulatory')) _row(sec, item);
+  }
+
+  // ── 5. FLOOD SIMULATION ────────────────────────────────────────────────────
+  {
+    const sec = createSection(list, 'Flood Simulation', { open: true,
+      note: "This project's solver output, plus satellite ground truth to compare against." });
+    for (const item of config.risk) _row(sec, item);
+  }
+
+  // ── 6. SOURCE DATA ─────────────────────────────────────────────────────────
+  {
+    const sec = createSection(list, 'Source Data', { open: false,
+      note: 'Raw inputs behind the layers above. Heavy, loaded on demand.' });
+    const heavy = document.getElementById('heavy-lidar-control');
+    if (heavy) { heavy.hidden = false; sec.appendChild(heavy); }
+  }
+}
+
+/** Render one config item, choosing the flat/draped variant when it has one. */
+function _row(parent, item) {
+  if (item.drape) {
+    _flatDrapedRow(parent, item.name, item.mesh, item.on, item.swatch,
+                   item.drapedMesh, item.drapedOn, item.legendUrl);
+  } else {
+    _toggleRow(parent, item.name, item.mesh, item.on, item.swatch);
   }
 }
 

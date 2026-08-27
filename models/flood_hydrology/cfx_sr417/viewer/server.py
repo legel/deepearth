@@ -112,6 +112,16 @@ def site3():
     return render_template("site3.html")
 
 
+# JS shared with the sibling site, served from ../floodtwin/viewer_js so there is one
+# canonical copy rather than a duplicate per viewer.
+SHARED_JS_DIR = os.path.join(os.path.dirname(os.path.dirname(BASE_DIR)), "floodtwin", "viewer_js")
+
+
+@app.route("/shared/<path:filename>")
+def serve_shared(filename):
+    return send_from_directory(SHARED_JS_DIR, filename)
+
+
 @app.route("/data/<path:filename>")
 def serve_data(filename):
     return send_from_directory(DATA_DIR, filename)

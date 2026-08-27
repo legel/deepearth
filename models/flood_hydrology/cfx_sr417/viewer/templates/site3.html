@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Site3 — Gee Creek Gauge Validation — CFX Digital Twin</title>
   <link rel="stylesheet" href="/static/css/styles.css">
+  <link rel="stylesheet" href="/shared/panelSections.css">
   <script type="importmap">
   {
     "imports": {
@@ -59,9 +60,9 @@
       <div class="section-header" data-section
            data-note="Imagery and the elevation surface everything else drapes onto.">Base Map</div>
       <div class="section-body">
-        <label class="layer-row"><input type="checkbox" id="site3-naip-cb">
+        <label class="layer-row"><input type="checkbox" id="site3-naip-cb" checked>
           <span class="layer-label">Aerial Imagery (NAIP, draped)</span></label>
-        <label class="layer-row"><input type="checkbox" id="site3-wireframe-cb" checked>
+        <label class="layer-row"><input type="checkbox" id="site3-wireframe-cb">
           <span class="layer-label">Terrain Wireframe</span></label>
         <div id="vert-exag-control">
           <label for="site3-vert-exag-slider">Vertical Exaggeration: <span id="site3-vert-exag-value">2.0×</span></label>
