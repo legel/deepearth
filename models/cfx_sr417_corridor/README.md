@@ -118,8 +118,8 @@ discharge can be compared against a real gauge without a disqualifying scale mis
 
 | | Simulated | Observed |
 |---|---|---|
-| Peak outflow | 91.4 cfs | 1,190 cfs |
-| Peak time (argmax) | t = 36.28 h | t = 37.52 h |
+| Peak outflow | 129.8 cfs | 1,190 cfs |
+| Peak time (argmax) | t = 35.80 h | t = 37.52 h |
 
 **What is validated is the rising limb, not the peak.** Quoting a "1.24 h peak-timing error"
 overstates the result: both hydrographs have broad, flat tops, and that difference is *smaller
@@ -136,15 +136,16 @@ spread is the finding:
 
 | metric | difference | reading |
 |---|---|---|
-| **rising limb** (50% of peak) | **0.47 h** | **real agreement — the model gets flood onset right** |
-| peak argmax | 1.24 h | inside the resolution limit above; consistent with agreement, not evidence of it |
-| centroid (centre of mass) | **9.13 h** | the model's response is centred 9 h early — it recedes far too fast |
+| **rising limb** (50% of peak) | **0.09 h** | **real agreement — the model gets flood onset right, to ~5 minutes** |
+| peak argmax | 1.72 h | inside the resolution limit above; consistent with agreement, not evidence of it |
+| centroid (centre of mass) | **7.44 h** | the model's response is centred 7 h early — it recedes far too fast |
 
-The rising-limb result is robust: across thresholds of 25/50/75% of peak and observed-baseflow
-assumptions of 40-55 cfs, the difference stays in the 0.44-1.89 h range, varying by under 0.1 h
-with the baseflow choice.
+These are measured on the current solver, with the finite-storage infiltration cap active. The
+cap improved both meaningful metrics — rising limb 0.47 -> 0.09 h and centroid 9.13 -> 7.44 h —
+and moved the argmax 1.24 -> 1.72 h, which is not informative either way since it sits inside
+the plateau width. The rising-limb agreement is robust to the baseflow assumption.
 
-The 9.13 h centroid gap is the honest failure, and it is expected: the observed hydrograph
+The 7.44 h centroid gap is the honest failure, and it is expected: the observed hydrograph
 recedes over more than a day on channel storage and groundwater that a surface-only solver with
 no baseflow does not represent at all. The model reproduces how a flood *starts* here; it does
 not reproduce how one *ends*.
@@ -192,7 +193,8 @@ These are real and documented rather than hidden:
   | observed (2.54 of 12.98 million m³) | **19.6 %** |
   | simulated (0.19 of 18.31 million m³) | **1.0 %** |
 
-  The 19.3x gap fully accounts for the 13x peak-discharge shortfall (91.4 vs 1,190 cfs); the
+  The 19.3x gap fully accounts for the 13x peak-discharge shortfall then measured (91.4 vs
+  1,190 cfs); the
   35% D8 watershed capture would only explain ~2.9x. **The error is parameterisation, not
   geometry.**
 

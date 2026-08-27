@@ -48,3 +48,5 @@ __pycache__/
 # Private planning document: contains third-party names, contact details and
 # editor correspondence. Kept local, deliberately not published.
 HYDROLINK_PAPER_PLAN.md
+HYDROLINK_abstract_draft.md
+**/HYDROLINK_*
