@@ -1,0 +1,2 @@
+scenario,total_rain_mm,flooded_ha_union,max_depth_m,max_velocity_ms,max_lake_rise_m
+atlas14_24hr_200yr,299.72,26.781587661009578,2.4539167881011963,1.306721806526184,0.024
