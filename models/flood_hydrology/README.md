@@ -92,6 +92,9 @@ python3 cfx_sr417/viewer/server.py     # → http://localhost:5051
 python3 johns_lake/viewer/server.py    # → http://localhost:5050
 ```
 
+**Next steps** are in [`NEXT_STEPS.md`](NEXT_STEPS.md) — two parallel tracks, with the
+measurements each is scored against.
+
 Site-level detail is in [`cfx_sr417/README.md`](cfx_sr417/README.md) and
 [`johns_lake/README.md`](johns_lake/README.md). A session log covering the most recent cleanup,
 unification and validation work is in [`../PROGRESS_2026-08-26.md`](../PROGRESS_2026-08-26.md).
