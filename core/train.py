@@ -5,20 +5,51 @@ import argparse
 import gc
 import json
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import torch
 
 from deepearth.core import data as base_data
+from deepearth.core.ecology_training import train_ecological_readers
 from deepearth.core.fusion import DeepEarth, Variable
 from deepearth.core.optimization import Optimizers, adamw_group
 
 
 @dataclass(frozen=True)
+class ReaderStage:
+    steps: int
+    batch: int
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-3
+
+
+@dataclass(frozen=True)
+class EcologyStages:
+    habitat: ReaderStage = field(
+        default_factory=lambda: ReaderStage(3000, 4096)
+    )
+    family: ReaderStage = field(
+        default_factory=lambda: ReaderStage(1500, 1024)
+    )
+    environment: ReaderStage = field(
+        default_factory=lambda: ReaderStage(500, 1024)
+    )
+    species: ReaderStage = field(
+        default_factory=lambda: ReaderStage(1500, 512)
+    )
+    distribution: ReaderStage = field(
+        default_factory=lambda: ReaderStage(2000, 512)
+    )
+    community: ReaderStage = field(
+        default_factory=lambda: ReaderStage(2000, 512)
+    )
+
+
+@dataclass(frozen=True)
 class Experiment:
     seed: int = 1337
-    steps: int = 2291
+    steps: int = 8000
     batch: int = 256
     width: int = 192
     levels: int = 12
@@ -32,6 +63,7 @@ class Experiment:
     graph_learning_rate_scale: float = 0.02
     init_checkpoint: str = ""
     reader_only: bool = False
+    ecology: EcologyStages = field(default_factory=EcologyStages)
 
 
 EXPERIMENT = Experiment()
@@ -130,6 +162,11 @@ LFMC_LENS_PARAMETERS = (
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
 CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
+ECOLOGY_PARAMETERS = (
+    "environment_family_reader.", "environment_species_reader.",
+    "habitat_family_expert.", "habitat_family_multimodal_",
+    "habitat_species_", "distribution_", "community_scale_meshes.",
+)
 
 
 @dataclass(frozen=True)
@@ -208,7 +245,11 @@ def initialize_optimizers(model, design, device):
     lens_ids = {id(parameter) for parameter in lens}
     calibration = matching_parameters(model, CALIBRATION_PARAMETERS)
     calibration_ids = {id(parameter) for parameter in calibration}
-    excluded = relation_ids | lens_ids | calibration_ids
+    ecology_ids = {
+        id(parameter)
+        for parameter in matching_parameters(model, ECOLOGY_PARAMETERS)
+    }
+    excluded = relation_ids | lens_ids | calibration_ids | ecology_ids
     base = [
         parameter for parameter in model.parameters()
         if parameter.requires_grad and id(parameter) not in excluded
@@ -325,6 +366,7 @@ def lfmc_correlation_loss(
             else torch.zeros_like(observed[name])
             for name in model.names
         }
+        present = model._with_worldclim_observed(present, observed)
         latent = model.encode(
             values, present, context, detach_species=True
         )
@@ -455,6 +497,9 @@ def train(
                 flush=True,
             )
 
+    if model.ecological_readers and not design.reader_only:
+        train_ecological_readers(model, source, cache, design.ecology, device)
+
     checkpoint = Path(__file__).with_name("checkpoint.pt")
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), checkpoint)
@@ -467,7 +512,7 @@ def main() -> None:
     parser.add_argument("--cache", required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=1337)
-    parser.add_argument("--steps", type=int, default=2291)
+    parser.add_argument("--steps", type=int, default=8000)
     parser.add_argument("--reader-steps", type=int, default=100)
     parser.add_argument("--checkpoint")
     parser.add_argument("--reader-only", action="store_true")

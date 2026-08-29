@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from deepearth.core.ecology import EcologicalReadoutMixin
 from deepearth.core.objective import TrainingObjectiveMixin
 from deepearth.core.layers import consume_rng, mlp, per_name, preserve_rng
 from deepearth.core.reader import (
@@ -37,7 +38,9 @@ class Variable:
     reconstruct: bool = True
 
 
-class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
+class DeepEarth(
+    EcologicalReadoutMixin, ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module
+):
     """All scientific evidence must enter fusion through a mesh-state update."""
 
     def __init__(
@@ -59,14 +62,18 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         self.d_model = d_model
         self.levels = levels
         self.species_variable = "identity"
-        self.always_names = tuple(always_dims)
+        has_worldclim = "worldclim" in source.extra
+        self.always_names = (
+            *always_dims, *(("worldclim",) if has_worldclim else ())
+        )
         self._ablate_species = False
 
         self.reader_phase = False
         self.rank_aligned_expansion = False
         self._init_mesh(d_model, levels, log2_size)
-        self._init_inputs(variables, always_dims, d_model)
+        self._init_inputs(variables, always_dims, source, d_model)
         self._init_species(source, d_model)
+        self._init_ecological_readers(source, d_model)
         write_names = [*self.names, *self.always_names]
         self._init_backbone(
             variables, write_names, d_model, levels, n_latents, n_layers, n_heads
@@ -88,7 +95,8 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         self.neighbors = MeshNeighborhood(d_model, levels, max(10, log2_size - 2))
 
     def _init_inputs(
-        self, variables: Sequence[Variable], always_dims: Dict[str, int], d_model: int
+        self, variables: Sequence[Variable], always_dims: Dict[str, int],
+        source, d_model: int,
     ) -> None:
         self.adapters = nn.ModuleDict()
         self.category_inputs = nn.ModuleDict()
@@ -99,6 +107,12 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
                 self.category_inputs[v.name] = nn.Embedding(v.num_classes, d_model)
         for name, dim in always_dims.items():
             self.adapters[name] = FiberAdapter(dim, d_model)
+        if "worldclim" in source.extra:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20260824)
+                self.adapters["worldclim"] = FiberAdapter(
+                    int(source.extra["worldclim"][2]), d_model
+                )
 
     def _init_species(self, source, d_model: int) -> None:
         graph_args = dict(n_species=source.n_classes, d_model=d_model, n_layers=2, n_heads=4)
@@ -143,9 +157,16 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         n_heads: int,
     ) -> None:
         self.write_names = tuple(write_names)
+        base_write_names = [name for name in write_names if name != "worldclim"]
         self.write_type = per_name(
-            write_names, lambda _: torch.randn(d_model) * 0.02
+            base_write_names, lambda _: torch.randn(d_model) * 0.02
         )
+        if "worldclim" in write_names:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20260825)
+                self.write_type["worldclim"] = nn.Parameter(
+                    torch.randn(d_model) * 0.02
+                )
         with preserve_rng():
             self.fiber_residual = nn.ModuleDict({
                 name: nn.Linear(d_model, d_model, bias=False)
@@ -289,7 +310,10 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         self.fiber_reconstruct = nn.ModuleDict({
             name: mlp(d_model, d_model) for name in reconstruct_names
         })
-        consume_rng(*(mlp(d_model, d_model) for _ in self.always_names))
+        consume_rng(*(
+            mlp(d_model, d_model)
+            for name in self.always_names if name != "worldclim"
+        ))
         self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.sparse_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.coarse_scale_exchange = nn.Linear(d_model, d_model, bias=False)
@@ -302,7 +326,7 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         })
         consume_rng(*(
             nn.Linear(d_model, d_model, bias=False)
-            for _ in self.always_names
+            for name in self.always_names if name != "worldclim"
         ))
         self.lens_exchange_norm = nn.LayerNorm(d_model)
         self.lens_exchange = nn.Parameter(
@@ -459,6 +483,8 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         address = state.mean(-2)
         tokens, masks = [], []
         for name in self.write_names:
+            if name == "worldclim":
+                continue
             if name not in values or name not in present:
                 continue
             valid = present[name].bool()
@@ -480,6 +506,8 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         updates = torch.zeros_like(state)
         count = state.new_zeros((*state.shape[:-2], 1, 1))
         for name, mask in present.items():
+            if name == "worldclim":
+                continue
             if name not in values or name not in self.write_gate:
                 continue
             edit = self._adapt(name, values[name], species) + self.write_type[name]
@@ -571,6 +599,7 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
             relative = relative.unsqueeze(-2)
         neighbor = neighbor + relative
         return {
+            "coords": query_coords,
             "position_s": query.mean(-2),
             "position_t": self.absolute_proj_t(temporal).mean(-2),
             "position": query.mean(-2),
@@ -606,7 +635,12 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         write_mask = dict(present)
         for name in self.always_names:
             if name in values:
-                write_mask[name] = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
+                valid = values[name].isfinite().all(-1) \
+                        & (values[name].norm(dim=-1) > 1e-6)
+                if name == "worldclim":
+                    valid &= present.get(name, torch.zeros_like(valid))
+                    valid &= present.get("climate", torch.zeros_like(valid))
+                write_mask[name] = valid
         self._raw_state_tokens, self._raw_state_mask = self._raw_residuals(
             context["query_state"], values, write_mask, species
         )
@@ -745,16 +779,22 @@ class DeepEarth(ScientificReadoutMixin, TrainingObjectiveMixin, nn.Module):
         for name in given:
             if name in present:
                 present[name] = observed.get(name, torch.ones_like(present[name]))
+        present = self._with_worldclim_observed(present, observed)
         latent = self.encode(values, present, context)
         environment_species = None
         if tuple(given) == self.environment_names \
                 and self.species_variable in targets:
-            pooled = self._pool(latent, self.species_variable)
-            environment_species = self._niche_species_logits(pooled) \
-                                  + self._identity_detail_logits(pooled)
-            environment_species = self._hierarchical_family_read(
-                environment_species
-            )
+            if self.ecological_readers:
+                environment_species = self._ecological_species_read(
+                    latent, values, observed, context["coords"]
+                )
+            else:
+                pooled = self._pool(latent, self.species_variable)
+                environment_species = self._niche_species_logits(pooled) \
+                                      + self._identity_detail_logits(pooled)
+                environment_species = self._hierarchical_family_read(
+                    environment_species
+                )
         pollinator_species = None
         if self.poll_head is not None and "pollinator" in targets \
                 and self.species_variable not in given:

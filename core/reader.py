@@ -462,7 +462,8 @@ class MeshQueryReader(nn.Module):
         ).reshape(batch, tasks, self.d_model)
         deep_gates = torch.stack([
             self.deep_mesh_reader_gate[name]
-            if self.training or name not in {"community", "identity"}
+            if self.training or name != "community"
+            and (name != self.species_variable or tasks == 1)
             else self.deep_mesh_reader_gate[name] * 0.0
             for name in names
         ]).view(1, tasks, 1)

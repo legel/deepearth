@@ -56,7 +56,8 @@ class TrainingObjectiveMixin:
             for name in self.names
         }
         blank = torch.rand(batch, device=device) < 0.15
-        return {name: mask & ~blank for name, mask in present.items()}
+        present = {name: mask & ~blank for name, mask in present.items()}
+        return self._with_worldclim_observed(present, observed)
 
     def _family_error(self, logits, target):
         probability = logits.softmax(-1)
@@ -171,6 +172,7 @@ class TrainingObjectiveMixin:
             if name in self.environment_names else torch.zeros_like(observed[name])
             for name in self.names
         }
+        present = self._with_worldclim_observed(present, observed)
         latent = self.encode(
             values, present, context, detach_species=True
         )
@@ -269,6 +271,7 @@ class TrainingObjectiveMixin:
             return loss
 
         empty = {name: torch.zeros_like(observed[name]) for name in self.names}
+        empty = self._with_worldclim_observed(empty, observed)
         with torch.no_grad():
             empty_latent = self.encode(
                 values, empty, context, detach_species=True, species_mask=mask
@@ -306,6 +309,9 @@ class TrainingObjectiveMixin:
             else torch.zeros_like(observed[name])
             for name in self.names
         }
+        ordinary_present = self._with_worldclim_observed(
+            ordinary_present, observed
+        )
         devices = [torch.cuda.current_device()] \
                   if context["position"].is_cuda else []
         with torch.random.fork_rng(devices=devices), torch.no_grad():
@@ -326,6 +332,9 @@ class TrainingObjectiveMixin:
             else torch.zeros_like(observed[name])
             for name in self.names
         }
+        masked_present = self._with_worldclim_observed(
+            masked_present, observed
+        )
         with torch.random.fork_rng(devices=devices):
             latent = self.encode(
                 values, masked_present, context, species_mask=mask
@@ -359,6 +368,7 @@ class TrainingObjectiveMixin:
             else torch.zeros_like(observed[name])
             for name in self.names
         }
+        present = self._with_worldclim_observed(present, observed)
         latent = self.encode(
             values, present, context, detach_species=True
         )
