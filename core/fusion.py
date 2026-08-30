@@ -15,7 +15,9 @@ from deepearth.core.layers import consume_rng, mlp, per_name, preserve_rng
 from deepearth.core.reader import (
     MeshQueryReader,
     RoutedMeshReader,
+    SegmentDenoiser,
     ScientificReadoutMixin,
+    SpecialistMesh,
 )
 from deepearth.core.world_mesh import (
     FiberAdapter,
@@ -60,7 +62,10 @@ class DeepEarth(
         self.d_model = d_model
         self.levels = levels
         self.species_variable = "identity"
-        self.always_names = tuple(always_dims)
+        has_worldclim = "worldclim" in source.extra
+        self.always_names = (
+            *always_dims, *(("worldclim",) if has_worldclim else ())
+        )
         self._ablate_species = False
 
         self.reader_phase = False
@@ -79,6 +84,8 @@ class DeepEarth(
             self._init_fiber_mesh(
                 variables, write_names, d_model, levels, n_heads
             )
+        with preserve_rng():
+            self._init_specialists(variables, d_model, levels, n_heads)
         self._reset_runtime_state()
 
     def _init_mesh(self, d_model: int, levels: int, log2_size: int) -> None:
@@ -149,9 +156,17 @@ class DeepEarth(
         n_layers: int,
         n_heads: int,
     ) -> None:
+        self.write_names = tuple(write_names)
+        base_write_names = [name for name in write_names if name != "worldclim"]
         self.write_type = per_name(
-            write_names, lambda _: torch.randn(d_model) * 0.02
+            base_write_names, lambda _: torch.randn(d_model) * 0.02
         )
+        if "worldclim" in write_names:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20260825)
+                self.write_type["worldclim"] = nn.Parameter(
+                    torch.randn(d_model) * 0.02
+                )
         with preserve_rng():
             self.fiber_residual = nn.ModuleDict({
                 name: nn.Linear(d_model, d_model, bias=False)
@@ -183,7 +198,18 @@ class DeepEarth(
     ) -> None:
         self.poll_head = nn.Linear(d_model, source.n_pollinators) if hasattr(source, "n_pollinators") else None
         self.pollinator_reader = None
+        self.poll_transfer_head = None
         if self.poll_head is not None:
+            with preserve_rng():
+                self.poll_transfer_head = nn.Linear(
+                    d_model, source.n_pollinators
+                )
+                self.poll_transfer_head.load_state_dict(
+                    self.poll_head.state_dict()
+                )
+                self.pollinator_transfer_router = nn.Linear(1, 1)
+                nn.init.zeros_(self.pollinator_transfer_router.weight)
+                nn.init.constant_(self.pollinator_transfer_router.bias, -2.0)
             self.pollinator_log_temperature = nn.Parameter(
                 torch.zeros(()), requires_grad=False
             )
@@ -214,6 +240,9 @@ class DeepEarth(
             with preserve_rng():
                 self.species_myco_head = mlp(
                     d_model, 5, d_model, normalize=False
+                )
+                self.myco_relation_gate = nn.Parameter(
+                    torch.tensor(math.atanh(0.75))
                 )
             train_species = torch.zeros(
                 source.n_classes, dtype=torch.bool, device=source.cls.device
@@ -281,7 +310,10 @@ class DeepEarth(
         self.fiber_reconstruct = nn.ModuleDict({
             name: mlp(d_model, d_model) for name in reconstruct_names
         })
-        consume_rng(*(mlp(d_model, d_model) for _ in self.always_names))
+        consume_rng(*(
+            mlp(d_model, d_model)
+            for name in self.always_names if name != "worldclim"
+        ))
         self.fiber_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.sparse_fusion_gate = nn.Parameter(torch.tensor(0.05))
         self.coarse_scale_exchange = nn.Linear(d_model, d_model, bias=False)
@@ -294,11 +326,116 @@ class DeepEarth(
         })
         consume_rng(*(
             nn.Linear(d_model, d_model, bias=False)
-            for _ in self.always_names
+            for name in self.always_names if name != "worldclim"
         ))
         self.lens_exchange_norm = nn.LayerNorm(d_model)
         self.lens_exchange = nn.Parameter(
             torch.zeros(levels, len(LENSES), len(LENSES))
+        )
+
+    def _init_specialists(
+        self, variables, d_model: int, levels: int, n_heads: int
+    ) -> None:
+        self.specialist_meshes = nn.ModuleList([
+            nn.ModuleList([
+                SpecialistMesh(d_model, n_heads) for _ in range(2)
+            ])
+            for _ in LENSES
+        ])
+        self.specialist_pair_mix = nn.Parameter(
+            torch.zeros(len(LENSES), 2)
+        )
+        self.specialist_type = nn.Parameter(
+            torch.randn(len(LENSES), d_model) * 0.02
+        )
+        self.specialist_aggregate_norm = nn.LayerNorm(d_model)
+        self.specialist_fusion = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.specialist_output_norm = nn.LayerNorm(d_model)
+        self.specialist_fusion_gate = nn.Parameter(torch.tensor(0.05))
+        self.raw_residual_norm = nn.LayerNorm(d_model)
+        self.raw_residual_read = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.raw_residual_output_norm = nn.LayerNorm(d_model)
+        self.raw_residual_gate = nn.Parameter(torch.tensor(0.05))
+        self.specialist_decode_query = nn.Parameter(
+            torch.randn(len(variables), d_model) * 0.02
+        )
+        self.specialist_reconstruct = nn.ModuleDict({
+            variable.name: nn.Linear(d_model, d_model)
+            for variable in variables
+        })
+
+        relations = ["identity"]
+        if self.poll_head is not None:
+            relations.extend(("pollinator", "pollinator_transfer"))
+        if self.myco_head is not None:
+            relations.append("myco")
+        self.relation_names = tuple(relations)
+        self.relation_meshes = nn.ModuleDict({
+            name: nn.ModuleList([
+                SpecialistMesh(d_model, n_heads) for _ in range(2)
+            ])
+            for name in relations
+        })
+        self.relation_pair_mix = per_name(relations, lambda _: torch.zeros(2))
+        self.relation_readers = nn.ModuleDict({
+            name: nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+            for name in relations
+        })
+        self.relation_reader_norms = nn.ModuleDict({
+            name: nn.LayerNorm(d_model) for name in relations
+        })
+        self.relation_output_norms = nn.ModuleDict({
+            name: nn.LayerNorm(d_model) for name in relations
+        })
+        self.relation_query = per_name(
+            relations, lambda _: torch.randn(d_model) * 0.02
+        )
+        self.relation_gate = per_name(relations, lambda _: torch.tensor(0.05))
+
+        corruption = {
+            "abiotic": (0.05, 0.05, 0.15, 0.010),
+            "visual": (0.15, 0.10, 0.10, 0.020),
+            "biological": (0.08, 0.08, 0.10, 0.010),
+            "ecological": (0.15, 0.12, 0.15, 0.020),
+            "identity": (0.08, 0.08, 0.10, 0.010),
+            "pollinator": (0.15, 0.12, 0.15, 0.020),
+            "pollinator_transfer": (0.10, 0.10, 0.12, 0.015),
+            "myco": (0.10, 0.10, 0.12, 0.015),
+        }
+        segments = (*LENSES, *relations)
+        self.segment_denoisers = nn.ModuleDict({
+            name: SegmentDenoiser(
+                d_model, n_heads, levels,
+                token_drop=corruption[name][0],
+                cell_drop=corruption[name][1],
+                level_drop=corruption[name][2],
+                jitter=corruption[name][3],
+            )
+            for name in segments
+        })
+        self.segment_type = per_name(
+            segments, lambda _: torch.randn(d_model) * 0.02
+        )
+        self.segment_gate = per_name(
+            segments, lambda _: torch.tensor(math.atanh(0.5))
+        )
+        self.segment_fusion_norm = nn.LayerNorm(d_model)
+        self.segment_fusion = nn.MultiheadAttention(
+            d_model, n_heads, batch_first=True
+        )
+        self.segment_output_norm = nn.LayerNorm(d_model)
+        denoised = {
+            self.species_variable, "community", "pollinator", "lfmc",
+            "myco", "flower", "seasonality", "water", "soil_drainage",
+            "form", "plant_type", "growth_rate", "sun", "ease_of_care",
+        }
+        self.segment_task_gate = per_name(
+            [name for name in self.mesh_read_names if name in denoised],
+            lambda _: torch.tensor(0.1),
         )
 
     def _reset_runtime_state(self) -> None:
@@ -306,7 +443,29 @@ class DeepEarth(
         self._fiber_mesh = None
         self._fiber_prior_mesh = None
         self._latest_fiber_prior = None
+        self._specialist_mesh = None
+        self._specialist_latents = None
+        self._relation_mesh = {}
+        self._relation_latents = {}
+        self._denoised_pool_cache = {}
+        self._identity_graph_uncertainty = None
+        self._pollinator_route = None
+        self._raw_state_tokens = None
+        self._raw_state_mask = None
         self.mesh_reader.bind(None, None, None)
+
+    @staticmethod
+    def _mesh_pair(meshes, state, mix):
+        branches = [mesh(state) for mesh in meshes]
+        weight = mix.softmax(0)
+        combined = state + sum(
+            weight[index] * (branch_state - state)
+            for index, (branch_state, _) in enumerate(branches)
+        )
+        latent = torch.cat([
+            branch_latent for _, branch_latent in branches
+        ], 1)
+        return combined, latent
 
     def _species(self, mask: torch.Tensor | None = None) -> torch.Tensor:
         refined = self.species_graph._seed() if self._ablate_species else self.species_graph(mask)
@@ -320,6 +479,23 @@ class DeepEarth(
             return self.adapters[name](value)
         return self.category_inputs[name](value.long().clamp_min(0))
 
+    def _raw_residuals(self, state, values, present, species):
+        address = state.mean(-2)
+        tokens, masks = [], []
+        for name in self.write_names:
+            if name == "worldclim":
+                continue
+            if name not in values or name not in present:
+                continue
+            valid = present[name].bool()
+            token = (
+                self._adapt(name, values[name], species)
+                + self.write_type[name] + address
+            ).detach()
+            tokens.append(token * valid.unsqueeze(-1).to(token.dtype))
+            masks.append(valid)
+        return torch.stack(tokens, 1), torch.stack(masks, 1)
+
     def _write(
         self,
         state: torch.Tensor,
@@ -330,6 +506,8 @@ class DeepEarth(
         updates = torch.zeros_like(state)
         count = state.new_zeros((*state.shape[:-2], 1, 1))
         for name, mask in present.items():
+            if name == "worldclim":
+                continue
             if name not in values or name not in self.write_gate:
                 continue
             edit = self._adapt(name, values[name], species) + self.write_type[name]
@@ -439,12 +617,33 @@ class DeepEarth(
         species_mask: torch.Tensor | None = None,
     ):
         species = self._species(species_mask)
+        identity = values.get(self.species_variable)
+        identity_present = present.get(self.species_variable)
+        if identity is not None and identity_present is not None:
+            index = identity.long().clamp(0, species.shape[0] - 1)
+            seed = self.species_graph._seed().detach()[index]
+            uncertainty = 1 - F.cosine_similarity(
+                species.detach()[index], seed, dim=-1
+            )
+            self._identity_graph_uncertainty = uncertainty.mul(
+                identity_present.to(uncertainty.dtype)
+            ).unsqueeze(-1)
+        else:
+            self._identity_graph_uncertainty = None
         if detach_species:
             species = species.detach()
         write_mask = dict(present)
         for name in self.always_names:
             if name in values:
-                write_mask[name] = values[name].isfinite().all(-1) & (values[name].norm(dim=-1) > 1e-6)
+                valid = values[name].isfinite().all(-1) \
+                        & (values[name].norm(dim=-1) > 1e-6)
+                if name == "worldclim":
+                    valid &= present.get(name, torch.zeros_like(valid))
+                    valid &= present.get("climate", torch.zeros_like(valid))
+                write_mask[name] = valid
+        self._raw_state_tokens, self._raw_state_mask = self._raw_residuals(
+            context["query_state"], values, write_mask, species
+        )
         query_fibers = self._fiber_write(context["query_state"], values, write_mask, species)
         query_priors = self._latest_fiber_prior
         query = self._write(context["query_state"], values, write_mask, species)
@@ -483,6 +682,7 @@ class DeepEarth(
         self.mesh_reader.bind(
             fiber_summary, self._fiber_mesh, self._fiber_prior_mesh
         )
+        self._denoised_pool_cache = {}
         normalized = self.fiber_fuse_norm(fiber_summary.flatten(1, 2))
         latent = latent + torch.tanh(self.fiber_fusion_gate) * self.fiber_fuse(
             latent.detach(), normalized, normalized, need_weights=False
@@ -500,10 +700,69 @@ class DeepEarth(
         route = sparse_weight.detach() + dense_weight - dense_weight.detach()
         mesh_read = torch.einsum("blk,bkd->bld", route, mesh_tokens)
         latent = latent + torch.tanh(self.sparse_fusion_gate) * mesh_read
-        return latent
+
+        specialist_states, specialist_latents = [], []
+        for lens, specialists in enumerate(self.specialist_meshes):
+            state, expert = self._mesh_pair(
+                specialists, fiber_mesh[..., lens, :],
+                self.specialist_pair_mix[lens],
+            )
+            specialist_states.append(state)
+            specialist_latents.append(expert)
+        self._specialist_mesh = torch.stack(specialist_states, 3)
+        self._specialist_latents = torch.stack(specialist_latents, 1)
+
+        biological = self._specialist_mesh[
+            ..., LENS_INDEX["biological"], :
+        ]
+        relation_sources = {"identity": biological}
+        if "pollinator" in self.relation_meshes:
+            ecological = self._specialist_mesh[
+                ..., LENS_INDEX["ecological"], :
+            ]
+            relation_sources["pollinator"] = 0.5 * (
+                biological + ecological
+            )
+            relation_sources["pollinator_transfer"] = biological
+        if "myco" in self.relation_meshes:
+            abiotic = self._specialist_mesh[..., LENS_INDEX["abiotic"], :]
+            relation_sources["myco"] = 0.5 * (biological + abiotic)
+        self._relation_mesh = {}
+        self._relation_latents = {}
+        for name, state in relation_sources.items():
+            relation_state, relation_latent = self._mesh_pair(
+                self.relation_meshes[name], state,
+                self.relation_pair_mix[name],
+            )
+            self._relation_mesh[name] = relation_state
+            self._relation_latents[name] = relation_latent
+
+        expert_tokens = self._specialist_latents + self.specialist_type.view(
+            1, len(LENSES), 1, self.d_model
+        )
+        expert_tokens = self.specialist_aggregate_norm(
+            expert_tokens.flatten(1, 2)
+        )
+        expert_read = self.specialist_fusion(
+            latent.detach(), expert_tokens, expert_tokens, need_weights=False
+        )[0]
+        latent = latent + torch.tanh(self.specialist_fusion_gate) \
+                 * self.specialist_output_norm(expert_read)
+
+        raw_tokens = self.raw_residual_norm(self._raw_state_tokens)
+        raw_mask = self._raw_state_mask.clone()
+        raw_mask[:, 0] |= ~raw_mask.any(-1)
+        raw_read = self.raw_residual_read(
+            latent.detach(), raw_tokens, raw_tokens,
+            key_padding_mask=~raw_mask, need_weights=False,
+        )[0]
+        return latent + torch.tanh(self.raw_residual_gate) \
+               * self.raw_residual_output_norm(raw_read)
 
     def decode(self, latent: torch.Tensor, name: str) -> torch.Tensor:
         pooled = self._pool(latent, name)
+        if name == self.species_variable:
+            pooled = self._relation_pool(pooled, "identity")
         logits = self._decode_pooled(pooled, name)
         if name == self.species_variable and not self.training \
                 and self._fiber_mesh is not None:
@@ -520,22 +779,21 @@ class DeepEarth(
         for name in given:
             if name in present:
                 present[name] = observed.get(name, torch.ones_like(present[name]))
+        present = self._with_worldclim_observed(present, observed)
         latent = self.encode(values, present, context)
         environment_species = None
         if tuple(given) == self.environment_names \
                 and self.species_variable in targets:
-            pooled = self._pool(latent, self.species_variable)
-            environment_species = self._niche_species_logits(pooled) \
-                                  + self._identity_detail_logits(pooled)
-            environment_species = self._hierarchical_family_read(
-                environment_species
-            )
             if self.ecological_readers:
-                ecological_species = self._ecological_species_read(
+                environment_species = self._ecological_species_read(
                     latent, values, observed, context["coords"]
                 )
-                environment_species = self._preserve_environment_family(
-                    environment_species, ecological_species
+            else:
+                pooled = self._pool(latent, self.species_variable)
+                environment_species = self._niche_species_logits(pooled) \
+                                      + self._identity_detail_logits(pooled)
+                environment_species = self._hierarchical_family_read(
+                    environment_species
                 )
         pollinator_species = None
         if self.poll_head is not None and "pollinator" in targets \
@@ -550,8 +808,7 @@ class DeepEarth(
                 pooled = self._pool(latent, "community")
                 out[name] = self.community_metric(pooled) @ self._refined_species.t()
             elif name == "pollinator":
-                pooled = self._pollinator_pool(latent)
-                prediction = self.poll_head(pooled)
+                prediction = self._pollinator_logits(latent)
                 if pollinator_species is None:
                     prediction = self._calibrate_pollinator_logits(prediction)
                 else:

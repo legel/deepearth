@@ -28,6 +28,7 @@ def environment_batch(
         else torch.zeros_like(observed[name])
         for name in model.names
     }
+    present = model._with_worldclim_observed(present, observed)
     latent = model.encode(values, present, context)
     pooled = model._pool(latent, model.species_variable)
     logits = model._niche_species_logits(pooled, include_lens=False)
@@ -251,10 +252,8 @@ def evaluate_family(model, source, index, batch, neighbor_index, mixes):
 
 
 def train_family(model, source, design, device):
-    prefixes = ("adapters.worldclim.", "habitat_family_multimodal_")
-    parameters = freeze(model, prefixes)
+    parameters = freeze(model, "habitat_family_multimodal_")
     modules = (
-        model.adapters["worldclim"],
         model.habitat_family_multimodal_norm,
         model.habitat_family_multimodal_reader,
         model.habitat_family_multimodal_head,
@@ -281,7 +280,7 @@ def train_family(model, source, design, device):
     best_state = {
         name: value.detach().cpu().clone()
         for name, value in model.state_dict().items()
-        if name.startswith(prefixes)
+        if name.startswith("habitat_family_multimodal_")
     }
     print(
         f"family mesh baseline  B1 {float(baseline[0]):.6f}  "
@@ -321,7 +320,7 @@ def train_family(model, source, design, device):
                     best_state = {
                         name: value.detach().cpu().clone()
                         for name, value in model.state_dict().items()
-                        if name.startswith(prefixes)
+                        if name.startswith("habitat_family_multimodal_")
                     }
                     best_state["habitat_family_multimodal_mix"] = \
                         mixture.detach().cpu().clone()
