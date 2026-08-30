@@ -39,7 +39,7 @@
 // ATOMIC ADD FOR HALF PRECISION
 // =============================================================================
 
-// Integer atomics make colliding gradient accumulation order-independent.
+// Integer fixed-point accumulation is order-independent across hash collisions.
 static inline __device__ void atomicAddFixed(long long *address, float val, float scale) {
     atomicAdd(reinterpret_cast<unsigned long long *>(address),
               static_cast<unsigned long long>(static_cast<long long>(llrintf(val * scale))));

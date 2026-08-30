@@ -1,41 +1,28 @@
-# DeepCal champion report
+# DeepEarth champion report
 
-## 25.4M fixed-step hierarchical-family record
+## Sparse ecological Earth4D record
 
-The compact model improves both public aggregates over a seed-matched 24.9M control at exactly 2,291 optimizer
-steps. It retains the PR's central result: the 797.1M default is unnecessary. The candidate is 96.8% smaller and
-uses 48.4% less training VRAM. Its 2,291-step score is also 18.7% higher than the historical 797M receipt, which
-used 5,126 steps; that row is replacement context, not the matched promotion comparison.
+The model builds typed, multiresolution Earth4D state, processes each scientific lens with paired graph streams, and
+denoises only query-selected mesh segments. Relation-specific meshes preserve identity, pollinator, and mycorrhizal
+structure; the ecological reader combines AlphaEarth, WorldClim, habitat, distribution, community-scale, and seasonal
+evidence before ranking species.
 
 | Model | Seed | Steps | Harmonic | Arithmetic |
 |---|---:|---:|---:|---:|
-| Registered 797.1M reference | 1337 | 5,126 | 0.318693 | 0.570700 |
-| Fixed-step 24.9M control | 1337 | 2,291 | 0.367661 | 0.578883 |
-| Fixed-step 24.9M control | 1338 | 2,291 | 0.365992 | 0.581475 |
-| Prior 25.4M niche fusion | 2-seed mean | 2,291 | 0.373924 | 0.583204 |
-| Prior masked-pollinator record | 2-seed mean | 2,291 | 0.376617 | 0.586926 |
-| **Hierarchical family MAP** | **1337** | **2,291** | **0.377589** | **0.586005** |
-| **Hierarchical family MAP** | **1338** | **2,291** | **0.379225** | **0.588743** |
-| **Candidate mean** | **2 seeds** | **2,291** | **0.378407** | **0.587374** |
-| **Delta vs prior PR record** |  |  | **+0.001790 (+0.48%)** | **+0.000448** |
-| **Delta vs fixed-step control** |  |  | **+0.011581 (+3.16%)** | **+0.007195** |
-| **Difference vs historical reference** |  |  | **+0.059714 (+18.74%)** | **+0.016674** |
+| Prior family-preserving record | two-seed mean | 8,300 | 0.385644 | 0.575712 |
+| Sparse ecological Earth4D | 1337 | 8,000 | 0.388024 | 0.577688 |
+| Sparse ecological Earth4D | 1338 | 8,000 | 0.388125 | 0.577697 |
+| **Sparse ecological mean** | **two seeds** | **8,000** | **0.388075** | **0.577692** |
+| **Record delta** |  |  | **+0.002430** | **+0.001980** |
 
-When plant identity is hidden, the model now composes its species posterior through the empirical
-species-to-pollinator table and blends that distribution with the learned pollinator decoder. This makes the
-interaction prediction consistent with the model's own uncertain species belief instead of requiring a single
-guessed species. It implements science rule 27: plant-pollinator interactions carry biological signal.
+The same architecture wins on both independent checkpoints. B1 environment-to-species top-10 rises
+`0.391769 -> 0.441402`; B23 species-calibration MRR rises
+`0.180489 -> 0.202651`. The evaluator, benchmark
+definitions, data, and spatial holdout are unchanged.
 
-The mechanism improves photo-only pollinator recall by 0.0892, photo-plus-environment recall by 0.0872,
-environment recall by 0.0054, and spacetime recall by 0.0043. Scores outside the pollinator pathway are identical
-because the validation replays the exact same trained checkpoints; no additional optimization steps are involved.
+The production model has 52,664,449 parameters. Both checkpoint conversions cover every production parameter; the
+seed-1337 conversion drops only 19 research-only tensors. The complete two-seed receipt is in `BENCHMARKS.md` and
+`champion_scores.json`.
 
-For masked species queries, the new decoder marginalizes the species posterior by botanical family and promotes
-the most likely species inside the family with the greatest total probability. It preserves every other species
-logit, so fine-grained evidence is retained while family-level decisions become coherent. On the exact same
-checkpoints it raises B6 family-from-environment from 0.159364 to 0.172357 and B8 family-from-spacetime from
-0.161352 to 0.170268, while increasing both public aggregates on both seeds. This implements science rules 17 and
-23: posterior evidence is composed probabilistically without collapsing the species distribution.
-
-The canonical configuration uses batch 512, dense hash optimization, learning rate `1e-3`, and exactly 2,291
-optimizer steps. The evaluator, aggregate definitions, spatial holdout, and extraction recipe are unchanged.
+Evaluation base: `bbbe6be6bf30a8d169605d67b0b6b9eec4d29b74`. Evaluator SHA-256:
+`59d37fbe2d5645c8169475ef61d298637638cc996403ba77da9b5ed20cdba99c`.
