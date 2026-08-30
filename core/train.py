@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import gc
 import json
 import time
 from dataclasses import dataclass, field, replace
@@ -132,21 +131,9 @@ READER_PARAMETERS = (
     "sparse_fusion_gate", "decode_query", "decoders.", "community_metric.",
     "species_graph.",
     "poll_head.", "pollinator_reader.", "identity_detail_reader.",
-    "poll_transfer_head.", "pollinator_transfer_router.",
     "lfmc_head.", "myco_head.", "species_myco_head.",
     "flower_head.", "mesh_reader.",
     "species_niche_key", "species_niche_adapter.",
-    "specialist_meshes.", "specialist_pair_mix", "specialist_fusion.",
-    "specialist_fusion_gate", "specialist_aggregate_norm.",
-    "specialist_output_norm.", "specialist_type", "raw_residual_read.",
-    "raw_residual_gate", "raw_residual_norm.",
-    "raw_residual_output_norm.", "specialist_decode_query",
-    "specialist_reconstruct.", "relation_meshes.", "relation_pair_mix.",
-    "relation_readers.", "relation_reader_norms.",
-    "relation_output_norms.", "relation_query.", "relation_gate.",
-    "segment_denoisers.", "segment_type.", "segment_gate.",
-    "segment_fusion.", "segment_fusion_norm.",
-    "segment_output_norm.", "segment_task_gate.",
 )
 EXPANSION_PARAMETERS = (
     "mesh_reader.deep_mesh_reader.",
@@ -160,10 +147,11 @@ LFMC_LENS_PARAMETERS = (
     "lfmc_lens_reader.", "lfmc_lens_reader_norm.", "lfmc_lens_head."
 )
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
-RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
+RELATION_PARAMETERS = ("species_myco_head.",)
 CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
 ECOLOGY_PARAMETERS = (
     "environment_family_reader.", "environment_species_reader.",
+    "adapters.worldclim.",
     "habitat_family_expert.", "habitat_family_multimodal_",
     "habitat_species_", "distribution_", "community_scale_meshes.",
 )
@@ -282,7 +270,7 @@ def enter_reader_phase(model, optimizers, parameters, design, device, budget):
                 or name.startswith(SPECIES_LENS_PARAMETERS)
                 or name.startswith(LFMC_LENS_PARAMETERS)
                 or name.startswith(CALIBRATION_PARAMETERS)
-            )
+            ) and not name.startswith(EXPANSION_PARAMETERS)
         parameter.requires_grad_(trainable)
 
     graph = matching_parameters(model, "species_graph.")
@@ -304,10 +292,6 @@ def enter_reader_phase(model, optimizers, parameters, design, device, budget):
         parameter for parameter in model.parameters()
         if parameter.requires_grad and id(parameter) not in excluded
     ]
-    optimizers.groups.pop("base", None)
-    gc.collect()
-    if device.startswith("cuda"):
-        torch.cuda.empty_cache()
     optimizers.add("base", adamw_group(
         base,
         lr=design.learning_rate * 0.2,
@@ -366,7 +350,6 @@ def lfmc_correlation_loss(
             else torch.zeros_like(observed[name])
             for name in model.names
         }
-        present = model._with_worldclim_observed(present, observed)
         latent = model.encode(
             values, present, context, detach_species=True
         )

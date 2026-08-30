@@ -503,13 +503,6 @@ class EcologicalReadoutMixin:
         family = family / family.sum(-1, keepdim=True)
         return self._protected_family_tail(species_logits, family, 1.0)
 
-    def _with_worldclim_observed(self, present, observed):
-        if "worldclim" not in self.always_names or "worldclim" not in observed:
-            return present
-        present = dict(present)
-        present["worldclim"] = observed["worldclim"]
-        return present
-
     def _ecological_species_read(self, latent, values, observed, coords):
         pooled = self._pool(latent, self.species_variable)
         species = self._niche_species_logits(pooled, include_lens=False)
@@ -528,3 +521,11 @@ class EcologicalReadoutMixin:
             species, self._community_scale_scores(values, coords)
         )
         return self._seasonal_family_read(species, coords)
+
+    def _preserve_environment_family(self, base, candidate):
+        family = self.species_family[base.argmax(-1)]
+        eligible = self.species_family.unsqueeze(0) == family.unsqueeze(1)
+        selected = candidate.masked_fill(~eligible, -torch.inf).argmax(-1)
+        return candidate.scatter(
+            1, selected[:, None], candidate.amax(-1)[:, None] + 1e-4
+        )

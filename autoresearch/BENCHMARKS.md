@@ -1,6 +1,6 @@
-# DeepEarth wide-cell Earth4D mesh scorecard
+# DeepEarth harmonic scorecard
 
-Protocol: `public-main-bbbe6be6-fixed-8300-steps`. Model: `core/train.py::Design(width=192, levels=12, hash_log2=14, latents=16, layers=2)`.
+Protocol: `public-main-bbbe6be6-fixed-8300-steps`. Backbone: `core/train.py::Experiment(width=192, levels=12, hash_log2=14, latents=16, layers=2)`.
 Data: 621,558 observations, 29,668-row spatial holdout, complete 64-dimensional AlphaEarth coverage. Values are the unrounded mean of two independent runs through Lance’s unchanged public evaluator.
 
 | Model | Seed | Steps | Harmonic | Arithmetic | Parameters |
@@ -12,24 +12,26 @@ Data: 621,558 observations, 29,668-row spatial holdout, complete 64-dimensional 
 | **192-wide Earth4D mesh** | **1337** | **8,300** | **0.382631** | **0.572135** | **22.7M** |
 | **192-wide Earth4D mesh** | **1338** | **8,300** | **0.388055** | **0.578847** | **22.7M** |
 | **192-wide mesh mean** | **2 seeds** | **8,300** | **0.385343** | **0.575491** | **22.7M** |
-| Sparse specialist mesh candidate | 1337 | 8,000 | 0.384141 | 0.577218 | 46.0M active |
-| Delta vs 192-wide seed 1337 |  |  | +0.001510 | +0.005083 | +24.2M active |
-| **Delta vs 128-wide mesh** |  |  | **+0.006002** | **+0.013657** | **+8.2M** |
-| **Delta vs registered 25.4M champion** |  |  | **+0.006936** | **-0.011884** | **-2.7M** |
+| Ecological reader | 1337 | 8,300 | 0.383805 | 0.572934 | 27.6M |
+| Ecological reader | 1338 | 8,300 | 0.387483 | 0.578490 | 27.6M |
+| **Ecological reader mean** | **2 seeds** | **8,300** | **0.385644** | **0.575712** | **27.6M** |
+| **Delta vs 192-wide mesh** |  |  | **+0.000301** | **+0.000222** | **+4.9M** |
+| **Delta vs 128-wide mesh** |  |  | **+0.006303** | **+0.013879** | **+13.1M** |
+| **Delta vs registered 25.4M champion** |  |  | **+0.007237** | **-0.011662** | **+2.2M** |
 
 ## Record criterion
 
-The public north star remains the harmonic mean, with the arithmetic mean and every human-interpretable capability reported alongside it. The 192-wide mesh is therefore a new harmonic record, not an arithmetic record. Its matched promotion comparison is the otherwise identical 128-wide mesh at 8,300 steps: both candidate seeds improve both aggregates over their seed-matched controls.
+The public north star remains the harmonic mean, with the arithmetic mean and every human-interpretable capability reported alongside it. The ecological reader advances the harmonic record and improves arithmetic over the same two frozen Earth4D backbones. Arithmetic remains below the older 25.4M champion.
 
 The older 25.4M champion used 2,291 steps, so that row is a public-score comparison rather than an equal-budget architecture ablation. Relative to it, the mesh improves harmonic breadth while losing arithmetic capability mass; the complete regression profile below is part of the record. The evaluator, benchmark definitions, spatial holdout, and active 58/63 suite are unchanged.
 
-The sparse specialist mesh is a matched-seed advancement, not a replacement for the two-seed champion receipt. It
-improves both aggregates over seed 1337 while remaining 0.001202 below the existing two-seed harmonic mean. Its full
-single-seed scorecard follows so the tradeoff is visible while the second confirmation remains intentionally deferred.
+The ecological reader is a two-seed record. It leaves the confirmed Earth4D backbone unchanged, reads AlphaEarth,
+WorldClim, coordinates, and frozen mesh state, and preserves the backbone's family decision while reranking species
+inside that family. The complete two-seed receipt follows; no evaluator or benchmark definition changed.
 
 ## Capability scorecard
 
-Capabilities are ordered weakest-first by the new two-seed mean. Deltas compare against the registered 25.4M public champion.
+This table preserves the prior 192-wide mesh receipt. Capabilities are ordered weakest-first by its two-seed mean; deltas compare against the registered 25.4M public champion.
 
 | Benchmark | Registered champion | 192-wide mesh | Delta | Seed 1337 | Seed 1338 |
 |---|---:|---:|---:|---:|---:|
@@ -99,73 +101,70 @@ Derived `*_gain` values remain diagnostics. The unchanged public evaluator logis
 | `B60_community_phylo_graph_gain` | 0.058334 | 0.292431 | +0.234097 | 0.278551 | 0.306311 |
 | `B24_geo_information_gain` | 0.426335 | 0.382314 | -0.044020 | 0.376163 | 0.388466 |
 
-+## Sparse specialist candidate scorecard
+## Ecological reader record scorecard
 
-Seed 1337, 8,000 steps, production port, unchanged public evaluator. Harmonic: `0.384141`. Arithmetic: `0.577218`.
+Both seeds use their independently trained reader weights over the corresponding confirmed backbone. Values are ordered weakest-first by the two-seed mean.
 
-| Capability | Score |
-|---|---:|
-| `B55_pollinator_phylo_transfer_recall` | 0.038076 |
-| `B50_pollinator_from_spacetime_recall` | 0.179756 |
-| `B23_species_calibration_mrr` | 0.180046 |
-| `B8_family_from_spacetime` | 0.182924 |
-| `B51_pollinator_from_env_recall` | 0.183262 |
-| `B6_family_from_env` | 0.197553 |
-| `B15_vision_from_aerial_cos` | 0.255547 |
-| `B20_community_from_env_recall` | 0.271620 |
-| `B22_companions_recall` | 0.274003 |
-| `B42_mycorrhiza_from_env` | 0.275868 |
-| `B21_community_from_species_recall` | 0.283657 |
-| `B28_flowering_peak_month_mrr` | 0.324644 |
-| `B18_infer_climate_cos` | 0.330557 |
-| `B5_species_from_spacetime_top10` | 0.339490 |
-| `B1_species_from_env_top10` | 0.387960 |
-| `B34_lfmc_from_env` | 0.404916 |
-| `B47_infer_naip_ir_cos` | 0.422343 |
-| `B43_infer_hydro_cos` | 0.424603 |
-| `B44_infer_topo_cos` | 0.425679 |
-| `B48_pollinator_from_photo_only_recall` | 0.498898 |
-| `B52_pollinator_from_photo_recall` | 0.501962 |
-| `B19_infer_aerial_cos` | 0.516446 |
-| `B37_imagine_vision_bio_cos` | 0.536112 |
-| `B45_vision_bio_leave_one_out_cos` | 0.546723 |
-| `B41_pollinator_from_species_recall` | 0.553952 |
-| `B17_infer_soil_cos` | 0.568136 |
-| `B13_imagine_vision_cos` | 0.629903 |
-| `B16_infer_clay_cos` | 0.654303 |
-| `B14_vision_leave_one_out_cos` | 0.656610 |
-| `B27_flowering_fidelity` | 0.680920 |
-| `B26_flowering_auc` | 0.736330 |
-| `B46_infer_chm_cos` | 0.763073 |
-| `B4_species_from_photo_only_top1` | 0.764426 |
-| `B49_form_trait_f1` | 0.770400 |
-| `B2_species_from_photo_top1` | 0.771875 |
-| `B9_phylo_from_photo_cos` | 0.785697 |
-| `B54_pollinator_dist_kl` | 0.800258 |
-| `B38_water_soil_regime_f1` | 0.822142 |
-| `B53_pollinator_calibration_mrr` | 0.845454 |
-| `B33_growth_rate_trait_f1` | 0.854568 |
-| `B10_traits_from_photo_env_f1` | 0.859935 |
-| `B35_sun_trait_f1` | 0.860257 |
-| `B11_traits_from_photo_f1` | 0.863827 |
-| `B32_plant_type_trait_f1` | 0.907110 |
-| `B30_seasonality_trait_f1` | 0.907669 |
-| `B3_species_from_photo_top5` | 0.934171 |
-| `B36_ease_of_care_trait_f1` | 0.935189 |
-| `B7_family_from_phylo` | 0.954227 |
-| `B12_traits_leave_one_out_f1` | 0.997847 |
-| `B63_myco_from_species_f1` | 1.000000 |
-
-| Mechanism diagnostic | Score |
-|---|---:|
-| `B58_lfmc_phylo_graph_gain` | 0.000000 |
-| `B57_flowering_phylo_graph_gain` | 0.000747 |
-| `B56_family_phylo_graph_gain` | 0.001550 |
-| `B59_pollinator_phylo_graph_gain` | 0.003332 |
-| `B61_trait_phylo_graph_gain` | 0.005410 |
-| `B62_mycorrhiza_phylo_graph_gain` | 0.032236 |
-| `B60_community_phylo_graph_gain` | 0.077880 |
-| `B24_geo_information_gain` | 0.383915 |
+| Capability | Mean | Seed 1337 | Seed 1338 |
+|---|---:|---:|---:|
+| `B58_lfmc_phylo_graph_gain` | 0.001305 | 0.000735 | 0.001876 |
+| `B61_trait_phylo_graph_gain` | 0.001876 | 0.000893 | 0.002859 |
+| `B57_flowering_phylo_graph_gain` | 0.001880 | 0.001832 | 0.001927 |
+| `B55_pollinator_phylo_transfer_recall` | 0.038385 | 0.038147 | 0.038623 |
+| `B59_pollinator_phylo_graph_gain` | 0.043237 | 0.036568 | 0.049906 |
+| `B62_mycorrhiza_phylo_graph_gain` | 0.049019 | 0.046213 | 0.051824 |
+| `B56_family_phylo_graph_gain` | 0.072755 | 0.080086 | 0.065424 |
+| `B50_pollinator_from_spacetime_recall` | 0.175366 | 0.177948 | 0.172785 |
+| `B51_pollinator_from_env_recall` | 0.177722 | 0.180064 | 0.175379 |
+| `B23_species_calibration_mrr` | 0.180489 | 0.184288 | 0.176689 |
+| `B8_family_from_spacetime` | 0.181778 | 0.178812 | 0.184745 |
+| `B6_family_from_env` | 0.190340 | 0.181677 | 0.199002 |
+| `B15_vision_from_aerial_cos` | 0.262063 | 0.263049 | 0.261077 |
+| `B22_companions_recall` | 0.281451 | 0.266618 | 0.296285 |
+| `B21_community_from_species_recall` | 0.285414 | 0.270996 | 0.299833 |
+| `B42_mycorrhiza_from_env` | 0.290400 | 0.312409 | 0.268391 |
+| `B60_community_phylo_graph_gain` | 0.292429 | 0.278532 | 0.306325 |
+| `B20_community_from_env_recall` | 0.302197 | 0.291375 | 0.313020 |
+| `B18_infer_climate_cos` | 0.325946 | 0.308763 | 0.343129 |
+| `B5_species_from_spacetime_top10` | 0.328991 | 0.326749 | 0.331232 |
+| `B28_flowering_peak_month_mrr` | 0.340603 | 0.362974 | 0.318232 |
+| `B24_geo_information_gain` | 0.365191 | 0.350816 | 0.379567 |
+| `B34_lfmc_from_env` | 0.385826 | 0.365190 | 0.406462 |
+| `B1_species_from_env_top10` | 0.391769 | 0.399218 | 0.384320 |
+| `B47_infer_naip_ir_cos` | 0.429145 | 0.432118 | 0.426172 |
+| `B43_infer_hydro_cos` | 0.438380 | 0.442822 | 0.433938 |
+| `B44_infer_topo_cos` | 0.457133 | 0.467341 | 0.446924 |
+| `B48_pollinator_from_photo_only_recall` | 0.478936 | 0.477964 | 0.479907 |
+| `B52_pollinator_from_photo_recall` | 0.479894 | 0.480408 | 0.479381 |
+| `B17_infer_soil_cos` | 0.522647 | 0.494753 | 0.550540 |
+| `B41_pollinator_from_species_recall` | 0.528110 | 0.526018 | 0.530201 |
+| `B19_infer_aerial_cos` | 0.531192 | 0.529491 | 0.532894 |
+| `B37_imagine_vision_bio_cos` | 0.538386 | 0.538766 | 0.538007 |
+| `B45_vision_bio_leave_one_out_cos` | 0.550505 | 0.550296 | 0.550715 |
+| `B13_imagine_vision_cos` | 0.623526 | 0.621610 | 0.625443 |
+| `B14_vision_leave_one_out_cos` | 0.652051 | 0.651213 | 0.652889 |
+| `B16_infer_clay_cos` | 0.653039 | 0.648627 | 0.657450 |
+| `B27_flowering_fidelity` | 0.679254 | 0.682875 | 0.675633 |
+| `B54_pollinator_dist_kl` | 0.718483 | 0.716165 | 0.720801 |
+| `B26_flowering_auc` | 0.741211 | 0.734865 | 0.747556 |
+| `B4_species_from_photo_only_top1` | 0.748112 | 0.740697 | 0.755528 |
+| `B2_species_from_photo_top1` | 0.756960 | 0.750034 | 0.763887 |
+| `B46_infer_chm_cos` | 0.769768 | 0.762345 | 0.777190 |
+| `B49_form_trait_f1` | 0.790675 | 0.783368 | 0.797982 |
+| `B9_phylo_from_photo_cos` | 0.793188 | 0.793305 | 0.793071 |
+| `B53_pollinator_calibration_mrr` | 0.797237 | 0.791125 | 0.803349 |
+| `B38_water_soil_regime_f1` | 0.832514 | 0.817449 | 0.847580 |
+| `B11_traits_from_photo_f1` | 0.867585 | 0.859457 | 0.875712 |
+| `B10_traits_from_photo_env_f1` | 0.871626 | 0.865617 | 0.877635 |
+| `B33_growth_rate_trait_f1` | 0.873519 | 0.871681 | 0.875357 |
+| `B35_sun_trait_f1` | 0.874687 | 0.874963 | 0.874412 |
+| `B32_plant_type_trait_f1` | 0.910736 | 0.909204 | 0.912269 |
+| `B30_seasonality_trait_f1` | 0.915672 | 0.906373 | 0.924972 |
+| `B3_species_from_photo_top5` | 0.917571 | 0.916139 | 0.919004 |
+| `B36_ease_of_care_trait_f1` | 0.942687 | 0.944447 | 0.940926 |
+| `B7_family_from_phylo` | 0.965889 | 0.960395 | 0.971383 |
+| `B12_traits_leave_one_out_f1` | 0.996565 | 0.996517 | 0.996613 |
+| `B63_myco_from_species_f1` | 1.000000 | 1.000000 | 1.000000 |
 
 ## Inactive
 

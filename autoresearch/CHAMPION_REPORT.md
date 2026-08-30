@@ -1,21 +1,25 @@
 # DeepEarth champion report
 
-## Sparse specialist mesh candidate
+## Family-preserving ecological reader record
 
-The current production candidate splits the fibered Earth4D state into paired abiotic, visual, biological, and
-ecological graph streams. Identity, pollination, and mycorrhiza receive relation meshes; each task retrieves and
-denoises only its query-local segments before prediction.
+The ecological reader keeps each confirmed 192-wide Earth4D backbone fixed. It reads AlphaEarth, WorldClim,
+coordinates, and the shared mesh to rerank species inside the family chosen by the backbone. This preserves coarse
+ecological routing while adding local species evidence.
 
 | Model | Seed | Steps | Harmonic | Arithmetic |
 |---|---:|---:|---:|---:|
 | Prior 192-wide mesh | 1337 | 8,300 | 0.382631 | 0.572135 |
-| **Sparse specialist mesh** | **1337** | **8,000** | **0.384141** | **0.577218** |
-| **Matched-seed delta** |  |  | **+0.001510** | **+0.005083** |
-| Published 192-wide mean | 2 seeds | 8,300 | **0.385343** | 0.575491 |
+| Ecological reader | 1337 | 8,300 | 0.383805 | 0.572934 |
+| Prior 192-wide mesh | 1338 | 8,300 | 0.388055 | 0.578847 |
+| Ecological reader | 1338 | 8,300 | 0.387483 | 0.578490 |
+| Prior 192-wide mean | 2 seeds | 8,300 | 0.385343 | 0.575491 |
+| **Ecological reader mean** | **2 seeds** | **8,300** | **0.385644** | **0.575712** |
+| **Mean delta** |  |  | **+0.000301** | **+0.000222** |
 
-This is a matched-seed advancement, not a new two-seed champion. It remains 0.001202 below the published harmonic
-mean while improving arithmetic by 0.001728. The implementation has 45,977,005 active parameters; its complete
-58-benchmark receipt is in `BENCHMARKS.md`.
+This is a new two-seed harmonic record with a simultaneous arithmetic improvement over the same backbones. B23
+species-calibration MRR improves `0.174621 -> 0.180489`; B1 species-from-environment top-10 improves
+`0.375657 -> 0.391769`. The evaluated composite has 27,613,447 parameters. The complete 58-benchmark receipt is in
+`BENCHMARKS.md` and `champion_scores.json`.
 
 ## 22.7M wide-cell Earth4D mesh harmonic record
 

@@ -5,7 +5,6 @@ import math
 
 import torch
 import torch.nn as nn
-from torch.utils.checkpoint import checkpoint
 
 from deepearth.core.layers import mlp, per_name, preserve_rng
 from deepearth.core.world_mesh import LENSES
@@ -39,131 +38,6 @@ class CrossFiberReaderBlock(nn.Module):
         )[0].squeeze(1)
         query = query + update
         return query + self.mlp(self.mlp_norm(query))
-
-
-class SpecialistMesh(nn.Module):
-    """One graph stream over a scientific lens."""
-
-    def __init__(self, d_model: int, n_heads: int, n_latents: int = 2):
-        super().__init__()
-        self.cell_message = nn.Linear(d_model, d_model, bias=False)
-        self.coarse_message = nn.Linear(d_model, d_model, bias=False)
-        self.fine_message = nn.Linear(d_model, d_model, bias=False)
-        self.graph_norm = nn.LayerNorm(d_model)
-        self.graph_gate = nn.Parameter(torch.tensor(0.1))
-        self.latents = nn.Parameter(torch.randn(n_latents, d_model) * 0.02)
-        self.read_norm = nn.LayerNorm(d_model)
-        self.read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
-        self.fuse = nn.TransformerEncoderLayer(
-            d_model, n_heads, 4 * d_model, batch_first=True, norm_first=True
-        )
-
-    def forward(self, state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        query = state[:, :1]
-        neighbors = state[:, 1:]
-        neighbor_mean = neighbors.mean(1, keepdim=True) \
-            if neighbors.shape[1] else query
-        cell_context = torch.cat((
-            neighbor_mean,
-            query.expand(-1, neighbors.shape[1], -1, -1),
-        ), 1)
-        coarse = torch.cat((
-            torch.zeros_like(state[:, :, :1]), state[:, :, :-1]
-        ), 2)
-        fine = torch.cat((
-            state[:, :, 1:], torch.zeros_like(state[:, :, :1])
-        ), 2)
-        message = self.cell_message(cell_context) \
-                  + self.coarse_message(coarse) + self.fine_message(fine)
-        state = state + torch.tanh(self.graph_gate) * self.graph_norm(message)
-        tokens = self.read_norm(state.flatten(1, 2))
-        latent = self.latents.unsqueeze(0).expand(state.shape[0], -1, -1)
-        latent = latent + self.read(
-            latent, tokens, tokens, need_weights=False
-        )[0]
-        return state, self.fuse(latent)
-
-
-class SegmentDenoiser(nn.Module):
-    """Retrieve and clean one query-local view of a mesh."""
-
-    def __init__(
-        self, d_model: int, n_heads: int, levels: int, *,
-        token_drop: float, cell_drop: float, level_drop: float,
-        jitter: float, top_k: int = 8,
-    ):
-        super().__init__()
-        self.levels = levels
-        self.top_k = top_k
-        self.token_drop = token_drop
-        self.cell_drop = cell_drop
-        self.level_drop = level_drop
-        self.jitter = jitter
-        self.token_norm = nn.LayerNorm(d_model)
-        self.query_norm = nn.LayerNorm(d_model)
-        self.cell_key = nn.Parameter(torch.zeros(2, d_model))
-        self.level_key = nn.Parameter(torch.zeros(levels, d_model))
-        self.latents = nn.Parameter(torch.randn(2, d_model) * 0.02)
-        self.read = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
-        self.blocks = nn.ModuleList([
-            nn.TransformerEncoderLayer(
-                d_model, n_heads, 4 * d_model, dropout=0.1,
-                batch_first=True, norm_first=True,
-            )
-            for _ in range(2)
-        ])
-        self.output = nn.MultiheadAttention(
-            d_model, n_heads, batch_first=True
-        )
-
-    def _keep_mask(self, index: torch.Tensor, cells: int) -> torch.Tensor:
-        batch, selected = index.shape
-        device = index.device
-        token = torch.rand(batch, selected, device=device) >= self.token_drop
-        cell = torch.rand(batch, cells, device=device) >= self.cell_drop
-        level = torch.rand(batch, self.levels, device=device) >= self.level_drop
-        keep = token \
-               & cell.gather(1, index.div(self.levels, rounding_mode="floor")) \
-               & level.gather(1, index.remainder(self.levels))
-        keep[:, 0] = True
-        return keep
-
-    def forward(self, state: torch.Tensor, query: torch.Tensor) -> torch.Tensor:
-        batch, cells, levels, width = state.shape
-        tokens = self.token_norm(state.flatten(1, 2))
-        cell_type = (torch.arange(cells, device=state.device) > 0).long()
-        address = (
-            self.cell_key[cell_type].view(1, cells, 1, width)
-            + self.level_key.view(1, 1, levels, width)
-        ).flatten(1, 2)
-        keys = tokens + address
-        score = torch.einsum(
-            "bkd,bd->bk", keys, self.query_norm(query)
-        ) / math.sqrt(width)
-        _, index = score.topk(min(self.top_k, score.shape[-1]), dim=-1)
-        gather = index[..., None].expand(-1, -1, width)
-        selected_keys = keys.gather(1, gather)
-        selected_values = tokens.gather(1, gather)
-        keep = None
-        if self.training:
-            keep = self._keep_mask(index, cells)
-            selected_values = selected_values + self.jitter * torch.randn_like(
-                selected_values
-            )
-        latent = query.unsqueeze(1) + self.latents.unsqueeze(0)
-        latent = latent + self.read(
-            latent, selected_keys, selected_values,
-            key_padding_mask=None if keep is None else ~keep,
-            need_weights=False,
-        )[0]
-        increment = self.jitter / math.sqrt(len(self.blocks))
-        for block in self.blocks:
-            latent = block(latent)
-            if self.training:
-                latent = latent + increment * torch.randn_like(latent)
-        return self.output(
-            query.unsqueeze(1), latent, latent, need_weights=False
-        )[0].squeeze(1)
 
 
 class RoutedMeshReader(nn.Module):
@@ -462,8 +336,7 @@ class MeshQueryReader(nn.Module):
         ).reshape(batch, tasks, self.d_model)
         deep_gates = torch.stack([
             self.deep_mesh_reader_gate[name]
-            if self.training or name != "community"
-            and (name != self.species_variable or tasks == 1)
+            if self.training or name not in {"community", "identity"}
             else self.deep_mesh_reader_gate[name] * 0.0
             for name in names
         ]).view(1, tasks, 1)
@@ -493,70 +366,6 @@ class MeshQueryReader(nn.Module):
 class ScientificReadoutMixin:
     """Scientific predictions built on task-conditioned mesh reads."""
 
-    def _task_segments(self, name: str) -> tuple[str, ...]:
-        traits = {
-            "seasonality", "water", "soil_drainage", "form",
-            "plant_type", "growth_rate", "sun", "ease_of_care",
-        }
-        if name == self.species_variable:
-            return "abiotic", "visual", "biological", "identity"
-        if name == "pollinator":
-            return (
-                "biological", "ecological", "pollinator",
-                "pollinator_transfer",
-            )
-        if name == "community":
-            return "biological", "ecological"
-        if name == "myco":
-            return "abiotic", "biological", "myco"
-        if name == "lfmc":
-            return "abiotic", "biological"
-        if name == "flower":
-            return "abiotic", "ecological"
-        if name in traits:
-            return "visual", "biological"
-        lens = LENSES[self.write_lens.get(name, 3)]
-        return (lens,)
-
-    def _segment_state(self, name: str):
-        if name in LENSES and self._specialist_mesh is not None:
-            return self._specialist_mesh[..., LENSES.index(name), :]
-        return self._relation_mesh.get(name)
-
-    def _query_denoised_pool(self, pooled, name):
-        if name not in self.segment_task_gate:
-            return pooled
-        if name in self._denoised_pool_cache:
-            return self._denoised_pool_cache[name]
-        query = pooled + self.mesh_reader.mesh_read_query[name]
-        reads = []
-        for segment in self._task_segments(name):
-            state = self._segment_state(segment)
-            if state is None or segment not in self.segment_denoisers:
-                continue
-            denoiser = self.segment_denoisers[segment]
-            read = checkpoint(
-                denoiser, state, query, use_reentrant=False
-            ) if self.training else denoiser(state, query)
-            read = torch.tanh(self.segment_gate[segment]) * read
-            if self.training:
-                keep = 0.9
-                path = (
-                    torch.rand(read.shape[0], 1, device=read.device) < keep
-                ).to(read.dtype) / keep
-                read = read * path
-            reads.append(read + self.segment_type[segment])
-        if reads:
-            tokens = self.segment_fusion_norm(torch.stack(reads, 1))
-            update = self.segment_fusion(
-                self.segment_fusion_norm(query).unsqueeze(1),
-                tokens, tokens, need_weights=False,
-            )[0].squeeze(1)
-            pooled = pooled + torch.tanh(self.segment_task_gate[name]) \
-                     * self.segment_output_norm(update)
-        self._denoised_pool_cache[name] = pooled
-        return pooled
-
     def _latent_pool(self, latent, names):
         queries = torch.stack([
             self.decode_query[self.names.index(
@@ -574,10 +383,8 @@ class ScientificReadoutMixin:
             self.mesh_reader.read(self._latent_pool(latent, names), names)
 
     def _pool(self, latent: torch.Tensor, name: str) -> torch.Tensor:
-        if name in self._denoised_pool_cache:
-            return self._denoised_pool_cache[name]
         self._read_tasks(latent, (name,))
-        return self._query_denoised_pool(self.mesh_reader.cache[name], name)
+        return self.mesh_reader.cache[name]
 
     def _prime_pool_cache(self, latent: torch.Tensor) -> None:
         self._read_tasks(latent, self.mesh_read_names)
@@ -585,37 +392,9 @@ class ScientificReadoutMixin:
     def _pollinator_pool(self, latent: torch.Tensor, *, isolated: bool = False) -> torch.Tensor:
         pooled = self._pool(latent, "pollinator")
         if self.pollinator_reader is None or self._fiber_mesh is None:
-            return self._relation_pool(pooled, "pollinator", isolated=isolated)
-        pooled = self.pollinator_reader(
+            return pooled
+        return self.pollinator_reader(
             pooled, self._fiber_mesh, isolated=isolated
-        )
-        return self._relation_pool(pooled, "pollinator", isolated=isolated)
-
-    def _pollinator_transfer_probability(self, batch, device):
-        uncertainty = self._identity_graph_uncertainty
-        if uncertainty is None:
-            uncertainty = torch.zeros((batch, 1), device=device)
-        return torch.sigmoid(
-            self.pollinator_transfer_router(10 * uncertainty)
-        )
-
-    def _pollinator_logits(self, latent, *, isolated=False):
-        ordinary_pool = self._pollinator_pool(latent, isolated=isolated)
-        transfer_pool = self._relation_pool(
-            self._pool(latent, "pollinator"),
-            "pollinator_transfer", isolated=isolated,
-        )
-        ordinary = torch.log_softmax(self.poll_head(ordinary_pool), -1)
-        transfer = torch.log_softmax(
-            self.poll_transfer_head(transfer_pool), -1
-        )
-        route = self._pollinator_transfer_probability(
-            ordinary.shape[0], ordinary.device
-        )
-        self._pollinator_route = route
-        return torch.logaddexp(
-            ordinary + torch.log1p(-route.clamp(max=1 - 1e-6)),
-            transfer + route.clamp_min(1e-6).log(),
         )
 
     def _calibrate_pollinator_logits(self, logits: torch.Tensor) -> torch.Tensor:
@@ -717,8 +496,7 @@ class ScientificReadoutMixin:
         )
 
     def _myco_logits(self, latent: torch.Tensor) -> torch.Tensor:
-        pooled = self._relation_pool(self._pool(latent, "myco"), "myco")
-        base = self.myco_head(pooled)
+        base = self.myco_head(self._pool(latent, "myco"))
         if self.species_myco_head is None or self.training:
             return base
         species_logits = self.decode(latent, self.species_variable)
@@ -728,33 +506,9 @@ class ScientificReadoutMixin:
         myco = species_logits.softmax(-1) @ species_to_myco
         evidence = myco.clamp_min(1e-8).log() \
                    - self.species_myco_prior.clamp_min(1e-8).log()
-        return base + torch.tanh(self.myco_relation_gate) * evidence
+        return base + 0.75 * evidence
 
     def _pool_fiber(self, fiber: torch.Tensor, name: str) -> torch.Tensor:
         query = self.fiber_decode_query[self.names.index(name)]
         weight = torch.softmax((fiber @ query) / math.sqrt(self.d_model), -1)
         return torch.einsum("bl,bld->bd", weight, fiber)
-
-    def _pool_specialist(self, name: str) -> torch.Tensor:
-        lens = self.write_lens[name]
-        expert = self._specialist_latents[:, lens]
-        query = self.specialist_decode_query[self.names.index(name)]
-        weight = torch.softmax(
-            (expert @ query) / math.sqrt(self.d_model), -1
-        )
-        return torch.einsum("bl,bld->bd", weight, expert)
-
-    def _relation_pool(self, pooled, name, *, isolated=False):
-        expert = self._relation_latents.get(name)
-        if expert is None:
-            return pooled
-        if isolated:
-            pooled = pooled.detach()
-            expert = expert.detach()
-        tokens = self.relation_reader_norms[name](expert)
-        query = pooled.unsqueeze(1) + self.relation_query[name].view(1, 1, -1)
-        read = self.relation_readers[name](
-            query, tokens, tokens, need_weights=False
-        )[0].squeeze(1)
-        return pooled + torch.tanh(self.relation_gate[name]) \
-               * self.relation_output_norms[name](read)

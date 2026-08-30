@@ -35,10 +35,7 @@ def project_fields(encoders, coords, axes, levels, features):
 
 
 def signal_lens(name: str, kind: str | None = None) -> str:
-    if name in {
-        "climate", "worldclim", "soil", "clay", "topo", "hydro",
-        "water", "soil_drainage",
-    }:
+    if name in {"climate", "soil", "clay", "topo", "hydro", "water", "soil_drainage"}:
         return "abiotic"
     if name in {"vision_dino", "naip_rgb", "naip_ir", "alphaearth"}:
         return "visual"
