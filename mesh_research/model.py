@@ -2744,6 +2744,16 @@ def attach_naip_patches(source, cache: str, device: str) -> None:
     patch32 = root / "gbif_naip_dinov3_patch32_v1"
     if (patch32 / "manifest.npz").exists():
         manifest = np.load(patch32 / "manifest.npz")
+        bytes_per_row = 32 * 32 * 1024 * np.dtype(np.float16).itemsize
+        eager_gb = source.n * bytes_per_row / 1e9
+        max_eager_gb = float(os.environ.get("MESH_NAIP_PATCH_MAX_EAGER_GB", "24"))
+        if eager_gb > max_eager_gb and os.environ.get("MESH_NAIP_PATCH_ALLOW_EAGER") != "1":
+            raise RuntimeError(
+                "DINOv3 patch32 cache requires streaming for this source size: "
+                f"{source.n:,} rows would eagerly stage about {eager_gb:.1f}GB. "
+                "Run a smaller proxy slice, raise MESH_NAIP_PATCH_MAX_EAGER_GB, "
+                "or set MESH_NAIP_PATCH_ALLOW_EAGER=1 if this is intentional."
+            )
         manifest_row = {
             int(g): i for i, g in enumerate(manifest["gbifID"].astype(np.int64))
         }
