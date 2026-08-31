@@ -32,18 +32,37 @@ def hf_token_path():
     return Path.home() / ".cache" / "huggingface" / "token"
 
 
+def hf_cache_has_model():
+    home = Path(os.environ.get("HF_HOME", str(Path.home() / ".cache" / "huggingface"))).expanduser()
+    hub = home / "hub"
+    pattern = "models--facebook--dinov3-vitl16-pretrain-sat493m*"
+    return any(hub.glob(pattern))
+
+
+def read_hf_token():
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if token:
+        return token.strip(), "env"
+    path = hf_token_path()
+    if path.exists():
+        return path.read_text().strip(), str(path)
+    return None, str(path)
+
+
 def check_hf():
-    token = hf_token_path()
-    if not token.exists():
-        return False, f"missing HF token at {token}"
-    headers = {"Authorization": "Bearer " + token.read_text().strip()}
+    if hf_cache_has_model():
+        return True, f"HF cache contains {MODEL}"
+    token, source = read_hf_token()
+    if not token:
+        return False, f"missing HF token; checked env and {source}"
+    headers = {"Authorization": "Bearer " + token}
     try:
         r = requests.get(f"https://huggingface.co/api/models/{MODEL}", headers=headers, timeout=30)
     except Exception as e:
         return False, f"HF request failed: {type(e).__name__}: {e}"
     if r.status_code != 200:
         return False, f"HF model access failed with status {r.status_code}"
-    return True, f"HF model access ok for {MODEL}"
+    return True, f"HF model access ok for {MODEL} via {source}"
 
 
 def main():
