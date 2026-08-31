@@ -580,11 +580,15 @@ class MeshModel(nn.Module):
             )
             self.position_species_patch_output = nn.LayerNorm(d_model)
             self.position_species_gate = nn.Parameter(torch.tensor(0.1))
-        self.register_buffer(
-            "position_species_patch_tokens",
-            source.naip_patch_tokens,
-            persistent=False,
-        )
+        patch_tokens = getattr(source, "naip_patch_tokens", None)
+        if patch_tokens is not None:
+            self.register_buffer(
+                "position_species_patch_tokens",
+                patch_tokens,
+                persistent=False,
+            )
+        else:
+            self.position_species_patch_tokens = None
         patch_coords = getattr(source, "naip_patch_coords", None)
         if patch_coords is not None:
             self.register_buffer(
@@ -1991,9 +1995,13 @@ class MeshModel(nn.Module):
             self._position_species_patch_valid = None
             return None
         index = index.long()
-        valid = (index >= 0) & present.get(
-            "naip_rgb", torch.zeros_like(index, dtype=torch.bool)
-        )
+        patch_present = present.get("naip_rgb")
+        if patch_present is None:
+            patch_present = values.get(
+                "naip_patch_have",
+                torch.zeros_like(index, dtype=torch.bool),
+            )
+        valid = (index >= 0) & patch_present
         coords = context["coordinates"]
         coarse_stop = self.levels // 3
         mid_stop = 2 * self.levels // 3
@@ -2034,10 +2042,16 @@ class MeshModel(nn.Module):
                     relative = relative.unsqueeze(-2)
                 return (position + relative).detach()
 
-            patches = self.position_species_patch_tokens[index[valid]]
+            patch_tokens = values.get(
+                "naip_patch_tokens", self.position_species_patch_tokens
+            )
+            patches = patch_tokens[index[valid]]
             patch_coords = None
-            if self.position_species_patch_coords is not None:
+            if "naip_patch_coords" in values:
+                patch_coords = values["naip_patch_coords"][index[valid]]
+            elif self.position_species_patch_coords is not None:
                 patch_coords = self.position_species_patch_coords[index[valid]]
+            if patch_coords is not None:
                 patch_coords = patch_coords.float()
                 patch_coords[..., 2:] = torch.nan_to_num(
                     patch_coords[..., 2:], nan=0.0
@@ -2748,12 +2762,34 @@ def attach_naip_patches(source, cache: str, device: str) -> None:
         eager_gb = source.n * bytes_per_row / 1e9
         max_eager_gb = float(os.environ.get("MESH_NAIP_PATCH_MAX_EAGER_GB", "24"))
         if eager_gb > max_eager_gb and os.environ.get("MESH_NAIP_PATCH_ALLOW_EAGER") != "1":
-            raise RuntimeError(
-                "DINOv3 patch32 cache requires streaming for this source size: "
-                f"{source.n:,} rows would eagerly stage about {eager_gb:.1f}GB. "
-                "Run a smaller proxy slice, raise MESH_NAIP_PATCH_MAX_EAGER_GB, "
-                "or set MESH_NAIP_PATCH_ALLOW_EAGER=1 if this is intentional."
+            from datatools.deepcal.env_priors.patch32_cache import Patch32Cache
+
+            patch_cache = Patch32Cache(root)
+            original_batch = source.batch
+
+            def batch_with_naip(idx):
+                values, observed, coords, neighbors, manifolds, neighbor_values = original_batch(idx)
+                rows = idx.detach().cpu().numpy() if torch.is_tensor(idx) else np.asarray(idx)
+                gbif_ids = np.asarray(source.gbifID)[rows]
+                patch, patch_coords, have = patch_cache.get_many_earth4d(gbif_ids)
+                batch = len(gbif_ids)
+                values["naip_patch_tokens"] = torch.from_numpy(patch).to(device)
+                values["naip_patch_coords"] = torch.from_numpy(patch_coords).to(device)
+                values["naip_patch_index"] = torch.arange(batch, device=device)
+                values["naip_patch_have"] = torch.from_numpy(have).to(device)
+                return values, observed, coords, neighbors, manifolds, neighbor_values
+
+            source.batch = batch_with_naip
+            source.naip_patch_dim = 1024
+            source.naip_patch_grid = 32
+            source.naip_patch_views = 1
+            source.naip_patch_streaming = True
+            print(
+                f"NAIP DINOv3 patch32 streaming enabled for {source.n:,} observations  "
+                f"estimated eager tensor {eager_gb:.1f}GB",
+                flush=True,
             )
+            return
         manifest_row = {
             int(g): i for i, g in enumerate(manifest["gbifID"].astype(np.int64))
         }

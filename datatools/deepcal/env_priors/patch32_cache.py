@@ -103,6 +103,33 @@ class Patch32Cache:
             "valid": valid,
         }
 
+    def get_many_earth4d(self, gbif_ids):
+        gids = [int(g) for g in gbif_ids]
+        n = len(gids)
+        patch = np.zeros((n, 32, 32, 1024), np.float16)
+        coords = np.zeros((n, 32, 32, 4), np.float32)
+        valid = np.zeros(n, bool)
+        by_chunk = {}
+        for row, gid in enumerate(gids):
+            item = self.chunk_row_for_id.get(gid)
+            if item is None:
+                continue
+            chunk, j = item
+            by_chunk.setdefault(chunk, []).append((row, j, gid))
+        for chunk, rows in by_chunk.items():
+            z = np.load(chunk, allow_pickle=True)
+            for row, j, gid in rows:
+                m = self.row[gid]
+                patch[row] = z["patch"][j]
+                lat = z["patch_lat"][j].astype(np.float32)
+                lon = z["patch_lon"][j].astype(np.float32)
+                coords[row, ..., 0] = lat
+                coords[row, ..., 1] = lon
+                coords[row, ..., 2] = self.manifest["elev_m"][m]
+                coords[row, ..., 3] = self.manifest["event_day"][m]
+                valid[row] = np.isfinite(lat).all() and np.isfinite(lon).all()
+        return patch, coords, valid
+
 
 def main():
     ap = argparse.ArgumentParser()
