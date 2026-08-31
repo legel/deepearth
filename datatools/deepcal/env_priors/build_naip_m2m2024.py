@@ -56,6 +56,7 @@ SAVE_IMAGERY = os.environ.get("NAIP_SAVE_IMAGERY", "0") == "1"
 SAVE_PATCH32 = os.environ.get("NAIP_SAVE_PATCH32", "1") == "1"
 PATCH_VIEW = os.environ.get("NAIP_PATCH_VIEW", "rgb")
 PATCH_DTYPE = np.float16 if os.environ.get("NAIP_PATCH_DTYPE", "float16") == "float16" else np.float32
+PATCH_COMPRESSED = os.environ.get("NAIP_PATCH_COMPRESSED", "0") == "1"
 NERSC_DIR = os.environ.get("NAIP_NERSC_DIR", "/global/cfs/cdirs/m5239/deepearth/naip2024_imagery")
 if PATCH_VIEW not in {"rgb", "ir"}:
     raise ValueError("NAIP_PATCH_VIEW must be 'rgb' or 'ir'")
@@ -316,7 +317,8 @@ def main():
         nonlocal patch_chunk, patch_done
         if not SAVE_PATCH32 or not patch_buf["gbifID"]: return
         ids = list(patch_buf["gbifID"])
-        np.savez_compressed(PATCH / f"chunk{patch_chunk:04d}.npz",
+        save = np.savez_compressed if PATCH_COMPRESSED else np.savez
+        save(PATCH / f"chunk{patch_chunk:04d}.npz",
             gbifID=np.array(patch_buf["gbifID"], np.int64),
             naip_year=np.array(patch_buf["naip_year"], np.int16),
             naip_scene=np.array(patch_buf["naip_scene"], object),
@@ -327,6 +329,7 @@ def main():
         patch_chunk += 1
         patch_done |= set(ids)
         pickle.dump(patch_done, open(PATCH_CKPT, "wb"))
+        print(f"  patch chunk {patch_chunk} | {len(patch_done)} patch obs done", flush=True)
         for k in patch_buf: patch_buf[k] = []
 
     key = None
