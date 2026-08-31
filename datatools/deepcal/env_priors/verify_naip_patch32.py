@@ -35,6 +35,8 @@ def main() -> None:
     ap.add_argument("--allow-prefix", action="store_true")
     ap.add_argument("--require-complete", action="store_true")
     ap.add_argument("--estimate-only", action="store_true")
+    ap.add_argument("--max-chunks", type=int, default=0)
+    ap.add_argument("--latest", action="store_true")
     args = ap.parse_args()
 
     root = Path(args.cache).expanduser()
@@ -109,6 +111,9 @@ def main() -> None:
     files = sorted(glob.glob(str(patch / PATCH_CHUNK_GLOB)))
     if not files:
         raise SystemExit(f"no patch chunks under {patch}")
+    total_files = len(files)
+    if args.max_chunks:
+        files = files[-args.max_chunks:] if args.latest else files[:args.max_chunks]
 
     seen, rows, bytes_total = set(), 0, 0
     manifest_set = set(map(int, all_ids))
@@ -148,8 +153,9 @@ def main() -> None:
     missing = len(all_ids) - len(seen)
     if args.require_complete and missing:
         raise SystemExit(f"patch cache incomplete: {missing}/{len(all_ids)} manifest rows missing")
+    scanned = f" chunks={len(files):,}/{total_files:,}" if args.max_chunks else ""
     print(
-        f"OK patch32 rows={rows:,}/{len(all_ids):,} missing={missing:,} "
+        f"OK patch32 rows={rows:,}/{len(all_ids):,} missing={missing:,}{scanned} "
         f"dtype={metadata.get('dtype')} payload={bytes_total/1e9:.2f}GB"
     )
 
