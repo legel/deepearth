@@ -40,6 +40,7 @@ def main() -> None:
     ap.add_argument("--latest", action="store_true")
     ap.add_argument("--coverage-only", action="store_true")
     ap.add_argument("--write-missing")
+    ap.add_argument("--write-no-candidate")
     args = ap.parse_args()
 
     root = Path(args.cache).expanduser()
@@ -110,6 +111,25 @@ def main() -> None:
         print(
             f"rows={len(all_ids):,} rgb_fp16={values*2/1e12:.2f}TB "
             f"rgb_fp32={values*4/1e12:.2f}TB"
+        )
+        return
+    if args.write_no_candidate:
+        has_candidate = manifest["has_candidate_tile"].astype(bool)
+        with open(args.write_no_candidate, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["gbifID", "lat", "lon", "elev_m", "event_day", "obs_ord"])
+            for i in np.flatnonzero(~has_candidate):
+                writer.writerow([
+                    int(all_ids[i]),
+                    float(manifest["lat"][i]),
+                    float(manifest["lon"][i]),
+                    float(manifest["elev_m"][i]),
+                    float(manifest["event_day"][i]),
+                    int(manifest["obs_ord"][i]),
+                ])
+        print(
+            f"OK no-candidate rows={int((~has_candidate).sum()):,}/{len(all_ids):,} "
+            f"wrote={args.write_no_candidate}"
         )
         return
 
