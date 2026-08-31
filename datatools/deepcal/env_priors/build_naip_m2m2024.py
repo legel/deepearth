@@ -235,15 +235,19 @@ def main():
         obs_ord = np.full(len(gid), -1, np.int32)
     elev = load_elevation(gid)
     event_day = load_event_day(gid)
-    # map each obs -> covering tile index (check nearest 8 tile centers for bbox containment)
+    # map each obs -> covering tile indices (check nearest tile centers for bbox containment)
     _, ii = tree.query(np.stack([lon, lat], 1), k=min(8, len(tiles)))
     ii = np.atleast_2d(ii)
     if ii.shape[0] != len(gid):
         ii = ii.T
     tile_of = np.full(len(gid), -1)
+    tile_candidates = [[] for _ in range(len(gid))]
     for k in range(ii.shape[1]):
         ti = ii[:, k]; b = tb[ti]
-        inside = (tile_of < 0) & (lon >= b[:, 0]) & (lon <= b[:, 2]) & (lat >= b[:, 1]) & (lat <= b[:, 3])
+        inside_any = (lon >= b[:, 0]) & (lon <= b[:, 2]) & (lat >= b[:, 1]) & (lat <= b[:, 3])
+        for row in np.flatnonzero(inside_any):
+            tile_candidates[row].append(int(ti[row]))
+        inside = (tile_of < 0) & inside_any
         tile_of[inside] = ti[inside]
     pool_done = pickle.load(open(CKPT, "rb")) if CKPT.exists() else set()
     for f in TOK.glob("chunk*.npz"):
@@ -254,11 +258,13 @@ def main():
         try: patch_done |= set(int(x) for x in np.load(f)["gbifID"])
         except Exception: pass
     done = patch_done if SAVE_PATCH32 else pool_done
-    # scenes to process = covering tiles with >=1 undone obs
+    # scenes to process = covering tiles with >=1 undone obs. Observations may
+    # have multiple candidates; later scenes can recover edge-window failures.
     by_scene = {}
     for i in range(len(gid)):
-        if tile_of[i] >= 0 and int(gid[i]) not in done:
-            by_scene.setdefault(tile_of[i], []).append(i)
+        if tile_candidates[i] and int(gid[i]) not in done:
+            for t in tile_candidates[i]:
+                by_scene.setdefault(t, []).append(i)
     todo = sorted(by_scene, key=lambda t: -len(by_scene[t]))
     _max = int(os.environ.get("NAIP_MAX_SCENES", 0))           # >0 limits scenes (validation runs)
     if _max: todo = todo[:_max]
@@ -367,7 +373,9 @@ def main():
         for t in batch:
             if t not in paths: continue
             ent = tiles[t]["entityId"]; yr = int(tiles[t]["displayId"].split("_")[-1][:4])
-            idxs = by_scene[t]
+            idxs = [i for i in by_scene[t] if int(gid[i]) not in done]
+            if not idxs:
+                continue
             with rasterio.open(paths[t]) as src:
                 for patches, keep in iter_scene_patches(src, idxs, lon, lat):
                     rgb_img = [a[:3] for a in patches]
