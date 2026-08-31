@@ -57,13 +57,17 @@ def check_hf():
     if not token:
         return False, f"missing HF token; checked env and {source}"
     headers = {"Authorization": "Bearer " + token}
+    file_url = f"https://huggingface.co/{MODEL}/resolve/main/processor_config.json"
     try:
-        r = requests.get(f"https://huggingface.co/api/models/{MODEL}", headers=headers, timeout=30)
+        who = requests.get("https://huggingface.co/api/whoami-v2", headers=headers, timeout=30)
+        r = requests.get(file_url, headers=headers, timeout=30)
     except Exception as e:
         return False, f"HF request failed: {type(e).__name__}: {e}"
+    if who.status_code != 200:
+        return False, f"HF token from {source} is not valid; whoami status {who.status_code}"
     if r.status_code != 200:
-        return False, f"HF model access failed with status {r.status_code}"
-    return True, f"HF model access ok for {MODEL} via {source}"
+        return False, f"HF token from {source} lacks gated file access to {MODEL}; file status {r.status_code}"
+    return True, f"HF gated file access ok for {MODEL} via {source}"
 
 
 def catalog_summary(path):
