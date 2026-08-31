@@ -22,12 +22,11 @@ class DINOv3Patch32:
             self.mean = np.array(SAT_MEAN, np.float32)[:, None, None]
             self.std = np.array(SAT_STD, np.float32)[:, None, None]
         elif self.backend == "transformers":
-            from transformers import AutoImageProcessor, AutoModel
-            self.proc = AutoImageProcessor.from_pretrained(model_id)
+            from transformers import AutoModel
             self.mdl = AutoModel.from_pretrained(model_id).eval().to(self.device)
             self.nreg = self.mdl.config.num_register_tokens
-            self.mean = np.array(self.proc.image_mean, np.float32)[:, None, None]
-            self.std = np.array(self.proc.image_std, np.float32)[:, None, None]
+            self.mean = np.array(SAT_MEAN, np.float32)[:, None, None]
+            self.std = np.array(SAT_STD, np.float32)[:, None, None]
         else:
             raise ValueError("DINOV3_BACKEND must be 'transformers' or 'hub'")
 

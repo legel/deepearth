@@ -57,7 +57,7 @@ def check_hf():
     if not token:
         return False, f"missing HF token; checked env and {source}"
     headers = {"Authorization": "Bearer " + token}
-    file_url = f"https://huggingface.co/{MODEL}/resolve/main/processor_config.json"
+    file_url = f"https://huggingface.co/{MODEL}/resolve/main/model.safetensors"
     try:
         who = requests.get("https://huggingface.co/api/whoami-v2", headers=headers, timeout=30)
         r = requests.get(file_url, headers=headers, timeout=30)
