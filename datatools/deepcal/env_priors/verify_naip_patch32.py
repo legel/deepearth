@@ -11,6 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
+PATCH_CHUNK_GLOB = "chunk[0-9]*.npz"
+
 
 def _load_token_ids(path: Path) -> np.ndarray:
     files = sorted(path.glob("*.npz"))
@@ -104,7 +106,7 @@ def main() -> None:
         )
         return
 
-    files = sorted(glob.glob(str(patch / "chunk*.npz")))
+    files = sorted(glob.glob(str(patch / PATCH_CHUNK_GLOB)))
     if not files:
         raise SystemExit(f"no patch chunks under {patch}")
 

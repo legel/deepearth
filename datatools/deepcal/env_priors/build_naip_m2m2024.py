@@ -31,6 +31,8 @@ from scipy.spatial import cKDTree
 from dinov3_patch32 import DINOv3Patch32
 warnings.filterwarnings("ignore")
 
+CHUNK_GLOB = "chunk[0-9]*.npz"
+
 HERE = Path(__file__).resolve().parent
 CACHE = Path(os.environ.get("DEEPCAL_CACHE", HERE.parent)).expanduser()
 TILES_JSON = Path(os.environ.get("NAIP_TILES_JSON", str(CACHE / "env_priors" / "naip2024_tiles.json")))
@@ -254,7 +256,7 @@ def main():
         try: pool_done |= set(int(x) for x in np.load(f)["gbifID"])
         except Exception: pass
     patch_done = pickle.load(open(PATCH_CKPT, "rb")) if PATCH_CKPT.exists() else set()
-    for f in PATCH.glob("chunk*.npz"):
+    for f in PATCH.glob(CHUNK_GLOB):
         try: patch_done |= set(int(x) for x in np.load(f)["gbifID"])
         except Exception: pass
     done = patch_done if SAVE_PATCH32 else pool_done
@@ -305,7 +307,7 @@ def main():
     patch_buf = {k: [] for k in ("gbifID", "naip_year", "naip_scene", "patch", "patch_lat", "patch_lon")}
     pool_pending, patch_pending = set(), set()
     chunk = len(list(TOK.glob("chunk*.npz"))); n_ok = 0; t0 = time.time()
-    patch_chunk = len(list(PATCH.glob("chunk*.npz")))
+    patch_chunk = len(list(PATCH.glob(CHUNK_GLOB)))
 
     def flush_tokens():
         nonlocal chunk, pool_done

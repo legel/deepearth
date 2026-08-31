@@ -2761,7 +2761,7 @@ def attach_naip_patches(source, cache: str, device: str) -> None:
         source_row = {int(g): i for i, g in enumerate(source_ids)}
         lookup = np.full(source.n, -1, np.int64)
         tokens, coords = [], []
-        for file in sorted(patch32.glob("chunk*.npz")):
+        for file in sorted(patch32.glob("chunk[0-9]*.npz")):
             z = np.load(file, allow_pickle=True)
             patch = z["patch"]
             patch_lat = z["patch_lat"].astype(np.float32)

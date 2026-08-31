@@ -4,6 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
+CHUNK_GLOB = "chunk[0-9]*.npz"
+
 
 class Patch32Cache:
     def __init__(self, root, patch_dir="gbif_naip_dinov3_patch32_v1"):
@@ -13,7 +15,7 @@ class Patch32Cache:
         self.ids = self.manifest["gbifID"].astype(np.int64)
         self.row = {int(g): i for i, g in enumerate(self.ids)}
         self.chunk_row_for_id = {}
-        chunks = sorted(self.path.glob("chunk*.npz"))
+        chunks = sorted(self.path.glob(CHUNK_GLOB))
         index = self.path / "chunk_index.npz"
         if index.exists():
             z = np.load(index, allow_pickle=True)
@@ -27,7 +29,7 @@ class Patch32Cache:
     def build_index(self, write=True):
         ids, chunks, rows = [], [], []
         seen = set()
-        for chunk in sorted(self.path.glob("chunk*.npz")):
+        for chunk in sorted(self.path.glob(CHUNK_GLOB)):
             z = np.load(chunk, allow_pickle=True)
             for row, g in enumerate(z["gbifID"].astype(np.int64)):
                 gid = int(g)
