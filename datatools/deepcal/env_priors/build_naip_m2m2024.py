@@ -303,6 +303,7 @@ def main():
     emb = DINOv3Patch32(DINO_SAT, batch=EMBED_BATCH)
     buf = {k: [] for k in ("gbifID", "naip_year", "naip_scene", "rgb_pool", "ir_pool")}
     patch_buf = {k: [] for k in ("gbifID", "naip_year", "naip_scene", "patch", "patch_lat", "patch_lon")}
+    pool_pending, patch_pending = set(), set()
     chunk = len(list(TOK.glob("chunk*.npz"))); n_ok = 0; t0 = time.time()
     patch_chunk = len(list(PATCH.glob("chunk*.npz")))
 
@@ -316,6 +317,7 @@ def main():
             rgb_pool=np.stack(buf["rgb_pool"]).astype(np.float32), ir_pool=np.stack(buf["ir_pool"]).astype(np.float32))
         chunk += 1
         pool_done |= set(ids)
+        pool_pending.difference_update(ids)
         pickle.dump(pool_done, open(CKPT, "wb"))
         for k in buf: buf[k] = []
 
@@ -334,6 +336,7 @@ def main():
             has_naip=np.ones(len(patch_buf["gbifID"]), bool))
         patch_chunk += 1
         patch_done |= set(ids)
+        patch_pending.difference_update(ids)
         pickle.dump(patch_done, open(PATCH_CKPT, "wb"))
         print(f"  patch chunk {patch_chunk} | {len(patch_done)} patch obs done", flush=True)
         for k in patch_buf: patch_buf[k] = []
@@ -373,7 +376,8 @@ def main():
         for t in batch:
             if t not in paths: continue
             ent = tiles[t]["entityId"]; yr = int(tiles[t]["displayId"].split("_")[-1][:4])
-            idxs = [i for i in by_scene[t] if int(gid[i]) not in done]
+            pending = patch_pending if SAVE_PATCH32 else pool_pending
+            idxs = [i for i in by_scene[t] if int(gid[i]) not in done and int(gid[i]) not in pending]
             if not idxs:
                 continue
             with rasterio.open(paths[t]) as src:
@@ -397,10 +401,12 @@ def main():
                         if gid_i not in pool_done:
                             buf["gbifID"].append(gid_i); buf["naip_year"].append(yr); buf["naip_scene"].append(ent)
                             buf["rgb_pool"].append(rgb[j]); buf["ir_pool"].append(irp[j])
+                            pool_pending.add(gid_i)
                         if SAVE_PATCH32:
                             patch_buf["gbifID"].append(gid_i); patch_buf["naip_year"].append(yr); patch_buf["naip_scene"].append(ent)
                             patch_buf["patch"].append(rgb_patch[j] if PATCH_VIEW == "rgb" else ir_patch[j])
                             patch_buf["patch_lat"].append(patch_lat[j]); patch_buf["patch_lon"].append(patch_lon[j])
+                            patch_pending.add(gid_i)
                     n_ok += len(keep)
                     if SAVE_IMAGERY:                            # raw imagery -> per-chunk npz -> NERSC -> delete
                         imp = IMG / f"{ent}_{n_ok:08d}.npz"
