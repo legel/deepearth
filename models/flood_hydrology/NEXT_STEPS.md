@@ -77,16 +77,18 @@ larger cap.
 ### Re-run required before any of these are quoted again
 
 Both probability ensembles and the `--baseflow` experiment — neither has been re-run since the
-2026-08-29 solver fixes. The storage-cap sweep and Track A's roughness A/B (both spectral and
-SAM3 backends) **are now re-run, above and in Track A below** — do not treat the "even a zero
-storage cap only reaches 10.8 % runoff" figure as current; it predates the fixes and is
-superseded by the 43.92 % uncapped-storage figure measured above.
+2026-08-29 solver fixes. The storage-cap sweep and the surface-parameterization roughness A/B
+(both spectral and SAM3 backends) **are now re-run, above and in Surface Parameterization
+below** — do not treat the "even a zero storage cap only reaches 10.8 % runoff" figure as
+current; it predates the fixes and is superseded by the 43.92 % uncapped-storage figure
+measured above.
 
 ---
 
-## What changed on 2026-08-27
+## Solver & Connectivity Fixes — what changed on 2026-08-27
 
-Track B was opened to test one hypothesis: that site3's burned creek channel had *gaps*. It did
+This investigation was opened to test one hypothesis: that site3's burned creek channel had
+*gaps*. It did
 not. The vector network is continuous — 22.17 km inside the domain, both components reaching a
 domain edge, stable across snap tolerances from 0.1 to 15 m. The hypothesis was wrong, and
 testing it surfaced thirteen defects underneath, several of which had been silently degrading
@@ -180,8 +182,8 @@ step. The resampling bug is confined to `cfx_sr417` and the research surrogate p
 ## What is fixed, and what is still wrong
 
 Fixed, decisively: **water no longer accumulates forever.** Flooded area was still *rising* 24 h
-after rain stopped, extrapolating to ~80 days to clear. It now drains. That was the finding
-Track B was built on and it is closed.
+after rain stopped, extrapolating to ~80 days to clear. It now drains. That was the finding this
+investigation was built on and it is closed.
 
 Still wrong: **magnitude, by about 3x, and timing badly.** Runoff coefficient is 8.90 % against
 an observed 28.9–31.4 %, and discharge at the gauge cell never peaks inside the 72-hour window
@@ -238,7 +240,7 @@ all present. There is no `python3.9` on PATH; checking for one and concluding th
 lacks 3.9 is a mistake worth not repeating. A separate 3.11 venv at `cfx_sr417/.venv` serves
 `research/` only and carries torch.
 
-## Track A — segmentation-derived parameters
+## Surface Parameterization — segmentation-derived parameters
 
 Built 2026-08-27 in `cfx_sr417/segmentation/`; full detail, method and limitations in
 [`cfx_sr417/segmentation/README.md`](cfx_sr417/segmentation/README.md).
@@ -277,8 +279,9 @@ field gives marginally better timing than the spectral one (0.20–0.22 h vs 0.2
 near the gauge's 0.25 h resolution floor, so neither improvement is fully claimable), but runoff
 coefficient sits at 71–73 % regardless of backend, roughness field, or impervious source — a
 ~2.3× overshoot against the observed 28.9–31.4 % that three independent methods now agree on:
-Track B's direct channel-slope/velocity measurement, the spectral segmentation A/B, and now the
-real SAM3 segmentation A/B. **Do not tune *n*, with either backend.**
+the connectivity investigation's direct channel-slope/velocity measurement, the spectral
+segmentation A/B, and now the real SAM3 segmentation A/B. **Do not tune *n*, with either
+backend.**
 
 **The one arm that moves runoff meaningfully is `vision Ks/Smax`** (60.92 %, still ~2× observed)
 — not because it's a better roughness field (same segmented *n* as the other spectral arms), but
@@ -407,7 +410,8 @@ roughness change down to canopy placement error. `segmentation/validate_canopy.p
 - **`segment_naip.py` only knows site3.** The main AOI has NAIP and LiDAR too and would need
   its own bbox cache built.
 
-**Both tracks edit `simulation/flood_sim_ian.py`.** They have coexisted cleanly — Track A's
-`manning_n` sits alongside Track B's `gauge_rc`/`initial_h` and its scalar branch leaves the
-original expression untouched — but there is no locking. Use targeted edits, never a full-file
-rewrite, and re-read before editing.
+**Both surface parameterization and the connectivity investigation edit
+`simulation/flood_sim_ian.py`.** They have coexisted cleanly — surface parameterization's
+`manning_n` sits alongside the connectivity investigation's `gauge_rc`/`initial_h` and its
+scalar branch leaves the original expression untouched — but there is no locking. Use targeted
+edits, never a full-file rewrite, and re-read before editing.

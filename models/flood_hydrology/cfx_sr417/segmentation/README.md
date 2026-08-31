@@ -1,7 +1,7 @@
 # segmentation — measured surface parameters for the physics mesh
 
-Track A of [`../../NEXT_STEPS.md`](../../NEXT_STEPS.md). Replaces two assumptions in the solver
-with measurements:
+The Surface Parameterization section of [`../../NEXT_STEPS.md`](../../NEXT_STEPS.md). Replaces
+two assumptions in the solver with measurements:
 
 1. **Tree canopy was absent from the flow surface entirely** — the mesh was bare-earth DEM plus
    LiDAR building roofs, with no vegetation in it at all.
@@ -320,9 +320,9 @@ domain margin, not the interior.
 
 Four solver runs at site3 on the real Ian event, all sharing one loaded DEM, Horton field,
 soil-storage cap and hyetograph. The baseline arm reproduced **411.6 cfs / 375.1 ha / 1.393 m**
-bit-for-bit on two independent invocations, and those are exactly Track B's published post-fix
-numbers — so the control is the untouched code path on the corrected terrain, not a
-re-derivation of it.
+bit-for-bit on two independent invocations, and those are exactly the connectivity
+investigation's published post-fix numbers — so the control is the untouched code path on the
+corrected terrain, not a re-derivation of it.
 
 | metric | baseline | **segmented *n*** | segmented *n*, no channel fix | observed |
 |---|---|---|---|---|
@@ -346,10 +346,11 @@ to 1.996 Mm³, so the missing volume is not in transit at t = 72 h — it infilt
 surface holds water on pervious ground longer, and with soil-storage capacity still available it
 soaks in. That is physically coherent, and it is a real cost of the change.
 
-**This corroborates Track B's conclusion from an independent direction.** Track B ruled out
-conveyance by measuring channel slope and velocity, and concluded Manning's *n* is not the
-bottleneck. Here a physically derived roughness field spanning 9.2× — mean +64 %, rougher over
-half the domain — moves runoff volume by 8 % in the wrong direction and does not touch the ~3.5×
+**This corroborates the connectivity investigation's conclusion from an independent
+direction.** That investigation ruled out conveyance by measuring channel slope and velocity,
+and concluded Manning's *n* is not the bottleneck. Here a physically derived roughness field
+spanning 9.2× — mean +64 %, rougher over half the domain — moves runoff volume by 8 % in the
+wrong direction and does not touch the ~3.5×
 magnitude gap. Two different methods, same answer: **roughness is not the missing physics.** No
 arm peaks inside the 72-hour window either; all three rise monotonically to t = 72 h, so
 roughness is not why the gauge hydrograph fails to peak.

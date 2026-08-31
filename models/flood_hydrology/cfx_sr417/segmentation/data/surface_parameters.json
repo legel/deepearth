@@ -6,7 +6,7 @@
     "roughness_family_rejected": "Engman (1986) overland-flow coefficients \u2014 calibrated for millimetre-deep sheet flow, 10-20x larger, not defensible at 5 m resolution and ~0.1 m depth",
     "baseline_anchor": "grass_turf is pinned to the solver's existing scalar MANNING_N = 0.040 so the experiment isolates redistribution from recalibration",
     "soil_parameters_are_now_a_measured_comparison": {
-      "why": "Track A's first pass declined to supply Ks and soil Smax on the grounds that SSURGO measures them. That was a judgement call, and it has been replaced by an experiment: both parameterisations are built and both are run against the Gee Creek gauge. See run_site3_ian_segmented.py --arms vision_soil.",
+      "why": "Surface parameterization's first pass declined to supply Ks and soil Smax on the grounds that SSURGO measures them. That was a judgement call, and it has been replaced by an experiment: both parameterisations are built and both are run against the Gee Creek gauge. See run_site3_ian_segmented.py --arms vision_soil.",
       "ssurgo_route": "load_spatial_horton() + load_soil_storage_capacity(), 28 map units",
       "vision_route": "vision_ks_mm_hr_dry / vision_soil_storage_m below, from the class map",
       "why_it_matters_beyond_this_site": "SSURGO exists only in the United States. If the premise is 'any coordinate -> a twin', the size of the gap between a soil survey and a vision estimate is what decides whether the pipeline is US-only or global.",

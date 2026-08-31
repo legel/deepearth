@@ -19,10 +19,10 @@ in the table above differ.
 Why this script and not `simulation/run_site3_ian.py`
 -----------------------------------------------------
 Two reasons, both practical:
-  * That script is being edited concurrently on the channel-connectivity track (Track B), and it
-    writes `simulation/outputs/hydrograph_ian_site3.csv` — the file Track B's own runs produce.
-    Everything here writes to `segmentation/data/` instead, so the two tracks cannot clobber
-    each other's results.
+  * That script is being edited concurrently by the connectivity investigation, and it
+    writes `simulation/outputs/hydrograph_ian_site3.csv` — the file that investigation's own
+    runs produce. Everything here writes to `segmentation/data/` instead, so the two efforts
+    cannot clobber each other's results.
   * A baseline recorded by someone else's run is not a controlled baseline. Running both arms
     here, back to back, on the same loaded inputs, removes every confounder except the one
     under test.

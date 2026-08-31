@@ -576,8 +576,8 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
     #
     # manning_n=None takes the scalar branch, which is the ORIGINAL expression unchanged — every
     # existing caller and every previously-recorded run is bit-identical. Passing an array is
-    # what segmentation/rasterize_parameters.py produces (Track A): the promotion of MANNING_N
-    # from a single domain-wide constant to a measured spatial field.
+    # what segmentation/rasterize_parameters.py produces (surface parameterization): the
+    # promotion of MANNING_N from a single domain-wide constant to a measured spatial field.
     #
     # A uniform array is NOT bit-identical to the scalar, and the reason is numpy casting, not
     # physics: a float64 SCALAR times a float32 array stays float32 (value-based casting), while
