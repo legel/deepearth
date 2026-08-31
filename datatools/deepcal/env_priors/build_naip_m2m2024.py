@@ -233,7 +233,10 @@ def main():
     elev = load_elevation(gid)
     event_day = load_event_day(gid)
     # map each obs -> covering tile index (check nearest 8 tile centers for bbox containment)
-    _, ii = tree.query(np.stack([lon, lat], 1), k=8)
+    _, ii = tree.query(np.stack([lon, lat], 1), k=min(8, len(tiles)))
+    ii = np.atleast_2d(ii)
+    if ii.shape[0] != len(gid):
+        ii = ii.T
     tile_of = np.full(len(gid), -1)
     for k in range(ii.shape[1]):
         ti = ii[:, k]; b = tb[ti]

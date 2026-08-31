@@ -1,0 +1,113 @@
+"""Build a NAIP scene catalog from the public Planetary Computer STAC API."""
+import argparse
+import json
+import time
+import urllib.request
+from pathlib import Path
+
+import numpy as np
+
+
+STAC_SEARCH = "https://planetarycomputer.microsoft.com/api/stac/v1/search"
+
+
+def load_points(root):
+    files = sorted((root / "gbif_tokens").glob("*.npz"))
+    if not files:
+        raise SystemExit(f"no train/test token shards under {root / 'gbif_tokens'}")
+    lat, lon = [], []
+    for file in files:
+        z = np.load(file)
+        la = z["lat"].astype(np.float64)
+        lo = z["lon"].astype(np.float64)
+        ok = np.isfinite(la) & np.isfinite(lo)
+        lat.append(la[ok])
+        lon.append(lo[ok])
+    if not lat:
+        raise SystemExit("no finite coordinates in train/test token shards")
+    return np.concatenate(lat), np.concatenate(lon)
+
+
+def query_cells(lat, lon, cell_deg):
+    ilat = np.floor(lat / cell_deg).astype(np.int64)
+    ilon = np.floor(lon / cell_deg).astype(np.int64)
+    cells = np.unique(np.stack([ilat, ilon], 1), axis=0)
+    for ca, co in cells:
+        lat0 = float(ca * cell_deg)
+        lon0 = float(co * cell_deg)
+        yield [lon0, lat0, lon0 + cell_deg, lat0 + cell_deg]
+
+
+def stac_search(bbox, datetime, limit):
+    body = {"collections": ["naip"], "bbox": bbox, "limit": limit}
+    if datetime:
+        body["datetime"] = datetime
+    req = urllib.request.Request(
+        STAC_SEARCH,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=120) as response:
+        payload = json.load(response)
+    return payload.get("features", [])
+
+
+def feature_row(feature):
+    assets = feature.get("assets") or {}
+    image = assets.get("image")
+    if not image or not image.get("href"):
+        return None
+    bbox = feature.get("bbox")
+    if not bbox or len(bbox) != 4:
+        return None
+    return {
+        "entityId": str(feature["id"]),
+        "displayId": str(feature["id"]),
+        "bbox": [float(x) for x in bbox],
+        "url": image["href"],
+        "source": "planetary-computer-stac",
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--cache", default=".")
+    ap.add_argument("--out")
+    ap.add_argument("--datetime", default="")
+    ap.add_argument("--cell-deg", type=float, default=0.25)
+    ap.add_argument("--limit", type=int, default=100)
+    ap.add_argument("--max-cells", type=int, default=0)
+    ap.add_argument("--sleep", type=float, default=0.05)
+    args = ap.parse_args()
+
+    root = Path(args.cache).expanduser()
+    out = Path(args.out).expanduser() if args.out else root / "env_priors" / "naip2024_tiles.json"
+    lat, lon = load_points(root)
+    rows, seen = [], set()
+    cells = list(query_cells(lat, lon, args.cell_deg))
+    if args.max_cells:
+        cells = cells[:args.max_cells]
+    for i, bbox in enumerate(cells, 1):
+        try:
+            features = stac_search(bbox, args.datetime, args.limit)
+        except Exception as exc:
+            print(f"cell {i}/{len(cells)} failed: {exc}", flush=True)
+            continue
+        for feature in features:
+            row = feature_row(feature)
+            if row and row["entityId"] not in seen:
+                seen.add(row["entityId"])
+                rows.append(row)
+        if i == 1 or i % 50 == 0:
+            print(f"catalog {i}/{len(cells)} cells | {len(rows)} scenes", flush=True)
+        time.sleep(args.sleep)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(rows, f)
+    tmp.replace(out)
+    print(f"wrote {out} ({len(rows)} scenes)")
+
+
+if __name__ == "__main__":
+    main()
