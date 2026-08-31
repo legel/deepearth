@@ -1,5 +1,6 @@
 """DINOv3-SAT patch-token extraction for 512px remote-sensing chips."""
 import os
+import sys
 
 import numpy as np
 import torch
@@ -35,6 +36,10 @@ class DINOv3Patch32:
         source = "local" if os.path.isdir(repo) else "github"
         model = os.environ.get("DINOV3_MODEL", "dinov3_vitl16")
         weights = os.environ.get("DINOV3_WEIGHTS", "SAT493M")
+        if source == "local" and weights in {"SAT493M", "LVD1689M"}:
+            sys.path.insert(0, repo)
+            from dinov3.hub.backbones import Weights
+            weights = getattr(Weights, weights)
         return torch.hub.load(repo, model, source=source, weights=weights)
 
     @torch.no_grad()
