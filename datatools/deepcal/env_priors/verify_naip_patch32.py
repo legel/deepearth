@@ -30,12 +30,23 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=".")
     ap.add_argument("--require-complete", action="store_true")
+    ap.add_argument("--estimate-only", action="store_true")
     args = ap.parse_args()
 
     root = Path(args.cache).expanduser()
     patch = root / "gbif_naip_dinov3_patch32_v1"
     manifest_path = patch / "manifest.npz"
     metadata_path = patch / "metadata.json"
+    if args.estimate_only and not manifest_path.exists():
+        token_ids = _load_token_ids(root / "gbif_tokens")
+        if not len(token_ids):
+            raise SystemExit("estimate needs either patch manifest.npz or gbif_tokens/*.npz")
+        values = len(token_ids) * 32 * 32 * 1024
+        print(
+            f"rows={len(token_ids):,} rgb_fp16={values*2/1e12:.2f}TB "
+            f"rgb_fp32={values*4/1e12:.2f}TB"
+        )
+        return
     if not manifest_path.exists():
         raise SystemExit(f"missing {manifest_path}")
     if not metadata_path.exists():
@@ -73,6 +84,13 @@ def main() -> None:
         raise SystemExit("metadata patch_shape must be [32, 32, 1024]")
     if metadata.get("patch_offset_m") != "manifest.npz:patch_offset_m [32,32,2], east/north meters from observation center":
         raise SystemExit("metadata patch_offset_m contract is missing")
+    if args.estimate_only:
+        values = len(all_ids) * 32 * 32 * 1024
+        print(
+            f"rows={len(all_ids):,} rgb_fp16={values*2/1e12:.2f}TB "
+            f"rgb_fp32={values*4/1e12:.2f}TB"
+        )
+        return
 
     files = sorted(glob.glob(str(patch / "chunk*.npz")))
     if not files:
