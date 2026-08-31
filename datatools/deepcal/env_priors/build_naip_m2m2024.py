@@ -15,7 +15,7 @@ Patch output: gbif_naip_dinov3_patch32_v1/manifest.npz plus chunk*.npz
   {gbifID, naip_year, naip_scene, patch[N,32,32,1024], has_naip}
 Raw imagery (optional, NAIP_SAVE_IMAGERY=1): NERSC <NERSC_DIR>/<entityId>.npz {gbifID, patch[n,512,512,4]uint8}
 env: USGS_M2M_TOKEN (default ~/.usgs_m2m_token), M2M_USER (ecological), NAIP_BATCH_TILES, NAIP_SAVE_IMAGERY,
-     NAIP_SAVE_PATCH32, NAIP_PATCH_DTYPE, NAIP_PATCH_VIEW, NAIP_NERSC_DIR, HF cache. Run on the H200:
+     NAIP_SAVE_PATCH32, NAIP_PATCH_DTYPE, NAIP_PATCH_VIEW, NAIP_EMBED_BATCH, NAIP_NERSC_DIR, HF cache. Run on the H200:
      python build_naip_m2m2024.py
 """
 import os, sys, io, time, json, pickle, zipfile, warnings
@@ -34,10 +34,10 @@ CACHE = Path(os.environ.get("DEEPCAL_CACHE", HERE.parent)).expanduser()
 TILES_JSON = Path(os.environ.get("NAIP_TILES_JSON", str(CACHE / "env_priors" / "naip2024_tiles.json")))
 TOKENS = CACHE / "gbif_tokens"                                  # train/test shards: {gbifID, lat, lon, ...}
 COORDS = CACHE / "env_priors" / "obs_coords.npz"                # fallback: {gbifID, lat, lon}
-TOK = CACHE / "gbif_naip_tokens"; TOK.mkdir(exist_ok=True)
-PATCH = CACHE / "gbif_naip_dinov3_patch32_v1"; PATCH.mkdir(exist_ok=True)
-IMG = CACHE / "env_priors" / "_naip2024_imagery"; IMG.mkdir(exist_ok=True)
-SCENES = CACHE / "env_priors" / "_naip2024_scenes"; SCENES.mkdir(exist_ok=True)
+TOK = CACHE / "gbif_naip_tokens"; TOK.mkdir(parents=True, exist_ok=True)
+PATCH = CACHE / "gbif_naip_dinov3_patch32_v1"; PATCH.mkdir(parents=True, exist_ok=True)
+IMG = CACHE / "env_priors" / "_naip2024_imagery"; IMG.mkdir(parents=True, exist_ok=True)
+SCENES = CACHE / "env_priors" / "_naip2024_scenes"; SCENES.mkdir(parents=True, exist_ok=True)
 CKPT = CACHE / "env_priors" / "naip_m2m2024_ckpt.pkl"
 PATCH_CKPT = CACHE / "env_priors" / "naip_m2m2024_patch32_ckpt.pkl"
 BASE = "https://m2m.cr.usgs.gov/api/api/json/stable"
@@ -49,6 +49,7 @@ EXT, PX = 300.0, 512                                            # 300 m patch ce
 INFERNO = matplotlib.colormaps["inferno"]
 BATCH_TILES = int(os.environ.get("NAIP_BATCH_TILES", 24))       # scenes per M2M download-request (working-set bound)
 DLW = int(os.environ.get("NAIP_DLW", 8))                        # parallel scene downloads
+EMBED_BATCH = int(os.environ.get("NAIP_EMBED_BATCH", 8))        # DINOv3 ViT-L patch forward microbatch
 SAVE_IMAGERY = os.environ.get("NAIP_SAVE_IMAGERY", "1") == "1"
 SAVE_PATCH32 = os.environ.get("NAIP_SAVE_PATCH32", "1") == "1"
 PATCH_VIEW = os.environ.get("NAIP_PATCH_VIEW", "rgb")
@@ -131,8 +132,8 @@ class Embedder:
     def patch32(self, ims):                                     # list of [3,512,512] uint8 -> [N,32,32,1024]
         x = np.stack([(im.astype(np.float32) / 255.0 - self.mean) / self.std for im in ims])
         out = []
-        for i in range(0, len(x), 64):
-            xt = torch.tensor(x[i:i + 64], dtype=torch.float32, device=DEV)
+        for i in range(0, len(x), EMBED_BATCH):
+            xt = torch.tensor(x[i:i + EMBED_BATCH], dtype=torch.float32, device=DEV)
             with torch.autocast("cuda", dtype=torch.float16):
                 h = self.mdl(pixel_values=xt).last_hidden_state[:, 1 + self.nreg:]
             if h.shape[1] != 1024 or h.shape[2] != 1024:
