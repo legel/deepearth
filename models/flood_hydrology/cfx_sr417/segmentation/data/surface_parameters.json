@@ -1,7 +1,7 @@
 {
   "provenance": {
     "table_version": "1.1.0",
-    "assigned_by": "multimodal reasoning over class definitions + measured per-class segment statistics (Lance's Step 2)",
+    "assigned_by": "multimodal reasoning over class definitions + measured per-class segment statistics",
     "roughness_family": "2D shallow-water land-cover tables (HEC-RAS 2D / FEMA), rooted in Chow (1959) Table 5-6",
     "roughness_family_rejected": "Engman (1986) overland-flow coefficients \u2014 calibrated for millimetre-deep sheet flow, 10-20x larger, not defensible at 5 m resolution and ~0.1 m depth",
     "baseline_anchor": "grass_turf is pinned to the solver's existing scalar MANNING_N = 0.040 so the experiment isolates redistribution from recalibration",

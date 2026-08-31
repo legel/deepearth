@@ -275,7 +275,7 @@ and runoff to 8.20 %. **A canopy roughness is not wrong for a forest; it is wron
 (Chow's 0.10 for timber assumes flow among the trunks, "flood stage below branches"). Any
 nadir-imagery parameterisation will make this mistake wherever vegetation overhangs conveyance.
 
-### Lance's Step 2 tested as asked — vision Ks/Smax vs SSURGO
+### Vision-derived vs SSURGO Ks/Smax — a controlled comparison
 
 Both soil routes built and run with the segmented Manning field held constant. Same AMC-III
 factor applied to both, so dry Ks is compared against dry Ks.

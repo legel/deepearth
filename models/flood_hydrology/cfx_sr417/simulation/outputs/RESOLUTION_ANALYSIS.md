@@ -18,7 +18,7 @@
 > Qualitative conclusions in this document are generally unaffected; the absolute numbers are not.
 
 
-_2026-07-06. Answers Lance's meeting-note question: is the 5m grid sufficient for
+_2026-07-06. Answers the open question: is the 5m grid sufficient for
 house/road-scale water depth reporting?_
 
 Three runs of `simulation/flood_sim_ian.py` (with the new spatial per-cell Horton infiltration —

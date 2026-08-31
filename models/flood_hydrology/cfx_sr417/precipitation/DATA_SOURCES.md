@@ -129,7 +129,7 @@ from different spatial geometry, not a data error. Agreement on total: 335.5 vs 
 
 Peak 1-hour intensity at MCO: **66.8 mm/hr** at 06:53 UTC Sep 29 (= ~02:53 EDT).
 
-**Recommended target dates for PlanetScope imagery (to request from Lance):**
+**Recommended target dates for sourcing new PlanetScope imagery:**
 - **MAX inundation:** 2022-10-01 to 2022-10-03 — gauges show zero precip (skies clear), Ian's
   flood water still pooled. This is the optimal acquisition window: max water extent, clear sky.
   Also request 2022-09-30 if available (earliest post-storm clear window).
@@ -173,7 +173,7 @@ conditions for baseline imagery selection):**
 | 2021-04-22 to 2021-06-04 | 32 days | 2021-05-13 |
 | 2024-04-13 to 2024-05-13 | 31 days | 2024-04-28 |
 
-The 2026-05-09 PlanetScope sample scene (Lance's existing data) falls after 15+ consecutive
+The 2026-05-09 PlanetScope sample scene (already in the existing catalogue) falls after 15+ consecutive
 zero-precip days (last meaningful rain May 3: 6.1 mm) — it is effectively a dry-season baseline
 already in hand.
 

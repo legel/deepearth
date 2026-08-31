@@ -1,7 +1,7 @@
 # gNATSGO Cross-Check — CFX SR417 Corridor AOI
 
-Investigated per Lance's 2026-06-29 meeting-note ask ("double check for soil dataset" —
-pointer to USDA gNATSGO). AOI: 28.36687N, -81.43299W, 1.0 km radius. Compared against the
+Investigated 2026-06-29 as a cross-check against USDA gNATSGO ("double check for soil
+dataset"). AOI: 28.36687N, -81.43299W, 1.0 km radius. Compared against the
 9 SSURGO map units already ingested by `soil/ssurgo_download.py`
 (mukeys 323133, 323139, 323143, 323148, 323151, 323156, 323157, 323159, 323176).
 
@@ -108,8 +108,8 @@ classification already used in `soil_parameters.json`.
 1. **gNATSGO's Valu1 table is not usable today without a large bulk geodatabase download** —
    confirmed by direct SDA query failure, not just documentation. Not pursued further (per
    task scope).
-2. **The `muaggatt` SDA table is a usable substitute for the "authoritative independent check"
-   Lance was asking gNATSGO for**, and it validates `ssurgo_download.py`'s current HSG/CN
+2. **The `muaggatt` SDA table is a usable substitute for the authoritative independent check
+   gNATSGO was expected to provide**, and it validates `ssurgo_download.py`'s current HSG/CN
    methodology for all 8 real soil map units — no discrepancy.
 3. **One real, fixable bug found**: mukey 323176 ("Water") gets an incorrect HSG-B / CN-68
    default instead of using the project's own `CN_WATER_BODY=0` path. Recommend a small
