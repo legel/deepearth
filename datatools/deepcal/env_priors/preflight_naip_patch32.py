@@ -60,12 +60,13 @@ def check_hf():
     file_url = f"https://huggingface.co/{MODEL}/resolve/main/model.safetensors"
     try:
         who = requests.get("https://huggingface.co/api/whoami-v2", headers=headers, timeout=30)
-        r = requests.get(file_url, headers=headers, timeout=30)
+        r = requests.get(file_url, headers={**headers, "Range": "bytes=0-0"}, stream=True, timeout=30)
+        r.close()
     except Exception as e:
         return False, f"HF request failed: {type(e).__name__}: {e}"
     if who.status_code != 200:
         return False, f"HF token from {source} is not valid; whoami status {who.status_code}"
-    if r.status_code != 200:
+    if r.status_code not in (200, 206):
         return False, f"HF token from {source} lacks gated file access to {MODEL}; file status {r.status_code}"
     return True, f"HF gated file access ok for {MODEL} via {source}"
 
