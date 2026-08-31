@@ -12,6 +12,13 @@ from pathlib import Path
 import numpy as np
 
 
+def _load_token_ids(path: Path) -> np.ndarray:
+    files = sorted(path.glob("*.npz"))
+    if not files:
+        return np.array([], np.int64)
+    return np.concatenate([_load_ids(file) for file in files])
+
+
 def _load_ids(path: Path) -> np.ndarray:
     z = np.load(path)
     if "gbifID" not in z:
@@ -47,13 +54,18 @@ def main() -> None:
     if manifest["patch_offset_m"].shape != (32, 32, 2):
         raise SystemExit(f"patch_offset_m shape is {manifest['patch_offset_m'].shape}, expected (32,32,2)")
 
-    expected_ids_path = root / "env_priors" / "obs_coords.npz"
-    if not expected_ids_path.exists():
-        expected_ids_path = root / "obs_coords.npz"
-    if expected_ids_path.exists():
-        expected = _load_ids(expected_ids_path)
-        if not np.array_equal(all_ids, expected):
-            raise SystemExit(f"manifest gbifID does not match {expected_ids_path}")
+    token_ids = _load_token_ids(root / "gbif_tokens")
+    if len(token_ids):
+        expected = token_ids
+        expected_source = root / "gbif_tokens"
+    else:
+        expected_ids_path = root / "env_priors" / "obs_coords.npz"
+        if not expected_ids_path.exists():
+            expected_ids_path = root / "obs_coords.npz"
+        expected = _load_ids(expected_ids_path) if expected_ids_path.exists() else None
+        expected_source = expected_ids_path
+    if expected is not None and not np.array_equal(all_ids, expected):
+        raise SystemExit(f"manifest gbifID does not match {expected_source}")
 
     with open(metadata_path) as f:
         metadata = json.load(f)

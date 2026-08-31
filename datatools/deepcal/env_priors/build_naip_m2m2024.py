@@ -30,15 +30,16 @@ from transformers import AutoModel, AutoImageProcessor
 warnings.filterwarnings("ignore")
 
 HERE = Path(__file__).resolve().parent
-TILES_JSON = HERE / "naip2024_tiles.json"                       # {entityId, displayId, bbox:[lon0,lat0,lon1,lat1]} statewide catalog
-TOKENS = HERE.parent / "gbif_tokens"                            # train/test shards: {gbifID, lat, lon, ...}
-COORDS = HERE / "obs_coords.npz"                                # fallback: {gbifID, lat, lon}
-TOK = HERE / "gbif_naip_tokens"; TOK.mkdir(exist_ok=True)
-PATCH = HERE / "gbif_naip_dinov3_patch32_v1"; PATCH.mkdir(exist_ok=True)
-IMG = HERE / "_naip2024_imagery"; IMG.mkdir(exist_ok=True)      # transient per-scene imagery npz -> NERSC -> deleted
-SCENES = HERE / "_naip2024_scenes"; SCENES.mkdir(exist_ok=True) # transient scene GeoTIFFs -> deleted after tiling
-CKPT = HERE / "naip_m2m2024_ckpt.pkl"
-PATCH_CKPT = HERE / "naip_m2m2024_patch32_ckpt.pkl"
+CACHE = Path(os.environ.get("DEEPCAL_CACHE", HERE.parent)).expanduser()
+TILES_JSON = Path(os.environ.get("NAIP_TILES_JSON", str(CACHE / "env_priors" / "naip2024_tiles.json")))
+TOKENS = CACHE / "gbif_tokens"                                  # train/test shards: {gbifID, lat, lon, ...}
+COORDS = CACHE / "env_priors" / "obs_coords.npz"                # fallback: {gbifID, lat, lon}
+TOK = CACHE / "gbif_naip_tokens"; TOK.mkdir(exist_ok=True)
+PATCH = CACHE / "gbif_naip_dinov3_patch32_v1"; PATCH.mkdir(exist_ok=True)
+IMG = CACHE / "env_priors" / "_naip2024_imagery"; IMG.mkdir(exist_ok=True)
+SCENES = CACHE / "env_priors" / "_naip2024_scenes"; SCENES.mkdir(exist_ok=True)
+CKPT = CACHE / "env_priors" / "naip_m2m2024_ckpt.pkl"
+PATCH_CKPT = CACHE / "env_priors" / "naip_m2m2024_patch32_ckpt.pkl"
 BASE = "https://m2m.cr.usgs.gov/api/api/json/stable"
 USERNAME = os.environ.get("M2M_USER", "ecological")
 TOKEN_PATH = Path(os.environ.get("USGS_M2M_TOKEN", str(Path.home() / ".usgs_m2m_token")))
@@ -181,6 +182,8 @@ def nersc_put(local_path, remote_name):
 
 
 def main():
+    if not TILES_JSON.exists():
+        raise SystemExit(f"{TILES_JSON} not found; set NAIP_TILES_JSON to the 2024 M2M tile catalog")
     tiles = json.load(open(TILES_JSON))
     tb = np.array([t["bbox"] for t in tiles], float)            # lon0,lat0,lon1,lat1
     cen = np.stack([(tb[:, 0] + tb[:, 2]) / 2, (tb[:, 1] + tb[:, 3]) / 2], 1)
