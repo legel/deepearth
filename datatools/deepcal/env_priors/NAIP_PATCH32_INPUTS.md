@@ -1,6 +1,12 @@
 # NAIP DINOv3 patch32 inputs
 
-Goal: produce DINOv3-SAT493M patch embeddings shaped `(32, 32, 1024)` for every train/test observation that has readable NAIP coverage.
+Goal: produce DINOv3-SAT493M patch embeddings shaped `(32, 32, 1024)` for every train/test observation.
+
+The current builder uses NAIP where public STAC coverage provides a readable
+scene. Rows without NAIP coverage remain in `manifest.npz` and are masked by
+`gbifID`; satisfying the full all-row contract requires either a fallback
+remote-sensing source for those rows or an explicit accepted missing-data
+policy.
 
 Required cache inputs:
 
@@ -46,6 +52,8 @@ Best input for Lance to provide:
 
 - A `naip2024_tiles.json` catalog with `local_path` entries pointing to mounted NAIP 2024 CNIR scenes.
 - Or the same catalog with signed `url` entries if scenes are hosted remotely.
+- A fallback source for train/test rows outside public NAIP/STAC coverage if
+  the final artifact must contain real DINO patch tensors for every row.
 
 That avoids repeated catalog/download negotiation and lets the builder stream patches directly from the provided scenes.
 
