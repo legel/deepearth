@@ -48,6 +48,31 @@ class Patch32Cache:
         })
         return out
 
+    def earth4d_inputs(self, gbif_id):
+        row = self.get(gbif_id)
+        if not row["has_naip"]:
+            return {
+                "gbifID": row["gbifID"],
+                "has_naip": False,
+                "patch": None,
+                "coords": None,
+                "valid": None,
+            }
+        patch = row["patch"]
+        lat = row["patch_lat"].astype(np.float32)
+        lon = row["patch_lon"].astype(np.float32)
+        elev = np.full(lat.shape, row["elev_m"], np.float32)
+        day = np.full(lat.shape, row["event_day"], np.float32)
+        coords = np.stack([lat, lon, elev, day], axis=-1)
+        valid = np.isfinite(lat) & np.isfinite(lon)
+        return {
+            "gbifID": row["gbifID"],
+            "has_naip": True,
+            "patch": patch,
+            "coords": coords,
+            "valid": valid,
+        }
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -64,6 +89,11 @@ def main():
         print(
             f"patch={row['patch'].shape} {row['patch'].dtype} "
             f"patch_lat={row['patch_lat'].shape} patch_lon={row['patch_lon'].shape}"
+        )
+        e4d = cache.earth4d_inputs(gid)
+        print(
+            f"earth4d patch={e4d['patch'].shape} coords={e4d['coords'].shape} "
+            f"valid={int(e4d['valid'].sum())}/{e4d['valid'].size}"
         )
 
 
