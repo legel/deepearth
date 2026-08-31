@@ -1,0 +1,29 @@
+{
+  "site": "site3",
+  "site_label": "Gauge-matched validation site \u2014 Gee Creek near Longwood (USGS 02234400)",
+  "precip_station": "KSFB (Orlando Sanford Intl, 10.8km)",
+  "cell_size_m": 25.0,
+  "grid_shape": [
+    272,
+    274
+  ],
+  "dt_s": 20.0,
+  "n_steps": 12960,
+  "wall_s": 391.5760188102722,
+  "total_rain_mm": 391.7442,
+  "peak_rain_mm_hr": 57.15,
+  "peak_depth_m": 3.2452123165130615,
+  "peak_flooded_ha": 1816.0,
+  "peak_outflow_total_cfs": 15158.86253757841,
+  "peak_outflow_time_hr": 33.96666666666667,
+  "rain_peak_time_hr": 33.0,
+  "outflow_lag_hr": 0.9666666666666686,
+  "gauge": {
+    "site_no": "02234400",
+    "documented_drainage_area_km2": 33.15,
+    "delineated_drainage_area_km2": 11.65,
+    "real_ian_baseflow_cfs": 45.2,
+    "real_ian_peak_cfs": 1190.0,
+    "real_ian_peak_time_utc": "2022-09-29T13:31:00Z"
+  }
+}

@@ -1,36 +1,36 @@
 {
   "site": "site3",
-  "cell_size_m": 5.0,
+  "cell_size_m": 25.0,
   "grid_shape": [
-    1363,
-    1372
+    272,
+    274
   ],
   "landcover_source": "landcover_0.6m_site3_sam3.tif",
   "parameter_table_version": "1.1.0",
-  "cells_with_classified_cover_pct": 69.59422171551778,
+  "cells_with_classified_cover_pct": 73.25166380420781,
   "channel_override": {
     "applied": true,
-    "cells": 17673,
+    "cells": 703,
     "buffer_m": 10.0,
     "channel_n": 0.045,
-    "imagery_derived_channel_n_mean": 0.0876
+    "imagery_derived_channel_n_mean": 0.0877
   },
   "domain_area_fraction_by_class": {
-    "tree_canopy": 0.45115,
-    "building_roof": 0.15972,
-    "road_paved": 0.1465,
-    "grass_turf": 0.09752,
-    "water": 0.06812,
-    "shrub_scrub": 0.04399,
-    "impervious_other": 0.01697,
-    "bare_soil": 0.01592,
-    "wetland_marsh": 0.00011
+    "tree_canopy": 0.43821,
+    "building_roof": 0.17215,
+    "road_paved": 0.15093,
+    "grass_turf": 0.09645,
+    "water": 0.06836,
+    "shrub_scrub": 0.04249,
+    "impervious_other": 0.01579,
+    "bare_soil": 0.01554,
+    "wetland_marsh": 7e-05
   },
   "manning_n": {
     "solver_scalar_today": 0.04,
-    "arithmetic_mean": 0.05941888317465782,
+    "arithmetic_mean": 0.05937610939145088,
     "arithmetic_p05_p50_p95": [
-      0.013000000268220901,
+      0.014990909723564982,
       0.03999999910593033,
       0.11999999731779099
     ],
@@ -38,32 +38,32 @@
       0.013000000268220901,
       0.11999999731779099
     ],
-    "horton_composite_mean": 0.059924591332674026,
-    "horton_vs_arithmetic_mean_pct": 0.8510899751005242,
-    "fraction_of_domain_rougher_than_scalar": 0.3708441976518099
+    "horton_composite_mean": 0.06163836643099785,
+    "horton_vs_arithmetic_mean_pct": 3.8100459304810763,
+    "fraction_of_domain_rougher_than_scalar": 0.45671425504508373
   },
   "surface_storage": {
-    "mean_mm": 1.6965980175882578,
+    "mean_mm": 1.747629721648991,
     "max_mm": 4.4999998062849045,
-    "as_pct_of_ian_storm_total": 0.43280561673169843
+    "as_pct_of_ian_storm_total": 0.4458239085839263
   },
   "vision_soil": {
-    "ks_dry_mm_hr_mean": 75.97320556640625,
+    "ks_dry_mm_hr_mean": 77.71858215332031,
     "ks_dry_mm_hr_p05_p50_p95": [
       0.0,
-      0.0,
+      40.0,
       210.0
     ],
-    "soil_storage_mm_mean": 135.38196682929993,
+    "soil_storage_mm_mean": 138.5260373353958,
     "soil_storage_mm_p05_p50_p95": [
       0.0,
-      0.0,
+      78.11329513788223,
       375.0
     ],
     "note": "DRY conductivity; the driver applies the same AMC-III factor the solver already applies to SSURGO Ksat, so the two are compared like for like"
   },
   "impervious_fraction": {
-    "mean": 0.27114975452423096,
+    "mean": 0.29714658856391907,
     "nlcd_domain_mean_for_reference": "see soil/data/nlcd_impervious.tif"
   }
 }

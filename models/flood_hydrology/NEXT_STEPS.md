@@ -52,12 +52,35 @@ structurally unreachable.** If ponded water could reach it, infiltration would g
 That is a genuine missing process rather than a tuning knob, but it is a modelling change, not a
 bug fix — flagged for decision, not yet implemented.
 
+### Storage-cap sensitivity sweep — done, 2026-08-31, on the current solver
+
+Direct test of the hypothesis above: scale the SSURGO storage cap alone (Manning's *n* left at
+the scalar 0.040, everything else identical), site3 @ 25 m, `simulation/run_site3_ian.py
+--storage-scale`.
+
+| storage cap | mean | runoff coefficient |
+|---|---|---|
+| 0.5× SSURGO | 103 mm | 78.89 % |
+| 1.0× SSURGO (current default) | 206 mm | 71.82 % |
+| 2.0× SSURGO | 412 mm | 67.19 % |
+| **uncapped** (infinite storage) | — | **43.92 %** |
+
+Monotonic and clean — more capacity, less runoff, exactly as expected. **But it floors at 43.9 %
+even with literally unlimited storage**, against an observed 28.9–31.4 %. That floor is close to
+this section's own prediction above (~37 % if ponded water could reach the existing 206 mm cap),
+which is not the same lever as this sweep (this scales *capacity*; the prediction above is about
+*access* to capacity that already exists) — the two landing near each other is corroborating,
+not redundant. **Conclusion: storage capacity alone cannot close the magnitude gap, at any
+value.** The ponded-infiltration access problem is the more promising remaining lever, not a
+larger cap.
+
 ### Re-run required before any of these are quoted again
 
-Both probability ensembles, the storage-cap sweep, the `--baseflow` experiment, and Track A's
-three-arm roughness A/B. All were measured through at least one of the four defects above. In
-particular "a baseflow initial condition makes it worse" and "even a zero storage cap only
-reaches 10.8 % runoff" are **not** conclusions that currently stand.
+Both probability ensembles and the `--baseflow` experiment — neither has been re-run since the
+2026-08-29 solver fixes. The storage-cap sweep and Track A's roughness A/B (both spectral and
+SAM3 backends) **are now re-run, above and in Track A below** — do not treat the "even a zero
+storage cap only reaches 10.8 % runoff" figure as current; it predates the fixes and is
+superseded by the 43.92 % uncapped-storage figure measured above.
 
 ---
 
@@ -229,35 +252,42 @@ against 3DHP's mapped 13.6 %.
 scalar to a spatial field. `manning_n=None` is the original expression, so every existing caller
 is unaffected. Nothing else in the solver was touched.
 
-**SUPERSEDED — re-run required.** `flood_sim_ian.py` was rewritten at 2026-08-28 14:35 (single
-adaptive-dt block replaced by an inner sub-stepping loop, `SUBSTEP_CAP = 20000`). With the
-ORIGINAL scalar n = 0.040 and identical inputs, the first 12 simulated hours give h_max 0.050 m /
-0.0 ha on the 12:51 solver and **1.070 m / 173.7 ha on the current one**. The Track A arms below
-ran on the 12:51 revision; the SAM3 arm ran after the change. Each arm set is internally
-consistent (one process, one revision) but they cannot be compared across revisions. Pin a
-revision and re-run before quoting any of it.
+**Re-run 2026-08-31 on the current (post-2026-08-29-fix) solver, site3 @ 25 m — the earlier
+SUPERSEDED numbers below are replaced.** Both backends now controlled, sharing one loaded
+DEM/Horton/storage/hyetograph per run, scored with `analysis/validate_gauge_site3.py`.
 
-**Result, four controlled runs sharing one loaded DEM/Horton/storage/hyetograph.** The baseline
-arm reproduced 411.6 cfs / 375.1 ha / 1.393 m bit-for-bit twice — the same numbers as this
-session's Track B run, so the control is genuinely the current model.
+**Spectral backend, four arms** (`segmentation/run_site3_ian_segmented.py --cell-size 25`):
 
-| | baseline | segmented *n* | observed |
-|---|---|---|---|
-| rising-limb error | 0.72 h | **0.24 h** | — |
-| runoff coefficient | 8.91 % | 8.20 % | 28.9–31.4 % |
-| gauge-cell peak | 101.6 cfs | 37.1 cfs | 1,190 cfs |
+| | baseline | segmented *n* | + segm. impervious | vision Ks/Smax | observed |
+|---|---|---|---|---|---|
+| rising-limb error | 0.27 h | 0.30 h | 0.28 h | 0.51 h | — |
+| runoff coefficient | 72.08 % | 71.45 % | 72.68 % | **60.92 %** | 28.9–31.4 % |
+| peak outflow | 13,951 cfs | 11,461 cfs | 11,639 cfs | 9,909 cfs | — |
 
-**Timing improves, magnitude does not.** The 0.48 h improvement in rising limb is resolved and
-real; the residual 0.24 h is below the gauge's 0.25 h sampling interval and is *not* claimable.
-Runoff moves 8 % the wrong way, and the mechanism was measured rather than assumed — outflow
-plus standing water falls from 2.119 to 1.996 Mm³, so the volume infiltrated rather than
-remaining in transit.
+**Real SAM3 backend, three arms** (same script, `--param-tag _sam3`):
 
-**This independently corroborates item 1 above.** A physically derived roughness field spanning
-9.2× (mean +64 %, rougher over half the domain) does not close the ~3.5× magnitude gap and does
-not make the gauge hydrograph peak — every arm still rises monotonically to t = 72 h. Track B
-ruled out conveyance by channel slope and velocity; Track A ruled out roughness by substituting
-a measured field for the scalar. Same conclusion, two methods. **Do not tune *n*.**
+| | baseline | segmented *n* | + segm. impervious | observed |
+|---|---|---|---|---|
+| rising-limb error | 0.27 h | **0.22 h** | **0.20 h** | — |
+| runoff coefficient | 72.08 % | 71.35 % | 72.60 % | 28.9–31.4 % |
+| peak outflow | 13,951 cfs | 11,670 cfs | 11,847 cfs | — |
+
+**Timing improves under both backends; magnitude does not, under either.** SAM3's roughness
+field gives marginally better timing than the spectral one (0.20–0.22 h vs 0.28–0.30 h — both
+near the gauge's 0.25 h resolution floor, so neither improvement is fully claimable), but runoff
+coefficient sits at 71–73 % regardless of backend, roughness field, or impervious source — a
+~2.3× overshoot against the observed 28.9–31.4 % that three independent methods now agree on:
+Track B's direct channel-slope/velocity measurement, the spectral segmentation A/B, and now the
+real SAM3 segmentation A/B. **Do not tune *n*, with either backend.**
+
+**The one arm that moves runoff meaningfully is `vision Ks/Smax`** (60.92 %, still ~2× observed)
+— not because it's a better roughness field (same segmented *n* as the other spectral arms), but
+because it replaces SSURGO's Smax/Ks with the vision-derived soil route. This is a different
+lever from the storage-cap sweep just above (which holds *n* and the Ks/Smax *source* fixed and
+only scales SSURGO's magnitude) — the vision route changes both the infiltration rate and the
+capacity's spatial pattern at once, so the two results are not directly comparable, only both
+consistent with "the soil-water side of the model, not roughness, is where the remaining gap
+lives."
 
 ### The transferable finding: nadir imagery puts forest roughness in the channel
 
