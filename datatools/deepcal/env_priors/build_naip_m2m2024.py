@@ -59,6 +59,7 @@ SAVE_PATCH32 = os.environ.get("NAIP_SAVE_PATCH32", "1") == "1"
 PATCH_VIEW = os.environ.get("NAIP_PATCH_VIEW", "rgb")
 PATCH_DTYPE = np.float16 if os.environ.get("NAIP_PATCH_DTYPE", "float16") == "float16" else np.float32
 PATCH_COMPRESSED = os.environ.get("NAIP_PATCH_COMPRESSED", "0") == "1"
+SOURCE_LABEL = os.environ.get("NAIP_SOURCE_LABEL", "Planetary Computer NAIP STAC available-year scene URLs")
 NERSC_DIR = os.environ.get("NAIP_NERSC_DIR", "/global/cfs/cdirs/m5239/deepearth/naip2024_imagery")
 if PATCH_VIEW not in {"rgb", "ir"}:
     raise ValueError("NAIP_PATCH_VIEW must be 'rgb' or 'ir'")
@@ -289,6 +290,7 @@ def main():
         with open(PATCH / "metadata.json", "w") as f:
             json.dump({
                 "model": DINO_SAT,
+                "source": SOURCE_LABEL,
                 "view": PATCH_VIEW,
                 "source_patch": [4, PX, PX],
                 "patch_extent_m": EXT,
