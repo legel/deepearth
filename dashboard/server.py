@@ -246,6 +246,36 @@ def run_events(rid):
     return jsonify({"events": events, "offset": offset + len(text.encode())})
 
 
+try:                       # the command console's write path — the one place the dashboard is not read-only
+    from . import ensue
+except ImportError:
+    import ensue
+
+
+@app.post("/api/directive")
+def directive():
+    payload = request.get_json(silent=True) or {}
+    text = (payload.get("text") or "").strip()
+    if not text:
+        abort(400)
+    author = payload.get("author") or "legel"
+    try:
+        items = ensue.post(text, author=author, source={"kind": "console"})
+    except Exception as e:                                     # Ensue unreachable / no key
+        return jsonify({"ok": False, "error": str(e)}), 502
+    return jsonify({"ok": True, "items": items})
+
+
+@app.get("/api/directives")
+def directives():
+    # A read that degrades: if Ensue is unreachable the board is empty with an error note, not a 500 —
+    # the console still renders and the sweep sees no HTTP error.
+    try:
+        return jsonify(ensue.board())
+    except Exception as e:
+        return jsonify({"error": str(e), "directives": [], "feedback": []})
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8321)

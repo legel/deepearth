@@ -95,6 +95,15 @@ failure (R27). Operate both; trust neither alone.
 actually running the system (missing data dependencies, stale binaries) that no
 static audit can see. They render on the Status wall. Append; don't rewrite.
 
+## The one write path
+
+The dashboard is a read-only viewer over `state/` and `runs/` with a single exception: the **Console**
+(`#/console`). It is command-and-control — a scientist types `/build …` / `/science …` / prose, and
+`POST /api/directive` writes it to the Ensue memory network (`ensue.py`, schema `deepearth.directive/1`),
+the same memory the research loop reads. The board (`GET /api/directives`) is a live view of those
+directives + the agents' status/progress written back. Nothing touches `state/`; Ensue is the source of
+truth. Needs `ENSUE_API_KEY` (env or `dashboard/.env`); absent it, the board degrades to empty.
+
 ## Extension points
 
 - New view: add a section to `static/app.js` + an endpoint reading state.

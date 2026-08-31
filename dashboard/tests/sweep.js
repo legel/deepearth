@@ -141,6 +141,14 @@ const BASE = "http://localhost:8321";
     return (pl >= 1 && deltas > 20) || { polylines: pl, deltas };
   }));
 
+  await go("/console", "#directive-input");
+  await check("console: command input + send + board render", () => page.evaluate(() =>
+    (!!document.querySelector("#directive-input") && !!document.querySelector("#directive-send") &&
+     !!document.querySelector("#console-board")) || {
+      input: !!document.querySelector("#directive-input"),
+      send: !!document.querySelector("#directive-send"),
+      board: !!document.querySelector("#console-board") }));
+
   console.log(problems.length ? problems.join("\n") : "ALL CLEAN");
   await browser.close();
 })();

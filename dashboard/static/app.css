@@ -174,3 +174,34 @@ select:hover { border-color: var(--ink-2); }
 
 @media (max-width: 900px) { header, main { padding-left: 1.2rem; padding-right: 1.2rem; }
   .maprow { grid-template-columns: 1fr; } .frow { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---- command & control console ---- */
+.cinput { border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+  overflow: hidden; margin-bottom: 1.6rem; }
+.cinput textarea { width: 100%; border: 0; background: transparent; resize: vertical; box-sizing: border-box;
+  padding: .8rem 1rem; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9rem;
+  color: var(--ink); outline: none; }
+.cinputbar { display: flex; align-items: center; gap: 1rem; padding: .5rem 1rem .6rem;
+  border-top: 1px solid var(--grid); }
+.cinputbar .sub { margin: 0; color: var(--critical); flex: 1; }
+#directive-send { border: 1px solid var(--line); background: var(--plane); color: var(--ink);
+  border-radius: 5px; padding: .38rem .8rem; font-size: .84rem; font-weight: 600; cursor: pointer; }
+#directive-send:hover { border-color: var(--ink-2); }
+#directive-send:disabled { opacity: .5; cursor: default; }
+.crows { display: flex; flex-direction: column; gap: 10px; }
+.crow { border: 1px solid var(--border); border-left: 3px solid var(--line); border-radius: 6px;
+  padding: .7rem .9rem; background: var(--surface); }
+.crow-build { border-left-color: var(--data); }
+.crow-science { border-left-color: var(--science); }
+.chead { display: flex; align-items: center; gap: .7rem; }
+.cbadge { font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  padding: .1rem .4rem; border-radius: 4px; color: #fff; }
+.c-build { background: var(--data); }
+.c-science { background: var(--science); }
+.c-feedback { background: var(--muted); }
+.cstatus { font-size: .74rem; font-weight: 650; letter-spacing: .03em; text-transform: uppercase; }
+.csrc { margin-left: auto; font-size: .78rem; color: var(--code); }
+.cbody { margin-top: .45rem; color: var(--ink); font-size: .9rem; white-space: pre-wrap; }
+.cnote { margin-top: .4rem; font-size: .82rem; color: var(--ink-2); }
+.cnote b { color: var(--muted); font-weight: 650; }
+.cdev { color: var(--serious); }

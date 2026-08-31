@@ -8,6 +8,11 @@ const SYS_NAMES = { earth4d: "Earth4D", phylo: "Phylogenomic", fusion: "Fusion C
 const GLYPH = { good: "✓", warning: "!", serious: "▲", critical: "✕", unknown: "·" };
 
 const api = async p => { const r = await fetch("/api/" + p); return r.ok ? r.json() : null; };
+const post = async (p, body) => {
+  const r = await fetch("/api/" + p, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body) });
+  return r.json().catch(() => null);          // returns {ok:false,error} on failure, so the UI can show it
+};
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function load() {
@@ -900,13 +905,68 @@ async function vRun(rid) {
   return render(ev);
 }
 
+/* ---- command & control console ---- */
+function vConsole() {
+  const SC = { open: "var(--muted)", acknowledged: "var(--good)", in_progress: "var(--good)",
+    "needs-clarification": "var(--serious)", blocked: "var(--critical)",
+    done: "var(--muted)", superseded: "var(--muted)" };
+  const badge = k => `<span class="cbadge c-${k}">${esc(k)}</span>`;
+  const last = a => (a && a.length ? a[a.length - 1] : null);
+  const dRow = d => `<div class="crow crow-${d.kind}">
+    <div class="chead">${badge(d.kind)}<span class="cstatus" style="color:${SC[d.status] || "var(--muted)"}">${esc(d.status)}</span>
+      ${d.source?.url ? `<a class="csrc" href="${esc(d.source.url)}" target="_blank" rel="noopener">source ↗</a>` : ""}</div>
+    <div class="cbody">${esc(d.body)}</div>
+    ${d.interpretation ? `<div class="cnote"><b>read-back:</b> ${esc(d.interpretation)}</div>` : ""}
+    ${last(d.deviations) ? `<div class="cnote cdev"><b>deviation:</b> ${esc(last(d.deviations).note)}</div>` : ""}
+    ${last(d.progress) ? `<div class="cnote"><b>latest:</b> ${esc(last(d.progress).note)}</div>` : ""}
+    ${d.science_pr ? `<div class="cnote"><a href="${esc(d.science_pr)}" target="_blank" rel="noopener">science.md PR ↗</a></div>` : ""}</div>`;
+  const fRow = f => `<div class="crow cfeedback">
+    <div class="chead">${badge("feedback")}<span class="cstatus" style="color:${f.needs_action ? "var(--serious)" : "var(--muted)"}">${f.needs_action ? "needs action" : "seen"}</span>
+      ${f.source?.url ? `<a class="csrc" href="${esc(f.source.url)}" target="_blank" rel="noopener">source ↗</a>` : ""}</div>
+    <div class="cbody">${esc(f.body)}</div></div>`;
+  const renderBoard = b => {
+    if (b?.error) return empty(`Ensue unavailable: ${esc(b.error)}`);
+    if (!b || (!b.directives.length && !b.feedback.length))
+      return empty("No directives yet. Type <code>/build</code> or <code>/science</code> above, or leave a plain note.");
+    return `<div class="crows">${b.directives.map(dRow).join("")}${b.feedback.map(fRow).join("")}</div>`;
+  };
+  route.after = () => {
+    const refresh = async () => { $("#console-board").innerHTML = renderBoard(await api("directives")); };
+    const send = async () => {
+      const ta = $("#directive-input"), text = ta.value.trim();
+      if (!text) return;
+      $("#directive-send").disabled = true;
+      $("#console-msg").textContent = "";
+      const r = await post("directive", { text });
+      $("#directive-send").disabled = false;
+      if (r?.ok) { ta.value = ""; refresh(); }
+      else $("#console-msg").textContent = r?.error ? `couldn't send: ${r.error}` : "couldn't send";
+    };
+    $("#directive-send").addEventListener("click", send);
+    $("#directive-input").addEventListener("keydown", e => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+    });
+    refresh();
+    window._poll = setInterval(refresh, 4000);   // agents write status/progress back; keep it live
+  };
+  return `<h1>Command &amp; Control</h1>
+    <p class="sub"><code>/build …</code> is a top-priority task the swarm carries to completion;
+      <code>/science …</code> is a new requirement for <code>science.md</code>; anything else is a note the
+      loop reads at THINK. All of it lands in the same memory the agents read — no PR round-trip.</p>
+    <div class="cinput">
+      <textarea id="directive-input" rows="3" placeholder="/build compute DINOv3 SAT493M (32,32,1024) patches for all train/test rows&#10;/science remote sensing enters as per-patch spatial tokens, not CLS"></textarea>
+      <div class="cinputbar"><span id="console-msg" class="sub"></span><button id="directive-send">Send ⌘⏎</button></div>
+    </div>
+    <div id="console-board">${empty("loading…")}</div>`;
+}
+
 /* ---- router ---- */
 async function route() {
   const [_, p1, p2] = location.hash.split("/");
   document.querySelectorAll("nav a").forEach(a =>
     a.classList.toggle("active", a.hash === "#/" + (p1 || "status")));
   const r = { status: vStatus, graph: vGraph, flow: vFlow, code: vCode, science: () => vScience(p2),
-              benchmarks: vBench, data: vData };
+              benchmarks: vBench, data: vData, console: vConsole };
   route.after = null;
   clearInterval(window._poll);
   view.innerHTML = p1 === "file" ? await vFile(decodeURIComponent(location.hash.slice(7)))
