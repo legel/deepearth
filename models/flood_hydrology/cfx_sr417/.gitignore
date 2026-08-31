@@ -51,6 +51,12 @@ HYDROLINK_PAPER_PLAN.md
 HYDROLINK_abstract_draft.md
 **/HYDROLINK_*
 
+# Research log: has referenced private correspondence and unpublished third-party
+# manuscript detail in the past (removed, but the file is a live working log of
+# what gets read while drafting HYDROLINK, so the same risk recurs easily).
+# Kept local, deliberately not published.
+research/LITERATURE_REVIEW.md
+
 # PlanetScope per-scene documentation figures — regenerable by planetscope/visualize_psscene.py
 # from the derived products kept alongside them. ~100 MB of visualisation output that the
 # pipeline itself never reads (export_overlays.py uses rgb_truecolor/ndvi/water_boundaries).
