@@ -31,7 +31,8 @@ _PKG_ROOT = ["gbif_vocab.npz", "ca_subtree.dated.nwk", "data_provenance.yaml",
         "bioclip_taxon_text_emb.npy",                       # BioCLIP-2.5 taxon-string prior (supersedes legacy BioCLIP-2)
         "pollinator_taxon_text_emb.npy", "pollinator_distance.npy", "pollinator_animal_mask.npy"]
 # Globbed multi-shard modalities (ground vision, aerial, climate, pollinator obs) + the derived tables.
-_PKG_DIRS = ["derived", "gbif_tokens", "gbif_daymet_tokens", "gbif_naip_tokens", "gbif_pollinator_obs"]
+_PKG_DIRS = ["derived", "gbif_tokens", "gbif_daymet_tokens", "gbif_naip_tokens",
+             "gbif_naip_dinov3_patch32_v1", "gbif_pollinator_obs"]
 # Included if present (reproducible re-runs / legacy readers), skipped without error otherwise.
 _PKG_OPTIONAL = ["observations_meta.parquet", "gbif_pollinator_tokens.npz", "gbif_flower.npz", "env_priors/obs_coords.npz"]
 # prepare.py's readiness gate — the zip is invalid if any is missing.

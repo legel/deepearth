@@ -29,7 +29,7 @@ models:
 modalities:
   vision_dino:
     source: iNaturalist observation photo (GBIF media)
-    model: ground_vision ; embed: DINOv3-ViT-L/16 CLS, MEAN-pooled over ALL of an observation's photos
+    model: "ground_vision; embed: DINOv3-ViT-L/16 CLS, MEAN-pooled over ALL of an observation's photos"
     builder: add_observation.py
     output: {file: "gbif_tokens/*.npz", key: dino, shape: "[N,1024]", dtype: float32}
     pooling: MEAN over ALL of an observation's photos (up to 6)   # AUDITED: model+preproc match cache exactly
@@ -62,16 +62,18 @@ modalities:
     config: {patch_m: 512, features: 12, TPI_radii_m: [8, 24, 72, 140]}
     builder: env_priors/build_topo.py
     output: {file: gbif_topo_tokens.npz, key: topo, shape: "[N,12]", dtype: float32, mask: has_topo, provenance: topo_scene}
-    reproducible: YES — deterministic given the pinned 1m tile (fixed S3 COG). Cross-source audit vs the prior ImageServer
-                  cache: elevations match to ~0.01 m (same 3DEP data); minor slope/aspect deltas = sub-pixel resampling.
-                  Overlapping CA 1m projects handled by candidate-tile fallback on nodata gaps (validated on the Alameda cell).
+    reproducible: >
+      YES — deterministic given the pinned 1m tile (fixed S3 COG). Cross-source audit vs the prior ImageServer
+      cache: elevations match to ~0.01 m (same 3DEP data); minor slope/aspect deltas = sub-pixel resampling.
+      Overlapping CA 1m projects handled by candidate-tile fallback on nodata gaps (validated on the Alameda cell).
 
   chm:
     source: NAIP-CHM canopy height (rangeland.ntsg.umt.edu index)
     builder: env_priors/build_chm.py
     output: {file: gbif_chm_tokens.npz, key: chm, shape: "[N,11]", dtype: float32, mask: has_chm}
-    reproducible: YES — AUDITED (reused process_tile on cache obs): BYTE-EXACT vs the shipped cache (6/6 cos 1.0000,
-                  maxdiff 0); deterministic given the NAIP-CHM tile + obs coords. Only hydro remains to spot-audit (needs a free GPU).
+    reproducible: >
+      YES — AUDITED (reused process_tile on cache obs): BYTE-EXACT vs the shipped cache (6/6 cos 1.0000,
+      maxdiff 0); deterministic given the NAIP-CHM tile + obs coords. Only hydro remains to spot-audit (needs a free GPU).
 
   hydro:
     source: USGS 3DEP 1m DEM (same AWS prd-tnm COG source + TNM Access resolution as topo; reuses topo's tile index) ->
@@ -80,21 +82,25 @@ modalities:
     upstream_id_per_obs: hydro_scene = the exact 1m tile filename (same scheme as topo_scene)
     builder: env_priors/build_hydrowind_torch.py
     output: {file: gbif_hydro_tokens.npz, key: hydro, shape: "[N,6]", dtype: float32, mask: has_hydro, provenance: hydro_scene}
-    reproducible: YES — deterministic given the pinned 1m tile. Cross-source audit vs the prior ImageServer cache:
-                  HAND/TPI/Winstral-wind match closely; TWI/lnSCA diverge more (flow-accumulation is chaotically
-                  sensitive to sub-pixel DEM differences — both are valid 3DEP-derived hydrology, not a bug).
+    reproducible: >
+      YES — deterministic given the pinned 1m tile. Cross-source audit vs the prior ImageServer cache:
+      HAND/TPI/Winstral-wind match closely; TWI/lnSCA diverge more (flow-accumulation is chaotically
+      sensitive to sub-pixel DEM differences — both are valid 3DEP-derived hydrology, not a bug).
 
   naip:
     source: "NAIP 2024 CA CNIR (USGS EROS M2M API) — 2024-EXCLUSIVE. Planetary Computer only serves 2022 for CA, so the
              prior env_priors/build_naip.py (PC, reverse-engineered, RGB cos 0.72/IR 0.50) is SUPERSEDED. 2024 lives on M2M."
     model: aerial_vision (DINOv3-SAT493M)
     builder: env_priors/build_naip_m2m2024.py  (statewide tile catalog naip2024_tiles.json = 18,956 tiles)
-    config: {patch_m: 300, patch_px: 512, pooling: "MEAN over patch tokens (NOT CLS)",
+    config: {patch_m: 300, patch_px: 512, patch_tokens: "32x32x1024 when NAIP_SAVE_PATCH32=1", pooling: "MEAN over patch tokens (NOT CLS)",
              bands: "rgb_pool=DINO(R,G,B); ir_pool=DINO(inferno(normalized NIR))",
              batching: "each covering tile downloaded ONCE via M2M, window-read a 300m patch centered per obs (avg 37 obs/tile)"}
     output: {dir: gbif_naip_tokens, keys: [gbifID, naip_year, naip_scene, rgb_pool, ir_pool], shape: "[N,1024]", dtype: float32,
              naip_scene: "M2M entityId per obs (e.g. M_3311628_NE_11_060_20240503) — scene-pinned provenance",
              imagery: "raw 300m patches -> NERSC /global/cfs/cdirs/m5239/deepearth/naip2024_imagery via Globus (GCP endpoint), deleted local"}
+    patch_output: {dir: gbif_naip_dinov3_patch32_v1, keys: [manifest, gbifID, naip_year, naip_scene, patch, has_naip],
+                   shape: "[N,32,32,1024]", dtype: "float16 default, float32 optional",
+                   purpose: "train/test-aligned DINOv3 patch field for Earth4D-relative spatial readers"}
     reproducible: YES — scene-pinned (M2M entityId + naip_year); deterministic given the versioned tile + DINOv3-SAT493M.
     coverage: "215,299/215,356 (100%) of the tree-obs covered; obs_coords now the full 345,357 plant set -> 6,350 covering tiles."
 
