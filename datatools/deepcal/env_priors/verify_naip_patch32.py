@@ -29,12 +29,14 @@ def _load_ids(path: Path) -> np.ndarray:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=".")
+    ap.add_argument("--patch-dir", default="gbif_naip_dinov3_patch32_v1")
+    ap.add_argument("--allow-prefix", action="store_true")
     ap.add_argument("--require-complete", action="store_true")
     ap.add_argument("--estimate-only", action="store_true")
     args = ap.parse_args()
 
     root = Path(args.cache).expanduser()
-    patch = root / "gbif_naip_dinov3_patch32_v1"
+    patch = root / args.patch_dir
     manifest_path = patch / "manifest.npz"
     metadata_path = patch / "metadata.json"
     if args.estimate_only and not manifest_path.exists():
@@ -80,7 +82,10 @@ def main() -> None:
             expected_ids_path = root / "obs_coords.npz"
         expected = _load_ids(expected_ids_path) if expected_ids_path.exists() else None
         expected_source = expected_ids_path
-    if expected is not None and not np.array_equal(all_ids, expected):
+    expected_ok = expected is None or np.array_equal(all_ids, expected)
+    if not expected_ok and args.allow_prefix and expected is not None:
+        expected_ok = len(all_ids) <= len(expected) and np.array_equal(all_ids, expected[:len(all_ids)])
+    if not expected_ok:
         raise SystemExit(f"manifest gbifID does not match {expected_source}")
 
     with open(metadata_path) as f:
