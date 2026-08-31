@@ -11,6 +11,17 @@ SAT_MEAN = (0.430, 0.411, 0.296)
 SAT_STD = (0.213, 0.156, 0.143)
 
 
+def hf_token():
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if token:
+        return token.strip()
+    path = os.path.expanduser(os.environ.get("HF_TOKEN_PATH", "~/.cache/huggingface/token"))
+    if os.path.exists(path):
+        with open(path) as f:
+            return f.read().strip()
+    return None
+
+
 class DINOv3Patch32:
     def __init__(self, model_id=DINO_SAT, device=None, batch=None, backend=None):
         self.model_id = model_id
@@ -23,7 +34,11 @@ class DINOv3Patch32:
             self.std = np.array(SAT_STD, np.float32)[:, None, None]
         elif self.backend == "transformers":
             from transformers import AutoModel
-            self.mdl = AutoModel.from_pretrained(model_id).eval().to(self.device)
+            kwargs = {}
+            token = hf_token()
+            if token:
+                kwargs["token"] = token
+            self.mdl = AutoModel.from_pretrained(model_id, **kwargs).eval().to(self.device)
             self.nreg = self.mdl.config.num_register_tokens
             self.mean = np.array(SAT_MEAN, np.float32)[:, None, None]
             self.std = np.array(SAT_STD, np.float32)[:, None, None]
