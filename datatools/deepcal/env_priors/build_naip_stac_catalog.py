@@ -90,6 +90,17 @@ def feature_row(feature):
     }
 
 
+def add_features(rows, seen, features):
+    added = 0
+    for feature in features:
+        row = feature_row(feature)
+        if row and row["entityId"] not in seen:
+            seen.add(row["entityId"])
+            rows.append(row)
+            added += 1
+    return added
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=".")
@@ -138,15 +149,25 @@ def main():
             print(f"cell {i}/{len(cells)} failed: {exc}", flush=True)
             failed.append({"cell": i, "bbox": bbox, "error": str(exc)})
             features = []
-        for feature in features:
-            row = feature_row(feature)
-            if row and row["entityId"] not in seen:
-                seen.add(row["entityId"])
-                rows.append(row)
+        add_features(rows, seen, features)
         if i == 1 or i % args.checkpoint_every == 0:
             save_catalog(out, rows, i, failed)
             print(f"catalog {i}/{len(cells)} cells | {len(rows)} scenes | failed={len(failed)}", flush=True)
         time.sleep(args.sleep)
+    if failed:
+        retry_failed = []
+        print(f"retrying {len(failed)} failed cells", flush=True)
+        for item in failed:
+            try:
+                features = stac_search(item["bbox"], args.datetime, args.limit, args.timeout, args.retries)
+                added = add_features(rows, seen, features)
+                print(f"retry cell {item['cell']} ok | +{added} scenes", flush=True)
+            except Exception as exc:
+                item = dict(item)
+                item["retry_error"] = str(exc)
+                retry_failed.append(item)
+                print(f"retry cell {item['cell']} failed: {exc}", flush=True)
+        failed = retry_failed
     save_catalog(out, rows, len(cells), failed)
     print(f"wrote {out} ({len(rows)} scenes, failed_cells={len(failed)})")
     if failed:
