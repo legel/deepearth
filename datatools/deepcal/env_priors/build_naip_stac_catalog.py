@@ -99,9 +99,9 @@ def main():
     ap.add_argument("--limit", type=int, default=100)
     ap.add_argument("--max-cells", type=int, default=0)
     ap.add_argument("--sleep", type=float, default=0.05)
-    ap.add_argument("--timeout", type=float, default=30.0)
-    ap.add_argument("--retries", type=int, default=2)
-    ap.add_argument("--checkpoint-every", type=int, default=25)
+    ap.add_argument("--timeout", type=float, default=5.0)
+    ap.add_argument("--retries", type=int, default=1)
+    ap.add_argument("--checkpoint-every", type=int, default=1)
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
 
