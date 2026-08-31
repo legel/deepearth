@@ -16,7 +16,7 @@ Patch output: gbif_naip_dinov3_patch32_v1/manifest.npz plus chunk*.npz
 Raw imagery (optional, NAIP_SAVE_IMAGERY=1): NERSC <NERSC_DIR>/<entityId>.npz {gbifID, patch[n,512,512,4]uint8}
 env: USGS_M2M_TOKEN (default ~/.usgs_m2m_token), M2M_USER (ecological), NAIP_BATCH_TILES, NAIP_DLW,
      NAIP_SAVE_IMAGERY, NAIP_SAVE_PATCH32, NAIP_PATCH_DTYPE, NAIP_PATCH_VIEW, NAIP_EMBED_BATCH,
-     NAIP_NERSC_DIR, HF cache. Low-memory default favors resumability over throughput.
+     NAIP_PATCH_ROWS, NAIP_NERSC_DIR, HF cache. Low-memory default favors resumability over throughput.
 """
 import os, sys, io, time, json, pickle, zipfile, warnings
 from pathlib import Path
@@ -50,6 +50,7 @@ INFERNO = matplotlib.colormaps["inferno"]
 BATCH_TILES = int(os.environ.get("NAIP_BATCH_TILES", 4))        # scenes per M2M download-request (working-set bound)
 DLW = int(os.environ.get("NAIP_DLW", 2))                        # parallel scene downloads
 EMBED_BATCH = int(os.environ.get("NAIP_EMBED_BATCH", 2))        # DINOv3 ViT-L patch forward microbatch
+PATCH_ROWS = int(os.environ.get("NAIP_PATCH_ROWS", 16))         # obs per scene chunk held through DINO + write buffer
 SAVE_IMAGERY = os.environ.get("NAIP_SAVE_IMAGERY", "0") == "1"
 SAVE_PATCH32 = os.environ.get("NAIP_SAVE_PATCH32", "1") == "1"
 PATCH_VIEW = os.environ.get("NAIP_PATCH_VIEW", "rgb")
@@ -156,6 +157,20 @@ def read_patch(src, lon, lat):
     win = from_bounds(cx - h, cy - h, cx + h, cy + h, src.transform)
     arr = src.read(indexes=[1, 2, 3, 4], window=win, out_shape=(4, PX, PX), resampling=Resampling.bilinear).astype(np.uint8)
     return arr if np.isfinite(arr).all() and arr.max() > 0 else None
+
+
+def iter_scene_patches(src, idxs, lon, lat):
+    patches, keep = [], []
+    for i in idxs:
+        a = read_patch(src, lon[i], lat[i])
+        if a is not None:
+            patches.append(a)
+            keep.append(i)
+        if len(patches) >= PATCH_ROWS:
+            yield patches, keep
+            patches, keep = [], []
+    if patches:
+        yield patches, keep
 
 
 def patch_latlon(lat, lon, patch_offset_m):
@@ -349,43 +364,39 @@ def main():
             if t not in paths: continue
             ent = tiles[t]["entityId"]; yr = int(tiles[t]["displayId"].split("_")[-1][:4])
             idxs = by_scene[t]
-            patches, keep = [], []
             with rasterio.open(paths[t]) as src:
-                for i in idxs:
-                    a = read_patch(src, lon[i], lat[i])
-                    if a is not None: patches.append(a); keep.append(i)
-            if patches:
-                rgb_img = [a[:3] for a in patches]
-                need_pool = any(int(gid[i]) not in pool_done for i in keep)
-                rgb_patch = emb.patch32(rgb_img)
-                rgb = rgb_patch.reshape(rgb_patch.shape[0], -1, rgb_patch.shape[-1]).mean(1)
-                ir_patch = irp = None
-                if need_pool or PATCH_VIEW == "ir":
-                    ir_img = [(INFERNO((a[3].astype(np.float32) - a[3].min()) / (np.ptp(a[3]) + 1e-6))[:, :, :3] * 255)
-                              .astype(np.uint8).transpose(2, 0, 1) for a in patches]
-                    ir_patch = emb.patch32(ir_img)
-                    irp = ir_patch.reshape(ir_patch.shape[0], -1, ir_patch.shape[-1]).mean(1)
-                patch_lat, patch_lon = (None, None)
-                if SAVE_PATCH32:
-                    keep_idx = np.array(keep)
-                    patch_lat, patch_lon = patch_latlon(lat[keep_idx], lon[keep_idx], patch_offset_m)
-                for j, i in enumerate(keep):
-                    gid_i = int(gid[i])
-                    if gid_i not in pool_done:
-                        buf["gbifID"].append(gid_i); buf["naip_year"].append(yr); buf["naip_scene"].append(ent)
-                        buf["rgb_pool"].append(rgb[j]); buf["ir_pool"].append(irp[j])
+                for patches, keep in iter_scene_patches(src, idxs, lon, lat):
+                    rgb_img = [a[:3] for a in patches]
+                    need_pool = any(int(gid[i]) not in pool_done for i in keep)
+                    rgb_patch = emb.patch32(rgb_img)
+                    rgb = rgb_patch.reshape(rgb_patch.shape[0], -1, rgb_patch.shape[-1]).mean(1)
+                    ir_patch = irp = None
+                    if need_pool or PATCH_VIEW == "ir":
+                        ir_img = [(INFERNO((a[3].astype(np.float32) - a[3].min()) / (np.ptp(a[3]) + 1e-6))[:, :, :3] * 255)
+                                  .astype(np.uint8).transpose(2, 0, 1) for a in patches]
+                        ir_patch = emb.patch32(ir_img)
+                        irp = ir_patch.reshape(ir_patch.shape[0], -1, ir_patch.shape[-1]).mean(1)
+                    patch_lat, patch_lon = (None, None)
                     if SAVE_PATCH32:
-                        patch_buf["gbifID"].append(gid_i); patch_buf["naip_year"].append(yr); patch_buf["naip_scene"].append(ent)
-                        patch_buf["patch"].append(rgb_patch[j] if PATCH_VIEW == "rgb" else ir_patch[j])
-                        patch_buf["patch_lat"].append(patch_lat[j]); patch_buf["patch_lon"].append(patch_lon[j])
-                n_ok += len(keep)
-                if SAVE_IMAGERY:                                # raw imagery -> per-scene npz -> NERSC -> delete
-                    imp = IMG / f"{ent}.npz"
-                    np.savez_compressed(imp, gbifID=np.array([int(gid[i]) for i in keep], np.int64),
-                                        patch=np.stack(patches).astype(np.uint8))
-                    if nersc_put(imp, f"{ent}.npz"): imp.unlink()
-                if len(patch_buf["gbifID"]) >= 64:
-                    flush_patch_tokens()
+                        keep_idx = np.array(keep)
+                        patch_lat, patch_lon = patch_latlon(lat[keep_idx], lon[keep_idx], patch_offset_m)
+                    for j, i in enumerate(keep):
+                        gid_i = int(gid[i])
+                        if gid_i not in pool_done:
+                            buf["gbifID"].append(gid_i); buf["naip_year"].append(yr); buf["naip_scene"].append(ent)
+                            buf["rgb_pool"].append(rgb[j]); buf["ir_pool"].append(irp[j])
+                        if SAVE_PATCH32:
+                            patch_buf["gbifID"].append(gid_i); patch_buf["naip_year"].append(yr); patch_buf["naip_scene"].append(ent)
+                            patch_buf["patch"].append(rgb_patch[j] if PATCH_VIEW == "rgb" else ir_patch[j])
+                            patch_buf["patch_lat"].append(patch_lat[j]); patch_buf["patch_lon"].append(patch_lon[j])
+                    n_ok += len(keep)
+                    if SAVE_IMAGERY:                            # raw imagery -> per-chunk npz -> NERSC -> delete
+                        imp = IMG / f"{ent}_{n_ok:08d}.npz"
+                        np.savez_compressed(imp, gbifID=np.array([int(gid[i]) for i in keep], np.int64),
+                                            patch=np.stack(patches).astype(np.uint8))
+                        if nersc_put(imp, imp.name): imp.unlink()
+                    if len(patch_buf["gbifID"]) >= 64:
+                        flush_patch_tokens()
             paths[t].unlink(missing_ok=True)                    # delete the scene GeoTIFF (streaming)
         if len(buf["gbifID"]) >= 4000: flush_tokens()
         if len(patch_buf["gbifID"]) >= 64: flush_patch_tokens()
