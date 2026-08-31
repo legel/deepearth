@@ -21,12 +21,12 @@ env: USGS_M2M_TOKEN (default ~/.usgs_m2m_token), M2M_USER (ecological), NAIP_BAT
 import os, sys, io, time, json, pickle, zipfile, warnings
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import numpy as np, requests, torch, rasterio, matplotlib
+import numpy as np, requests, rasterio, matplotlib
 from rasterio.windows import from_bounds
 from rasterio.enums import Resampling
 from pyproj import Transformer
 from scipy.spatial import cKDTree
-from transformers import AutoModel, AutoImageProcessor
+from dinov3_patch32 import DINOv3Patch32
 warnings.filterwarnings("ignore")
 
 HERE = Path(__file__).resolve().parent
@@ -44,7 +44,6 @@ BASE = "https://m2m.cr.usgs.gov/api/api/json/stable"
 USERNAME = os.environ.get("M2M_USER", "ecological")
 TOKEN_PATH = Path(os.environ.get("USGS_M2M_TOKEN", str(Path.home() / ".usgs_m2m_token")))
 DINO_SAT = "facebook/dinov3-vitl16-pretrain-sat493m"
-DEV = "cuda:0" if torch.cuda.is_available() else "cpu"
 EXT, PX = 300.0, 512                                            # 300 m patch centered on the obs, resampled to 512 px
 INFERNO = matplotlib.colormaps["inferno"]
 BATCH_TILES = int(os.environ.get("NAIP_BATCH_TILES", 4))        # scenes per M2M download-request (working-set bound)
@@ -127,32 +126,6 @@ def catalog_scene_path(tile):
         return None
     path = Path(path).expanduser()
     return path if path.exists() else None
-
-
-# ---------------- DINOv3-SAT embedding ----------------
-class Embedder:
-    def __init__(self):
-        self.proc = AutoImageProcessor.from_pretrained(DINO_SAT)
-        self.mdl = AutoModel.from_pretrained(DINO_SAT).eval().to(DEV)
-        self.nreg = self.mdl.config.num_register_tokens
-        self.mean = np.array(self.proc.image_mean)[:, None, None]; self.std = np.array(self.proc.image_std)[:, None, None]
-
-    @torch.no_grad()
-    def patch32(self, ims):                                     # list of [3,512,512] uint8 -> [N,32,32,1024]
-        x = np.stack([(im.astype(np.float32) / 255.0 - self.mean) / self.std for im in ims])
-        out = []
-        for i in range(0, len(x), EMBED_BATCH):
-            xt = torch.tensor(x[i:i + EMBED_BATCH], dtype=torch.float32, device=DEV)
-            with torch.autocast("cuda", dtype=torch.float16):
-                h = self.mdl(pixel_values=xt).last_hidden_state[:, 1 + self.nreg:]
-            if h.shape[1] != 1024 or h.shape[2] != 1024:
-                raise RuntimeError(f"expected DINOv3 patch tokens [N,1024,1024], got {tuple(h.shape)}")
-            out.append(h.float().reshape(h.shape[0], 32, 32, 1024).cpu().numpy())
-        return np.concatenate(out)
-
-    def pool(self, ims):
-        patch = self.patch32(ims)
-        return patch.reshape(patch.shape[0], -1, patch.shape[-1]).mean(1)
 
 
 def read_patch(src, lon, lat):
@@ -315,7 +288,7 @@ def main():
                 "row_manifest": "manifest.npz",
                 "missing_policy": "rows without a readable NAIP patch are absent from chunks and masked by gbifID",
             }, f, indent=2)
-    emb = Embedder()
+    emb = DINOv3Patch32(DINO_SAT, batch=EMBED_BATCH)
     buf = {k: [] for k in ("gbifID", "naip_year", "naip_scene", "rgb_pool", "ir_pool")}
     patch_buf = {k: [] for k in ("gbifID", "naip_year", "naip_scene", "patch", "patch_lat", "patch_lon")}
     chunk = len(list(TOK.glob("chunk*.npz"))); n_ok = 0; t0 = time.time()
