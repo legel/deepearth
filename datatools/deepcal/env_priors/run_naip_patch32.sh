@@ -11,6 +11,7 @@ set -euo pipefail
 : "${NAIP_PATCH_ROWS:=16}"
 : "${NAIP_SAVE_IMAGERY:=0}"
 : "${USGS_M2M_TOKEN:=/root/.usgs_m2m_token}"
+: "${NAIP_TILES_JSON:=$DEEPCAL_CACHE/env_priors/naip2024_tiles.json}"
 
 export DEEPCAL_CACHE
 export NAIP_SAVE_PATCH32
@@ -22,19 +23,18 @@ export NAIP_EMBED_BATCH
 export NAIP_PATCH_ROWS
 export NAIP_SAVE_IMAGERY
 export USGS_M2M_TOKEN
-
-if [[ ! -f "$USGS_M2M_TOKEN" ]]; then
-  echo "missing USGS_M2M_TOKEN=$USGS_M2M_TOKEN" >&2
-  exit 2
-fi
+export NAIP_TILES_JSON
 
 python datatools/deepcal/env_priors/preflight_naip_patch32.py \
   --cache "$DEEPCAL_CACHE" \
   --dtype "$NAIP_PATCH_DTYPE" \
-  --require-usgs \
   --require-hf
 
-if [[ ! -f "$DEEPCAL_CACHE/env_priors/naip2024_tiles.json" ]]; then
+if [[ ! -f "$NAIP_TILES_JSON" ]]; then
+  if [[ ! -f "$USGS_M2M_TOKEN" ]]; then
+    echo "missing USGS_M2M_TOKEN=$USGS_M2M_TOKEN and no NAIP catalog exists" >&2
+    exit 2
+  fi
   python datatools/deepcal/env_priors/build_naip_m2m2024_catalog.py
 fi
 
@@ -42,7 +42,6 @@ python datatools/deepcal/env_priors/preflight_naip_patch32.py \
   --cache "$DEEPCAL_CACHE" \
   --dtype "$NAIP_PATCH_DTYPE" \
   --require-catalog \
-  --require-usgs \
   --require-hf
 
 python datatools/deepcal/env_priors/build_naip_m2m2024.py

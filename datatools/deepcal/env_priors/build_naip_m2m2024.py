@@ -2,7 +2,7 @@
 
 Planetary Computer only serves 2022 NAIP for CA; the 2024 CNIR acquisition lives on USGS M2M. For each NAIP-2024
 scene that covers >=1 observation (mapped from the cached statewide catalog naip2024_tiles.json), download the scene
-ONCE via M2M, window-read a 300x300 m patch CENTERED on every observation the scene covers -> 512x512 4-band uint8,
+ONCE via M2M unless the catalog provides local_path/url, window-read a 300x300 m patch CENTERED on every observation the scene covers -> 512x512 4-band uint8,
 then (a) optionally accumulate the raw imagery patch -> per-scene npz streamed to NERSC and deleted locally, and
 (b) embed with DINOv3-SAT493M. The pooled cache is still emitted for backward compatibility; NAIP_SAVE_PATCH32=1
 also emits full 32x32x1024 patch-token shards for train/test-aligned Earth4D readers. Scene GeoTIFF is deleted
@@ -16,7 +16,7 @@ Patch output: gbif_naip_dinov3_patch32_v1/manifest.npz plus chunk*.npz
 Raw imagery (optional, NAIP_SAVE_IMAGERY=1): NERSC <NERSC_DIR>/<entityId>.npz {gbifID, patch[n,512,512,4]uint8}
 env: USGS_M2M_TOKEN (default ~/.usgs_m2m_token), M2M_USER (ecological), NAIP_BATCH_TILES, NAIP_DLW,
      NAIP_SAVE_IMAGERY, NAIP_SAVE_PATCH32, NAIP_PATCH_DTYPE, NAIP_PATCH_VIEW, NAIP_EMBED_BATCH,
-     NAIP_PATCH_ROWS, NAIP_NERSC_DIR, HF cache. Low-memory default favors resumability over throughput.
+     NAIP_PATCH_ROWS, NAIP_NERSC_DIR, NAIP_TILES_JSON, HF cache. Low-memory default favors resumability over throughput.
 """
 import os, sys, io, time, json, pickle, zipfile, warnings
 from pathlib import Path
@@ -119,6 +119,14 @@ def fetch_scene(url, entity):
         for p in (raw, scene):
             if p.exists(): p.unlink()
         return None
+
+
+def catalog_scene_path(tile):
+    path = tile.get("local_path")
+    if not path:
+        return None
+    path = Path(path).expanduser()
+    return path if path.exists() else None
 
 
 # ---------------- DINOv3-SAT embedding ----------------
@@ -343,22 +351,37 @@ def main():
         pickle.dump(patch_done, open(PATCH_CKPT, "wb"))
         for k in patch_buf: patch_buf[k] = []
 
-    key = login()
+    key = None
     for w in range(0, len(todo), BATCH_TILES):
         batch = todo[w:w + BATCH_TILES]
-        ents = [tiles[t]["entityId"] for t in batch]
-        try:
-            urls = scene_urls(key, ents)
-        except Exception as e:                                  # apiKey expires ~2h -> re-login
-            print(f"  re-login ({e})", flush=True); key = login(); urls = scene_urls(key, ents)
+        urls, paths, cleanup = {}, {}, {}
+        m2m_batch = []
+        for t in batch:
+            local = catalog_scene_path(tiles[t])
+            if local is not None:
+                paths[t] = local
+                cleanup[t] = False
+            elif tiles[t].get("url"):
+                urls[tiles[t]["entityId"]] = tiles[t]["url"]
+            else:
+                m2m_batch.append(t)
+        if m2m_batch:
+            ents = [tiles[t]["entityId"] for t in m2m_batch]
+            if key is None:
+                key = login()
+            try:
+                urls.update(scene_urls(key, ents))
+            except Exception as e:                              # apiKey expires ~2h -> re-login
+                print(f"  re-login ({e})", flush=True); key = login(); urls.update(scene_urls(key, ents))
         # download scenes in parallel
-        paths = {}
         with ThreadPoolExecutor(max_workers=DLW) as ex:
             futs = {ex.submit(fetch_scene, urls[tiles[t]["entityId"]], tiles[t]["entityId"]): t
-                    for t in batch if tiles[t]["entityId"] in urls}
+                    for t in batch if t not in paths and tiles[t]["entityId"] in urls}
             for fut in as_completed(futs):
                 p = fut.result()
-                if p is not None: paths[futs[fut]] = p
+                if p is not None:
+                    paths[futs[fut]] = p
+                    cleanup[futs[fut]] = True
         # tile + embed each scene, upload imagery, delete
         for t in batch:
             if t not in paths: continue
@@ -397,7 +420,8 @@ def main():
                         if nersc_put(imp, imp.name): imp.unlink()
                     if len(patch_buf["gbifID"]) >= 64:
                         flush_patch_tokens()
-            paths[t].unlink(missing_ok=True)                    # delete the scene GeoTIFF (streaming)
+            if cleanup.get(t, True):
+                paths[t].unlink(missing_ok=True)                # delete downloaded scene GeoTIFFs; keep catalog local_path files
         if len(buf["gbifID"]) >= 4000: flush_tokens()
         if len(patch_buf["gbifID"]) >= 64: flush_patch_tokens()
         print(f"  scenes {min(w+BATCH_TILES,len(todo))}/{len(todo)} | {n_ok} obs embedded | {n_ok/max(time.time()-t0,1):.1f} obs/s", flush=True)

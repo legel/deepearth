@@ -1,5 +1,6 @@
 """Preflight checks for the NAIP 2024 DINOv3 patch32 build."""
 import argparse
+import json
 import os
 import shutil
 from pathlib import Path
@@ -65,6 +66,34 @@ def check_hf():
     return True, f"HF model access ok for {MODEL} via {source}"
 
 
+def catalog_summary(path):
+    if not path.exists():
+        return None
+    with open(path) as f:
+        tiles = json.load(f)
+    local = 0
+    valid_local = 0
+    url = 0
+    missing_local = 0
+    for tile in tiles:
+        if tile.get("url"):
+            url += 1
+        if tile.get("local_path"):
+            local += 1
+            if not Path(tile["local_path"]).expanduser().exists():
+                missing_local += 1
+            else:
+                valid_local += 1
+    return {
+        "entries": len(tiles),
+        "local_path": local,
+        "valid_local_path": valid_local,
+        "url": url,
+        "missing_local_path": missing_local,
+        "direct": valid_local + url,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=os.environ.get("DEEPCAL_CACHE", "."))
@@ -87,8 +116,14 @@ def main():
     print(f"disk_free={usage.free/1e12:.2f}TB")
     print(f"disk_ok={usage.free > needed * 1.10}")
 
-    catalog = root / "env_priors" / "naip2024_tiles.json"
-    print(f"catalog_present={catalog.exists()} path={catalog}")
+    catalog = Path(os.environ.get("NAIP_TILES_JSON", str(root / "env_priors" / "naip2024_tiles.json"))).expanduser()
+    summary = catalog_summary(catalog)
+    print(f"catalog_present={summary is not None} path={catalog}")
+    if summary is not None:
+        print(
+            "catalog_entries={entries} local_path={local_path} valid_local_path={valid_local_path} url={url} "
+            "missing_local_path={missing_local_path} direct_sources={direct}".format(**summary)
+        )
     if args.require_catalog and not catalog.exists():
         raise SystemExit(2)
 
