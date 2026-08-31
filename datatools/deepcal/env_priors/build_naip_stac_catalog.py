@@ -2,6 +2,7 @@
 import argparse
 import json
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -38,7 +39,17 @@ def query_cells(lat, lon, cell_deg):
         yield [lon0, lat0, lon0 + cell_deg, lat0 + cell_deg]
 
 
-def stac_search(bbox, datetime, limit):
+def save_catalog(out, rows, next_cell):
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(rows, f)
+    tmp.replace(out)
+    with open(out.with_suffix(".progress.json"), "w") as f:
+        json.dump({"next_cell": next_cell, "scenes": len(rows)}, f)
+
+
+def stac_search(bbox, datetime, limit, timeout):
     body = {"collections": ["naip"], "bbox": bbox, "limit": limit}
     if datetime:
         body["datetime"] = datetime
@@ -47,7 +58,7 @@ def stac_search(bbox, datetime, limit):
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=120) as response:
+    with urllib.request.urlopen(req, timeout=timeout) as response:
         payload = json.load(response)
     return payload.get("features", [])
 
@@ -78,34 +89,48 @@ def main():
     ap.add_argument("--limit", type=int, default=100)
     ap.add_argument("--max-cells", type=int, default=0)
     ap.add_argument("--sleep", type=float, default=0.05)
+    ap.add_argument("--timeout", type=float, default=30.0)
+    ap.add_argument("--checkpoint-every", type=int, default=25)
+    ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
 
     root = Path(args.cache).expanduser()
     out = Path(args.out).expanduser() if args.out else root / "env_priors" / "naip2024_tiles.json"
     lat, lon = load_points(root)
-    rows, seen = [], set()
+    rows, seen, start_cell = [], set(), 0
+    progress = out.with_suffix(".progress.json")
+    if args.resume and out.exists():
+        with open(out) as f:
+            rows = json.load(f)
+        seen = {row["entityId"] for row in rows}
+        if progress.exists():
+            with open(progress) as f:
+                start_cell = int(json.load(f).get("next_cell", 0))
+        print(f"resume from cell {start_cell} with {len(rows)} scenes", flush=True)
     cells = list(query_cells(lat, lon, args.cell_deg))
     if args.max_cells:
         cells = cells[:args.max_cells]
     for i, bbox in enumerate(cells, 1):
+        if i <= start_cell:
+            continue
         try:
-            features = stac_search(bbox, args.datetime, args.limit)
+            features = stac_search(bbox, args.datetime, args.limit, args.timeout)
+        except urllib.error.HTTPError as exc:
+            print(f"cell {i}/{len(cells)} http {exc.code}: {bbox}", flush=True)
+            features = []
         except Exception as exc:
             print(f"cell {i}/{len(cells)} failed: {exc}", flush=True)
-            continue
+            features = []
         for feature in features:
             row = feature_row(feature)
             if row and row["entityId"] not in seen:
                 seen.add(row["entityId"])
                 rows.append(row)
-        if i == 1 or i % 50 == 0:
+        if i == 1 or i % args.checkpoint_every == 0:
+            save_catalog(out, rows, i)
             print(f"catalog {i}/{len(cells)} cells | {len(rows)} scenes", flush=True)
         time.sleep(args.sleep)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(".json.tmp")
-    with open(tmp, "w") as f:
-        json.dump(rows, f)
-    tmp.replace(out)
+    save_catalog(out, rows, len(cells))
     print(f"wrote {out} ({len(rows)} scenes)")
 
 
