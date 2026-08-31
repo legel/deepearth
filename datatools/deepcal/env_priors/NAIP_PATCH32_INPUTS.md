@@ -34,3 +34,17 @@ Best input for Lance to provide:
 - Or the same catalog with signed `url` entries if scenes are hosted remotely.
 
 That avoids repeated M2M catalog/download negotiation and lets the builder stream patches directly from the provided scenes.
+
+DINOv3 model input options:
+
+1. Hugging Face Transformers
+   - default backend
+   - requires an HF token with accepted access to `facebook/dinov3-vitl16-pretrain-sat493m`, or an existing local HF cache
+
+2. Official facebookresearch/dinov3 repo
+   - set `DINOV3_BACKEND=hub`
+   - optionally set `DINOV3_REPO=/path/to/dinov3`
+   - set `DINOV3_WEIGHTS=/path/to/dinov3_vitl16_sat493m-eadcf0ff.pth` or an accepted direct weights URL
+   - uses SAT-493M normalization: mean `(0.430, 0.411, 0.296)`, std `(0.213, 0.156, 0.143)`
+
+The official repo path does not bypass model access. It lets us use a local `.pth` or accepted weights URL if Lance/Meta provides one.
