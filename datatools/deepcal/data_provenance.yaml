@@ -98,9 +98,9 @@ modalities:
     output: {dir: gbif_naip_tokens, keys: [gbifID, naip_year, naip_scene, rgb_pool, ir_pool], shape: "[N,1024]", dtype: float32,
              naip_scene: "M2M entityId per obs (e.g. M_3311628_NE_11_060_20240503) — scene-pinned provenance",
              imagery: "raw 300m patches -> NERSC /global/cfs/cdirs/m5239/deepearth/naip2024_imagery via Globus (GCP endpoint), deleted local"}
-    patch_output: {dir: gbif_naip_dinov3_patch32_v1, keys: [manifest, gbifID, naip_year, naip_scene, patch, has_naip],
+    patch_output: {dir: gbif_naip_dinov3_patch32_v1, keys: [manifest, gbifID, naip_year, naip_scene, patch, patch_lat, patch_lon, has_naip],
                    shape: "[N,32,32,1024]", dtype: "float16 default, float32 optional",
-                   purpose: "train/test-aligned DINOv3 patch field for Earth4D-relative spatial readers"}
+                   purpose: "train/test-aligned DINOv3 patch field plus per-patch GPS grid for Earth4D-relative spatial readers"}
     reproducible: YES — scene-pinned (M2M entityId + naip_year); deterministic given the versioned tile + DINOv3-SAT493M.
     coverage: "215,299/215,356 (100%) of the tree-obs covered; obs_coords now the full 345,357 plant set -> 6,350 covering tiles."
 

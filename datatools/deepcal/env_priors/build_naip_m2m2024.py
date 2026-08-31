@@ -12,11 +12,11 @@ of finished gbifIDs.
 
 Output: gbif_naip_tokens/chunk*.npz {gbifID, naip_year, naip_scene, rgb_pool[N,1024]f32, ir_pool[N,1024]f32}
 Patch output: gbif_naip_dinov3_patch32_v1/manifest.npz plus chunk*.npz
-  {gbifID, naip_year, naip_scene, patch[N,32,32,1024], has_naip}
+  {gbifID, naip_year, naip_scene, patch[N,32,32,1024], patch_lat[N,32,32], patch_lon[N,32,32], has_naip}
 Raw imagery (optional, NAIP_SAVE_IMAGERY=1): NERSC <NERSC_DIR>/<entityId>.npz {gbifID, patch[n,512,512,4]uint8}
-env: USGS_M2M_TOKEN (default ~/.usgs_m2m_token), M2M_USER (ecological), NAIP_BATCH_TILES, NAIP_SAVE_IMAGERY,
-     NAIP_SAVE_PATCH32, NAIP_PATCH_DTYPE, NAIP_PATCH_VIEW, NAIP_EMBED_BATCH, NAIP_NERSC_DIR, HF cache. Run on the H200:
-     python build_naip_m2m2024.py
+env: USGS_M2M_TOKEN (default ~/.usgs_m2m_token), M2M_USER (ecological), NAIP_BATCH_TILES, NAIP_DLW,
+     NAIP_SAVE_IMAGERY, NAIP_SAVE_PATCH32, NAIP_PATCH_DTYPE, NAIP_PATCH_VIEW, NAIP_EMBED_BATCH,
+     NAIP_NERSC_DIR, HF cache. Low-memory default favors resumability over throughput.
 """
 import os, sys, io, time, json, pickle, zipfile, warnings
 from pathlib import Path
@@ -47,10 +47,10 @@ DINO_SAT = "facebook/dinov3-vitl16-pretrain-sat493m"
 DEV = "cuda:0" if torch.cuda.is_available() else "cpu"
 EXT, PX = 300.0, 512                                            # 300 m patch centered on the obs, resampled to 512 px
 INFERNO = matplotlib.colormaps["inferno"]
-BATCH_TILES = int(os.environ.get("NAIP_BATCH_TILES", 24))       # scenes per M2M download-request (working-set bound)
-DLW = int(os.environ.get("NAIP_DLW", 8))                        # parallel scene downloads
-EMBED_BATCH = int(os.environ.get("NAIP_EMBED_BATCH", 8))        # DINOv3 ViT-L patch forward microbatch
-SAVE_IMAGERY = os.environ.get("NAIP_SAVE_IMAGERY", "1") == "1"
+BATCH_TILES = int(os.environ.get("NAIP_BATCH_TILES", 4))        # scenes per M2M download-request (working-set bound)
+DLW = int(os.environ.get("NAIP_DLW", 2))                        # parallel scene downloads
+EMBED_BATCH = int(os.environ.get("NAIP_EMBED_BATCH", 2))        # DINOv3 ViT-L patch forward microbatch
+SAVE_IMAGERY = os.environ.get("NAIP_SAVE_IMAGERY", "0") == "1"
 SAVE_PATCH32 = os.environ.get("NAIP_SAVE_PATCH32", "1") == "1"
 PATCH_VIEW = os.environ.get("NAIP_PATCH_VIEW", "rgb")
 PATCH_DTYPE = np.float16 if os.environ.get("NAIP_PATCH_DTYPE", "float16") == "float16" else np.float32
