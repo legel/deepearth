@@ -12,14 +12,42 @@ class Patch32Cache:
         self.manifest = np.load(self.path / "manifest.npz")
         self.ids = self.manifest["gbifID"].astype(np.int64)
         self.row = {int(g): i for i, g in enumerate(self.ids)}
-        self.chunk_for_id = {}
+        self.chunk_row_for_id = {}
+        chunks = sorted(self.path.glob("chunk*.npz"))
+        index = self.path / "chunk_index.npz"
+        if index.exists():
+            z = np.load(index, allow_pickle=True)
+            indexed = set(map(str, z["chunk"]))
+            if indexed == {chunk.name for chunk in chunks}:
+                for gid, chunk, row in zip(z["gbifID"], z["chunk"], z["row"]):
+                    self.chunk_row_for_id[int(gid)] = (self.path / str(chunk), int(row))
+                return
+        self.build_index(write=False)
+
+    def build_index(self, write=True):
+        ids, chunks, rows = [], [], []
+        seen = set()
         for chunk in sorted(self.path.glob("chunk*.npz")):
             z = np.load(chunk, allow_pickle=True)
-            for g in z["gbifID"].astype(np.int64):
-                self.chunk_for_id[int(g)] = chunk
+            for row, g in enumerate(z["gbifID"].astype(np.int64)):
+                gid = int(g)
+                if gid in seen:
+                    raise ValueError(f"duplicate gbifID {gid} in {chunk}")
+                seen.add(gid)
+                self.chunk_row_for_id[gid] = (chunk, row)
+                ids.append(gid)
+                chunks.append(chunk.name)
+                rows.append(row)
+        if write:
+            np.savez(
+                self.path / "chunk_index.npz",
+                gbifID=np.array(ids, np.int64),
+                chunk=np.array(chunks, object),
+                row=np.array(rows, np.int32),
+            )
 
     def has(self, gbif_id):
-        return int(gbif_id) in self.chunk_for_id
+        return int(gbif_id) in self.chunk_row_for_id
 
     def get(self, gbif_id):
         gid = int(gbif_id)
@@ -37,8 +65,8 @@ class Patch32Cache:
         }
         if not out["has_naip"]:
             return out
-        z = np.load(self.chunk_for_id[gid], allow_pickle=True)
-        j = int(np.flatnonzero(z["gbifID"].astype(np.int64) == gid)[0])
+        chunk, j = self.chunk_row_for_id[gid]
+        z = np.load(chunk, allow_pickle=True)
         out.update({
             "patch": z["patch"][j],
             "patch_lat": z["patch_lat"][j],
@@ -79,9 +107,14 @@ def main():
     ap.add_argument("--cache", required=True)
     ap.add_argument("--patch-dir", default="gbif_naip_dinov3_patch32_v1")
     ap.add_argument("--gbif-id", type=int)
+    ap.add_argument("--build-index", action="store_true")
     args = ap.parse_args()
 
     cache = Patch32Cache(args.cache, args.patch_dir)
+    if args.build_index:
+        cache.build_index(write=True)
+        print(f"indexed {len(cache.chunk_row_for_id):,} patch rows")
+        return
     gid = args.gbif_id or int(cache.ids[0])
     row = cache.get(gid)
     print(f"gbifID={gid} has_naip={row['has_naip']} lat={float(row['lat']):.6f} lon={float(row['lon']):.6f}")
