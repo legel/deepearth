@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, Sequence
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -105,6 +106,7 @@ READER_PARAMETERS = (
     "mesh_condition_gate.", "mesh_condition_norm.",
     "mesh_cell_key", "mesh_level_key", "mesh_lens_key",
     "species_niche_key", "species_niche_adapter.",
+    "position_species_",
     "specialist_meshes.", "specialist_pair_mix", "specialist_fusion.",
     "specialist_fusion_gate",
     "specialist_aggregate_norm.", "specialist_output_norm.", "specialist_type",
@@ -131,6 +133,7 @@ LFMC_LENS_PARAMETERS = (
 IDENTITY_DETAIL_PARAMETERS = ("identity_detail_",)
 RELATION_PARAMETERS = ("species_myco_head.", "myco_relation_gate")
 CALIBRATION_PARAMETERS = ("pollinator_log_temperature",)
+POSITION_PARAMETERS = ("position_species_",)
 
 
 def signal_lens(name: str, kind: str | None = None) -> str:
@@ -541,6 +544,61 @@ class MeshModel(nn.Module):
         nn.init.zeros_(self.species_niche_adapter[-1].weight)
         nn.init.zeros_(self.species_niche_adapter[-1].bias)
         torch.random.set_rng_state(niche_rng)
+        position_devices = list(range(torch.cuda.device_count())) \
+                           if torch.cuda.is_available() else []
+        with torch.random.fork_rng(devices=position_devices):
+            torch.manual_seed(20260831)
+            self.position_species_level = nn.Parameter(torch.zeros(levels))
+            self.position_species_adapter = nn.Sequential(
+                nn.LayerNorm(d_model),
+                nn.Linear(d_model, d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model, bias=False),
+            )
+            nn.init.zeros_(self.position_species_adapter[-1].weight)
+            self.position_species_rgb_adapter = SignalAdapter(384, d_model)
+            self.position_species_ir_adapter = SignalAdapter(384, d_model)
+            self.position_species_local = nn.Sequential(
+                nn.Conv2d(
+                    d_model, d_model, 3, padding=1,
+                    groups=d_model, bias=False,
+                ),
+                nn.GELU(),
+                nn.Conv2d(d_model, d_model, 1, bias=False),
+            )
+            nn.init.zeros_(self.position_species_local[-1].weight)
+            self.position_species_scale_type = nn.Parameter(
+                torch.randn(3, d_model) * 0.02
+            )
+            self.position_species_patch_norm = nn.LayerNorm(d_model)
+            self.position_species_patch_attention = nn.MultiheadAttention(
+                d_model, 4, batch_first=True
+            )
+            self.position_species_patch_output = nn.LayerNorm(d_model)
+            self.position_species_gate = nn.Parameter(torch.tensor(0.1))
+        self.register_buffer(
+            "position_species_patch_tokens",
+            source.naip_patch_tokens,
+            persistent=False,
+        )
+        fine_axis = torch.linspace(83.125, -83.125, 8)
+        fine_north, fine_east = torch.meshgrid(
+            fine_axis, -fine_axis, indexing="ij"
+        )
+        mid_axis = torch.tensor((71.25, 23.75, -23.75, -71.25))
+        mid_north, mid_east = torch.meshgrid(
+            mid_axis, -mid_axis, indexing="ij"
+        )
+        self.register_buffer(
+            "position_species_patch_offsets",
+            torch.stack((fine_north.flatten(), fine_east.flatten()), -1),
+            persistent=False,
+        )
+        self.register_buffer(
+            "position_species_mid_offsets",
+            torch.stack((mid_north.flatten(), mid_east.flatten()), -1),
+            persistent=False,
+        )
         lens_rng = torch.random.get_rng_state()
         self.species_lens_reader_norm = nn.LayerNorm(d_model)
         self.species_lens_reader = nn.MultiheadAttention(
@@ -959,6 +1017,10 @@ class MeshModel(nn.Module):
         self._pollinator_route = None
         self._raw_state_tokens = None
         self._raw_state_mask = None
+        self._position_species_state = None
+        self._position_species_patch_state = None
+        self._position_species_patch_mask = None
+        self._position_species_patch_valid = None
 
     @staticmethod
     def _mesh_pair(
@@ -1115,6 +1177,7 @@ class MeshModel(nn.Module):
             relative = relative.unsqueeze(-2)
         neighbor = neighbor + relative
         return {
+            "coordinates": query_coords,
             "position_s": query.mean(-2),
             "position_t": self.absolute_proj_t(temporal).mean(-2),
             "position": query.mean(-2),
@@ -1131,6 +1194,10 @@ class MeshModel(nn.Module):
         detach_species: bool = False,
         species_mask: torch.Tensor | None = None,
     ):
+        self._position_species_state = context["query_state"].detach()
+        self._position_species_patch_state = self._positioned_patch_state(
+            context, values, present
+        )
         species = self._species(species_mask)
         identity = values.get(self.species_variable)
         identity_present = present.get(self.species_variable)
@@ -1866,10 +1933,135 @@ class MeshModel(nn.Module):
         residual = residual - family_mean.gather(
             1, self.species_family.expand(residual.shape[0], -1)
         )
-        logits = base + residual
+        logits = base + residual + self._position_species_logits(pooled, key)
         if include_lens:
             logits = logits + self._species_lens_residual(pooled, key)
         return logits
+
+    def _position_species_logits(
+        self, pooled: torch.Tensor, key: torch.Tensor
+    ) -> torch.Tensor:
+        state = self._position_species_state
+        patches = self._position_species_patch_state
+        if state is None or patches is None:
+            return key.new_zeros(pooled.shape[0], key.shape[0])
+        position = torch.einsum(
+            "l,bld->bd", self.position_species_level.softmax(0), state.float()
+        )
+        query = pooled + position
+        read = self.position_species_patch_attention(
+            query.unsqueeze(1), patches, patches,
+            key_padding_mask=self._position_species_patch_mask,
+            need_weights=False,
+        )[0].squeeze(1)
+        query = query + self.position_species_patch_output(read)
+        residual = self.position_species_adapter(query) @ key.detach().t()
+        family = self.species_family.expand(residual.shape[0], -1)
+        family_sum = residual.new_zeros(residual.shape[0], self.family_count)
+        family_sum.scatter_add_(1, family, residual)
+        family_size = torch.bincount(
+            self.species_family, minlength=self.family_count
+        ).clamp_min(1).to(residual.dtype)
+        residual = residual - (family_sum / family_size).gather(1, family)
+        valid = self._position_species_patch_valid.to(residual.dtype).unsqueeze(1)
+        return torch.tanh(self.position_species_gate) * residual * valid
+
+    def _positioned_patch_state(
+        self,
+        context: dict,
+        values: Dict[str, torch.Tensor],
+        present: Dict[str, torch.Tensor],
+    ) -> torch.Tensor | None:
+        index = values.get("naip_patch_index")
+        if index is None:
+            self._position_species_patch_mask = None
+            self._position_species_patch_valid = None
+            return None
+        index = index.long()
+        valid = (index >= 0) & present.get(
+            "naip_rgb", torch.zeros_like(index, dtype=torch.bool)
+        )
+        coords = context["coordinates"]
+        coarse_stop = self.levels // 3
+        mid_stop = 2 * self.levels // 3
+        fine_levels = self.levels - mid_stop
+        mid_levels = mid_stop - coarse_stop
+        token_count = 64 * fine_levels + 16 * mid_levels + coarse_stop
+        state = coords.new_zeros(len(coords), token_count, self.d_model)
+        if valid.any():
+            active_coords = coords[valid]
+
+            def shifted(offsets: torch.Tensor) -> torch.Tensor:
+                patch_coords = active_coords[:, None].expand(
+                    -1, len(offsets), -1
+                ).clone()
+                patch_coords[..., 0] += offsets[None, :, 0] / 111_320.0
+                longitude_scale = 111_320.0 * torch.cos(
+                    torch.deg2rad(active_coords[:, 0])
+                ).clamp_min(0.2)
+                patch_coords[..., 1] += (
+                    offsets[None, :, 1] / longitude_scale[:, None]
+                )
+                return patch_coords
+
+            def addressed(patch_coords: torch.Tensor) -> torch.Tensor:
+                spatial, temporal = self.mesh.raw(
+                    patch_coords.float().flatten(0, 1)
+                )
+                position = self.absolute_proj_s(spatial) \
+                           + self.absolute_proj_t(temporal)
+                position = position.reshape(
+                    len(active_coords), patch_coords.shape[1],
+                    self.levels, self.d_model,
+                )
+                relative = self.neighbors.space_time(
+                    active_coords.float(), patch_coords.float()
+                )
+                if relative.dim() == position.dim() - 1:
+                    relative = relative.unsqueeze(-2)
+                return (position + relative).detach()
+
+            fine_coords = shifted(self.position_species_patch_offsets)
+            mid_coords = shifted(self.position_species_mid_offsets)
+            global_coords = active_coords[:, None]
+            with torch.autocast(device_type=coords.device.type, enabled=False):
+                fine_position = addressed(fine_coords)[:, :, mid_stop:]
+                mid_position = addressed(mid_coords)[:, :, coarse_stop:mid_stop]
+                coarse_position = addressed(global_coords)[:, :, :coarse_stop]
+
+            patches = self.position_species_patch_tokens[index[valid]]
+            evidence = (
+                self.position_species_rgb_adapter(patches[:, 0].float())
+                + self.position_species_ir_adapter(patches[:, 1].float())
+            ).mul_(1.0 / math.sqrt(2.0))
+            grid = evidence.reshape(-1, 8, 8, self.d_model).permute(0, 3, 1, 2)
+            grid = grid + self.position_species_local(grid)
+            fine_evidence = grid.permute(0, 2, 3, 1).reshape(
+                -1, 64, self.d_model
+            )
+            mid_grid = F.avg_pool2d(grid, 2, 2)
+            mid_evidence = mid_grid.permute(0, 2, 3, 1).reshape(
+                -1, 16, self.d_model
+            )
+            coarse_evidence = mid_evidence.mean(1, keepdim=True)
+            scale = self.position_species_scale_type
+            fine_state = self.position_species_patch_norm(
+                fine_evidence.unsqueeze(2) + fine_position + scale[0]
+            ).flatten(1, 2)
+            mid_state = self.position_species_patch_norm(
+                mid_evidence.unsqueeze(2) + mid_position + scale[1]
+            ).flatten(1, 2)
+            coarse_state = self.position_species_patch_norm(
+                coarse_evidence.unsqueeze(2) + coarse_position + scale[2]
+            ).flatten(1, 2)
+            state[valid] = torch.cat(
+                (fine_state, mid_state, coarse_state), dim=1
+            )
+        token_valid = valid[:, None].expand(-1, token_count).clone()
+        token_valid[~valid, 0] = True
+        self._position_species_patch_mask = ~token_valid
+        self._position_species_patch_valid = valid
+        return state
 
     def _hierarchical_family_read(self, species_logits: torch.Tensor) -> torch.Tensor:
         """Read the strongest species inside the mesh posterior's strongest family."""
@@ -2489,6 +2681,32 @@ def build_model(source, variable_specs, always_dims, device: str, design: Experi
     ).to(device)
 
 
+def attach_naip_patches(source, cache: str, device: str) -> None:
+    directory = Path(cache).expanduser() / "naip_dinov2_patch8_v1"
+    metadata = directory / "metadata.json"
+    if not metadata.exists():
+        raise FileNotFoundError(f"incomplete NAIP patch cache: {directory}")
+    rows = np.load(directory / "rows.npy")
+    gbif_id = np.load(directory / "gbifID.npy")
+    valid = np.load(directory / "valid.npy")
+    if not np.array_equal(np.asarray(source.gbifID)[rows], gbif_id):
+        raise ValueError("NAIP patch cache does not match the assembled dataset")
+    lookup = np.full(source.n, -1, np.int64)
+    lookup[rows[valid]] = np.arange(int(valid.sum()))
+    tokens = np.load(directory / "tokens.npy", mmap_mode="r")[valid]
+    source.naip_patch_tokens = torch.from_numpy(
+        np.asarray(tokens).copy()
+    ).to(device)
+    index = torch.from_numpy(lookup).to(device)
+    have = index >= 0
+    source.extra["naip_patch_index"] = (index, have, 1)
+    print(
+        f"NAIP DINOv2 patch state {int(have.sum()):,}/{source.n:,} observations  "
+        f"tokens {tuple(source.naip_patch_tokens.shape)}",
+        flush=True,
+    )
+
+
 def train(
     cache: str,
     device: str,
@@ -2506,6 +2724,7 @@ def train(
     if device.startswith("cuda"):
         torch.cuda.manual_seed_all(design.seed)
     source, variable_specs, always_dims = load_data(cache, device)
+    attach_naip_patches(source, cache, device)
     if design.width != 128:
         candidate_rng = torch.random.get_rng_state()
         candidate_cuda_rng = torch.cuda.get_rng_state_all() \
@@ -2562,11 +2781,17 @@ def train(
         if name.startswith(CALIBRATION_PARAMETERS)
     ]
     calibration_ids = {id(parameter) for parameter in calibration_parameters}
+    position_parameters = [
+        parameter for name, parameter in model.named_parameters()
+        if name.startswith(POSITION_PARAMETERS)
+    ]
+    position_ids = {id(parameter) for parameter in position_parameters}
     base_parameters = [
         parameter for parameter in model.parameters()
         if id(parameter) not in relation_ids
         and id(parameter) not in lens_ids
         and id(parameter) not in calibration_ids
+        and id(parameter) not in position_ids
     ]
     optimizer = torch.optim.AdamW(
         base_parameters,
@@ -2593,6 +2818,15 @@ def train(
     lens_scheduler = None
     calibration_optimizer = None
     calibration_scheduler = None
+    position_optimizer = torch.optim.AdamW(
+        position_parameters,
+        lr=design.learning_rate * 2.0,
+        weight_decay=design.weight_decay,
+        fused=device.startswith("cuda"),
+    )
+    position_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        position_optimizer, design.steps
+    )
     reader_budget = design.steps if design.reader_only else design.reader_steps
     reader_start = 0 if design.reader_only else design.steps - design.reader_steps
     lfmc_train_index = None
@@ -2634,6 +2868,7 @@ def train(
                 and id(parameter) not in relation_ids
                 and id(parameter) not in lens_ids
                 and id(parameter) not in calibration_ids
+                and id(parameter) not in position_ids
             ]
             base_parameters = [
                 parameter for parameter in model.parameters()
@@ -2642,8 +2877,9 @@ def train(
                 and id(parameter) not in relation_ids
                 and id(parameter) not in lens_ids
                 and id(parameter) not in calibration_ids
+                and id(parameter) not in position_ids
             ]
-            del optimizer, scheduler
+            del optimizer, scheduler, position_optimizer, position_scheduler
             gc.collect()
             if device.startswith("cuda"):
                 torch.cuda.empty_cache()
@@ -2687,12 +2923,22 @@ def train(
             calibration_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 calibration_optimizer, reader_budget
             )
+            position_optimizer = torch.optim.AdamW(
+                position_parameters,
+                lr=design.learning_rate * 2.0,
+                weight_decay=design.weight_decay,
+                fused=device.startswith("cuda"),
+            )
+            position_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                position_optimizer, reader_budget
+            )
             print(
                 f"reader phase {reader_budget} steps  "
                 f"parameters {sum(parameter.numel() for parameter in reader_parameters):,}  "
                 f"graph parameters {sum(parameter.numel() for parameter in graph_parameters):,}  "
                 f"detail parameters {sum(parameter.numel() for parameter in detail_parameters):,}  "
                 f"lens parameters {sum(parameter.numel() for parameter in lens_parameters):,}  "
+                f"position parameters {sum(parameter.numel() for parameter in position_parameters):,}  "
                 f"graph lr scale {design.graph_learning_rate_scale:g}",
                 flush=True,
             )
@@ -2775,6 +3021,7 @@ def train(
             lens_optimizer.zero_grad(set_to_none=True)
         if calibration_optimizer is not None:
             calibration_optimizer.zero_grad(set_to_none=True)
+        position_optimizer.zero_grad(set_to_none=True)
         gradient_cosine = None
         if structured_loss is None:
             loss.backward()
@@ -2797,6 +3044,7 @@ def train(
                 lens_optimizer.zero_grad(set_to_none=True)
             if calibration_optimizer is not None:
                 calibration_optimizer.zero_grad(set_to_none=True)
+            position_optimizer.zero_grad(set_to_none=True)
             structured_loss.backward()
             shared = [
                 parameter for parameter in trainable
@@ -2835,6 +3083,7 @@ def train(
             torch.nn.utils.clip_grad_norm_(lens_parameters, 5.0)
         if calibration_optimizer is not None:
             torch.nn.utils.clip_grad_norm_(calibration_parameters, 5.0)
+        torch.nn.utils.clip_grad_norm_(position_parameters, 5.0)
         optimizer.step()
         scheduler.step()
         if relation_optimizer is not None:
@@ -2849,6 +3098,8 @@ def train(
         if calibration_optimizer is not None:
             calibration_optimizer.step()
             calibration_scheduler.step()
+        position_optimizer.step()
+        position_scheduler.step()
         for module in model.modules():
             if hasattr(module, "clamp_per_level_scale"):
                 module.clamp_per_level_scale()
