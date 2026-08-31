@@ -158,6 +158,37 @@ def read_patch(src, lon, lat):
     return arr if np.isfinite(arr).all() and arr.max() > 0 else None
 
 
+def patch_latlon(lat, lon, patch_offset_m):
+    lat = np.asarray(lat, np.float32)
+    lon = np.asarray(lon, np.float32)
+    north = patch_offset_m[..., 1]
+    east = patch_offset_m[..., 0]
+    dlat = north[None, :, :] / 111_320.0
+    dlon = east[None, :, :] / (111_320.0 * np.cos(np.deg2rad(lat))[:, None, None] + 1e-6)
+    return (lat[:, None, None] + dlat).astype(np.float32), (lon[:, None, None] + dlon).astype(np.float32)
+
+
+def load_elevation(gid):
+    path = CACHE / "gbif_elev.npz"
+    if not path.exists():
+        return np.full(len(gid), np.nan, np.float32)
+    z = np.load(path)
+    lut = dict(zip(z["gbifID"].astype(np.int64).tolist(), z["elev"].astype(np.float32).tolist()))
+    return np.array([lut.get(int(g), np.nan) for g in gid], np.float32)
+
+
+def load_event_day(gid):
+    path = CACHE / "gbif_eventtime.npz"
+    if not path.exists():
+        return np.full(len(gid), np.nan, np.float32)
+    z = np.load(path)
+    key = "days" if "days" in z else ("event_day" if "event_day" in z else None)
+    if key is None:
+        return np.full(len(gid), np.nan, np.float32)
+    lut = dict(zip(z["gbifID"].astype(np.int64).tolist(), z[key].astype(np.float32).tolist()))
+    return np.array([lut.get(int(g), np.nan) for g in gid], np.float32)
+
+
 _SF = {}
 def _nersc_dir():
     """Lazy SFAPI handle to NERSC_DIR (client_id + secret from ~/.sfapi/sfapi.json), reused across uploads."""
@@ -191,16 +222,20 @@ def main():
     tree = cKDTree(cen)
     token_files = sorted(TOKENS.glob("*.npz"))
     if token_files:
-        gid, lat, lon = [], [], []
+        gid, lat, lon, obs_ord = [], [], [], []
         for file in token_files:
             z = np.load(file)
             gid.append(z["gbifID"].astype(np.int64))
             lat.append(z["lat"].astype(float))
             lon.append(z["lon"].astype(float))
-        gid, lat, lon = np.concatenate(gid), np.concatenate(lat), np.concatenate(lon)
+            obs_ord.append(z["ord"].astype(np.int32) if "ord" in z else np.full(len(z["gbifID"]), -1, np.int32))
+        gid, lat, lon, obs_ord = np.concatenate(gid), np.concatenate(lat), np.concatenate(lon), np.concatenate(obs_ord)
     else:
         z = np.load(COORDS)
         gid, lat, lon = z["gbifID"].astype(np.int64), z["lat"].astype(float), z["lon"].astype(float)
+        obs_ord = np.full(len(gid), -1, np.int32)
+    elev = load_elevation(gid)
+    event_day = load_event_day(gid)
     # map each obs -> covering tile index (check nearest 8 tile centers for bbox containment)
     _, ii = tree.query(np.stack([lon, lat], 1), k=8)
     tile_of = np.full(len(gid), -1)
@@ -234,6 +269,9 @@ def main():
             gbifID=gid.astype(np.int64),
             lat=lat.astype(np.float32),
             lon=lon.astype(np.float32),
+            elev_m=elev.astype(np.float32),
+            event_day=event_day.astype(np.float32),
+            obs_ord=obs_ord.astype(np.int32),
             has_candidate_tile=(tile_of >= 0),
             patch_shape=np.array([32, 32, 1024], np.int16),
             patch_offset_m=patch_offset_m,
@@ -245,6 +283,9 @@ def main():
                 "source_patch": [4, PX, PX],
                 "patch_extent_m": EXT,
                 "patch_offset_m": "manifest.npz:patch_offset_m [32,32,2], east/north meters from observation center",
+                "patch_latlon": "chunk*.npz:patch_lat/patch_lon [N,32,32], derived from obs center + patch_offset_m",
+                "center_elev_m": "manifest.npz:elev_m, copied from gbif_elev.npz when present; true per-patch DEM elevation is not generated here",
+                "timestamp": "manifest.npz:event_day when gbif_eventtime.npz is present; shared by all patches for the observation",
                 "patch_shape": [32, 32, 1024],
                 "dtype": str(np.dtype(PATCH_DTYPE)),
                 "row_key": "gbifID",
@@ -253,7 +294,7 @@ def main():
             }, f, indent=2)
     emb = Embedder()
     buf = {k: [] for k in ("gbifID", "naip_year", "naip_scene", "rgb_pool", "ir_pool")}
-    patch_buf = {k: [] for k in ("gbifID", "naip_year", "naip_scene", "patch")}
+    patch_buf = {k: [] for k in ("gbifID", "naip_year", "naip_scene", "patch", "patch_lat", "patch_lon")}
     chunk = len(list(TOK.glob("chunk*.npz"))); n_ok = 0; t0 = time.time()
     patch_chunk = len(list(PATCH.glob("chunk*.npz")))
 
@@ -279,6 +320,8 @@ def main():
             naip_year=np.array(patch_buf["naip_year"], np.int16),
             naip_scene=np.array(patch_buf["naip_scene"], object),
             patch=np.stack(patch_buf["patch"]).astype(PATCH_DTYPE),
+            patch_lat=np.stack(patch_buf["patch_lat"]).astype(np.float32),
+            patch_lon=np.stack(patch_buf["patch_lon"]).astype(np.float32),
             has_naip=np.ones(len(patch_buf["gbifID"]), bool))
         patch_chunk += 1
         patch_done |= set(ids)
@@ -322,6 +365,10 @@ def main():
                               .astype(np.uint8).transpose(2, 0, 1) for a in patches]
                     ir_patch = emb.patch32(ir_img)
                     irp = ir_patch.reshape(ir_patch.shape[0], -1, ir_patch.shape[-1]).mean(1)
+                patch_lat, patch_lon = (None, None)
+                if SAVE_PATCH32:
+                    keep_idx = np.array(keep)
+                    patch_lat, patch_lon = patch_latlon(lat[keep_idx], lon[keep_idx], patch_offset_m)
                 for j, i in enumerate(keep):
                     gid_i = int(gid[i])
                     if gid_i not in pool_done:
@@ -330,6 +377,7 @@ def main():
                     if SAVE_PATCH32:
                         patch_buf["gbifID"].append(gid_i); patch_buf["naip_year"].append(yr); patch_buf["naip_scene"].append(ent)
                         patch_buf["patch"].append(rgb_patch[j] if PATCH_VIEW == "rgb" else ir_patch[j])
+                        patch_buf["patch_lat"].append(patch_lat[j]); patch_buf["patch_lon"].append(patch_lon[j])
                 n_ok += len(keep)
                 if SAVE_IMAGERY:                                # raw imagery -> per-scene npz -> NERSC -> delete
                     imp = IMG / f"{ent}.npz"

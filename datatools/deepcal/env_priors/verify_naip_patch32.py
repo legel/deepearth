@@ -60,6 +60,11 @@ def main() -> None:
         raise SystemExit("manifest gbifID contains duplicates")
     if tuple(manifest["patch_shape"].tolist()) != (32, 32, 1024):
         raise SystemExit(f"manifest patch_shape is {manifest['patch_shape']}, expected (32,32,1024)")
+    for key in ("lat", "lon", "elev_m", "event_day", "obs_ord", "has_candidate_tile"):
+        if key not in manifest:
+            raise SystemExit(f"manifest is missing {key}")
+        if manifest[key].shape[0] != len(all_ids):
+            raise SystemExit(f"manifest {key} length {manifest[key].shape[0]}, expected {len(all_ids)}")
     if "patch_offset_m" not in manifest:
         raise SystemExit("manifest is missing patch_offset_m")
     if manifest["patch_offset_m"].shape != (32, 32, 2):
@@ -84,6 +89,8 @@ def main() -> None:
         raise SystemExit("metadata patch_shape must be [32, 32, 1024]")
     if metadata.get("patch_offset_m") != "manifest.npz:patch_offset_m [32,32,2], east/north meters from observation center":
         raise SystemExit("metadata patch_offset_m contract is missing")
+    if "patch_latlon" not in metadata:
+        raise SystemExit("metadata patch_latlon contract is missing")
     if args.estimate_only:
         values = len(all_ids) * 32 * 32 * 1024
         print(
@@ -100,13 +107,19 @@ def main() -> None:
     manifest_set = set(map(int, all_ids))
     for file in files:
         z = np.load(file, allow_pickle=True)
-        for key in ("gbifID", "naip_year", "naip_scene", "patch", "has_naip"):
+        for key in ("gbifID", "naip_year", "naip_scene", "patch", "patch_lat", "patch_lon", "has_naip"):
             if key not in z:
                 raise SystemExit(f"{file} missing {key}")
         gid = z["gbifID"].astype(np.int64)
         patch_tensor = z["patch"]
         if patch_tensor.shape != (len(gid), 32, 32, 1024):
             raise SystemExit(f"{file} patch shape {patch_tensor.shape}")
+        if z["patch_lat"].shape != (len(gid), 32, 32):
+            raise SystemExit(f"{file} patch_lat shape {z['patch_lat'].shape}")
+        if z["patch_lon"].shape != (len(gid), 32, 32):
+            raise SystemExit(f"{file} patch_lon shape {z['patch_lon'].shape}")
+        if not (np.isfinite(z["patch_lat"]).all() and np.isfinite(z["patch_lon"]).all()):
+            raise SystemExit(f"{file} patch coordinates must be finite")
         if patch_tensor.dtype not in (np.float16, np.float32):
             raise SystemExit(f"{file} patch dtype must be float16 or float32")
         if not np.all(z["has_naip"].astype(bool)):
