@@ -5,6 +5,7 @@ shaped (32, 32, 1024), keyed by gbifID, with an all-row manifest for train/test
 alignment.
 """
 import argparse
+import csv
 import glob
 import json
 from pathlib import Path
@@ -37,6 +38,8 @@ def main() -> None:
     ap.add_argument("--estimate-only", action="store_true")
     ap.add_argument("--max-chunks", type=int, default=0)
     ap.add_argument("--latest", action="store_true")
+    ap.add_argument("--coverage-only", action="store_true")
+    ap.add_argument("--write-missing")
     args = ap.parse_args()
 
     root = Path(args.cache).expanduser()
@@ -57,6 +60,8 @@ def main() -> None:
         raise SystemExit(f"missing {manifest_path}")
     if not metadata_path.exists():
         raise SystemExit(f"missing {metadata_path}")
+    if args.write_missing and args.max_chunks:
+        raise SystemExit("--write-missing requires a full scan; do not combine with --max-chunks")
 
     manifest = np.load(manifest_path)
     all_ids = manifest["gbifID"].astype(np.int64)
@@ -119,6 +124,19 @@ def main() -> None:
     manifest_set = set(map(int, all_ids))
     for file in files:
         z = np.load(file, allow_pickle=True)
+        if args.coverage_only:
+            if "gbifID" not in z:
+                raise SystemExit(f"{file} missing gbifID")
+            gid = z["gbifID"].astype(np.int64)
+            for g in gid:
+                gi = int(g)
+                if gi not in manifest_set:
+                    raise SystemExit(f"{file} gbifID {gi} is absent from manifest")
+                if gi in seen:
+                    raise SystemExit(f"duplicate chunk gbifID {gi}")
+                seen.add(gi)
+            rows += len(gid)
+            continue
         for key in ("gbifID", "naip_year", "naip_scene", "patch", "patch_lat", "patch_lon", "has_naip"):
             if key not in z:
                 raise SystemExit(f"{file} missing {key}")
@@ -151,6 +169,18 @@ def main() -> None:
         bytes_total += patch_tensor.nbytes
 
     missing = len(all_ids) - len(seen)
+    if args.write_missing:
+        with open(args.write_missing, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["gbifID", "lat", "lon", "has_candidate_tile"])
+            for i, gid in enumerate(all_ids):
+                if int(gid) not in seen:
+                    writer.writerow([
+                        int(gid),
+                        float(manifest["lat"][i]),
+                        float(manifest["lon"][i]),
+                        bool(manifest["has_candidate_tile"][i]),
+                    ])
     if args.require_complete and missing:
         raise SystemExit(f"patch cache incomplete: {missing}/{len(all_ids)} manifest rows missing")
     scanned = f" chunks={len(files):,}/{total_files:,}" if args.max_chunks else ""
