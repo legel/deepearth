@@ -125,8 +125,12 @@ def main() -> None:
             raise SystemExit(f"{file} patch_lat shape {z['patch_lat'].shape}")
         if z["patch_lon"].shape != (len(gid), 32, 32):
             raise SystemExit(f"{file} patch_lon shape {z['patch_lon'].shape}")
+        if "patch_elev" in z and z["patch_elev"].shape != (len(gid), 32, 32):
+            raise SystemExit(f"{file} patch_elev shape {z['patch_elev'].shape}")
         if not (np.isfinite(z["patch_lat"]).all() and np.isfinite(z["patch_lon"]).all()):
             raise SystemExit(f"{file} patch coordinates must be finite")
+        if "patch_elev" in z and not np.isfinite(z["patch_elev"]).all():
+            raise SystemExit(f"{file} patch_elev must be finite")
         if patch_tensor.dtype not in (np.float16, np.float32):
             raise SystemExit(f"{file} patch dtype must be float16 or float32")
         if not np.all(z["has_naip"].astype(bool)):

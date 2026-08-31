@@ -9,8 +9,16 @@ Required cache inputs:
   - optional key: `ord`
 - `gbif_elev.npz`
   - optional keys: `gbifID`, `elev`
+  - current DINO patch builder uses this as center-elevation fallback
 - `gbif_eventtime.npz`
   - optional keys: `gbifID`, `days` or `event_day`
+
+Patch coordinate contract:
+
+- `patch_lat` / `patch_lon` are stored per DINO patch.
+- `patch_elev` is supported as an optional per-patch DEM raster.
+- Until a DEM-aligned `patch_elev` raster is generated, readers use the
+  observation center elevation from `gbif_elev.npz` for all patches.
 
 Remote-sensing input options:
 

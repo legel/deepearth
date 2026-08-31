@@ -73,6 +73,7 @@ class Patch32Cache:
             "patch": z["patch"][j],
             "patch_lat": z["patch_lat"][j],
             "patch_lon": z["patch_lon"][j],
+            "patch_elev": z["patch_elev"][j] if "patch_elev" in z else None,
             "naip_year": z["naip_year"][j],
             "naip_scene": z["naip_scene"][j],
         })
@@ -91,7 +92,11 @@ class Patch32Cache:
         patch = row["patch"]
         lat = row["patch_lat"].astype(np.float32)
         lon = row["patch_lon"].astype(np.float32)
-        elev = np.full(lat.shape, row["elev_m"], np.float32)
+        elev = row["patch_elev"]
+        if elev is None:
+            elev = np.full(lat.shape, row["elev_m"], np.float32)
+        else:
+            elev = elev.astype(np.float32)
         day = np.full(lat.shape, row["event_day"], np.float32)
         coords = np.stack([lat, lon, elev, day], axis=-1)
         valid = np.isfinite(lat) & np.isfinite(lon)
@@ -125,7 +130,10 @@ class Patch32Cache:
                 lon = z["patch_lon"][j].astype(np.float32)
                 coords[row, ..., 0] = lat
                 coords[row, ..., 1] = lon
-                coords[row, ..., 2] = self.manifest["elev_m"][m]
+                if "patch_elev" in z:
+                    coords[row, ..., 2] = z["patch_elev"][j].astype(np.float32)
+                else:
+                    coords[row, ..., 2] = self.manifest["elev_m"][m]
                 coords[row, ..., 3] = self.manifest["event_day"][m]
                 valid[row] = np.isfinite(lat).all() and np.isfinite(lon).all()
         return patch, coords, valid
