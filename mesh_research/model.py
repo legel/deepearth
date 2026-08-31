@@ -556,8 +556,12 @@ class MeshModel(nn.Module):
                 nn.Linear(d_model, d_model, bias=False),
             )
             nn.init.zeros_(self.position_species_adapter[-1].weight)
-            self.position_species_rgb_adapter = SignalAdapter(384, d_model)
-            self.position_species_ir_adapter = SignalAdapter(384, d_model)
+            self.position_species_rgb_adapter = SignalAdapter(
+                int(source.naip_patch_dim), d_model
+            )
+            self.position_species_ir_adapter = SignalAdapter(
+                int(source.naip_patch_dim), d_model
+            ) if int(source.naip_patch_views) > 1 else None
             self.position_species_local = nn.Sequential(
                 nn.Conv2d(
                     d_model, d_model, 3, padding=1,
@@ -581,6 +585,15 @@ class MeshModel(nn.Module):
             source.naip_patch_tokens,
             persistent=False,
         )
+        patch_coords = getattr(source, "naip_patch_coords", None)
+        if patch_coords is not None:
+            self.register_buffer(
+                "position_species_patch_coords",
+                patch_coords,
+                persistent=False,
+            )
+        else:
+            self.position_species_patch_coords = None
         fine_axis = torch.linspace(83.125, -83.125, 8)
         fine_north, fine_east = torch.meshgrid(
             fine_axis, -fine_axis, indexing="ij"
@@ -2021,29 +2034,74 @@ class MeshModel(nn.Module):
                     relative = relative.unsqueeze(-2)
                 return (position + relative).detach()
 
-            fine_coords = shifted(self.position_species_patch_offsets)
-            mid_coords = shifted(self.position_species_mid_offsets)
-            global_coords = active_coords[:, None]
+            patches = self.position_species_patch_tokens[index[valid]]
+            patch_coords = None
+            if self.position_species_patch_coords is not None:
+                patch_coords = self.position_species_patch_coords[index[valid]]
+                patch_coords = patch_coords.float()
+                patch_coords[..., 2:] = torch.nan_to_num(
+                    patch_coords[..., 2:], nan=0.0
+                )
+            if patches.dim() == 4:
+                patch_grid = patches.float().permute(0, 3, 1, 2)
+                fine_raw = F.adaptive_avg_pool2d(patch_grid, (8, 8))
+                mid_raw = F.adaptive_avg_pool2d(patch_grid, (4, 4))
+                coarse_raw = F.adaptive_avg_pool2d(patch_grid, (1, 1))
+                fine_evidence = self.position_species_rgb_adapter(
+                    fine_raw.permute(0, 2, 3, 1).reshape(-1, 64, patches.shape[-1])
+                )
+                fine_grid = fine_evidence.reshape(
+                    -1, 8, 8, self.d_model
+                ).permute(0, 3, 1, 2)
+                fine_grid = fine_grid + self.position_species_local(fine_grid)
+                fine_evidence = fine_grid.permute(0, 2, 3, 1).reshape(
+                    -1, 64, self.d_model
+                )
+                mid_evidence = self.position_species_rgb_adapter(
+                    mid_raw.permute(0, 2, 3, 1).reshape(-1, 16, patches.shape[-1])
+                )
+                coarse_evidence = self.position_species_rgb_adapter(
+                    coarse_raw.permute(0, 2, 3, 1).reshape(-1, 1, patches.shape[-1])
+                )
+                if patch_coords is not None:
+                    coord_grid = patch_coords.permute(0, 3, 1, 2)
+                    fine_coords = F.adaptive_avg_pool2d(
+                        coord_grid, (8, 8)
+                    ).permute(0, 2, 3, 1).reshape(-1, 64, 4)
+                    mid_coords = F.adaptive_avg_pool2d(
+                        coord_grid, (4, 4)
+                    ).permute(0, 2, 3, 1).reshape(-1, 16, 4)
+                    global_coords = F.adaptive_avg_pool2d(
+                        coord_grid, (1, 1)
+                    ).permute(0, 2, 3, 1).reshape(-1, 1, 4)
+                else:
+                    fine_coords = shifted(self.position_species_patch_offsets)
+                    mid_coords = shifted(self.position_species_mid_offsets)
+                    global_coords = active_coords[:, None]
+            else:
+                evidence = self.position_species_rgb_adapter(patches[:, 0].float())
+                if self.position_species_ir_adapter is not None:
+                    evidence = (
+                        evidence
+                        + self.position_species_ir_adapter(patches[:, 1].float())
+                    ).mul_(1.0 / math.sqrt(2.0))
+                grid = evidence.reshape(-1, 8, 8, self.d_model).permute(0, 3, 1, 2)
+                grid = grid + self.position_species_local(grid)
+                fine_evidence = grid.permute(0, 2, 3, 1).reshape(
+                    -1, 64, self.d_model
+                )
+                mid_grid = F.avg_pool2d(grid, 2, 2)
+                mid_evidence = mid_grid.permute(0, 2, 3, 1).reshape(
+                    -1, 16, self.d_model
+                )
+                coarse_evidence = mid_evidence.mean(1, keepdim=True)
+                fine_coords = shifted(self.position_species_patch_offsets)
+                mid_coords = shifted(self.position_species_mid_offsets)
+                global_coords = active_coords[:, None]
             with torch.autocast(device_type=coords.device.type, enabled=False):
                 fine_position = addressed(fine_coords)[:, :, mid_stop:]
                 mid_position = addressed(mid_coords)[:, :, coarse_stop:mid_stop]
                 coarse_position = addressed(global_coords)[:, :, :coarse_stop]
-
-            patches = self.position_species_patch_tokens[index[valid]]
-            evidence = (
-                self.position_species_rgb_adapter(patches[:, 0].float())
-                + self.position_species_ir_adapter(patches[:, 1].float())
-            ).mul_(1.0 / math.sqrt(2.0))
-            grid = evidence.reshape(-1, 8, 8, self.d_model).permute(0, 3, 1, 2)
-            grid = grid + self.position_species_local(grid)
-            fine_evidence = grid.permute(0, 2, 3, 1).reshape(
-                -1, 64, self.d_model
-            )
-            mid_grid = F.avg_pool2d(grid, 2, 2)
-            mid_evidence = mid_grid.permute(0, 2, 3, 1).reshape(
-                -1, 16, self.d_model
-            )
-            coarse_evidence = mid_evidence.mean(1, keepdim=True)
             scale = self.position_species_scale_type
             fine_state = self.position_species_patch_norm(
                 fine_evidence.unsqueeze(2) + fine_position + scale[0]
@@ -2682,7 +2740,50 @@ def build_model(source, variable_specs, always_dims, device: str, design: Experi
 
 
 def attach_naip_patches(source, cache: str, device: str) -> None:
-    directory = Path(cache).expanduser() / "naip_dinov2_patch8_v1"
+    root = Path(cache).expanduser()
+    patch32 = root / "gbif_naip_dinov3_patch32_v1"
+    if (patch32 / "manifest.npz").exists():
+        manifest = np.load(patch32 / "manifest.npz")
+        manifest_row = {
+            int(g): i for i, g in enumerate(manifest["gbifID"].astype(np.int64))
+        }
+        source_ids = np.asarray(source.gbifID).astype(np.int64)
+        source_row = {int(g): i for i, g in enumerate(source_ids)}
+        lookup = np.full(source.n, -1, np.int64)
+        tokens, coords = [], []
+        for file in sorted(patch32.glob("chunk*.npz")):
+            z = np.load(file, allow_pickle=True)
+            patch = z["patch"]
+            patch_lat = z["patch_lat"].astype(np.float32)
+            patch_lon = z["patch_lon"].astype(np.float32)
+            for j, gid in enumerate(z["gbifID"].astype(np.int64)):
+                row = source_row.get(int(gid))
+                if row is None or lookup[row] >= 0:
+                    continue
+                lookup[row] = len(tokens)
+                tokens.append(patch[j])
+                k = manifest_row[int(gid)]
+                elev = np.full(patch_lat[j].shape, manifest["elev_m"][k], np.float32)
+                day = np.full(patch_lat[j].shape, manifest["event_day"][k], np.float32)
+                coords.append(np.stack((patch_lat[j], patch_lon[j], elev, day), -1))
+        if not tokens:
+            raise FileNotFoundError(f"empty NAIP DINOv3 patch32 cache: {patch32}")
+        source.naip_patch_tokens = torch.from_numpy(np.stack(tokens)).to(device)
+        source.naip_patch_coords = torch.from_numpy(np.stack(coords)).to(device)
+        source.naip_patch_dim = int(source.naip_patch_tokens.shape[-1])
+        source.naip_patch_grid = int(source.naip_patch_tokens.shape[1])
+        source.naip_patch_views = 1
+        index = torch.from_numpy(lookup).to(device)
+        have = index >= 0
+        source.extra["naip_patch_index"] = (index, have, 1)
+        print(
+            f"NAIP DINOv3 patch32 state {int(have.sum()):,}/{source.n:,} observations  "
+            f"tokens {tuple(source.naip_patch_tokens.shape)}",
+            flush=True,
+        )
+        return
+
+    directory = root / "naip_dinov2_patch8_v1"
     metadata = directory / "metadata.json"
     if not metadata.exists():
         raise FileNotFoundError(f"incomplete NAIP patch cache: {directory}")
@@ -2697,6 +2798,10 @@ def attach_naip_patches(source, cache: str, device: str) -> None:
     source.naip_patch_tokens = torch.from_numpy(
         np.asarray(tokens).copy()
     ).to(device)
+    source.naip_patch_coords = None
+    source.naip_patch_dim = int(source.naip_patch_tokens.shape[-1])
+    source.naip_patch_grid = 8
+    source.naip_patch_views = int(source.naip_patch_tokens.shape[1])
     index = torch.from_numpy(lookup).to(device)
     have = index >= 0
     source.extra["naip_patch_index"] = (index, have, 1)
