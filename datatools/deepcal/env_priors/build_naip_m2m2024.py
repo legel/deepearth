@@ -1,13 +1,15 @@
-"""2024 NAIP per-observation imagery + DINOv3-SAT493M embeddings via USGS EROS M2M (2024-EXCLUSIVE).
+"""NAIP per-observation imagery + DINOv3-SAT493M embeddings.
 
-Planetary Computer only serves 2022 NAIP for CA; the 2024 CNIR acquisition lives on USGS M2M. For each NAIP-2024
-scene that covers >=1 observation (mapped from the cached statewide catalog naip2024_tiles.json), download the scene
-ONCE via M2M unless the catalog provides local_path/url, window-read a 300x300 m patch CENTERED on every observation the scene covers -> 512x512 4-band uint8,
+For each NAIP scene that covers >=1 observation, download the scene ONCE
+unless the catalog provides local_path, window-read a 300x300 m patch CENTERED
+on every observation the scene covers -> 512x512 4-band uint8,
 then (a) optionally accumulate the raw imagery patch -> per-scene npz streamed to NERSC and deleted locally, and
 (b) embed with DINOv3-SAT493M. The pooled cache is still emitted for backward compatibility; NAIP_SAVE_PATCH32=1
 also emits full 32x32x1024 patch-token shards for train/test-aligned Earth4D readers. Scene GeoTIFF is deleted
-after tiling. Scene-pinned: naip_scene = M2M entityId, naip_year =
-acquisition year. Streaming keeps the working set small (BATCH_TILES scenes at a time); resumable via a checkpoint
+after tiling. Scene-pinned: naip_scene = catalog entityId, naip_year =
+acquisition year parsed from displayId. USGS M2M can pin NAIP 2024 where access
+exists; STAC direct-URL catalogs use the available public acquisition year.
+Streaming keeps the working set small (BATCH_TILES scenes at a time); resumable via a checkpoint
 of finished gbifIDs.
 
 Output: gbif_naip_tokens/chunk*.npz {gbifID, naip_year, naip_scene, rgb_pool[N,1024]f32, ir_pool[N,1024]f32}
@@ -403,7 +405,7 @@ def main():
         print(f"  scenes {min(w+BATCH_TILES,len(todo))}/{len(todo)} | {n_ok} obs embedded | {n_ok/max(time.time()-t0,1):.1f} obs/s", flush=True)
     flush_tokens()
     flush_patch_tokens()
-    print(f"DONE: {n_ok} obs on 2024 NAIP (scene-pinned).", flush=True)
+    print(f"DONE: {n_ok} obs on NAIP scenes (scene-pinned).", flush=True)
 
 
 if __name__ == "__main__":

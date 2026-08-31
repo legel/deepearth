@@ -88,20 +88,20 @@ modalities:
       sensitive to sub-pixel DEM differences — both are valid 3DEP-derived hydrology, not a bug).
 
   naip:
-    source: "NAIP 2024 CA CNIR (USGS EROS M2M API) — 2024-EXCLUSIVE. Planetary Computer only serves 2022 for CA, so the
-             prior env_priors/build_naip.py (PC, reverse-engineered, RGB cos 0.72/IR 0.50) is SUPERSEDED. 2024 lives on M2M."
+    source: "NAIP scene imagery. USGS M2M can pin 2024 CNIR where access exists; Planetary Computer STAC can provide direct
+             public scene URLs by available acquisition year."
     model: aerial_vision (DINOv3-SAT493M)
-    builder: env_priors/build_naip_m2m2024.py  (tile catalog built by env_priors/build_naip_m2m2024_catalog.py)
+    builder: env_priors/build_naip_m2m2024.py  (tile catalog built by env_priors/build_naip_m2m2024_catalog.py or env_priors/build_naip_stac_catalog.py)
     config: {patch_m: 300, patch_px: 512, patch_tokens: "32x32x1024 when NAIP_SAVE_PATCH32=1", pooling: "MEAN over patch tokens (NOT CLS)",
              bands: "rgb_pool=DINO(R,G,B); ir_pool=DINO(inferno(normalized NIR))",
              batching: "each covering tile downloaded ONCE via M2M, window-read a 300m patch centered per obs (avg 37 obs/tile)"}
     output: {dir: gbif_naip_tokens, keys: [gbifID, naip_year, naip_scene, rgb_pool, ir_pool], shape: "[N,1024]", dtype: float32,
-             naip_scene: "M2M entityId per obs (e.g. M_3311628_NE_11_060_20240503) — scene-pinned provenance",
+             naip_scene: "catalog entityId per obs — scene-pinned provenance",
              imagery: "raw 300m patches -> NERSC /global/cfs/cdirs/m5239/deepearth/naip2024_imagery via Globus (GCP endpoint), deleted local"}
     patch_output: {dir: gbif_naip_dinov3_patch32_v1, keys: [manifest, gbifID, naip_year, naip_scene, patch, patch_lat, patch_lon, has_naip],
                    shape: "[N,32,32,1024]", dtype: "float16 default, float32 optional",
                    purpose: "train/test-aligned DINOv3 patch field plus per-patch GPS grid for Earth4D-relative spatial readers"}
-    reproducible: YES — scene-pinned (M2M entityId + naip_year); deterministic given the versioned tile + DINOv3-SAT493M.
+    reproducible: YES — scene-pinned (catalog entityId/url + naip_year); deterministic given the versioned tile + DINOv3-SAT493M.
     coverage: "215,299/215,356 (100%) of the tree-obs covered; obs_coords now the full 345,357 plant set -> 6,350 covering tiles."
 
   clay:

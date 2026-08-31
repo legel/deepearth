@@ -14,11 +14,17 @@ Required cache inputs:
 
 Remote-sensing input options:
 
-1. USGS M2M token
-   - place token at `/root/.usgs_m2m_token`, or set `USGS_M2M_TOKEN=/path/to/token`
-   - the runner builds `env_priors/naip2024_tiles.json`
+1. Public STAC catalog
+   - default runner backend
+   - builds `env_priors/naip2024_tiles.json` from Planetary Computer NAIP scene URLs
+   - uses the available public acquisition year per location
 
-2. Prebuilt scene catalog
+2. USGS M2M token
+   - place token at `/root/.usgs_m2m_token`, or set `USGS_M2M_TOKEN=/path/to/token`
+   - set `NAIP_CATALOG_BACKEND=m2m`
+   - the runner builds a 2024-pinned `env_priors/naip2024_tiles.json` where M2M access is available
+
+3. Prebuilt scene catalog
    - place at `$DEEPCAL_CACHE/env_priors/naip2024_tiles.json`, or set `NAIP_TILES_JSON=/path/to/catalog.json`
    - each entry must include:
      - `entityId`
@@ -33,7 +39,7 @@ Best input for Lance to provide:
 - A `naip2024_tiles.json` catalog with `local_path` entries pointing to mounted NAIP 2024 CNIR scenes.
 - Or the same catalog with signed `url` entries if scenes are hosted remotely.
 
-That avoids repeated M2M catalog/download negotiation and lets the builder stream patches directly from the provided scenes.
+That avoids repeated catalog/download negotiation and lets the builder stream patches directly from the provided scenes.
 
 DINOv3 model input options:
 
