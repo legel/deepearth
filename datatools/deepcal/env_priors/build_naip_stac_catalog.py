@@ -39,17 +39,19 @@ def query_cells(lat, lon, cell_deg):
         yield [lon0, lat0, lon0 + cell_deg, lat0 + cell_deg]
 
 
-def save_catalog(out, rows, next_cell):
+def save_catalog(out, rows, next_cell, failed):
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".json.tmp")
     with open(tmp, "w") as f:
         json.dump(rows, f)
     tmp.replace(out)
     with open(out.with_suffix(".progress.json"), "w") as f:
-        json.dump({"next_cell": next_cell, "scenes": len(rows)}, f)
+        json.dump({"next_cell": next_cell, "scenes": len(rows), "failed_cells": len(failed)}, f)
+    with open(out.with_suffix(".failed.json"), "w") as f:
+        json.dump(failed, f)
 
 
-def stac_search(bbox, datetime, limit, timeout):
+def stac_search(bbox, datetime, limit, timeout, retries):
     body = {"collections": ["naip"], "bbox": bbox, "limit": limit}
     if datetime:
         body["datetime"] = datetime
@@ -58,9 +60,17 @@ def stac_search(bbox, datetime, limit, timeout):
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        payload = json.load(response)
-    return payload.get("features", [])
+    last_error = None
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                payload = json.load(response)
+            return payload.get("features", [])
+        except Exception as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(1.0 + attempt)
+    raise last_error
 
 
 def feature_row(feature):
@@ -90,6 +100,7 @@ def main():
     ap.add_argument("--max-cells", type=int, default=0)
     ap.add_argument("--sleep", type=float, default=0.05)
     ap.add_argument("--timeout", type=float, default=30.0)
+    ap.add_argument("--retries", type=int, default=2)
     ap.add_argument("--checkpoint-every", type=int, default=25)
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
@@ -97,7 +108,7 @@ def main():
     root = Path(args.cache).expanduser()
     out = Path(args.out).expanduser() if args.out else root / "env_priors" / "naip2024_tiles.json"
     lat, lon = load_points(root)
-    rows, seen, start_cell = [], set(), 0
+    rows, seen, start_cell, failed = [], set(), 0, []
     progress = out.with_suffix(".progress.json")
     if args.resume and out.exists():
         with open(out) as f:
@@ -106,6 +117,10 @@ def main():
         if progress.exists():
             with open(progress) as f:
                 start_cell = int(json.load(f).get("next_cell", 0))
+        failed_path = out.with_suffix(".failed.json")
+        if failed_path.exists():
+            with open(failed_path) as f:
+                failed = json.load(f)
         print(f"resume from cell {start_cell} with {len(rows)} scenes", flush=True)
     cells = list(query_cells(lat, lon, args.cell_deg))
     if args.max_cells:
@@ -114,12 +129,14 @@ def main():
         if i <= start_cell:
             continue
         try:
-            features = stac_search(bbox, args.datetime, args.limit, args.timeout)
+            features = stac_search(bbox, args.datetime, args.limit, args.timeout, args.retries)
         except urllib.error.HTTPError as exc:
             print(f"cell {i}/{len(cells)} http {exc.code}: {bbox}", flush=True)
+            failed.append({"cell": i, "bbox": bbox, "error": f"http {exc.code}"})
             features = []
         except Exception as exc:
             print(f"cell {i}/{len(cells)} failed: {exc}", flush=True)
+            failed.append({"cell": i, "bbox": bbox, "error": str(exc)})
             features = []
         for feature in features:
             row = feature_row(feature)
@@ -127,11 +144,13 @@ def main():
                 seen.add(row["entityId"])
                 rows.append(row)
         if i == 1 or i % args.checkpoint_every == 0:
-            save_catalog(out, rows, i)
-            print(f"catalog {i}/{len(cells)} cells | {len(rows)} scenes", flush=True)
+            save_catalog(out, rows, i, failed)
+            print(f"catalog {i}/{len(cells)} cells | {len(rows)} scenes | failed={len(failed)}", flush=True)
         time.sleep(args.sleep)
-    save_catalog(out, rows, len(cells))
-    print(f"wrote {out} ({len(rows)} scenes)")
+    save_catalog(out, rows, len(cells), failed)
+    print(f"wrote {out} ({len(rows)} scenes, failed_cells={len(failed)})")
+    if failed:
+        raise SystemExit(f"{len(failed)} STAC cells failed; inspect {out.with_suffix('.failed.json')}")
 
 
 if __name__ == "__main__":
