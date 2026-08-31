@@ -17,6 +17,11 @@ set -euo pipefail
 : "${NAIP_IDLE_SECONDS:=300}"
 
 mkdir -p "$(dirname "$NAIP_WATCHDOG_LOG")"
+lock=/tmp/naip_patch32_watchdog.lock
+if ! mkdir "$lock" 2>/dev/null; then
+  exit 0
+fi
+trap 'rmdir "$lock"' EXIT
 
 while true; do
   if ! pgrep -f "[b]uild_naip_m2m2024.py" >/dev/null; then
