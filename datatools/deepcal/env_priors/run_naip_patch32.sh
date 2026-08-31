@@ -28,9 +28,22 @@ if [[ ! -f "$USGS_M2M_TOKEN" ]]; then
   exit 2
 fi
 
+python datatools/deepcal/env_priors/preflight_naip_patch32.py \
+  --cache "$DEEPCAL_CACHE" \
+  --dtype "$NAIP_PATCH_DTYPE" \
+  --require-usgs \
+  --require-hf
+
 if [[ ! -f "$DEEPCAL_CACHE/env_priors/naip2024_tiles.json" ]]; then
   python datatools/deepcal/env_priors/build_naip_m2m2024_catalog.py
 fi
+
+python datatools/deepcal/env_priors/preflight_naip_patch32.py \
+  --cache "$DEEPCAL_CACHE" \
+  --dtype "$NAIP_PATCH_DTYPE" \
+  --require-catalog \
+  --require-usgs \
+  --require-hf
 
 python datatools/deepcal/env_priors/build_naip_m2m2024.py
 python datatools/deepcal/env_priors/verify_naip_patch32.py --cache "$DEEPCAL_CACHE"
