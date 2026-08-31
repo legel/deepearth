@@ -47,6 +47,18 @@ def main():
     # Keep a window around the sim (-12h to +84h) -- plenty of context either side.
     real_w = real[(real["time_min"] >= -12 * 60) & (real["time_min"] <= 84 * 60)].reset_index(drop=True)
 
+    # Delineated catchment area, read from the watershed the conditioning actually produced.
+    # This was hardcoded as 11.65/33.15, which silently went stale the moment the pour-point
+    # snapping and stream-burning were fixed (the delineation is now a different number).
+    catch_km2 = None
+    ws = os.path.join(PROJ_DIR, "site3_gee_creek", "dem", "data", "hydro", "watershed.geojson")
+    if os.path.exists(ws):
+        try:
+            import geopandas as gpd
+            catch_km2 = float(gpd.read_file(ws).to_crs("epsg:5070").area.sum()) / 1e6
+        except Exception as e:
+            print(f"  could not read {ws}: {e}")
+
     sim_peak_idx = int(sim["outflow_total_cfs"].idxmax())
     real_peak_idx = int(real_w["discharge_cfs"].idxmax())
     rain_peak_idx = int(sim["rain_mm_hr"].idxmax())
@@ -64,11 +76,21 @@ def main():
             "real_peak_cfs": float(real_w["discharge_cfs"].iloc[real_peak_idx]),
             "real_peak_time_min": float(real_w["time_min"].iloc[real_peak_idx]),
             "rain_peak_time_min": float(sim["time_min"].iloc[rain_peak_idx]),
-            "area_capture_frac": 11.65 / 33.15,
+            "delineated_area_km2": catch_km2,
+            "documented_area_km2": 33.15,
+            "area_capture_frac": (catch_km2 / 33.15) if catch_km2 else None,
             "gauge_site_no": "02234400",
             "precip_station": "KSFB (Orlando Sanford Intl, 10.8km)",
         },
     }
+    # Discharge at the gauge cell is the only cross-section directly comparable to the gauge;
+    # domain-boundary outflow additionally charges the traverse from the gauge to the box edge.
+    if "gauge_cfs" in sim.columns:
+        gi = int(sim["gauge_cfs"].idxmax())
+        out["sim_gauge_cfs"] = sim_ds["gauge_cfs"].round(3).tolist()
+        out["summary"]["sim_gauge_peak_cfs"] = float(sim["gauge_cfs"].iloc[gi])
+        out["summary"]["sim_gauge_peak_time_min"] = float(sim["time_min"].iloc[gi])
+
     out_path = os.path.join(OUT_DIR, "gauge_comparison_site3.json")
     with open(out_path, "w") as fh:
         json.dump(out, fh)

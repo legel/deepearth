@@ -110,7 +110,7 @@ def load_cropped_dem(cell_size_m):
         win = rasterio.windows.Window(col0, row0, col1 - col0, row1 - row0)
         dem_crop = src.read(1, window=win).astype(np.float32)
         crop_tf = src.window_transform(win)
-        nodata = src.nodata or -9999.0
+        nodata = src.nodata if src.nodata is not None else -9999.0  # 0.0 is falsy
         crs = src.crs
 
     print(f"  DEM native res {native_res:.2f}m, cropped window {dem_crop.shape} "
@@ -125,8 +125,15 @@ def load_cropped_dem(cell_size_m):
     new_w = int((right - left) / cell_size_m)
     dst_tf = transform_from_bounds(left, bottom, right, top, new_w, new_h)
     z_c = np.zeros((new_h, new_w), dtype=np.float32)
+    # Was Resampling.bilinear — a hand-rolled copy of flood_sim_ian.load_dem_for_sim that
+    # carried the same defect: averaging kernels blend richdem's one-cell-wide breach channels
+    # back into the surrounding ground, reintroducing depression storage the conditioning had
+    # removed (measured on site3 at 5 m: 3.710e6 m³, 20.3 % of the Ian storm). Reference the
+    # solver's own constant so the two cannot drift apart again.
     reproject(dem_crop, z_c, src_transform=crop_tf, src_crs=crs,
-              dst_transform=dst_tf, dst_crs=crs, resampling=Resampling.bilinear)
+              dst_transform=dst_tf, dst_crs=crs,
+              src_nodata=nodata, dst_nodata=nodata,
+              resampling=fsi.DEM_RESAMPLING)
     z_c[z_c == nodata] = np.nan
     return z_c, {"transform": dst_tf, "crs": crs}, cell_size_m
 

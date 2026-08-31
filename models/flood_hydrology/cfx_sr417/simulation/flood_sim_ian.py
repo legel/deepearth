@@ -49,6 +49,26 @@ DEM_COND     = os.path.join(PROJ_DIR, "dem", "data", "hydro", "dem_conditioned.t
 # must use these bounds so the Ian flood-depth texture lines up with everything else when
 # draped onto the terrain.
 SR417_DEM_RAW = os.path.join(PROJ_DIR, "dem", "data", "sr417_corridor_dem.tif")
+# Downsampling operator used when the solver grid is coarser than the conditioned DEM
+# (load_dem_for_sim below). NOT cosmetic — measured on site3, 0.875m conditioned DEM -> 5m grid:
+#
+#   operator    trapped depression storage after resampling
+#   ---------   -------------------------------------------
+#   bilinear         3.710e6 m^3   (79.4 mm domain-average, 20.3% of the Ian storm total)
+#   average          3.614e6 m^3   (77.3 mm)
+#   nearest          4.604e6 m^3   (98.5 mm)
+#   min              0.000e6 m^3   (0.0 mm)
+#
+# The native conditioned DEM has exactly zero trapped volume — richdem's breaching carves
+# least-cost drainage paths one cell (~0.9m) wide. Any averaging kernel blends that trench back
+# into the surrounding high ground at 5m, re-sealing every outlet the conditioning opened and
+# silently reintroducing ~a full storm's worth of depression storage. min() is the standard
+# channel-preserving choice for hydrologic downsampling: a coarse cell containing a drainage
+# path should convey at that path's elevation, since conveyance is set by the lowest flow line
+# through the cell, not its mean surface. Cost is a downward elevation bias (mean 0.134 m,
+# median 0.091 m against 27.9 m of relief) and an unchanged median slope (1.830% -> 1.848%).
+DEM_RESAMPLING = Resampling.min
+
 SOIL_JSON    = os.path.join(PROJ_DIR, "soil", "data", "soil_parameters.json")
 MUKEY_MAP    = os.path.join(PROJ_DIR, "soil", "data", "mukey_map.tif")
 MUKEY_LEGEND = os.path.join(PROJ_DIR, "soil", "data", "mukey_map_legend.csv")
@@ -68,7 +88,15 @@ from floodtwin.physics import (   # noqa: E402
 ASOS_CSV     = os.path.join(PROJ_DIR, "precipitation", "data", "asos_hourly_MCO.csv")
 
 G          = 9.81
-CFL_ALPHA  = 0.3      # conservative CFL factor for road-embankment terrain (steep slopes)
+CFL_ALPHA  = 0.15     # Was 0.3, which is UNSTABLE on this terrain once water actually
+                      # accumulates. Measured 2026-08-29 at the main AOI over 7,000 steps with
+                      # the storm properly delivered: alpha=0.30 gave a -517.8 % mass residual
+                      # and h_max of 8.99 m on terrain with 14 m of total relief, with depths
+                      # oscillating between 5.5 and 8 m under ZERO rainfall. alpha=0.15 and
+                      # alpha=0.05 agree to four figures (-12.6 % residual, h_max 2.03 m), so
+                      # the solution is timestep-converged at 0.15 and tightening further only
+                      # costs sub-steps. The instability was unreachable before the 2026-08-28
+                      # sub-stepping fix because the solver never accumulated enough water.
 MIN_DEPTH  = 1e-4     # m wet/dry threshold
 DEPTH_THR  = 0.05     # m "flooded" for outputs
 MANNING_N  = 0.040    # flatwoods grassland / mixed cover
@@ -411,7 +439,9 @@ def load_dem_for_sim(cell_size_m):
         native_crs    = src.crs
         native_bounds = src.bounds
         dem_native    = src.read(1).astype(np.float32)
-        nodata        = src.nodata or -9999.0
+        # `src.nodata or -9999.0` would swap a legitimate nodata value of 0.0 for -9999.0,
+        # since 0.0 is falsy — leaving real nodata cells as valid ground at elevation zero.
+        nodata        = src.nodata if src.nodata is not None else -9999.0
         profile       = src.profile.copy()
 
     print(f"  DEM: {dem_native.shape[0]}×{dem_native.shape[1]} @ {native_res:.2f}m  CRS: {native_crs}")
@@ -438,10 +468,17 @@ def load_dem_for_sim(cell_size_m):
         new_w = int((true_right - true_left) / cell_size_m)
         dst_tf = from_bounds(true_left, true_bottom, true_right, true_top, new_w, new_h)
         z_c = np.zeros((new_h, new_w), dtype=np.float32)
+        # src/dst nodata must be declared explicitly. Without them GDAL treats the nodata
+        # sentinel as ordinary data: verified that Resampling.min then SILENTLY FILLS a NaN
+        # hole with the surrounding minimum (0 NaN cells out of a 36-cell hole) where bilinear
+        # correctly propagates it. Neither conditioned DEM on disk has any NaN today, so this
+        # changes nothing here — but the pipeline's premise is "any coordinate", and a DEM with
+        # holes would otherwise get invented terrain at exactly the elevations that matter most.
         reproject(dem_native, z_c,
                   src_transform=profile["transform"], src_crs=native_crs,
                   dst_transform=dst_tf, dst_crs=native_crs,
-                  resampling=Resampling.bilinear)
+                  src_nodata=nodata, dst_nodata=nodata,
+                  resampling=DEM_RESAMPLING)
         z_c[z_c == nodata] = np.nan
         prof = profile.copy()
         prof.update(height=new_h, width=new_w, transform=dst_tf)
@@ -452,7 +489,8 @@ def load_dem_for_sim(cell_size_m):
 # ── LISFLOOD-FP solver with optional frame capture ────────────────────────────
 
 def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
-            use_infiltration=True, horton_arrays=None, max_deficit_m=None):
+            use_infiltration=True, horton_arrays=None, max_deficit_m=None, gauge_rc=None,
+            initial_h=None, manning_n=None):
     """
     Bates et al. (2010) local inertia solver.
     use_infiltration=False sets Horton inf=0 so Pe=rain (all rain stays on surface).
@@ -461,6 +499,10 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
     max_deficit_m: optional 2D array of finite soil storage [m]. Once a cell's cumulative
     infiltration reaches it, infiltration stops and further rain becomes runoff (saturation
     excess). None reproduces the previous unbounded-infiltration behaviour exactly.
+    manning_n: optional 2D array of Manning's n, one value per CELL (averaged onto faces
+    internally). None uses the scalar MANNING_N, which is the original code path. Built by
+    segmentation/rasterize_parameters.py from SAM-style surface classes over NAIP + a LiDAR
+    canopy-height model.
     Returns:
       h_max, cum_infil, flooded_ha_ts, frame_data
       where frame_data = {'frames': [...], 'infil_frames': [...], 'times_min': [...],
@@ -487,7 +529,18 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
     z_work = z.copy()
     z_work[~valid] = np.nanmax(z_work) + 100.0
 
-    h     = np.zeros_like(z_work)
+    # Initial water. Default (None) starts the whole domain bone-dry, which is wrong for any
+    # perennial channel and became the dominant error once stream burning gave site3 a real
+    # carved channel: the creek was carrying 45.2 cfs of baseflow when Ian made landfall, i.e.
+    # it was already full, whereas the model made 72 h of runoff fill 22 km of empty channel
+    # first. Measured, that channel held 63 % of everything passing the gauge all event, and
+    # gauge-cell discharge rose monotonically for the entire run without ever peaking.
+    h     = np.zeros_like(z_work) if initial_h is None else initial_h.astype(np.float32).copy()
+    if initial_h is not None:
+        h[~valid] = 0.0
+        print(f"  Initial water: {float(h.sum()) * dx * dx / 1e3:.1f} thousand m³ "
+              f"in {int((h > 0).sum()):,} cells (mean depth {float(h[h > 0].mean()):.3f} m)")
+    initial_volume_m3 = float(h.sum()) * dx * dx
     qx    = np.zeros((nrows, ncols + 1), dtype=np.float32)
     qy    = np.zeros((nrows + 1, ncols), dtype=np.float32)
 
@@ -500,6 +553,13 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
                                  # shape/timing against (not magnitude — the gauge's
                                  # watershed is ~44x this AOI, see run_sim's docstring)
     outflow_total_cms_ts = []   # m^3/s leaving all 4 domain edges combined — mass-balance check
+    gauge_cms_ts = []           # m^3/s through the gauge cell itself, when one is given.
+                                # Domain-boundary outflow is NOT what a stream gauge measures:
+                                # the gauge sits INSIDE the domain, so boundary outflow charges
+                                # the comparison for the extra travel time from the gauge out
+                                # to the box edge. Measured on site3 that is the difference
+                                # between a +5 h and a +29 h lag against an observed +4.5 h,
+                                # entirely from which cross-section is read — not from physics.
     rain_mm_hr_ts   = []
     Pe_mm_hr_ts     = []
     infil_mm_hr_ts  = []
@@ -509,106 +569,200 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
     frame_infil     = []   # cumulative infiltration snapshots [m]
     frame_times_min = []
 
-    n     = MANNING_N
+    # Manning's n at each FACE, not each cell: the friction term below acts on the flux across
+    # a cell boundary, so it needs the roughness the water actually crosses. Averaging the two
+    # adjacent cells is the standard face reconstruction, and it keeps the array shapes matching
+    # hf_x (nrows, ncols-1) and hf_y (nrows-1, ncols) exactly.
+    #
+    # manning_n=None takes the scalar branch, which is the ORIGINAL expression unchanged — every
+    # existing caller and every previously-recorded run is bit-identical. Passing an array is
+    # what segmentation/rasterize_parameters.py produces (Track A): the promotion of MANNING_N
+    # from a single domain-wide constant to a measured spatial field.
+    #
+    # A uniform array is NOT bit-identical to the scalar, and the reason is numpy casting, not
+    # physics: a float64 SCALAR times a float32 array stays float32 (value-based casting), while
+    # a float64 ARRAY times a float32 array promotes to float64, so the two round differently.
+    # Measured on a 60x60 test grid over 200 steps: max depth difference 8.9e-08 m (90 nm),
+    # outflow-volume difference 1.1e-07 relative. Negligible, but stated rather than assumed —
+    # and it is why the A/B runs below use the scalar branch for the baseline, so the baseline
+    # is the untouched code path rather than a re-derivation of it.
+    if manning_n is None:
+        n2_x = n2_y = MANNING_N ** 2
+    else:
+        # float64: the friction denominator is the one place n enters, and carrying the face
+        # values at full precision costs 15 MB at site3's grid size. See the note above for why
+        # this still does not reproduce the scalar branch bit-for-bit.
+        mn = np.asarray(manning_n, dtype=np.float64)
+        if mn.shape != z.shape:
+            raise ValueError(f"manning_n shape {mn.shape} != grid shape {z.shape}")
+        n2_x = (0.5 * (mn[:, :-1] + mn[:, 1:])) ** 2
+        n2_y = (0.5 * (mn[:-1, :] + mn[1:, :])) ** 2
     cell_ha = dx * dx / 1e4
     n_steps = len(rain_sim)
     frame_interval_s = frame_interval_min * 60
 
     t0  = time.time()
     t_s = 0.0
+    n_substeps = 0
+    substep_cap_hits = 0
     last_frame_t = -1e9    # force a frame at t=0
+
+    # Sub-stepping. The physics is integrated with a CFL-limited dt, and one hyetograph
+    # interval (dt_s long) generally needs SEVERAL such steps. This loop previously took a
+    # single CFL-limited step and then advanced the clock by the full dt_s, so the model
+    # applied `dt` worth of rain and routing while recording `dt_s` of elapsed time.
+    #
+    # Measured 2026-08-28 at site3, infiltration off: CFL bound 94.6 % of steps (median real
+    # dt 2.97 s against dt_s = 60 s), a nominal 72-hour run integrated 9.59 h of physics, and
+    # 7.4 % of the specified rain ever entered the domain. At the production 5 m / dt_s = 20 s
+    # configuration it was 11 %. The solver's numerics were never at fault — recomputing the
+    # mass balance on the real dt closes to 0.1 %, and a synthetic sloped domain conserves
+    # exactly. The clock was wrong, so the storm was never delivered.
+    #
+    # The fix is to advance to each interval's end with as many CFL-limited sub-steps as it
+    # takes. Cost is real: a correct run takes roughly dt_s/dt times more steps.
+    SUBSTEP_CAP = 20000      # guard against dt collapsing; exceeded => report, do not hang
 
     for step in range(n_steps):
         P   = rain_sim[step]
+        t_target = t_s + dt_s
 
-        # The adaptive timestep is computed first: it depends only on the current depth field,
-        # and the storage cap below needs it to convert remaining capacity into a rate.
-        h_max_local = float(h.max())
-        dt = min(dt_s, CFL_ALPHA * dx / np.sqrt(G * h_max_local)) \
-             if h_max_local > MIN_DEPTH else dt_s
+        # The per-step series are RATES that get integrated downstream against a dt_s-spaced
+        # axis, so each must be this interval's TIME-WEIGHTED MEAN, not whatever the final
+        # sub-step happened to leave behind.
+        acc_out_s = acc_out_t = acc_gauge = 0.0
+        acc_Pe = acc_inf = 0.0
+        sub_elapsed = 0.0
+        n_sub = 0
 
-        inf = horton_rate(t_s, f0_si, fc_si, k_si) if use_infiltration else 0.0
+        while t_s < t_target - 1e-9 and n_sub < SUBSTEP_CAP:
+            h_max_local = float(h.max())
+            dt = min(dt_s, CFL_ALPHA * dx / np.sqrt(G * h_max_local)) \
+                 if h_max_local > MIN_DEPTH else dt_s
+            # Never overshoot the hyetograph interval: the last sub-step is trimmed to land
+            # exactly on t_target, so each interval receives exactly dt_s of its own rain rate
+            # and the clock stays aligned with the forcing.
+            dt = min(dt, t_target - t_s)
 
-        # Storage-limited infiltration (saturation excess).
-        #
-        # Horton alone gives a RATE that decays to fc and then stays there indefinitely, so a
-        # cell can absorb water forever. Over a 72-hour event at site3's fc_eff of 23.3 mm/hr
-        # that is 1,678 mm of capacity against 392 mm of rain, and essentially all rainfall
-        # infiltrates: the simulated runoff coefficient came out at 1.0% against 19.6% measured
-        # at the Gee Creek gauge for Hurricane Ian.
-        #
-        # Real soil has finite storage. Once the profile fills, infiltration stops and further
-        # rain becomes runoff — saturation excess, which dominates over infiltration excess on
-        # flat terrain with a shallow water table, i.e. exactly this landscape.
-        #
-        # This is the "maximum deficit" of HEC-RAS/HEC-HMS's Deficit and Constant loss method,
-        # conventionally taken as effective porosity x active layer depth and then calibrated.
-        # Here max_deficit_m is derived per cell from SSURGO (depth to seasonal-high water table
-        # x drainable porosity); see load_soil_storage_capacity().
-        if use_infiltration and max_deficit_m is not None:
-            remaining = np.maximum(max_deficit_m - cum_infil, 0.0)
-            inf = np.minimum(inf, remaining / dt)   # cannot infiltrate more than is left
+            inf = horton_rate(t_s, f0_si, fc_si, k_si) if use_infiltration else 0.0
 
-        Pe  = np.maximum(P - inf, 0.0)
+            # Storage-limited infiltration (saturation excess).
+            #
+            # Horton alone gives a RATE that decays to fc and then stays there indefinitely, so a
+            # cell can absorb water forever. Over a 72-hour event at site3's fc_eff of 23.3 mm/hr
+            # that is 1,678 mm of capacity against 392 mm of rain, and essentially all rainfall
+            # infiltrates: the simulated runoff coefficient came out at 1.0% against 19.6% measured
+            # at the Gee Creek gauge for Hurricane Ian.
+            #
+            # Real soil has finite storage. Once the profile fills, infiltration stops and further
+            # rain becomes runoff — saturation excess, which dominates over infiltration excess on
+            # flat terrain with a shallow water table, i.e. exactly this landscape.
+            #
+            # This is the "maximum deficit" of HEC-RAS/HEC-HMS's Deficit and Constant loss method,
+            # conventionally taken as effective porosity x active layer depth and then calibrated.
+            # Here max_deficit_m is derived per cell from SSURGO (depth to seasonal-high water table
+            # x drainable porosity); see load_soil_storage_capacity().
+            if use_infiltration and max_deficit_m is not None:
+                remaining = np.maximum(max_deficit_m - cum_infil, 0.0)
+                inf = np.minimum(inf, remaining / dt)   # cannot infiltrate more than is left
 
-        eta = z_work + h
+            Pe  = np.maximum(P - inf, 0.0)
 
-        # X fluxes
-        hf_x    = np.maximum(eta[:, 1:], eta[:, :-1]) - np.maximum(z_work[:, 1:], z_work[:, :-1])
-        hf_x    = np.maximum(hf_x, 0.0)
-        num_x   = qx[:, 1:-1] - G * hf_x * dt * (eta[:, 1:] - eta[:, :-1]) / dx
-        denom_x = 1.0 + G * dt * n**2 * np.abs(qx[:, 1:-1]) / (hf_x ** MANNING_EXP + 1e-10)
-        qx[:, 1:-1] = np.where(hf_x > MIN_DEPTH, num_x / denom_x, 0.0)
-        # Froude limiter: cap unit discharge to subcritical (Fr ≤ 0.9) at each face.
-        # Prevents supercritical flow instability at steep road-embankment cells.
-        q_cap_x = 0.9 * hf_x * np.sqrt(G * np.maximum(hf_x, MIN_DEPTH))
-        qx[:, 1:-1] = np.clip(qx[:, 1:-1], -q_cap_x, q_cap_x)
+            eta = z_work + h
 
-        # Y fluxes
-        hf_y    = np.maximum(eta[1:, :], eta[:-1, :]) - np.maximum(z_work[1:, :], z_work[:-1, :])
-        hf_y    = np.maximum(hf_y, 0.0)
-        num_y   = qy[1:-1, :] - G * hf_y * dt * (eta[1:, :] - eta[:-1, :]) / dx
-        denom_y = 1.0 + G * dt * n**2 * np.abs(qy[1:-1, :]) / (hf_y ** MANNING_EXP + 1e-10)
-        qy[1:-1, :] = np.where(hf_y > MIN_DEPTH, num_y / denom_y, 0.0)
-        q_cap_y = 0.9 * hf_y * np.sqrt(G * np.maximum(hf_y, MIN_DEPTH))
-        qy[1:-1, :] = np.clip(qy[1:-1, :], -q_cap_y, q_cap_y)
+            # X fluxes
+            hf_x    = np.maximum(eta[:, 1:], eta[:, :-1]) - np.maximum(z_work[:, 1:], z_work[:, :-1])
+            hf_x    = np.maximum(hf_x, 0.0)
+            num_x   = qx[:, 1:-1] - G * hf_x * dt * (eta[:, 1:] - eta[:, :-1]) / dx
+            denom_x = 1.0 + G * dt * n2_x * np.abs(qx[:, 1:-1]) / (hf_x ** MANNING_EXP + 1e-10)
+            qx[:, 1:-1] = np.where(hf_x > MIN_DEPTH, num_x / denom_x, 0.0)
+            # Froude limiter: cap unit discharge to subcritical (Fr ≤ 0.9) at each face.
+            # Prevents supercritical flow instability at steep road-embankment cells.
+            q_cap_x = 0.9 * hf_x * np.sqrt(G * np.maximum(hf_x, MIN_DEPTH))
+            qx[:, 1:-1] = np.clip(qx[:, 1:-1], -q_cap_x, q_cap_x)
 
-        # Open (transmissive) boundary conditions — allow outflow at all domain edges.
-        # Water exits when it reaches the grid boundary; no inflow from outside.
-        # This physically represents the 2×2km AOI being embedded in a larger watershed
-        # rather than a closed box.  Sign convention: qx > 0 = eastward, qy > 0 = southward.
-        qx[:, 0]  = np.minimum(qx[:, 1],  0.0)   # west edge: outflow (westward) only
-        qx[:, -1] = np.maximum(qx[:, -2], 0.0)   # east edge: outflow (eastward) only
-        qy[0, :]  = np.minimum(qy[1, :],  0.0)   # north edge: outflow (northward) only
-        qy[-1, :] = np.maximum(qy[-2, :], 0.0)   # south edge: outflow (southward) only
+            # Y fluxes
+            hf_y    = np.maximum(eta[1:, :], eta[:-1, :]) - np.maximum(z_work[1:, :], z_work[:-1, :])
+            hf_y    = np.maximum(hf_y, 0.0)
+            num_y   = qy[1:-1, :] - G * hf_y * dt * (eta[1:, :] - eta[:-1, :]) / dx
+            denom_y = 1.0 + G * dt * n2_y * np.abs(qy[1:-1, :]) / (hf_y ** MANNING_EXP + 1e-10)
+            qy[1:-1, :] = np.where(hf_y > MIN_DEPTH, num_y / denom_y, 0.0)
+            q_cap_y = 0.9 * hf_y * np.sqrt(G * np.maximum(hf_y, MIN_DEPTH))
+            qy[1:-1, :] = np.clip(qy[1:-1, :], -q_cap_y, q_cap_y)
 
-        # Boundary discharge (m^3/s) — q here is unit discharge (m^2/s per Bates convention),
-        # so multiplying each face's flux by dx (the cell width that face spans) and summing
-        # across the edge gives the actual volumetric rate crossing it. All four terms made
-        # positive (leaving), regardless of each edge's own sign convention above.
-        out_west  = float(-qx[:, 0].sum())  * dx
-        out_east  = float( qx[:, -1].sum()) * dx
-        out_north = float(-qy[0, :].sum())  * dx
-        out_south = float( qy[-1, :].sum()) * dx
-        outflow_south_ts_step = out_south
-        outflow_total_ts_step = out_west + out_east + out_north + out_south
+            # Open (transmissive) boundary conditions — allow outflow at all domain edges.
+            # Water exits when it reaches the grid boundary; no inflow from outside.
+            # This physically represents the 2×2km AOI being embedded in a larger watershed
+            # rather than a closed box.  Sign convention: qx > 0 = eastward, qy > 0 = southward.
+            qx[:, 0]  = np.minimum(qx[:, 1],  0.0)   # west edge: outflow (westward) only
+            qx[:, -1] = np.maximum(qx[:, -2], 0.0)   # east edge: outflow (eastward) only
+            qy[0, :]  = np.minimum(qy[1, :],  0.0)   # north edge: outflow (northward) only
+            qy[-1, :] = np.maximum(qy[-2, :], 0.0)   # south edge: outflow (southward) only
 
-        # Depth update
-        h += dt / dx * (qx[:, :-1] - qx[:, 1:] + qy[:-1, :] - qy[1:, :]) + dt * Pe
-        h  = np.maximum(h, 0.0)
-        h[~valid] = 0.0
+            # Boundary discharge (m^3/s) — q here is unit discharge (m^2/s per Bates convention),
+            # so multiplying each face's flux by dx (the cell width that face spans) and summing
+            # across the edge gives the actual volumetric rate crossing it. All four terms made
+            # positive (leaving), regardless of each edge's own sign convention above.
+            out_west  = float(-qx[:, 0].sum())  * dx
+            out_east  = float( qx[:, -1].sum()) * dx
+            out_north = float(-qy[0, :].sum())  * dx
+            out_south = float( qy[-1, :].sum()) * dx
+            outflow_south_ts_step = out_south
+            outflow_total_ts_step = out_west + out_east + out_north + out_south
 
-        cum_infil += inf * dt
-        h_max = np.maximum(h_max, h)
+            # Depth update
+            h += dt / dx * (qx[:, :-1] - qx[:, 1:] + qy[:-1, :] - qy[1:, :]) + dt * Pe
+            h  = np.maximum(h, 0.0)
+            h[~valid] = 0.0
+
+            # Charge the soil only for water that ACTUALLY infiltrated. `inf` is a capacity
+            # RATE; the water available to satisfy it is the rain falling this sub-step, since
+            # Pe = max(P - inf, 0) draws infiltration from rainfall only. Charging the full
+            # capacity regardless of supply let the profile fill without absorbing anything:
+            # over site3's first ~8 h Ian delivers <1 mm/hr while Horton offers 25-58 mm/hr, so
+            # cum_infil accrued ~194 mm of PHANTOM infiltration and hit the 206 mm cap before
+            # the storm arrived. Infiltration then stopped for the rest of the event — measured
+            # 2.9 % of rain infiltrating against the ~50 % the cap implies, and a 92.8 % runoff
+            # coefficient against an observed 28.9-31.4 %.
+            #
+            # This was invisible until the sub-stepping fix of 2026-08-28: the clock previously
+            # ran ~10x ahead of the physics, so cum_infil accrued over a fraction of the real
+            # time and never reached the cap. One bug was masking the other.
+            cum_infil += np.minimum(inf, P) * dt
+            h_max = np.maximum(h_max, h)
+
+            # advance the clock by what was ACTUALLY integrated
+            t_s += dt
+            sub_elapsed += dt
+            n_sub += 1
+            n_substeps += 1
+
+            acc_out_s += outflow_south_ts_step * dt
+            acc_out_t += outflow_total_ts_step * dt
+            acc_Pe    += float(np.mean(Pe[valid]) if isinstance(Pe, np.ndarray) else Pe) * dt
+            acc_inf   += float(np.mean(inf[valid]) if isinstance(inf, np.ndarray) else inf) * dt
+            if gauge_rc is not None:
+                gr, gc = gauge_rc
+                gqx = 0.5 * (qx[gr, gc] + qx[gr, gc + 1])
+                gqy = 0.5 * (qy[gr, gc] + qy[gr + 1, gc])
+                acc_gauge += float(np.hypot(gqx, gqy)) * dx * dt
+
+        if n_sub >= SUBSTEP_CAP:
+            substep_cap_hits += 1
+        w = sub_elapsed if sub_elapsed > 0 else 1.0
+        outflow_south_ts_step = acc_out_s / w
+        outflow_total_ts_step = acc_out_t / w
 
         n_flooded = int((h[valid] > DEPTH_THR).sum())
         flooded_ha_ts.append(n_flooded * cell_ha)
         outflow_south_cms_ts.append(outflow_south_ts_step)
         outflow_total_cms_ts.append(outflow_total_ts_step)
+        if gauge_rc is not None:
+            gauge_cms_ts.append(acc_gauge / w)
         rain_mm_hr_ts.append(P * 3600 * 1000)
         # Pe/inf may be per-cell arrays under spatial infiltration — log the domain mean.
-        Pe_mm_hr_ts.append(float(np.mean(Pe[valid]) if isinstance(Pe, np.ndarray) else Pe) * 3600 * 1000)
-        infil_mm_hr_ts.append(float(np.mean(inf[valid]) if isinstance(inf, np.ndarray) else inf) * 3600 * 1000)
+        Pe_mm_hr_ts.append(acc_Pe / w * 3600 * 1000)
+        infil_mm_hr_ts.append(acc_inf / w * 3600 * 1000)
         wet_h = h[valid][h[valid] > DEPTH_THR]
         mean_depth_ts.append(float(wet_h.mean()) if len(wet_h) else 0.0)
 
@@ -626,10 +780,18 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
                   f"flooded={n_flooded*cell_ha:.1f}ha  "
                   f"[{(step+1)/n_steps*100:.0f}% {time.time()-t0:.0f}s]")
 
-        t_s += dt_s
 
     # Always capture a final frame
-    if frame_times_min and abs(frame_times_min[-1] - t_s/60.0) > frame_interval_min/2:
+    # Always land a frame on the true end of the run. The old guard
+    #     if frame_times_min and abs(frame_times_min[-1] - t_s/60) > frame_interval_min/2
+    # skipped the final frame whenever the run ended less than half an interval after the last
+    # periodic one, and captured NOTHING at all when frame_interval_min exceeded the run length
+    # (the leading `and` short-circuits on an empty list). Either way frames[-1] is then a
+    # snapshot from BEFORE the end, which silently breaks any mass balance computed against it:
+    # outflow integrated to the end vs storage sampled earlier reads as created mass. That cost
+    # real diagnostic time on 2026-08-29 — it produced a convincing -12.6 % "structural mass
+    # error" that did not exist.
+    if (not frame_times_min) or frame_times_min[-1] < t_s / 60.0 - 1e-9:
         frame_depths.append(h.copy().astype(np.float32))
         frame_infil.append(cum_infil.copy().astype(np.float32) * 1000)
         frame_times_min.append(t_s / 60.0)
@@ -646,6 +808,8 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
             "times_min":   frame_times_min,
             "outflow_south_cms": np.array(outflow_south_cms_ts),
             "outflow_total_cms": np.array(outflow_total_cms_ts),
+            "gauge_cms": np.array(gauge_cms_ts) if gauge_rc is not None else None,
+            "initial_volume_m3": initial_volume_m3,
         },
     )
 
@@ -693,6 +857,10 @@ def main():
                     help="Minutes between animation frames  (default 30)")
     ap.add_argument("--save-frames", action="store_true",
                     help="Save per-timestep depth frames for viewer animation")
+    ap.add_argument("--dem-resample", default="min",
+                    choices=["min", "bilinear", "average", "nearest"],
+                    help="Downsampling operator for the conditioned DEM (default min). "
+                         "See DEM_RESAMPLING above — averaging kernels destroy the breaching.")
     ap.add_argument("--no-infiltration", action="store_true",
                     help="Disable Horton infiltration — Pe = rain (water stays on surface)")
     ap.add_argument("--uniform-infiltration", action="store_true",
@@ -707,6 +875,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="Print setup info and exit")
     args = ap.parse_args()
+
+    global DEM_RESAMPLING
+    DEM_RESAMPLING = getattr(Resampling, args.dem_resample)
 
     use_infiltration = not args.no_infiltration
     tag = "_noinfil" if not use_infiltration else ("_uniforminfil" if args.uniform_infiltration else "")

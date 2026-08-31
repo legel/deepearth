@@ -1,0 +1,34 @@
+{
+  "site": "site3",
+  "backend": "spectral",
+  "naip": "site3_gee_creek/imagery/data/naip_2021_RGB.tif",
+  "n_segments": 343980,
+  "n_tiles": 25,
+  "ndvi_vegetation_threshold": -0.02,
+  "class_area_fraction": {
+    "bare_soil": 0.01792,
+    "building_roof": 0.08068,
+    "grass_turf": 0.08952,
+    "impervious_other": 0.03458,
+    "nodata": 0.00251,
+    "road_paved": 0.10219,
+    "shrub_scrub": 0.02152,
+    "tree_canopy": 0.47103,
+    "water": 0.1034,
+    "wetland_marsh": 0.07666
+  },
+  "class_segment_count": {
+    "tree_canopy": 161969,
+    "water": 35625,
+    "road_paved": 35140,
+    "grass_turf": 30793,
+    "building_roof": 27727,
+    "wetland_marsh": 26368,
+    "impervious_other": 11871,
+    "shrub_scrub": 7404,
+    "bare_soil": 6159,
+    "nodata": 924
+  },
+  "total_classified_area_km2": 35.993,
+  "wall_s": 76.1
+}

@@ -1,0 +1,17 @@
+# Regenerable intermediates. Everything here is reproduced by re-running the pipeline in the
+# order given in README.md; none of it is an input.
+
+# per-tile LiDAR accumulators, ~107 MB, rebuilt by canopy_lidar.py
+data/canopy_checkpoints/
+# ~39 MB per site; the class raster is the downstream interface
+data/segments_*.csv
+# ~23 MB
+data/canopy_cover_2m_*.tif
+# ~15 MB, a coverage diagnostic
+data/return_density_2m_*.tif
+data/class_fractions_5m_*.npz
+# solver output, ~2.3 MB per arm
+data/hydrograph_ian_*.csv
+# SAM3 backend outputs, regenerable
+data/*sam3*.tif
+data/class_fractions_*_sam3.npz

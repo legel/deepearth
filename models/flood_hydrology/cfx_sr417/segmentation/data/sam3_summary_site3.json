@@ -1,0 +1,76 @@
+{
+  "site": "site3",
+  "backend": "sam3",
+  "model": "facebook/sam3",
+  "tiles": 121,
+  "tile_px": 1024,
+  "overlap_px": 64,
+  "score_threshold": 0.3,
+  "mask_threshold": 0.5,
+  "prompts": {
+    "water": [
+      "water",
+      "pond",
+      "lake",
+      "river"
+    ],
+    "building_roof": [
+      "roof",
+      "rooftop",
+      "building"
+    ],
+    "road_paved": [
+      "road",
+      "street",
+      "paved road"
+    ],
+    "impervious_other": [
+      "parking lot",
+      "sidewalk",
+      "driveway",
+      "concrete pavement"
+    ],
+    "tree_canopy": [
+      "tree",
+      "tree canopy",
+      "forest"
+    ],
+    "shrub_scrub": [
+      "shrub",
+      "bush",
+      "scrub vegetation"
+    ],
+    "grass_turf": [
+      "grass",
+      "lawn",
+      "turf"
+    ],
+    "bare_soil": [
+      "bare soil",
+      "dirt",
+      "sand"
+    ],
+    "wetland_marsh": [
+      "marsh",
+      "wetland",
+      "swamp"
+    ]
+  },
+  "class_area_fraction": {
+    "water": 0.07092,
+    "building_roof": 0.14016,
+    "road_paved": 0.14008,
+    "impervious_other": 0.01558,
+    "tree_canopy": 0.47596,
+    "shrub_scrub": 0.04543,
+    "grass_turf": 0.09562,
+    "bare_soil": 0.01617,
+    "wetland_marsh": 7e-05
+  },
+  "wall_s": 1525.5,
+  "footprint_precedence": "OSM roads and buildings overwrite the model's own call",
+  "tiles_computed": 113,
+  "tiles_from_checkpoint": 8,
+  "vision_embeds_reused_per_tile": true,
+  "class_assignment": "highest-scoring prompt wins; SAM3 scores are per-prompt confidences and are not calibrated across prompts"
+}

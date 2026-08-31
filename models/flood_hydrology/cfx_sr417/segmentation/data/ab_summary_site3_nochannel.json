@@ -1,0 +1,104 @@
+{
+  "site": "site3",
+  "cell_size_m": 5.0,
+  "grid_shape": [
+    1363,
+    1372
+  ],
+  "dt_s": 20.0,
+  "n_steps": 12960,
+  "total_rain_mm": 391.7442,
+  "domain_km2": 46.751,
+  "manning_scalar": 0.04,
+  "manning_field_mean": 0.06591952592134476,
+  "manning_field_min_max": [
+    0.013000000268220901,
+    0.11999999731779099
+  ],
+  "arms": {
+    "baseline": {
+      "wall_s": 487.5,
+      "peak_depth_m": 1.3934643268585205,
+      "peak_flooded_ha": 375.07,
+      "peak_outflow_total_cfs": 411.57501828648896,
+      "hydrograph": "segmentation/data/hydrograph_ian_site3_baseline.csv",
+      "scores": {
+        "rising_limb_sim_h": 32.325,
+        "rising_limb_obs_h": 31.6,
+        "rising_limb_diff_h": 0.725,
+        "runoff_coefficient_sim_pct": 8.905,
+        "runoff_coefficient_obs_pct_range": [
+          28.88,
+          31.43
+        ],
+        "runoff_shortfall_x": [
+          3.24,
+          3.53
+        ],
+        "outflow_volume_Mm3": 1.6309,
+        "gauge_cell_rising_limb_sim_h": 53.681,
+        "gauge_cell_peak_cfs": 101.62
+      },
+      "config": {
+        "manning": "scalar",
+        "impervious": "NLCD 30 m"
+      }
+    },
+    "manning": {
+      "wall_s": 523.9,
+      "peak_depth_m": 1.5408389568328857,
+      "peak_flooded_ha": 368.7475,
+      "peak_outflow_total_cfs": 318.3473997456953,
+      "hydrograph": "segmentation/data/hydrograph_ian_site3_manning.csv",
+      "scores": {
+        "rising_limb_sim_h": 31.74,
+        "rising_limb_obs_h": 31.6,
+        "rising_limb_diff_h": 0.14,
+        "runoff_coefficient_sim_pct": 6.636,
+        "runoff_coefficient_obs_pct_range": [
+          28.88,
+          31.43
+        ],
+        "runoff_shortfall_x": [
+          4.35,
+          4.74
+        ],
+        "outflow_volume_Mm3": 1.2153,
+        "gauge_cell_rising_limb_sim_h": 63.752,
+        "gauge_cell_peak_cfs": 10.48
+      },
+      "config": {
+        "manning": "segmented",
+        "impervious": "NLCD 30 m"
+      }
+    },
+    "full": {
+      "wall_s": 520.0,
+      "peak_depth_m": 1.5379753112792969,
+      "peak_flooded_ha": 373.41,
+      "peak_outflow_total_cfs": 315.45275828655065,
+      "hydrograph": "segmentation/data/hydrograph_ian_site3_full.csv",
+      "scores": {
+        "rising_limb_sim_h": 31.745,
+        "rising_limb_obs_h": 31.6,
+        "rising_limb_diff_h": 0.145,
+        "runoff_coefficient_sim_pct": 6.586,
+        "runoff_coefficient_obs_pct_range": [
+          28.88,
+          31.43
+        ],
+        "runoff_shortfall_x": [
+          4.39,
+          4.77
+        ],
+        "outflow_volume_Mm3": 1.2061,
+        "gauge_cell_rising_limb_sim_h": 63.746,
+        "gauge_cell_peak_cfs": 10.47
+      },
+      "config": {
+        "manning": "segmented",
+        "impervious": "segmentation 0.6 m"
+      }
+    }
+  }
+}

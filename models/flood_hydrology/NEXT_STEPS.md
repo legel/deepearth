@@ -1,110 +1,383 @@
-# Next steps — two parallel tracks
+# Next steps
 
-Written 2026-08-26 as a handoff. Background and measurements are in
+Updated 2026-08-29. Full session log for the solver work below is in
+[`../PROGRESS_2026-08-29.md`](../PROGRESS_2026-08-29.md); the preceding session is in
 [`../PROGRESS_2026-08-26.md`](../PROGRESS_2026-08-26.md); site detail is in each site's README.
 
-## Where things stand
+## READ FIRST — 2026-08-29 solver state
 
-The pipeline is clean, unified and pushed. One physics bug was found by gauge validation, fixed,
-and measured. **The dominant remaining error is now isolated and it is not parameterisation.**
+Four defects were found in `simulation/flood_sim_ian.py`'s integration loop, all by mass balance
+refusing to close. **Every magnitude number published before 2026-08-29 was produced through at
+least one of them and none survive.** Timing results are far more robust and largely do.
 
-| | value |
-|---|---|
-| Flood-onset timing vs USGS 02234400 (Hurricane Ian) | **0.09 h** — validated |
-| Runoff coefficient, simulated vs observed | **1.7 % vs 19.6 %** — 11.5× gap |
-| Peak discharge | 129.8 cfs vs 1,190 cfs |
-| Hydrograph centroid | 7.44 h early — no baseflow or channel storage |
-
-**Both tracks below are scored against the same two numbers: rising limb (0.09 h) and runoff
-coefficient (1.7 % vs 19.6 %).** A change either moves them or it doesn't. That discipline is
-what caught the unbounded infiltration; keep it.
-
----
-
-## Track B — channel connectivity (the dominant error)
-
-**The finding this comes from.** Water is generated correctly and then cannot leave the domain.
-Twenty-four hours after rain stops, flooded area is still *rising* (+0.13 ha/hr); extrapolated,
-the standing 244 ha would take ~80 days to clear. It is **not** trapped in depressions — the
-conditioned DEM has 240 true pits (0.00 %), so breaching worked. An earlier claim of ~750,000
-pits was a detector artifact that counted *flats* (11.02 %) as pits; don't repeat it.
-
-The constraint is conveyance across near-zero gradient. This is the same phenomenon as the D8
-under-capture (11.65 of 33.15 km² at Gee Creek), seen from the water side.
-
-**First test, before building anything:** is site3's burned creek channel *continuous* through
-the domain? `dem_hydro.py` burns 3DHP flowlines 1.5 m into the DEM. If that burn left gaps —
-because 3DHP flowlines are discontinuous, or the burn didn't reach the domain edge — then a
-single fact explains both the under-capture and the 80-day drainage, and the fix is local.
-
-```
-cfx_sr417/dem/data/hydro/dem_burned.tif      # post-burn, pre-breach
-cfx_sr417/dem/data/hydro/dem_conditioned.tif # what the solver reads
-cfx_sr417/site3_gee_creek/hydrography/data/  # the 3DHP flowlines burned in
-```
-
-Concretely: trace the burned channel from the Gee Creek pour point
-(28.7041629, −81.2906221) downslope and check it reaches a domain boundary without
-interruption. If it does, connectivity isn't the answer and the next candidate is conveyance
-capacity — Manning's *n* and channel cross-section at 5 m resolution.
-
-**Known, related, undocumented:** `dem_hydro.py` computes a fully conditioned DEM
-(breach + `fill_pits` + `fill_depressions` + `resolve_flats`) for D8 and HAND but **never saves
-it**. The solver reads the breach-only `dem_conditioned.tif`. With no pits to fill the practical
-impact is small, but HAND/streams and the solver genuinely run on different DEMs.
-
----
-
-## Track A — segmentation-derived parameters (Lance's Step 1+2)
-
-Lance is picking this up. It fills two documented holes:
-
-1. **Tree canopy is absent from the physics mesh entirely.** The mesh is bare-earth DEM plus
-   LiDAR building roofs — no vegetation in the flow surface at all.
-2. **Ground Manning's *n* is a single uniform 0.040** everywhere non-roof (roofs 0.015). That is
-   the whole spatial variation.
-
-| step | output | consumed by |
+| defect | effect | status |
 |---|---|---|
-| SAM3 on NAIP 0.6 m — segment and name everything | per-class polygons | new `cfx_sr417/segmentation/` |
-| VLM per segment → `{material, Smax, Ks, Manning's n}` | per-class parameter JSON | rasterised to the solver grid |
-| rasterise to the 5 m solver grid | 3 parameter rasters | `flood_sim_ian.py` as spatial arrays |
+| physics integrated a CFL-limited `dt` while the clock advanced `dt_s` | a "72-hour" run delivered **7-11 %** of the storm | fixed — sub-steps to each hyetograph interval |
+| `cum_infil` charged the Horton *capacity* rate regardless of available rain | soil filled on paper without absorbing; infiltration 2.9 % of rain | fixed — charges `min(inf, P)·dt` |
+| `CFL_ALPHA = 0.30` unstable at 5 m once water accumulates | **-517.8 %** mass residual, 8.99 m depths oscillating under zero rain | fixed — 0.15 |
+| final-frame guard captured no end-of-run frame | broke any mass balance measured against `frames[-1]` | fixed |
 
-**The solver already takes spatially-varying inputs at this interface** —
-`load_spatial_horton()` builds per-cell `f0`/`fc`/`k` from SSURGO, and `load_soil_storage_capacity()`
-does the same for `Smax`. Feeding segmentation-derived values in is a substitution, not new
-solver machinery. Only Manning's *n* needs promoting from scalar to array.
+The first two masked each other: the broken clock meant `cum_infil` accrued over a fraction of
+real time and never reached its cap. The third was unreachable until the first was fixed,
+because the solver never accumulated enough water to go unstable.
 
-**Canopy: use LiDAR, not imagery.** The 2018 point cloud carries vegetation returns (classes
-3/4/5), so canopy height is recoverable directly rather than inferred from nadir NAIP — real
-geometry, from data already on disk. See `cfx_sr417/lidar/cache_bbox_points.py` for the
-classification-filtered loader.
+**A per-cell volume limiter was added and then reverted.** It was justified by a -12.6 % residual
+that turned out to be a measurement artefact of the final-frame bug — outflow integrated to the
+end compared against storage sampled 333 minutes earlier. Measured correctly the solver conserves
+mass to **-0.001 %**, and the limiter changed results by 1 part in 10^4. Do not re-add it without
+new evidence; `mesh_shallow_water.py` needs its equivalent, this solver does not.
 
-**Compute:** ASU allocation for SAM3; hosted inference only if VLM iteration speed matters.
+### Current state, site3 @ 25 m, all fixes, mass residual -0.001 %
+
+| | model | observed |
+|---|---|---|
+| **rising limb error** | **0.27 h** | gauge resolves 0.25 h |
+| runoff coefficient | 72.1 % | **28.9 - 31.4 %** |
+| infiltration | 17.3 % of rain (`cum_infil` 68 of 206 mm) | — |
+
+**Timing is effectively solved** — flood onset reproduced to within one gauge sample, and the
+gauge hydrograph now peaks, which it never did before. **Magnitude overshoots ~2.3x.**
+
+25 m and 5 m agree exactly on these numbers, so 25 m is a valid fast proxy for the physics
+(~7 min vs ~7.4 hours) — but it does NOT reproduce the 5 m instability, so any CFL or stability
+question must be checked at production resolution.
+
+### The leading candidate for the remaining overshoot
+
+Infiltration draws only from instantaneous rainfall (`Pe = max(P - inf, 0)`), so once rain stops,
+ponded water sits on a half-empty soil profile and cannot enter it. **138 mm of the 206 mm cap is
+structurally unreachable.** If ponded water could reach it, infiltration would go from 17.3 % to
+~52 % of rain and runoff from 72 % to roughly 37 %, against an observed 28.9-31.4 %.
+
+That is a genuine missing process rather than a tuning knob, but it is a modelling change, not a
+bug fix — flagged for decision, not yet implemented.
+
+### Re-run required before any of these are quoted again
+
+Both probability ensembles, the storage-cap sweep, the `--baseflow` experiment, and Track A's
+three-arm roughness A/B. All were measured through at least one of the four defects above. In
+particular "a baseflow initial condition makes it worse" and "even a zero storage cap only
+reaches 10.8 % runoff" are **not** conclusions that currently stand.
 
 ---
 
-## Also open, lower priority
+## What changed on 2026-08-27
 
-- **Duration axis.** The standard set is T ∈ {1…500} yr at 24 hr. Johns Lake floods nothing
-  below the 50-yr storm at that duration because flooding there tracks *peak intensity*, not
-  storm total, and it is only 4.9 % impervious against the CFX AOI's 28.7 %. Running
-  T × {1 hr, 12 hr, 24 hr} would make the comparison discriminate at every site.
-- **Cold-start test.** Nothing has been built at a genuinely fresh coordinate. Site3 re-runs can
-  silently pass by reusing cached files; only a new location proves "coordinate → twin".
-- **Johns Lake AOI.** 144 ha modelled against a real lake of ~1,044 ha, clipped on three of four
-  edges. A validated zero-clip bbox (7.37 × 3.87 km) exists in
-  `johns_lake/ground_truth/aoi_expansion_test_data/` and has never been run.
-- **`historical_20240212` is not a validation case.** Five independent stations report 1.1–3.9 mm
-  over that window; the lake rose 17 ha with no rain. Don't treat its 0.0 ha result as a model
-  failure.
+Track B was opened to test one hypothesis: that site3's burned creek channel had *gaps*. It did
+not. The vector network is continuous — 22.17 km inside the domain, both components reaching a
+domain edge, stable across snap tolerances from 0.1 to 15 m. The hypothesis was wrong, and
+testing it surfaced thirteen defects underneath, several of which had been silently degrading
+every number this project has published.
 
-## Don't redo these — already measured and settled
+**The dominant one: the solver destroyed its own DEM conditioning.** `flood_sim_ian.py`
+bilinear-downsampled the conditioned DEM from 0.875 m to 5 m. richdem's breaching carves
+drainage paths roughly one cell wide; any averaging kernel blends that trench back into the
+surrounding ground, re-sealing every outlet the conditioning had opened.
 
-- **whitebox is not a richdem substitute.** Stream-network IoU 0.29 against richdem despite
-  elevations agreeing within 1 mm on 98.3 % of cells.
-- **Python 3.9 for the pipeline.** richdem does not build on 3.11 (vendored pybind11 predates
-  `PyFrameObject` becoming opaque); pysheds 0.5 needs numpy < 2 (`np.in1d`).
-- **The "1.24 h peak-timing error" cannot be claimed.** Peak plateaus are 1.60 h (model) and
-  3.00 h (gauge) wide, so the argmax is not resolved that finely. The rising limb is the
-  defensible metric.
+| DEM | trapped depression storage |
+|---|---|
+| native 0.875 m conditioned | **0.000 Mm³** |
+| 5 m bilinear — what the solver actually integrated | **3.710 Mm³**, 79.4 mm domain-average |
+
+79.4 mm is 20 % of the Ian storm, and almost exactly the entire observed runoff volume. The
+logged "fill adds zero volume" was true — at native resolution, which is not the surface the
+solver reads. Fixed with `Resampling.min`; the conditioning now survives the downsample at both
+sites. The identical bug existed in `research/build_grid_surrogate_dataset_site3_crop.py`.
+
+**site3's stream burn had never run at all.** `HYDRO_GEO` was hardcoded to the main AOI, so
+site3 loaded the main AOI's six Shingle Creek flowlines — whose EPSG:5070 extent sits ~34 km
+south of site3's DEM. They rasterised to an all-zero mask and the burn became a silent no-op:
+`dem_burned.tif` was bit-identical to the raw DEM. `dem_hydro.py` now resolves paths through
+`site_registry` (`--site site3`) and raises on an empty burn mask.
+
+**A constant-depth burn does not route.** Once site3 was burned correctly, D8 still fragmented:
+the largest flow accumulation anywhere in the 46.78 km² domain was 0.99 km², and 191 of 399
+sampled steps along the main stem ran *uphill* downstream. A uniform carve lowers a channel but
+imposes no direction — on this terrain that is a flat-bottomed ditch. The burn now enforces
+monotonic descent using 3DHP's own digitized flow direction, with depth scaled by stream order
+and the enforced gradient measured from the DEM per order rather than assumed.
+
+**The infiltration fix from the previous session reached only one of two sites.**
+`soil/data/soil_storage.csv` existed for site3 but was never generated for the main AOI, so
+every main-AOI number — including the flood-probability ensemble — was produced with the
+unbounded infiltration that session diagnosed as a bug.
+
+**`export_overlays.py` had been aborting since 2026-08-03.** It masked `hand.png` (512 px, from
+`dem_hydro.PNG_SIZE`) with a waterbody mask built at its own `SIZE` (2048 px). The `IndexError`
+fired partway through the export chain, so every export after it was skipped too and the hydro
+overlays in `viewer/data/` were frozen for three weeks.
+
+Also fixed: pour-point snapping took the *nearest* stream cell rather than the largest channel
+(0.14 km² catchment against 33.15 documented); the stream-initiation threshold was a raw cell
+count, so the same number meant 766 m² at site3 and 38,391 m² at the main AOI; `flow_dir.tif`
+was documented as an output but never written; the fully-conditioned DEM D8 and HAND run on was
+never saved, so those products were not reproducible from any file on disk; `src.nodata or
+-9999.0` silently replaced a legitimate nodata of 0.0; `reproject` without declared nodata lets
+`Resampling.min` *fill* nodata holes with surrounding terrain; and a hardcoded `area_capture_frac`
+in the viewer export went stale the moment the delineation changed.
+
+---
+
+## Corrected baselines — do not calibrate against anything older
+
+**Main AOI**, all three of its defects fixed and re-run end to end:
+
+| | before | after |
+|---|---|---|
+| runoff coefficient | 2.93 % | **26.44 %** |
+| peak boundary outflow | 35.2 cfs | 156.6 cfs |
+| peak flooded area | 24.1 ha | 68.1 ha |
+| any resolvable risk | 6.85 ha | **11.03 ha** |
+| ≥1 %/yr | 3.98 ha | **5.97 ha** |
+| ≥10 %/yr | 1.30 ha | **1.73 ha** |
+
+26 % runoff on a 28.7 % impervious corridor is physically plausible where 2.9 % never was.
+There is no gauge at this AOI (the 44x watershed mismatch), so this is a plausibility check,
+not a validation.
+
+**site3 / Gee Creek**, scored with `analysis/validate_gauge_site3.py`:
+
+| | before | after |
+|---|---|---|
+| runoff coefficient (domain boundary) | 1.69 % | 8.90 % |
+| rising limb vs gauge | 0.09 h* | 0.72 h |
+| flooded area 24 h after rain stops | **+0.10 ha/hr, rising** | **−0.48 ha/hr, draining** |
+| D8 stream cells | 1,719,908 (2.82 %) | 112,502 (0.18 %) |
+| cells with HAND < 1 m | 77.2 % | 17.2 % |
+| max flow accumulation in-domain | 0.99 km² | 7.12 km² |
+| pour-point catchment | 0.14 km² | 3.72 km² |
+
+`*` **below the gauge's own 0.25 h sampling interval, and therefore never claimable.** The same
+resolution limit that disqualified the peak-argmax metric applies here. Only the 0.72 h figure
+is resolved.
+
+**Johns Lake is unaffected** — its solver reads the DEM at native 2.64 m with no downsampling
+step. The resampling bug is confined to `cfx_sr417` and the research surrogate path.
+
+## What is fixed, and what is still wrong
+
+Fixed, decisively: **water no longer accumulates forever.** Flooded area was still *rising* 24 h
+after rain stopped, extrapolating to ~80 days to clear. It now drains. That was the finding
+Track B was built on and it is closed.
+
+Still wrong: **magnitude, by about 3x, and timing badly.** Runoff coefficient is 8.90 % against
+an observed 28.9–31.4 %, and discharge at the gauge cell never peaks inside the 72-hour window
+at all — it rises monotonically to 101.6 cfs at t=72 h, against an observed peak of 1,190 cfs at
+t=37.5 h.
+
+**The observed target itself was wrong in the docs.** The 19.6 % runoff coefficient quoted
+throughout cannot be reproduced from the NWIS record under any standard baseflow or window
+choice. Like-for-like over the simulated window it is 28.9–31.4 %. The model was always further
+from truth than recorded. `analysis/validate_gauge_site3.py` now reports the full sensitivity
+instead of a single unreproducible number; use it rather than quoting a figure.
+
+## Next
+
+1. **Why the gauge-cell hydrograph never peaks.** This is the sharpest open question and the
+   one that most constrains everything else. Conveyance has been *ruled out* by measurement —
+   along-channel bed slope on the solver grid is 1.94e-3, matching the natural 1.90e-3, and at
+   the existing n=0.040 a channel depth of only 0.14–0.62 m yields 0.30–0.80 m/s, precisely the
+   documented range for this stream class. Manning's *n* is not the bottleneck; do not tune it.
+2. **The soil storage cap is the leading remaining candidate.** site3's mean cap is 206 mm
+   against the main AOI's 36 mm, both SSURGO-derived. The main AOI, with the tighter cap,
+   produces a plausible 26 % runoff; site3, with the looser one, produces 8.9 %. That contrast
+   is worth a direct sensitivity test — it has never had one.
+3. **Re-run Johns Lake's probability ensemble.** The main AOI's and site3's are both done
+   (site3: 30.08 → 56.33 ha any risk, 18.53 → 33.54 at ≥1 %/yr, 8.47 → 13.68 at ≥10 %/yr, with
+   peak depths falling as areas rise — the correct signature for removing fabricated depression
+   storage). Johns Lake is verified free of the resampling defect but has not been re-checked
+   against the burn and storage-cap fixes.
+4. **Flood extent at site3 has no ground truth at all.** Peak flooded area moved 246 → 375 ha
+   across this session's fixes with nothing to check it against. site3 has no PlanetScope or
+   Sentinel-2 coverage; sourcing a single post-Ian scene would make extent falsifiable.
+
+### Measured and settled — do not redo
+
+- **The 3DHP flowlines are continuous.** Verified by node-graph connectivity, not `linemerge`,
+  which splits at junctions and reports a misleading 16 components for a connected network.
+- **A baseflow initial condition does not help.** Pre-filling the channel to the depth its own
+  measured 45.2 cfs baseflow implies validates itself beautifully — 47.9 cfs simulated at the
+  gauge cell at t=0 — and then makes the run worse: total infiltration rose 2.56 → 5.00 Mm³ and
+  storm runoff reaching the gauge fell 0.189 → 0.080 Mm³. Zeroing the channel's soil storage (a
+  perennial channel sits at the water table) was tried and changed nothing; only 3,504 of 8,846
+  channel cells had any storage to zero. Kept behind `--baseflow`, off by default.
+- **Boundary outflow vs gauge-cell discharge is not the explanation for the lag.** Measuring at
+  the gauge cell was tried on the hypothesis that domain-boundary outflow unfairly charges the
+  traverse to the box edge. It reports a *later* response, not an earlier one.
+- Everything in the previous session's don't-redo list still stands: whitebox is not a richdem
+  substitute (stream IoU 0.29), the peak-argmax metric is unresolvable, and `historical_20240212`
+  is not a validation case.
+
+### Environment
+
+**`python3` is 3.9.6 and is the pipeline interpreter** — richdem, pysheds, rasterio, geopandas
+all present. There is no `python3.9` on PATH; checking for one and concluding the environment
+lacks 3.9 is a mistake worth not repeating. A separate 3.11 venv at `cfx_sr417/.venv` serves
+`research/` only and carries torch.
+
+## Track A — segmentation-derived parameters
+
+Built 2026-08-27 in `cfx_sr417/segmentation/`; full detail, method and limitations in
+[`cfx_sr417/segmentation/README.md`](cfx_sr417/segmentation/README.md).
+
+The pipeline is complete and runs end to end: LiDAR canopy height → 344k NAIP segments in 9
+surface classes → a per-class parameter table → three rasters on the 5 m solver grid. Two
+independent cross-checks pass — total impervious 21.8 % against NLCD's 18.7 %, open water 10.4 %
+against 3DHP's mapped 13.6 %.
+
+`run_sim` gained one optional argument, `manning_n`, promoting `MANNING_N` from a domain-wide
+scalar to a spatial field. `manning_n=None` is the original expression, so every existing caller
+is unaffected. Nothing else in the solver was touched.
+
+**SUPERSEDED — re-run required.** `flood_sim_ian.py` was rewritten at 2026-08-28 14:35 (single
+adaptive-dt block replaced by an inner sub-stepping loop, `SUBSTEP_CAP = 20000`). With the
+ORIGINAL scalar n = 0.040 and identical inputs, the first 12 simulated hours give h_max 0.050 m /
+0.0 ha on the 12:51 solver and **1.070 m / 173.7 ha on the current one**. The Track A arms below
+ran on the 12:51 revision; the SAM3 arm ran after the change. Each arm set is internally
+consistent (one process, one revision) but they cannot be compared across revisions. Pin a
+revision and re-run before quoting any of it.
+
+**Result, four controlled runs sharing one loaded DEM/Horton/storage/hyetograph.** The baseline
+arm reproduced 411.6 cfs / 375.1 ha / 1.393 m bit-for-bit twice — the same numbers as this
+session's Track B run, so the control is genuinely the current model.
+
+| | baseline | segmented *n* | observed |
+|---|---|---|---|
+| rising-limb error | 0.72 h | **0.24 h** | — |
+| runoff coefficient | 8.91 % | 8.20 % | 28.9–31.4 % |
+| gauge-cell peak | 101.6 cfs | 37.1 cfs | 1,190 cfs |
+
+**Timing improves, magnitude does not.** The 0.48 h improvement in rising limb is resolved and
+real; the residual 0.24 h is below the gauge's 0.25 h sampling interval and is *not* claimable.
+Runoff moves 8 % the wrong way, and the mechanism was measured rather than assumed — outflow
+plus standing water falls from 2.119 to 1.996 Mm³, so the volume infiltrated rather than
+remaining in transit.
+
+**This independently corroborates item 1 above.** A physically derived roughness field spanning
+9.2× (mean +64 %, rougher over half the domain) does not close the ~3.5× magnitude gap and does
+not make the gauge hydrograph peak — every arm still rises monotonically to t = 72 h. Track B
+ruled out conveyance by channel slope and velocity; Track A ruled out roughness by substituting
+a measured field for the scalar. Same conclusion, two methods. **Do not tune *n*.**
+
+### The transferable finding: nadir imagery puts forest roughness in the channel
+
+Riparian canopy closes over Gee Creek, so NAIP cannot see the creek and the canopy-height model
+correctly reports 12 m of tree above it. The classifier therefore called 58.9 % of mapped channel
+cells `tree_canopy` and the **gauge cell itself 100 %**, putting n = 0.120 on the channel bed.
+Measured cost: gauge-cell discharge collapsed 101.6 → **10.5 cfs**, a ~10× drop, while boundary
+outflow fell only 23 %. A defect invisible in a domain-wide statistic dominated the validation
+cell.
+
+Fixed by extending the precedence rule the classification already used — a mapped feature
+outranks a spectral inference — to the hydrography layer, forcing channel cells to n = 0.045
+using the same 3DHP flowlines `dem_hydro.py` burns. Recovered gauge-cell discharge to 37.1 cfs
+and runoff to 8.20 %. **A canopy roughness is not wrong for a forest; it is wrong for a channel**
+(Chow's 0.10 for timber assumes flow among the trunks, "flood stage below branches"). Any
+nadir-imagery parameterisation will make this mistake wherever vegetation overhangs conveyance.
+
+### Lance's Step 2 tested as asked — vision Ks/Smax vs SSURGO
+
+Both soil routes built and run with the segmented Manning field held constant. Same AMC-III
+factor applied to both, so dry Ks is compared against dry Ks.
+
+| | SSURGO | vision | observed |
+|---|---|---|---|
+| runoff coefficient | 8.202 % | 8.249 % | 28.9–31.4 % |
+| rising-limb error | 0.24 h | 0.54 h | — |
+| peak flooded | 383.6 ha | 266.5 ha | — |
+| **gauge-cell discharge** | **37.1 cfs** | **3.0 cfs** | 1,190 cfs |
+
+**A tie on the water budget (0.6 % apart), 12x apart at the gauge cell** — despite fields that
+share almost no spatial structure (conductivity *r* = +0.171, storage *r* = **−0.234**). At
+392 mm the storm overwhelms both profiles, so basin runoff is set by what neither can hold; the
+routing is where they part.
+
+The mechanism is specific: SSURGO reports the LEAST storage where canopy is densest (140 mm at
+>80 % canopy vs 234 mm below 20 %), because Florida's deep-rooted forest sits on hydric ground
+with a shallow water table. The vision route infers a deep profile from deep roots — the
+causality runs the other way. Since that forest is the riparian corridor, the vision route soaks
+up water in the strip feeding the creek and sheds it in the suburbs draining to the box edge.
+
+**Use SSURGO where it exists.** Where it does not — i.e. outside the US, which is the whole
+"any coordinate" premise — expect a usable volume and degraded routing. Extent differs 30 %
+between the two and site3 has no extent ground truth to adjudicate it.
+
+### Canopy validated independently
+
+`tree_canopy` is 44.4 % of the domain and drives the whole roughness change, so it was checked
+against **NLCD Tree Canopy Cover 2021** (30 m, Landsat + FIA plots — no shared sensor or method
+with airborne LiDAR). Domain-mean canopy fraction: **ours 34.1 %, TCC 33.9 %**; r = 0.751, bias
++1.6 pp, class agreement 78.4 % at a 50 % threshold. The aggregate is near-exact and the scatter
+(MAE 17.5 pp) is about *where* canopy sits, not how much there is — TCC cannot resolve a
+hedgerow, and its distribution saturates (p50 21 %, p90 95 %) where ours is continuous.
+
+Capping tree fraction at TCC's wherever ours is higher, never raising it where ours is lower,
+drops mean n from 0.0655 to 0.0543 — a strict one-sided bound putting **at most 44 %** of the
+roughness change down to canopy placement error. `segmentation/validate_canopy.py`.
+
+### Also measured, and settled
+
+- **Surface storage is negligible here** — 1.84 mm domain mean, 0.47 % of the 392 mm storm. The
+  raster is produced; wiring it would need a new solver term and is not justified at that size.
+- **The 0.6 m impervious substitution changes nothing** — runoff coefficient moved −0.004 pp
+  after the channel fix, −0.05 pp before it. NLCD's 30 m pixels smear road/roof imperviousness
+  into cells the binary OSM mask already handles, so the coarse layer double-counts; the finer
+  one is more nearly correct and immaterial.
+- **The n-aggregation choice does not matter** — arithmetic and Horton/Einstein composites of the
+  0.6 m classes onto 5 m cells differ by 1.4 %.
+- **The LiDAR has no vegetation classes.** ASPRS 3/4/5 are absent from this acquisition (48 M
+  points sampled: 61 % class 1, 33 % ground, 5 % building). The note above pointing at
+  `classification_filter` for classes 3/4/5 was wrong; canopy comes from class-1 returns
+  normalised against the bare-earth DEM.
+- **SAM3 RAN — access approved and full scene complete (2026-08-28).** Weights are cached
+  locally (3.4 GB); it runs from the 3.11 venv (transformers 5.16.1, torch 2.13 + MPS) as a
+  standalone stage writing `landcover_0.6m_site3_sam3.tif`, which the 3.9 pipeline consumes
+  unchanged. **121 tiles over the full 36 km2 scene in 25.4 minutes.** Two engineering notes:
+  the vision encoder is run once per tile rather than once per prompt (`vision_embeds` in place
+  of `pixel_values`) — **2.38x faster, verified bit-identical** — and tiles are checkpointed
+  atomically, the same pattern `cache_bbox_points.py` uses.
+
+  **Findings that do not depend on the solver and therefore stand:**
+  - Object delineation is markedly better than the spectral backend — countable rooftop
+    polygons, continuous curved roads, sharp shorelines vs blocky fragments. See
+    `segmentation/data/backend_comparison_site3.png`.
+  - **It over-detects buildings 2.4x**: 16.0 % of the domain `building_roof` against OSM's 6.8 %
+    mapped footprint area and the spectral backend's 8.1 %. Total impervious 24.4 % against
+    NLCD's independent 18.7 %.
+  - It labels only what it detects, leaving **17.4 % of the scene unlabelled** (spectral: 0.5 %),
+    and finds **no wetland at all** — that class comes from HAND, which SAM3 cannot see.
+  - Agreement with the spectral map where both label a pixel: **69.8 %**. On the 5 m grid mean
+    *n* = 0.0594 (spectral 0.0655, scalar 0.040) over 69.6 % classified cover.
+
+  **Not yet done: the gauge score.** The SAM3 arm was run, but through the integration defects
+  fixed on 2026-08-29, so its magnitude numbers are void along with everything else from before
+  that date. It is listed in the re-run set above.
+
+  **A correction worth keeping.** Early ponding in that arm was attributed to the impervious
+  over-detection making ~20 % of cells near-frictionless. That was wrong: re-running the *scalar*
+  baseline (n = 0.040, no SAM3 involved) reproduced the same behaviour, so the cause was the
+  solver, not the parameter field. The over-detection is real; the consequence claimed for it
+  was not.
+
+- Original diagnosis, kept for the record: **blocked on access and Python version — not hardware.** `facebook/sam3` is
+  `gated: manual` (HTTP 401 without an approved token), and `Sam3Model` ships only in
+  transformers **5.x**, which requires Python >= 3.10. **There is no 4.58**; the series goes
+  4.57.x -> 5.0.0, so it cannot be installed into the 3.9.6 pipeline interpreter. Run it from
+  the 3.11 venv as a standalone stage writing `landcover_0.6m.tif` — the class raster is the
+  contract, so the 3.9 pipeline consumes it unchanged. Weights are 3.44 GB against 17.2 GB of
+  unified memory with MPS available; the MPS OOM recorded for the mesh GNN is a different
+  workload and says nothing about SAM3.
+
+### Open
+
+- **Canopy is missing on the domain margins.** The cached LiDAR bbox is a true-north box in
+  EPSG:2881 inset in a rotated EPSG:5070 domain, so 72.7 % of the domain has returns — but
+  **97.4 % inside the delineated gauge watershed**, which is what the scored signal comes from.
+  Re-caching at a larger radius would close it.
+- **`segment_naip.py` only knows site3.** The main AOI has NAIP and LiDAR too and would need
+  its own bbox cache built.
+
+**Both tracks edit `simulation/flood_sim_ian.py`.** They have coexisted cleanly — Track A's
+`manning_n` sits alongside Track B's `gauge_rc`/`initial_h` and its scalar branch leaves the
+original expression untouched — but there is no locking. Use targeted edits, never a full-file
+rewrite, and re-read before editing.

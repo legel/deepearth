@@ -1,5 +1,12 @@
 # CFX SR417 Corridor — flood digital twin
 
+> **2026-08-29 — magnitude numbers in this document are superseded.**
+> Four defects were found in the solver's integration loop (broken clock delivering 7-11 % of
+> the storm, phantom infiltration, an unstable CFL constant, a broken final-frame guard). All
+> are fixed and the solver now conserves mass to -0.001 %, but every magnitude figure below —
+> runoff coefficients, peak discharges, depths, flooded areas, probability surfaces — predates
+> the fixes. Timing results are robust and largely stand. See [`../NEXT_STEPS.md`](../NEXT_STEPS.md).
+
 A reproducible pipeline that turns **a coordinate** into a working flood digital twin: fetch
 every public dataset for that location, condition the terrain, run a calibrated shallow-water
 solver over a standard storm ensemble, and serve the result as an interactive 3D viewer.
@@ -53,13 +60,15 @@ coordinate
 
 ### Quick start
 
-> **Use Python 3.9 for the pipeline.** `richdem`, which performs the depression breaching the
-> solver depends on, does not build on 3.11 — its vendored pybind11 predates the Python 3.11
-> change that made `PyFrameObject` opaque. A separate 3.11 venv serves `research/` only, which
-> needs torch. `requirements.txt` documents both constraints.
+> **Use Python 3.9 for the pipeline — and `python3` already *is* 3.9.6 here.** There is no
+> `python3.9` binary on PATH; checking for one and concluding 3.9 is unavailable is a mistake
+> worth not repeating. `richdem`, which performs the depression breaching the solver depends on,
+> does not build on 3.11 — its vendored pybind11 predates the Python 3.11 change that made
+> `PyFrameObject` opaque. A separate 3.11 venv at `.venv` serves `research/` only, which needs
+> torch. `requirements.txt` documents both constraints.
 
 ```bash
-python3.9 -m pip install --user -r requirements.txt
+python3 -m pip install --user -r requirements.txt   # python3 IS 3.9 here
 
 # 1. Fetch everything for a site
 python3 dem/dem_download.py            --site main_aoi
@@ -98,12 +107,19 @@ an **annual exceedance probability**, then to any horizon via `P(≥1 in N yr) =
 | | `main_aoi` | `site3` |
 |---|---|---|
 | Grid | 208,390 cells @ 5 m | 1,870,036 cells @ 5 m |
-| Peak depth, 1 yr → 500 yr | 0.373 → 0.617 m | 0.939 → 1.456 m |
-| Peak flooded, 1 yr → 500 yr | 6.7 → 26.3 ha | 31.3 → 124.7 ha |
-| Any resolvable pluvial risk | 6.85 ha | 30.08 ha |
-| ≥1 %/yr | 3.98 ha | 18.53 ha |
-| ≥10 %/yr | 1.30 ha | 8.47 ha |
+| Peak depth, 1 yr → 500 yr | 0.373 → 0.617 m | 0.533 → 1.162 m |
+| Peak flooded, 1 yr → 500 yr | 6.7 → 26.3 ha | 50.1 → 199.9 ha |
+| Any resolvable pluvial risk | **11.03 ha** | **56.33 ha** |
+| ≥1 %/yr | **5.97 ha** | **33.54 ha** |
+| ≥10 %/yr | **1.73 ha** | **13.68 ha** |
 | Depth vs log T, R² | 0.9715 | 0.9703 |
+
+**Both surfaces were rebuilt on 2026-08-27** after three defects that suppressed runoff were
+fixed (see `../NEXT_STEPS.md`). The previous figures were 6.85 / 3.98 / 1.30 (main_aoi) and
+30.08 / 18.53 / 8.47 (site3) — the correction roughly doubles mapped risk area at both sites.
+site3's peak depths *fell* while its areas *rose* (100 yr: 1.249 m / 84.7 ha → 0.967 m /
+143.4 ha), which is the expected signature of removing depression storage the DEM downsampling
+had invented: water spreads and moves instead of pooling in pits that were never there.
 
 Both surfaces are monotone in T, as required. A 1 %-AEP cell returns P = 0.2606 over 30 years,
 matching FEMA's published "26 % chance over a 30-year mortgage" figure.
@@ -118,8 +134,17 @@ discharge can be compared against a real gauge without a disqualifying scale mis
 
 | | Simulated | Observed |
 |---|---|---|
-| Peak outflow | 129.8 cfs | 1,190 cfs |
-| Peak time (argmax) | t = 35.80 h | t = 37.52 h |
+| Peak outflow, domain boundary | 411.6 cfs | — |
+| Peak discharge, at the gauge cell | 101.6 cfs (still rising at t = 72 h) | 1,190 cfs at t = 37.52 h |
+| Runoff coefficient | 8.90 % | **28.9 – 31.4 %** |
+| Rising limb (50 % of peak) | 0.72 h difference | gauge samples at 0.25 h |
+
+Run `analysis/validate_gauge_site3.py` rather than quoting these — it recomputes them from the
+raw NWIS record and reports the baseflow/window sensitivity. **A 19.6 % observed runoff
+coefficient appears throughout the older text below and cannot be reproduced from that record
+under any standard choice**; like-for-like over the simulated window it is 28.9–31.4 %, so the
+model was always further from truth than recorded. Treat every figure in the "Known limitations"
+section that predates 2026-08-27 as superseded.
 
 **What is validated is the rising limb, not the peak.** Quoting a "1.24 h peak-timing error"
 overstates the result: both hydrographs have broad, flat tops, and that difference is *smaller

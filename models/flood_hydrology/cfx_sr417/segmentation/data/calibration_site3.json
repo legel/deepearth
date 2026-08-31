@@ -1,0 +1,19 @@
+{
+  "ndvi_vegetation_threshold": -0.02,
+  "equal_error_rate": 0.0843,
+  "n_vegetation_px": 4800000,
+  "n_roof_px": 4798218,
+  "vegetation_ndvi_p10_p50_p90": [
+    0.0116,
+    0.27,
+    0.4146
+  ],
+  "roof_ndvi_p10_p50_p90": [
+    -0.2844,
+    -0.1727,
+    -0.0219
+  ],
+  "positives": "LiDAR CHM > 3 m",
+  "negatives": "inside an OSM building footprint, CHM < 1 m",
+  "naip_date": "2021-12-02 (winter \u2014 a textbook NDVI cutoff would not transfer)"
+}

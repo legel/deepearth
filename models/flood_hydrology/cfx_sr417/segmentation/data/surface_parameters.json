@@ -1,0 +1,141 @@
+{
+  "provenance": {
+    "table_version": "1.1.0",
+    "assigned_by": "multimodal reasoning over class definitions + measured per-class segment statistics (Lance's Step 2)",
+    "roughness_family": "2D shallow-water land-cover tables (HEC-RAS 2D / FEMA), rooted in Chow (1959) Table 5-6",
+    "roughness_family_rejected": "Engman (1986) overland-flow coefficients \u2014 calibrated for millimetre-deep sheet flow, 10-20x larger, not defensible at 5 m resolution and ~0.1 m depth",
+    "baseline_anchor": "grass_turf is pinned to the solver's existing scalar MANNING_N = 0.040 so the experiment isolates redistribution from recalibration",
+    "soil_parameters_are_now_a_measured_comparison": {
+      "why": "Track A's first pass declined to supply Ks and soil Smax on the grounds that SSURGO measures them. That was a judgement call, and it has been replaced by an experiment: both parameterisations are built and both are run against the Gee Creek gauge. See run_site3_ian_segmented.py --arms vision_soil.",
+      "ssurgo_route": "load_spatial_horton() + load_soil_storage_capacity(), 28 map units",
+      "vision_route": "vision_ks_mm_hr_dry / vision_soil_storage_m below, from the class map",
+      "why_it_matters_beyond_this_site": "SSURGO exists only in the United States. If the premise is 'any coordinate -> a twin', the size of the gap between a soil survey and a vision estimate is what decides whether the pipeline is US-only or global.",
+      "fairness": "The same AMC-III wet-antecedent factor the solver already applies to SSURGO Ksat is applied to the vision Ks. Both sides are dry-condition saturated conductivities, so correcting only one would compare a wet soil against a dry one and the vision arm would infiltrate ~14x too much."
+    },
+    "references": [
+      "Chow, V.T. (1959) Open-Channel Hydraulics, Table 5-6.",
+      "USACE HEC-RAS 2D Modeling User's Manual \u2014 land-cover Manning's n tables.",
+      "Engman, E.T. (1986) Roughness coefficients for routing surface runoff, JIDE 112(1) \u2014 the rejected family, cited so the choice is auditable.",
+      "Zinke, P.J. (1967) Forest interception studies in the United States \u2014 canopy interception 1-2 mm."
+    ]
+  },
+  "classes": {
+    "water": {
+      "material": "open water",
+      "manning_n": 0.035,
+      "surface_storage_m": 0.0,
+      "impervious_fraction": 1.0,
+      "n_basis": "Chow 1959 \u2014 clean, straight natural channel / open water surface, 0.030-0.040.",
+      "storage_basis": "A free water surface has no storage to fill; rain joins it directly.",
+      "impervious_basis": "Rain on open water becomes surface water immediately; it does not infiltrate here.",
+      "vision_ks_mm_hr_dry": 0.0,
+      "vision_soil_storage_m": 0.0,
+      "vision_ks_basis": "No infiltration through a free water surface.",
+      "vision_soil_storage_basis": "No profile to fill."
+    },
+    "building_roof": {
+      "material": "asphalt shingle / metal roofing",
+      "manning_n": 0.015,
+      "surface_storage_m": 0.0005,
+      "impervious_fraction": 1.0,
+      "n_basis": "Smooth manufactured surface. Matches the 0.015 both mesh solvers already use for roofs, so this class does not move a value the project had already set deliberately.",
+      "storage_basis": "0.5 mm depression storage on a pitched roof \u2014 shallow, since a roof is built to shed.",
+      "impervious_basis": "By definition.",
+      "vision_ks_mm_hr_dry": 0.0,
+      "vision_soil_storage_m": 0.0,
+      "vision_ks_basis": "Sealed.",
+      "vision_soil_storage_basis": "Sealed."
+    },
+    "road_paved": {
+      "material": "asphalt concrete",
+      "manning_n": 0.013,
+      "surface_storage_m": 0.001,
+      "impervious_fraction": 1.0,
+      "n_basis": "Chow 1959 \u2014 smooth asphalt, 0.013. The smoothest surface in the domain.",
+      "storage_basis": "1 mm; crowned and drained, but with real texture depth and gutter ponding.",
+      "impervious_basis": "By definition; already how the solver's OSM mask treats these cells.",
+      "vision_ks_mm_hr_dry": 0.0,
+      "vision_soil_storage_m": 0.0,
+      "vision_ks_basis": "Sealed.",
+      "vision_soil_storage_basis": "Sealed."
+    },
+    "impervious_other": {
+      "material": "concrete / compacted gravel \u2014 driveways, parking, sidewalks, pool decks",
+      "manning_n": 0.016,
+      "surface_storage_m": 0.0015,
+      "impervious_fraction": 0.9,
+      "n_basis": "Slightly rougher than a highway-grade road: broom-finished concrete, joints, and gravel aprons. Chow's concrete range 0.012-0.018.",
+      "storage_basis": "1.5 mm; flatter and less deliberately drained than a road.",
+      "impervious_basis": "0.90 rather than 1.00 \u2014 this class is inferred spectrally, not from a mapped footprint, so a fraction of it is genuinely compacted bare ground rather than sealed surface.",
+      "vision_ks_mm_hr_dry": 1.0,
+      "vision_soil_storage_m": 0.01,
+      "vision_ks_basis": "90 % sealed; the pervious remainder is compacted gravel/verge.",
+      "vision_soil_storage_basis": "Thin pervious remainder only."
+    },
+    "tree_canopy": {
+      "material": "forest floor beneath closed canopy \u2014 litter over sandy soil",
+      "manning_n": 0.12,
+      "surface_storage_m": 0.0045,
+      "impervious_fraction": 0.0,
+      "n_basis": "HEC-RAS 2D / FEMA land-cover tables for forest, 0.10-0.12; Chow's 'heavy stand of timber, little undergrowth, flood stage below branches' is 0.10. Trunks, roots, litter and understory obstruct flow. 3x the scalar this class currently gets.",
+      "storage_basis": "1.5 mm canopy interception for a closed broadleaf/mixed stand, plus ~3 mm litter storage.",
+      "impervious_basis": "Fully pervious; SSURGO supplies the soil beneath.",
+      "vision_ks_mm_hr_dry": 210.0,
+      "vision_soil_storage_m": 0.375,
+      "vision_ks_basis": "Rawls et al. (1982) sand, 210 mm/hr. Florida flatwoods forest floor is fine sand, and root macropores and litter keep it open \u2014 the highest-conductivity surface in the domain.",
+      "vision_soil_storage_basis": "Rooting depth ~1.5 m x 0.25 drainable porosity. Trees root deepest and so command the largest profile."
+    },
+    "shrub_scrub": {
+      "material": "palmetto / scrub understory",
+      "manning_n": 0.07,
+      "surface_storage_m": 0.002,
+      "impervious_fraction": 0.0,
+      "n_basis": "FEMA land-cover tables, shrub/scrub 0.05-0.07. Denser near the ground than forest but without the litter mat.",
+      "storage_basis": "2 mm; less leaf area than closed canopy, little litter.",
+      "impervious_basis": "Fully pervious.",
+      "vision_ks_mm_hr_dry": 180.0,
+      "vision_soil_storage_m": 0.25,
+      "vision_ks_basis": "Slightly below forest: sandy, but less macropore development under palmetto scrub.",
+      "vision_soil_storage_basis": "~1.0 m rooting depth x 0.25."
+    },
+    "grass_turf": {
+      "material": "managed turf / pasture over sandy soil",
+      "manning_n": 0.04,
+      "surface_storage_m": 0.001,
+      "impervious_fraction": 0.0,
+      "n_basis": "FEMA grassland/pasture 0.035-0.05. Deliberately set to 0.040 \u2014 the exact scalar the solver uses domain-wide today \u2014 so that any change in the gauge metrics is attributable to the classes that MOVED, not to a quiet shift in the baseline.",
+      "storage_basis": "1 mm; short vegetation intercepts little.",
+      "impervious_basis": "Fully pervious.",
+      "vision_ks_mm_hr_dry": 60.0,
+      "vision_soil_storage_m": 0.125,
+      "vision_ks_basis": "Rawls loamy sand, 61 mm/hr. Managed turf is mown, trafficked and partly compacted, so well below the forest floor on the same parent sand.",
+      "vision_soil_storage_basis": "~0.5 m rooting depth x 0.25. Turf roots shallowly."
+    },
+    "bare_soil": {
+      "material": "bare / sparsely vegetated sand",
+      "manning_n": 0.025,
+      "surface_storage_m": 0.0005,
+      "impervious_fraction": 0.0,
+      "n_basis": "Chow 1959, bare earth 0.020-0.025. Smoother than turf, rougher than pavement.",
+      "storage_basis": "0.5 mm surface roughness storage only.",
+      "impervious_basis": "Pervious; SSURGO supplies the soil.",
+      "vision_ks_mm_hr_dry": 40.0,
+      "vision_soil_storage_m": 0.125,
+      "vision_ks_basis": "Between loamy sand and sandy loam: exposed sand crusts and compacts without a root mat.",
+      "vision_soil_storage_basis": "~0.5 m x 0.25; no deep root system to open the profile."
+    },
+    "wetland_marsh": {
+      "material": "emergent herbaceous wetland / cypress dome margin",
+      "manning_n": 0.08,
+      "surface_storage_m": 0.0,
+      "impervious_fraction": 0.0,
+      "n_basis": "FEMA emergent-wetland 0.05-0.08. Dense standing stems through the flow depth make this the second-roughest class here.",
+      "storage_basis": "Zero. A wetland sits at the water table and has no unfilled surface store \u2014 the same reasoning that gives SSURGO's depressional soils zero soil storage.",
+      "impervious_basis": "Pervious in principle, but saturated in practice; the SSURGO storage cap already forces these cells to shed.",
+      "vision_ks_mm_hr_dry": 2.0,
+      "vision_soil_storage_m": 0.0,
+      "vision_ks_basis": "Organic, saturated, and sitting at the water table \u2014 effectively no capacity.",
+      "vision_soil_storage_basis": "Zero \u2014 a wetland sits at the water table, the same reasoning SSURGO applies to its depressional soils."
+    }
+  }
+}

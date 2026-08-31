@@ -1,0 +1,31 @@
+{
+  "site": "site3",
+  "cell_size_m": 2.0,
+  "grid_shape": [
+    3408,
+    3430
+  ],
+  "crs": "EPSG:5070",
+  "n_tiles": 31,
+  "total_returns_used": 1159119065,
+  "mean_return_density_per_m2": 34.099761962890625,
+  "cells_with_returns_pct": 72.69810187656552,
+  "canopy_cover_gt20pct_area_pct": 39.82252357683516,
+  "mean_canopy_height_where_treed_m": 11.730278968811035,
+  "max_canopy_height_m": 30.0,
+  "height_bins_m": [
+    0.5,
+    1.0,
+    2.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    16.0,
+    20.0,
+    25.0,
+    30.0
+  ],
+  "method": "class-1 returns normalised against the bare-earth DEM; discretised p98 height",
+  "classification_note": "ASPRS vegetation classes 3/4/5 are ABSENT from this acquisition \u2014 canopy comes from class-1 unclassified returns, see module docstring"
+}

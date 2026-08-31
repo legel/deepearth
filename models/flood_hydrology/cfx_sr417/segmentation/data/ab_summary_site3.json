@@ -1,0 +1,78 @@
+{
+  "site": "site3",
+  "cell_size_m": 5.0,
+  "grid_shape": [
+    1363,
+    1372
+  ],
+  "dt_s": 20.0,
+  "n_steps": 12960,
+  "total_rain_mm": 391.7442,
+  "domain_km2": 46.751,
+  "manning_scalar": 0.04,
+  "manning_field_mean": 0.06552855670452118,
+  "manning_field_min_max": [
+    0.013000000268220901,
+    0.11999999731779099
+  ],
+  "arms": {
+    "manning": {
+      "wall_s": 974.7,
+      "peak_depth_m": 1.2766509056091309,
+      "peak_flooded_ha": 383.55,
+      "peak_outflow_total_cfs": 358.450087146733,
+      "hydrograph": "segmentation/data/hydrograph_ian_site3_manning.csv",
+      "scores": {
+        "rising_limb_sim_h": 31.842,
+        "rising_limb_obs_h": 31.6,
+        "rising_limb_diff_h": 0.242,
+        "runoff_coefficient_sim_pct": 8.202,
+        "runoff_coefficient_obs_pct_range": [
+          28.88,
+          31.43
+        ],
+        "runoff_shortfall_x": [
+          3.52,
+          3.83
+        ],
+        "outflow_volume_Mm3": 1.5022,
+        "gauge_cell_rising_limb_sim_h": 58.745,
+        "gauge_cell_peak_cfs": 37.07
+      },
+      "config": {
+        "manning": "segmented",
+        "soil": "SSURGO",
+        "impervious": "NLCD 30 m"
+      }
+    },
+    "vision_soil": {
+      "wall_s": 454.9,
+      "peak_depth_m": 1.2104928493499756,
+      "peak_flooded_ha": 266.5,
+      "peak_outflow_total_cfs": 387.8607352991328,
+      "hydrograph": "segmentation/data/hydrograph_ian_site3_vision_soil.csv",
+      "scores": {
+        "rising_limb_sim_h": 31.059,
+        "rising_limb_obs_h": 31.6,
+        "rising_limb_diff_h": 0.541,
+        "runoff_coefficient_sim_pct": 8.249,
+        "runoff_coefficient_obs_pct_range": [
+          28.88,
+          31.43
+        ],
+        "runoff_shortfall_x": [
+          3.5,
+          3.81
+        ],
+        "outflow_volume_Mm3": 1.5107,
+        "gauge_cell_rising_limb_sim_h": 36.873,
+        "gauge_cell_peak_cfs": 3.05
+      },
+      "config": {
+        "manning": "segmented",
+        "soil": "vision (class map)",
+        "impervious": "class map"
+      }
+    }
+  }
+}

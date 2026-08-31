@@ -1,14 +1,18 @@
 {
-  "dem_path": "/Users/hqqq422/Desktop/deepearth/models/cfx_sr417_corridor/dem/data/sr417_corridor_dem_1m.tif",
+  "dem_path": "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/cfx_sr417/dem/data/sr417_corridor_dem_1m.tif",
   "dem_res_m": 0.8762538844439881,
   "crs": "EPSG:5070",
   "burn_depth_m": 1.5,
-  "acc_threshold": 50000,
-  "stream_cells": 8133,
-  "hand_mean_m": 1.2210041284561157,
-  "hand_p95_m": 3.1841830015182495,
-  "hand_max_m": 13.566544532775879,
-  "cells_hand_lt1m": 1343670,
-  "cells_hand_lt3m": 2483796,
-  "calibration_note": "Ian peak at NWIS 02263800 = 3500 cfs / 11.43 ft (2022-09-30). HAND contour matching this stage (~3.5m above thalweg) should reproduce the observed inundation visible in PlanetScope Max_1 scene."
+  "burn_mode": "gradient",
+  "acc_threshold": 50012,
+  "acc_area_m2": 38399.763301837585,
+  "stream_cells": 8860,
+  "stream_area_m2": 6802.805383794401,
+  "hand_mean_m": 1.3531278371810913,
+  "hand_p95_m": 4.48364162445068,
+  "hand_max_m": 13.60761547088623,
+  "cells_hand_lt1m": 1352145,
+  "cells_hand_lt3m": 2575784,
+  "calibration_note": "Ian peak at NWIS 02263800 = 3500 cfs / 11.43 ft (2022-09-30). HAND contour matching this stage (~3.5m above thalweg) should reproduce the observed inundation visible in PlanetScope Max_1 scene.",
+  "site_data_root": "/Users/hqqq422/Desktop/deepearth/models/flood_hydrology/cfx_sr417"
 }

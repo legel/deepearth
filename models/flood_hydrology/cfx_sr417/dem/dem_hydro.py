@@ -31,13 +31,16 @@ Methodology (peer-reviewed, no arbitrary assumptions):
 
 Outputs → dem/data/hydro/:
   dem_burned.tif          — DEM after stream burning (pre-breach, for inspection)
-  dem_conditioned.tif     — DEM after stream burning + breach depression filling
+  dem_conditioned.tif     — DEM after stream burning + breach depression filling (what the
+                            shallow-water solver reads)
+  dem_flat_resolved.tif   — + fill_pits/fill_depressions/resolve_flats (what D8 and HAND
+                            are actually computed on)
   flow_dir.tif            — D8 flow direction (pysheds encoding)
   flow_accum.tif          — upstream cell count (log-scaled for vis)
   stream_network.geojson  — vectorised stream cells (EPSG:4326, accum > threshold)
   hand.tif                — Height Above Nearest Drainage (metres)
   watershed.geojson       — pour-point watershed polygon (EPSG:4326)
-  hydro_summary.json      — threshold used, stream length, HAND stats
+  hydro_summary.json      — threshold used, stream extent, HAND stats
 
   Viewer PNGs (512×512, copied to dem/data/hydro/ for export_overlays.py):
   hand.png                — HAND colourised 0–5 m (blue=near-drainage, red=high)
@@ -78,9 +81,56 @@ _DEM_1M = os.path.join(DATA_DIR, "sr417_corridor_dem_1m.tif")
 _DEM_3M = os.path.join(DATA_DIR, "sr417_corridor_dem.tif")
 DEFAULT_DEM = _DEM_1M if os.path.exists(_DEM_1M) else _DEM_3M
 
-DEFAULT_ACC_THRESHOLD = 50000  # cells; ~5 ha on 1m grid — resolves Shingle Creek main channel
-                               # and major tributaries while excluding micro-drainage swales.
-                               # On a 4 km² AOI (4M cells), 50k = top 1.25% of contributing area.
+
+def apply_site(name):
+    """Point every path constant at `name`'s own data tree, via the shared site registry.
+
+    The module-level constants above are the MAIN AOI's. Any other site conditioned with them
+    defaulted silently onto main-AOI inputs — which is exactly what happened to site3: it took
+    the main AOI's 6 Shingle Creek flowlines, ~34 km outside its own DEM, so the burn mask came
+    out empty and stream burning became a no-op nobody noticed. site_registry.py exists to stop
+    that class of bug; this wires dem_hydro.py into it.
+
+    Returns (dem_path, pour_lat, pour_lon). The pour point is the site's gauge when it has one
+    (the hydrologically meaningful outlet), otherwise its box centre.
+    """
+    global DATA_DIR, HYDRO_DIR, HYDRO_GEO
+    sys.path.insert(0, os.path.dirname(BASE_DIR))
+    from site_registry import get_site
+
+    site      = get_site(name)
+    root      = site["data_root"]
+    DATA_DIR  = os.path.join(root, "dem", "data")
+    HYDRO_DIR = os.path.join(DATA_DIR, "hydro")
+    HYDRO_GEO = os.path.join(root, "hydrography", "data")
+    os.makedirs(HYDRO_DIR, exist_ok=True)
+
+    cands = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".tif"))
+    if not cands:
+        sys.exit(f"No DEM found in {DATA_DIR} — run dem/dem_download.py --site {name}")
+    pick = next((f for f in cands if f.endswith("_1m.tif")), cands[0])
+    if len(cands) > 1 and not pick.endswith("_1m.tif"):
+        print(f"  NOTE: {len(cands)} DEMs in {DATA_DIR}; using {pick}. Override with --dem.")
+
+    lat = site.get("gauge_lat", site["lat"])
+    lon = site.get("gauge_lon", site["lon"])
+    print(f"Site    : {name} — {site.get('label', '')}")
+    print(f"  data root  : {root}")
+    print(f"  flowlines  : {os.path.join(HYDRO_GEO, '3dhp_flowlines.geojson')}")
+    print(f"  pour point : ({lat}, {lon})"
+          f"{'  [gauge ' + str(site['gauge_site_no']) + ']' if 'gauge_lat' in site else '  [box centre]'}")
+    return os.path.join(DATA_DIR, pick), lat, lon
+
+# Stream initiation is a CONTRIBUTING-AREA threshold, expressed in m², converted to a cell
+# count at runtime from the DEM's own resolution. It used to be a bare cell count, which is
+# resolution-dependent and silently wrong on any grid but the one it was tuned for: 50,000 cells
+# is 38,391 m² on the main AOI's 0.876 m grid but only 766 m² on a 0.875 m grid entered as
+# `--acc-threshold 1000`. site3 was conditioned that way, giving 1,719,908 stream cells (2.82 %
+# of the domain, 23x the main AOI's 0.12 %) and a degenerate HAND surface with 77.2 % of cells
+# below 1 m. 38,400 m² reproduces the main AOI's calibrated 50,000 cells to within 0.02 %.
+DEFAULT_ACC_AREA_M2 = 38400.0  # ≈3.84 ha — resolves Shingle Creek's main channel and major
+                               # tributaries while excluding micro-drainage swales.
+DEFAULT_ACC_THRESHOLD = None   # None → derive from DEFAULT_ACC_AREA_M2 and the DEM's resolution
 DEFAULT_BURN_DEPTH    = 1.5   # metres to carve channels into DEM
 PNG_SIZE = 512
 
@@ -113,9 +163,82 @@ def save_tif(arr, profile, path, nodata=np.nan):
 
 # ── 1. Stream burning ─────────────────────────────────────────────────────────
 
-def burn_streams(z, profile, transform, dem_crs, burn_depth_m):
-    """Lower DEM elevations along 3DHP Shingle Creek flowlines by burn_depth_m."""
-    flow_path = os.path.join(HYDRO_GEO, "3dhp_flowlines.geojson")
+def _network_order(lines, tol):
+    """Topological order over flowlines, using 3DHP's digitized direction.
+
+    3DHP's `flowdirectionlabel` states vertices run downslope in digitized order, so each
+    LineString's own vertex order IS the downstream direction — authoritative, and better than
+    inferring direction from a DEM this flat. Lines are chained where one's last node meets
+    another's first. Returns (order, node_of, ends) for a downstream sweep.
+    """
+    from collections import defaultdict, deque
+
+    node, ends = {}, []
+    def nid(pt):
+        k = (round(pt[0] / tol), round(pt[1] / tol))
+        return node.setdefault(k, len(node))
+    for ln in lines:
+        cs = list(ln.coords)
+        ends.append((nid(cs[0]), nid(cs[-1])))
+
+    outgoing = defaultdict(list)          # node -> lines starting there
+    for i, (a, _) in enumerate(ends):
+        outgoing[a].append(i)
+    indeg = [0] * len(lines)
+    succ  = defaultdict(list)
+    for i, (_, z) in enumerate(ends):
+        for j in outgoing.get(z, []):
+            succ[i].append(j)
+            indeg[j] += 1
+
+    q = deque(i for i in range(len(lines)) if indeg[i] == 0)
+    order = []
+    while q:
+        i = q.popleft(); order.append(i)
+        for j in succ[i]:
+            indeg[j] -= 1
+            if indeg[j] == 0:
+                q.append(j)
+    if len(order) < len(lines):           # cycle (shouldn't occur) — append the rest
+        order += [i for i in range(len(lines)) if i not in set(order)]
+    return order, ends
+
+
+def burn_streams(z, profile, transform, dem_crs, burn_depth_m, flow_path=None,
+                 mode="gradient", min_slope=None, step_m=5.0, max_carve_mult=2.0):
+    """Carve the 3DHP flowlines into the DEM, enforcing a downstream gradient.
+
+    flow_path defaults to HYDRO_GEO, which is the MAIN AOI's hydrography directory. Any site
+    with its own DEM must pass its own flowlines — see apply_site(). site3 was conditioned with
+    this defaulted, so it loaded the main AOI's 6 Shingle Creek lines, ~34 km outside its own
+    DEM; the burn mask came out empty and stream burning silently became a no-op. The
+    empty-mask check below makes that loud.
+
+    mode="constant" is the original behaviour: subtract burn_depth_m uniformly along the
+    channel. MEASURED to not work on this terrain. A constant-depth carve on ground with
+    ~14 m of relief over 6.8 km is a flat-bottomed ditch: it lowers the channel but imposes no
+    direction, so D8 cannot route along it. After a correct constant-depth burn of site3, the
+    largest flow accumulation anywhere in the 46.78 km² domain was 0.99 km², the median
+    accumulation along the burned channel itself was 5 cells, and only 10 % of burned cells
+    reached the stream threshold — drainage fragmented into dozens of disconnected pockets
+    instead of forming a network.
+
+    mode="gradient" (default) additionally enforces monotonic descent downstream: each point
+    is carved to at least burn_depth_m below ground AND at least min_slope x distance below the
+    point upstream of it. Where the DEM already falls faster than min_slope the natural profile
+    is kept, so this only intervenes on the flats where D8 has no information.
+
+    min_slope=None (default) MEASURES the enforced gradient per stream order from the raw DEM,
+    rather than assuming one. A hand-picked 1e-4 (0.1 m/km) "just enough to break ties" was
+    tried first and is wrong by more than an order of magnitude: site3's network actually falls
+    at 1.90e-3 m/m overall (order 1 2.76e-3, order 2 1.88e-3, order 3 5.61e-4). Because channel
+    velocity goes as sqrt(S), imposing 1e-4 on the flat reaches throttled them 2.4-5x, and the
+    simulated outflow peak landed 25.9 h after the rain peak against the gauge's observed 4.5 h
+    — a routing failure, not a storage one (channel storage is only ~9 % of event runoff).
+    Falling at the rate this channel is measured to fall elsewhere is the defensible choice.
+    """
+    if flow_path is None:
+        flow_path = os.path.join(HYDRO_GEO, "3dhp_flowlines.geojson")
     if not os.path.exists(flow_path):
         print("  3DHP flowlines not found — skipping stream burning")
         return z
@@ -126,21 +249,163 @@ def burn_streams(z, profile, transform, dem_crs, burn_depth_m):
     gdf_proj = gdf.to_crs(dem_crs)
 
     rows, cols = z.shape
-    # Buffer flowlines by 2 cell widths so they burn a few pixels wide
     cell_m = (abs(transform.a) + abs(transform.e)) / 2
-    buffered = gdf_proj.geometry.buffer(cell_m * 2)
+    buf    = cell_m * 2
 
     burn_mask = rasterize(
-        [(geom, 1) for geom in buffered if geom is not None],
+        [(g, 1) for g in gdf_proj.geometry.buffer(buf) if g is not None],
         out_shape=(rows, cols), transform=transform, fill=0, dtype=np.uint8,
     ).astype(bool)
-
-    z_burned = z.copy()
-    z_burned[burn_mask & np.isfinite(z)] -= burn_depth_m
     n_burned = int(burn_mask.sum())
-    print(f"  Stream burned: {n_burned:,} cells lowered by {burn_depth_m} m  "
-          f"(flowlines={len(gdf)}, buffer={cell_m*2:.1f} m)")
-    return z_burned
+    if n_burned == 0:
+        fb = gdf_proj.total_bounds
+        raise SystemExit(
+            f"\n  BURN MASK IS EMPTY — {len(gdf)} flowlines rasterised to 0 cells.\n"
+            f"    flowlines : {flow_path}\n"
+            f"    their extent ({dem_crs}) : {fb}\n"
+            f"    DEM extent  ({dem_crs}) : {rasterio.transform.array_bounds(rows, cols, transform)}\n"
+            f"  These do not overlap. Pass the flowlines matching this DEM via --flowlines "
+            f"(or --site).\n"
+            f"  (Continuing would produce a dem_burned.tif identical to the raw DEM.)")
+
+    if mode == "constant":
+        z_b = z.copy()
+        z_b[burn_mask & np.isfinite(z)] -= burn_depth_m
+        print(f"  Stream burned (constant {burn_depth_m} m): {n_burned:,} cells  "
+              f"(flowlines={len(gdf)}, buffer={buf:.1f} m)")
+        return z_b
+
+    # ── gradient-enforced carve ──────────────────────────────────────────────
+    from shapely.geometry import LineString
+
+    def _natural_gradient(sel_idx):
+        """Measured fall per unit length over the given reaches, from the raw DEM."""
+        inv_t = ~transform
+        D = L = 0.0
+        for i in sel_idx:
+            ln = gdf_proj.geometry.iloc[i]
+            if ln is None or ln.geom_type != "LineString" or ln.length <= 0:
+                continue
+            zs = []
+            for dd in np.linspace(0.0, ln.length, 50):
+                pt = ln.interpolate(float(dd))
+                c, r = inv_t * (pt.x, pt.y)
+                r, c = int(r), int(c)
+                if 0 <= r < rows and 0 <= c < cols and np.isfinite(z[r, c]):
+                    zs.append(float(z[r, c]))
+            if len(zs) > 2:
+                D += zs[0] - zs[-1]
+                L += ln.length
+        return (D / L) if (L > 0 and D > 0) else None
+
+    keep  = [i for i, g in enumerate(gdf_proj.geometry)
+             if g is not None and g.geom_type == "LineString"]
+    lines = [gdf_proj.geometry.iloc[i] for i in keep]
+
+    # Carve depth scales with stream order. A 1st-order headwater swale is not as deep as the
+    # 3rd-order main stem, and carving every tributary to the full depth turns 22 km of minor
+    # channel into storage the runoff has to fill before any of it can leave: measured, a
+    # uniform 1.5 m floor delayed the outflow peak to 25.9 h after the rain peak against the
+    # gauge's observed 4.5 h. Depth ∝ order is the coarse form of the standard hydraulic-
+    # geometry result that channel depth grows with drainage area (Leopold & Maddock 1953);
+    # 3DHP carries `streamorder` per reach, so this uses measured order rather than a guess.
+    if "streamorder" in gdf_proj.columns and gdf_proj["streamorder"].notna().all():
+        so     = gdf_proj["streamorder"].to_numpy(float)
+        so_max = float(np.nanmax(so))
+        depths = [burn_depth_m * float(so[i]) / so_max for i in keep]
+        by_ord = {int(o): burn_depth_m * o / so_max for o in sorted(set(so))}
+        print(f"    depth by stream order: "
+              + ", ".join(f"{k}->{v:.2f} m" for k, v in sorted(by_ord.items())))
+    else:
+        depths = [burn_depth_m] * len(lines)
+        print(f"    no streamorder attribute — uniform {burn_depth_m} m carve")
+
+    # Enforced gradient, measured per stream order unless the caller pinned one.
+    FLOOR = 1e-4
+    if min_slope is None:
+        if "streamorder" in gdf_proj.columns and gdf_proj["streamorder"].notna().all():
+            so_all = gdf_proj["streamorder"].to_numpy(float)
+            grad_by_ord = {}
+            for o in sorted(set(so_all)):
+                gmeas = _natural_gradient([i for i in range(len(gdf_proj)) if so_all[i] == o])
+                grad_by_ord[o] = max(gmeas, FLOOR) if gmeas else FLOOR
+            slopes = [grad_by_ord[so_all[i]] for i in keep]
+            print("    enforced gradient, measured per order: "
+                  + ", ".join(f"{int(k)}->{v:.2e}" for k, v in sorted(grad_by_ord.items())))
+        else:
+            gmeas = _natural_gradient(range(len(gdf_proj)))
+            slopes = [max(gmeas, FLOOR) if gmeas else FLOOR] * len(lines)
+            print(f"    enforced gradient, measured network-wide: {slopes[0]:.2e} m/m")
+    else:
+        slopes = [min_slope] * len(lines)
+        print(f"    enforced gradient: {min_slope:.2e} m/m (explicit)")
+
+    order, ends = _network_order(lines, tol=cell_m)
+
+    inv = ~transform
+    def dem_at(pt):
+        c, r = inv * (pt[0], pt[1])
+        r, c = int(r), int(c)
+        if 0 <= r < rows and 0 <= c < cols and np.isfinite(z[r, c]):
+            return float(z[r, c])
+        return np.nan
+
+    node_z   = {}                 # node id -> carved elevation already assigned
+    pieces   = []                 # (sub-segment geometry, carved elevation)
+    for li in order:
+        ln = lines[li]
+        a, zz = ends[li]
+        depth_li = depths[li]
+        slope_li = slopes[li]
+        # densify so the carved profile steps smoothly rather than per-whole-line
+        n_steps = max(2, int(np.ceil(ln.length / step_m)) + 1)
+        ds      = np.linspace(0.0, ln.length, n_steps)
+        pts     = [ln.interpolate(float(d)) for d in ds]
+
+        z_prev = node_z.get(a, np.nan)
+        if not np.isfinite(z_prev):
+            g0 = dem_at((pts[0].x, pts[0].y))
+            z_prev = (g0 - depth_li) if np.isfinite(g0) else 0.0
+        node_z[a] = min(node_z.get(a, np.inf), z_prev)
+
+        carved = [z_prev]
+        for k in range(1, len(pts)):
+            seg   = ds[k] - ds[k - 1]
+            gnd   = dem_at((pts[k].x, pts[k].y))
+            floor = carved[-1] - slope_li * seg      # must fall going downstream
+            target = min(gnd - depth_li, floor) if np.isfinite(gnd) else floor
+            # Clamp to a maximum depth below ground. Without this the profile RATCHETS: the
+            # moment the slope floor dips under the ground-following line it wins at every
+            # subsequent step, because `floor` is computed from the already-lowered previous
+            # point. Measured, that left 92.6 % of the channel slope-limited rather than
+            # tracking terrain, and with a realistic gradient it plunged the bed to a median
+            # 3.13 m / max 8.82 m below ground. The clamp lets the profile recover to
+            # ground-following wherever terrain resumes falling; residual barriers it
+            # reintroduces are exactly what the breaching step downstream of here is for.
+            if np.isfinite(gnd):
+                target = max(target, gnd - max_carve_mult * depth_li)
+            carved.append(target)
+            pieces.append((LineString([(pts[k - 1].x, pts[k - 1].y),
+                                       (pts[k].x, pts[k].y)]).buffer(buf),
+                           float(min(carved[-2], carved[-1]))))
+        # the downstream node keeps the lowest elevation reaching it
+        node_z[zz] = min(node_z.get(zz, np.inf), carved[-1])
+
+    # rasterise deepest-last so overlaps resolve to the minimum (rasterize overwrites in order)
+    pieces.sort(key=lambda t: -t[1])
+    carved_grid = rasterize(pieces, out_shape=(rows, cols), transform=transform,
+                            fill=np.nan, dtype="float32")
+
+    z_b = z.copy()
+    sel = burn_mask & np.isfinite(carved_grid) & np.isfinite(z)
+    z_b[sel] = np.minimum(z[sel], carved_grid[sel])
+
+    drop = (z - z_b)[sel]
+    print(f"  Stream burned (gradient-enforced): {n_burned:,} cells, "
+          f"{len(pieces):,} sub-segments  (flowlines={len(gdf)}, buffer={buf:.1f} m)")
+    print(f"    carve depth: min {drop.min():.2f} m  median {np.median(drop):.2f} m  "
+          f"max {drop.max():.2f} m   (max-order floor {burn_depth_m} m)")
+    return z_b
 
 
 # ── 2. Breach depressions (richdem) ──────────────────────────────────────────
@@ -189,6 +454,19 @@ def compute_flow(z_cond, profile, dem_path_tmp):
     accum = grid.accumulation(fdir)
 
     os.remove(tmp_path)
+
+    # Persist the surface D8/HAND are actually computed on. Previously this existed only in
+    # memory: dem_conditioned.tif (breach-only) was saved and the solver reads it, while D8,
+    # the stream network and HAND all ran on this further-conditioned array. Measured on the
+    # main AOI the difference is small but real — 12.71 % of cells changed, max raise 0.020 m
+    # (resolve_flats' epsilon gradient across flats), 1,970 m³ added — so the two were never
+    # reproducible from the same file.
+    save_tif(np.array(inflated, dtype=np.float32), profile,
+             os.path.join(HYDRO_DIR, "dem_flat_resolved.tif"))
+    # flow_dir.tif is listed in this module's own docstring as an output but was never
+    # actually written by any run — the array existed only in memory.
+    save_tif(np.array(fdir, dtype=np.float32), profile,
+             os.path.join(HYDRO_DIR, "flow_dir.tif"))
     return grid, fdir, accum, inflated  # return inflated DEM for HAND
 
 
@@ -205,7 +483,8 @@ def compute_hand(grid, fdir, dem_inflated, accum, acc_threshold):
 
 # ── 6. Watershed delineation ──────────────────────────────────────────────────
 
-def delineate_watershed(grid, fdir, accum, center_lat, center_lon, dem_crs, acc_threshold, raster_transform):
+def delineate_watershed(grid, fdir, accum, center_lat, center_lon, dem_crs, acc_threshold,
+                        raster_transform, snap_radius_m=250.0):
     """Pour-point watershed, snapped to the nearest stream cell to the AOI centre.
     Uses rasterio's xy() to convert grid indices → projected coordinates reliably."""
     from pyproj import Transformer
@@ -227,17 +506,43 @@ def delineate_watershed(grid, fdir, accum, center_lat, center_lon, dem_crs, acc_
     col0 = (cx - t.c) / t.a
     row0 = (cy - t.f) / t.e
 
-    stream_rows, stream_cols = np.where(stream_mask)
-    dists = np.hypot(stream_rows - row0, stream_cols - col0)
-    idx   = int(np.argmin(dists))
-    snap_row, snap_col = int(stream_rows[idx]), int(stream_cols[idx])
+    # Snap to the LARGEST channel within a search radius, not the nearest stream cell.
+    # argmin(distance) takes whichever stream cell happens to be closest, which on a dense
+    # network is routinely a minor tributary head sitting just above the threshold: at site3
+    # that returned a catchment of 0.14 km² against a documented 33.15 km², because the
+    # nearest cell carried 181,492 cells of accumulation while a channel 200 m away carried
+    # 622,601. Snapping on maximum accumulation within a tolerance is the standard method
+    # (ArcGIS "Snap Pour Point", pysheds `snap_to_mask`) precisely to avoid this.
+    rad = max(1, int(round(snap_radius_m / ((abs(t.a) + abs(t.e)) / 2))))
+    r0i, c0i = int(round(row0)), int(round(col0))
+    r1, r2 = max(0, r0i - rad), min(acc_arr.shape[0], r0i + rad + 1)
+    c1, c2 = max(0, c0i - rad), min(acc_arr.shape[1], c0i + rad + 1)
+    sub_acc  = acc_arr[r1:r2, c1:c2]
+    rr, cc   = np.mgrid[r1:r2, c1:c2]
+    in_rad   = np.hypot(rr - row0, cc - col0) <= rad
+    cand     = in_rad & (sub_acc > acc_threshold)
+    if not cand.any():                      # nothing above threshold nearby — take the best cell
+        cand = in_rad
+    flat     = int(np.argmax(np.where(cand, sub_acc, -np.inf)))
+    snap_row = int(rr.ravel()[flat])
+    snap_col = int(cc.ravel()[flat])
+
+    # Report what the old nearest-cell rule would have picked, so the difference is visible.
+    sr, sc = np.where(stream_mask)
+    nearest = int(np.argmin(np.hypot(sr - row0, sc - col0)))
+    n_acc = acc_arr[int(sr[nearest]), int(sc[nearest])]
+    m_acc = acc_arr[snap_row, snap_col]
+    if n_acc < m_acc:
+        print(f"  Snap: chose max-accumulation cell ({m_acc:,.0f} cells) over the merely-"
+              f"nearest stream cell ({n_acc:,.0f} cells) within {snap_radius_m:.0f} m")
+    snap_dist_cells = float(np.hypot(snap_row - row0, snap_col - col0))
 
     # Use rasterio's reliable xy() to convert grid index → projected coordinate
     snap_x, snap_y = rio_xy(raster_transform, snap_row, snap_col)
 
     print(f"  Pour point snapped: grid ({snap_row},{snap_col})  "
-          f"acc={acc_arr[snap_row, snap_col]:.0f}  "
-          f"dist={dists[idx]:.1f} cells from AOI centre")
+          f"acc={acc_arr[snap_row, snap_col]:,.0f} cells  "
+          f"dist={snap_dist_cells:.1f} cells from the requested pour point")
     print(f"  Snap coords (EPSG:5070): ({snap_x:.1f}, {snap_y:.1f})")
 
     try:
@@ -262,16 +567,20 @@ def stream_to_geojson(stream_mask_np, profile, dem_crs, out_path):
             polys.append(shape(geom_dict))
     if not polys:
         print("  No stream cells found — try lowering --acc-threshold")
-        return 0
+        return 0, 0.0
 
     import geopandas as gpd
     gdf = gpd.GeoDataFrame(geometry=polys, crs=dem_crs)
     gdf_4326 = gdf.to_crs("epsg:4326")
     dissolved = gdf_4326.dissolve()
     dissolved.to_file(out_path, driver="GeoJSON")
-    total_km = float(gdf_4326.geometry.length.sum()) / 1000  # rough (degrees), not meaningful
-    print(f"  stream_network.geojson: {len(gdf_4326)} segments")
-    return len(gdf_4326)
+    # These are polygons vectorised from a raster mask, so .length is a PERIMETER, not a
+    # channel centreline — the previous `total_km` computed it in degrees, called itself "not
+    # meaningful" in its own comment, was never used, and raised a geographic-CRS warning on
+    # every run. Report wetted area instead, which is exact and actually derivable from a mask.
+    area_m2 = float(gdf.geometry.area.sum())
+    print(f"  stream_network.geojson: {len(gdf_4326)} segments, {area_m2/1e4:.1f} ha")
+    return len(gdf_4326), area_m2
 
 
 # ── Watershed → GeoJSON ───────────────────────────────────────────────────────
@@ -331,10 +640,10 @@ def save_stream_png(stream_mask, path):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def run(dem_path=DEFAULT_DEM, acc_threshold=DEFAULT_ACC_THRESHOLD,
-        burn_depth=DEFAULT_BURN_DEPTH, center_lat=28.36687, center_lon=-81.43299):
+        burn_depth=DEFAULT_BURN_DEPTH, center_lat=28.36687, center_lon=-81.43299,
+        flowlines=None, acc_area_m2=DEFAULT_ACC_AREA_M2, burn_mode="gradient"):
 
     print(f"\nHydrological DEM Processing — {os.path.basename(dem_path)}")
-    print(f"  acc_threshold={acc_threshold} cells  burn_depth={burn_depth} m")
     print("=" * 60)
 
     if not os.path.exists(dem_path):
@@ -342,11 +651,22 @@ def run(dem_path=DEFAULT_DEM, acc_threshold=DEFAULT_ACC_THRESHOLD,
 
     z, profile, transform, res_x, res_y, dem_crs = load_dem(dem_path)
     print(f"DEM     : {z.shape[0]}×{z.shape[1]} px @ {res_x:.2f}m  CRS: {dem_crs}")
+
+    cell_area = res_x * res_y
+    if acc_threshold is None:
+        acc_threshold = max(1, int(round(acc_area_m2 / cell_area)))
+        print(f"  acc_threshold={acc_threshold:,} cells  "
+              f"(= {acc_area_m2:,.0f} m² / {cell_area:.4f} m² per cell)")
+    else:
+        print(f"  acc_threshold={acc_threshold:,} cells  "
+              f"(= {acc_threshold * cell_area:,.0f} m² contributing area) — explicit override")
+    print(f"  burn_depth={burn_depth} m")
     print(f"Elevation: {np.nanmin(z):.2f}–{np.nanmax(z):.2f} m NAVD88")
 
     # ── Step 1: stream burning ───────────────────────────────────────────────
     print("\n[1/6] Stream burning (3DHP Shingle Creek) …")
-    z_burned = burn_streams(z, profile, transform, dem_crs, burn_depth)
+    z_burned = burn_streams(z, profile, transform, dem_crs, burn_depth, flowlines,
+                            mode=burn_mode)
     save_tif(z_burned, profile, os.path.join(HYDRO_DIR, "dem_burned.tif"))
 
     # ── Step 2: breach depressions ───────────────────────────────────────────
@@ -391,8 +711,8 @@ def run(dem_path=DEFAULT_DEM, acc_threshold=DEFAULT_ACC_THRESHOLD,
 
     # ── Vector stream network ─────────────────────────────────────────────────
     stream_mask_np = accum_np > acc_threshold
-    stream_to_geojson(stream_mask_np, profile, dem_crs,
-                      os.path.join(HYDRO_DIR, "stream_network.geojson"))
+    n_seg, stream_area_m2 = stream_to_geojson(
+        stream_mask_np, profile, dem_crs, os.path.join(HYDRO_DIR, "stream_network.geojson"))
 
     # ── Viewer PNGs ───────────────────────────────────────────────────────────
     print("\nSaving viewer PNGs …")
@@ -409,8 +729,11 @@ def run(dem_path=DEFAULT_DEM, acc_threshold=DEFAULT_ACC_THRESHOLD,
         "dem_res_m":         (res_x + res_y) / 2,
         "crs":               str(dem_crs),
         "burn_depth_m":      burn_depth,
+        "burn_mode":         burn_mode,
         "acc_threshold":     acc_threshold,
+        "acc_area_m2":       float(acc_threshold * res_x * res_y),
         "stream_cells":      n_stream,
+        "stream_area_m2":    stream_area_m2,
         "hand_mean_m":       float(np.mean(valid_hand)),
         "hand_p95_m":        float(np.percentile(valid_hand, 95)),
         "hand_max_m":        float(np.nanmax(hand_np)),
@@ -422,6 +745,7 @@ def run(dem_path=DEFAULT_DEM, acc_threshold=DEFAULT_ACC_THRESHOLD,
             "reproduce the observed inundation visible in PlanetScope Max_1 scene."
         ),
     }
+    summary["site_data_root"] = os.path.dirname(os.path.dirname(DATA_DIR))
     summary_path = os.path.join(HYDRO_DIR, "hydro_summary.json")
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
@@ -431,12 +755,38 @@ def run(dem_path=DEFAULT_DEM, acc_threshold=DEFAULT_ACC_THRESHOLD,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dem",           default=DEFAULT_DEM,        type=str)
+    parser.add_argument("--site",          default=None,               type=str,
+                        help="Resolve the DEM, output dir, flowlines and pour point from "
+                             "site_registry.py (e.g. --site site3). Preferred over hand-typed "
+                             "paths — see apply_site().")
+    parser.add_argument("--dem",           default=None,               type=str)
     parser.add_argument("--acc-threshold", default=DEFAULT_ACC_THRESHOLD, type=int,
-                        help="Flow accumulation cells threshold for stream initiation")
+                        help="Explicit stream-initiation threshold in CELLS. Resolution-dependent "
+                             "— prefer --acc-area-m2 unless reproducing an old run.")
+    parser.add_argument("--acc-area-m2",   default=DEFAULT_ACC_AREA_M2, type=float,
+                        help="Stream-initiation contributing area in m² (default 38400 ≈ 3.84 ha). "
+                             "Converted to cells using the DEM's own resolution.")
     parser.add_argument("--burn-depth",    default=DEFAULT_BURN_DEPTH, type=float,
-                        help="Metres to lower DEM along channel centrelines")
+                        help="Minimum metres to lower the DEM along channel centrelines")
+    parser.add_argument("--burn-mode",     default="gradient",
+                        choices=["gradient", "constant"],
+                        help="gradient (default) enforces monotonic downstream descent; "
+                             "constant reproduces the original uniform carve, which measurably "
+                             "does not route on this terrain — see burn_streams()")
+    parser.add_argument("--flowlines",     default=None,               type=str,
+                        help="3DHP flowlines GeoJSON to burn. Defaults to the MAIN AOI's — "
+                             "any other site must pass its own (see burn_streams docstring).")
     parser.add_argument("--lat",           default=28.36687,           type=float)
     parser.add_argument("--lon",           default=-81.43299,          type=float)
     args = parser.parse_args()
-    run(args.dem, args.acc_threshold, args.burn_depth, args.lat, args.lon)
+
+    dem, lat, lon = args.dem, args.lat, args.lon
+    if args.site:
+        site_dem, lat, lon = apply_site(args.site)
+        dem = args.dem or site_dem
+        if args.lat != 28.36687 or args.lon != -81.43299:
+            sys.exit("  Refusing to run: --site sets the pour point; don't also pass --lat/--lon.")
+    dem = dem or DEFAULT_DEM
+
+    run(dem, args.acc_threshold, args.burn_depth, lat, lon, args.flowlines,
+        args.acc_area_m2, args.burn_mode)

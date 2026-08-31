@@ -500,10 +500,20 @@ def export_hydro_overlays(bounds=None, dem_crs=None):
                 dst_transform = from_bounds(
                     bounds.left, bounds.bottom, bounds.right, bounds.top, SIZE, SIZE
                 )
-                wb_mask = rasterize(
-                    [(g, 1) for g in wb_proj.geometry if g is not None],
-                    out_shape=(SIZE, SIZE), transform=dst_transform, fill=0, dtype=np.uint8,
-                ).astype(bool)
+                # Rasterise on demand at whatever size the target image actually is. This was
+                # hardcoded to SIZE (2048) while dem_hydro.py writes its viewer PNGs at
+                # PNG_SIZE (512), so `hand_img[wb_mask]` raised
+                #   IndexError: boolean index did not match indexed array along dimension 0;
+                #   dimension is 512 but corresponding boolean dimension is 2048
+                # on every run, aborting export_hydro_overlays() and everything after it. The
+                # hydro overlays in viewer/data/ had been frozen since 2026-08-03 as a result.
+                def _wb_mask_at(n):
+                    tfm = from_bounds(bounds.left, bounds.bottom, bounds.right, bounds.top, n, n)
+                    return rasterize(
+                        [(g, 1) for g in wb_proj.geometry if g is not None],
+                        out_shape=(n, n), transform=tfm, fill=0, dtype=np.uint8,
+                    ).astype(bool)
+                wb_mask = _wb_mask_at
 
     # HAND: copy pre-computed colourised PNG, then zero-out waterbody pixels so
     # LiDAR artifacts inside ponds don't show partial HAND colouring.
@@ -511,10 +521,13 @@ def export_hydro_overlays(bounds=None, dem_crs=None):
     hand_dst = os.path.join(OUT_DIR, "hydro_hand.png")
     if os.path.exists(hand_src):
         hand_img = np.array(Image.open(hand_src).convert("RGBA"))
+        cleared = 0
         if wb_mask is not None:
-            hand_img[wb_mask] = 0   # fully transparent over water bodies
+            m = wb_mask(hand_img.shape[0])
+            hand_img[m] = 0   # fully transparent over water bodies
+            cleared = int(m.sum())
         Image.fromarray(hand_img).save(hand_dst)
-        print(f"  hydro_hand.png (waterbody mask applied: {int(wb_mask.sum()) if wb_mask is not None else 0} px cleared)")
+        print(f"  hydro_hand.png (waterbody mask applied: {cleared} px cleared)")
     else:
         print("  hand.png not found — run dem/dem_hydro.py first")
 
@@ -546,7 +559,7 @@ def export_hydro_overlays(bounds=None, dem_crs=None):
             ).astype(bool)
             n_before = int(stream_mask.sum())
             if wb_mask is not None:
-                stream_mask = stream_mask & ~wb_mask  # erase stream pixels inside ponds
+                stream_mask = stream_mask & ~wb_mask(stream_mask.shape[0])  # erase inside ponds
             rgba = np.zeros((SIZE, SIZE, 4), dtype=np.uint8)
             rgba[stream_mask] = (0, 230, 255, 230)
             Image.fromarray(rgba).save(dst_stream)

@@ -1,0 +1,43 @@
+{
+  "site": "site3",
+  "reference": {
+    "product": "NLCD Tree Canopy Cover 2021 (CONUS)",
+    "coverage": "mrlc_display:nlcd_tcc_conus_2021_v2021-4",
+    "resolution_m": 30,
+    "independence": "Landsat time series + FIA plot training \u2014 shares no sensor, platform or method with 2018 airborne LiDAR"
+  },
+  "n_comparable_30m_cells": 40957,
+  "cover_fraction": {
+    "nlcd_tcc_mean": 0.3569,
+    "lidar_mean": 0.3728,
+    "correlation_r": 0.7509,
+    "bias_pp": 1.58,
+    "mae_pp": 17.51,
+    "rmse_pp": 22.64
+  },
+  "class_agreement": {
+    "threshold": 0.5,
+    "accuracy": 0.7843,
+    "iou": 0.5538,
+    "f1": 0.7128,
+    "tp": 10965,
+    "fp": 7371,
+    "fn": 1464,
+    "tn": 21157
+  },
+  "roughness_sensitivity": {
+    "scalar": 0.04,
+    "shipped_mean_n": 0.06553,
+    "tcc_capped_mean_n": 0.05433,
+    "mean_tree_fraction_ours": 0.3408,
+    "mean_tree_fraction_tcc": 0.3391,
+    "max_share_of_n_change_from_canopy_error": 0.4388,
+    "note": "one-sided bound: tree fraction is only ever capped downward, never raised, so this overstates the correction by construction"
+  },
+  "caveats": [
+    "NLCD TCC is 2021; the LiDAR acquisition is 2018.",
+    "TCC's 30 m pixel cannot resolve hedgerows or individual street trees.",
+    "TCC reports TREE canopy; the LiDAR statistic counts any return above 2 m.",
+    "Cells less than 95 % LiDAR-covered are excluded, so the domain margin is not scored."
+  ]
+}

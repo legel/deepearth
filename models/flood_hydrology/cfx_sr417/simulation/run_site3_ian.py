@@ -47,6 +47,8 @@ site = get_site(SITE)
 
 SITE3_DIR = os.path.join(PROJ_DIR, "site3_gee_creek")
 
+BASEFLOW_CFS = 45.2   # gauge 02234400, 2022-09-27 19:30 UTC — pre-Ian steady flow
+
 # Monkey-patch flood_sim_ian's module-level path constants to point at site3's own already-
 # built data (dem/soil/roads/buildings, all fetched during the 2026-07-27 site3 pipeline build)
 # plus the newly-fetched real KSFB Ian-window ASOS record — same non-invasive pattern every
@@ -80,6 +82,32 @@ def main():
                      help="Minutes between saved animation frames (default 60)")
     ap.add_argument("--save-frames", action="store_true",
                      help="Save SIML animation frames for the viewer (site3.html)")
+    ap.add_argument("--storage-scale", type=float, default=1.0,
+                     help="Multiply the SSURGO-derived soil-storage cap by this factor. 1.0 is "
+                          "the derived value (mean 206 mm at site3); 0 forces immediate "
+                          "saturation excess; use --no-storage-cap for unbounded infiltration. "
+                          "For the sensitivity sweep — the cap has never had one, and site3's "
+                          "206 mm against the main AOI's 36 mm is the leading unexplained "
+                          "difference between a site that reproduces plausible runoff and one "
+                          "that does not.")
+    ap.add_argument("--no-storage-cap", action="store_true",
+                     help="Disable the cap entirely (unbounded Horton infiltration).")
+    ap.add_argument("--tag", default="", type=str,
+                     help="Suffix for output filenames, so sweep arms don't overwrite each "
+                          "other or the canonical hydrograph_ian_site3.csv.")
+    ap.add_argument("--baseflow", action="store_true",
+                     help="Pre-fill the channel to the depth gauge 02234400's measured 45.2 cfs "
+                          "baseflow implies, instead of starting it dry. OFF by default: the "
+                          "initial condition validates itself well (simulated 47.9 cfs at the "
+                          "gauge cell at t=0 vs 45.2 observed) but MEASURABLY HURTS the run — "
+                          "total infiltration rose 2.56 -> 5.00 million m³ and storm runoff "
+                          "reaching the gauge fell 0.189 -> 0.080 million m³. Zeroing the "
+                          "channel's soil storage (a perennial channel sits at the water table) "
+                          "was tried and changed nothing: only 3,504 of 8,846 channel cells had "
+                          "any storage to zero. The extra infiltration is on the floodplain — "
+                          "a conveying channel moves water across more distinct cells, and each "
+                          "one it wets unlocks its own soil storage. Kept for that experiment, "
+                          "not because it improves the result.")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -117,6 +145,13 @@ def main():
     # Finite soil storage (saturation excess). This driver calls run_sim directly rather than
     # going through fsi.main(), so it has to load the cap itself.
     max_deficit_m = fsi.load_soil_storage_capacity(z.shape, profile["transform"], profile["crs"])
+    if args.no_storage_cap:
+        max_deficit_m = None
+        print("  Soil storage cap DISABLED — infiltration is unbounded")
+    elif max_deficit_m is not None and args.storage_scale != 1.0:
+        max_deficit_m = max_deficit_m * args.storage_scale
+        print(f"  Soil storage cap scaled x{args.storage_scale:g} -> mean "
+              f"{1000 * float(max_deficit_m.mean()):.0f} mm")
     if max_deficit_m is not None:
         print(f"  Soil storage cap: mean {1000*float(max_deficit_m.mean()):.0f} mm, "
               f"range {1000*float(max_deficit_m.min()):.0f}-{1000*float(max_deficit_m.max()):.0f} mm, "
@@ -125,9 +160,78 @@ def main():
         print(f"  WARNING: no soil storage table at {fsi.SOIL_STORAGE_CSV} — "
               f"infiltration is UNBOUNDED (run soil/fetch_soil_storage.py --site site3)")
 
+    # Locate USGS 02234400 on the solver grid, and snap it onto the channel: the gauge
+    # coordinate can land a cell or two off the burned centreline, and reading a dry
+    # floodplain cell next to the creek would report ~no discharge. Snap to the deepest
+    # (lowest-bed) cell within 25 m, which on a burned DEM is the channel itself.
+    from pyproj import Transformer as _Tf
+    _tr = _Tf.from_crs("epsg:4326", profile["crs"], always_xy=True)
+    _gx, _gy = _tr.transform(site["gauge_lon"], site["gauge_lat"])
+    _gc, _gr = ~profile["transform"] * (_gx, _gy)
+    _gr, _gc = int(round(_gr)), int(round(_gc))
+    _rad = max(1, int(round(25.0 / dx)))
+    _r0, _r1 = max(0, _gr - _rad), min(z.shape[0], _gr + _rad + 1)
+    _c0, _c1 = max(0, _gc - _rad), min(z.shape[1], _gc + _rad + 1)
+    _sub = z[_r0:_r1, _c0:_c1]
+    _fl = int(np.nanargmin(np.where(np.isfinite(_sub), _sub, np.inf)))
+    gauge_rc = (_r0 + _fl // _sub.shape[1], _c0 + _fl % _sub.shape[1])
+    print(f"  Gauge {site['gauge_site_no']} at grid {gauge_rc}, bed {z[gauge_rc]:.2f} m "
+          f"(snapped {np.hypot(gauge_rc[0]-_gr, gauge_rc[1]-_gc)*dx:.0f} m to the channel)")
+
+    # ── Baseflow initial condition ───────────────────────────────────────────────────────
+    # Pre-fill the burned channel to the depth its own measured baseflow implies. Gauge 02234400
+    # read 45.2 cfs immediately before Ian; a perennial creek is not empty when a storm starts.
+    # Depth from Manning at normal flow, using the along-channel bed slope measured on THIS grid
+    # rather than an assumed value:  h = ( Q n / (w sqrt(S)) )^(3/5).
+    if args.baseflow:
+        import geopandas as _gpd
+        from rasterio.features import rasterize as _rasterize
+        _fl = os.path.join(SITE3_DIR, "hydrography", "data", "3dhp_flowlines.geojson")
+        _g = _gpd.read_file(_fl).to_crs(profile["crs"])
+        _ch = _rasterize([(x, 1) for x in _g.geometry.buffer(dx) if x is not None],
+                         out_shape=z.shape, transform=profile["transform"],
+                         fill=0, dtype=np.uint8).astype(bool)
+        # along-channel bed slope on the solver grid
+        _inv = ~profile["transform"]; _D = _L = 0.0
+        for _ln in _g.geometry:
+            if _ln is None or _ln.length < 20:
+                continue
+            _zs = []
+            for _d in np.arange(0, _ln.length, dx):
+                _p = _ln.interpolate(float(_d)); _c, _r = _inv * (_p.x, _p.y)
+                _r, _c = int(_r), int(_c)
+                if 0 <= _r < z.shape[0] and 0 <= _c < z.shape[1] and np.isfinite(z[_r, _c]):
+                    _zs.append(z[_r, _c])
+            if len(_zs) > 3:
+                _D += _zs[0] - _zs[-1]; _L += _ln.length
+        _S = max(_D / _L, 1e-4) if _L > 0 else 1e-3
+        _Q = BASEFLOW_CFS / 35.3147                     # m³/s
+        _h0 = ((_Q * fsi.MANNING_N) / (dx * np.sqrt(_S))) ** 0.6
+        initial_h = np.zeros_like(z); initial_h[_ch & np.isfinite(z)] = _h0
+
+        # A channel carrying perennial baseflow is, by definition, at the water table: its
+        # available soil storage is ZERO. Leaving channel cells with the SSURGO column storage
+        # (206 mm mean here) let the pre-filled channel soak away for 72 h — measured, that
+        # DOUBLED total infiltration (2.56 -> 5.00 million m³) and cut storm runoff reaching
+        # the gauge 13x (0.189 -> 0.015 million m³), while inflating the runoff coefficient to
+        # a flattering 25 % that was almost entirely baseflow passing through. The solver
+        # already zeroes storage for the 26 % of cells SSURGO flags depressional; a perennial
+        # channel belongs in exactly that category.
+        if max_deficit_m is not None:
+            _nz = int((max_deficit_m[_ch] > 0).sum())
+            max_deficit_m[_ch] = 0.0
+            print(f"  Channel soil storage zeroed in {_nz:,} cells "
+                  f"(perennial channel sits at the water table)")
+        print(f"  Baseflow IC: {BASEFLOW_CFS} cfs, along-channel S={_S:.2e} "
+              f"-> channel depth {_h0:.3f} m over {int(_ch.sum()):,} cells")
+    else:
+        initial_h = None
+        print("  Channel starts dry (pass --baseflow to pre-fill it; see the flag's help)")
+
     h_max, cum_infil, flooded_ha_ts, rain_ts, Pe_ts, mean_depth_ts, frame_data = fsi.run_sim(
         z, dx, rain_sim, args.dt, frame_interval_min=args.frame_interval, use_infiltration=True,
-        horton_arrays=horton_arrays, max_deficit_m=max_deficit_m,
+        horton_arrays=horton_arrays, max_deficit_m=max_deficit_m, gauge_rc=gauge_rc,
+        initial_h=initial_h,
     )
     elapsed = time.time() - t0
 
@@ -149,8 +253,10 @@ def main():
         "outflow_total_cfs": outflow_total_cms * CMS_TO_CFS,
         "outflow_south_cms": outflow_south_cms,
         "outflow_south_cfs": outflow_south_cms * CMS_TO_CFS,
+        "gauge_cms": frame_data["gauge_cms"],
+        "gauge_cfs": frame_data["gauge_cms"] * CMS_TO_CFS,
     })
-    hydro_path = os.path.join(OUT_DIR, "hydrograph_ian_site3.csv")
+    hydro_path = os.path.join(OUT_DIR, f"hydrograph_ian_site3{args.tag}.csv")
     hydro_df.to_csv(hydro_path, index=False)
     print(f"  {os.path.basename(hydro_path)} ({n_steps} rows)")
 
@@ -190,7 +296,7 @@ def main():
             "real_ian_peak_time_utc": "2022-09-29T13:31:00Z",
         },
     }
-    with open(os.path.join(OUT_DIR, "ian_sim_summary_site3.json"), "w") as fh:
+    with open(os.path.join(OUT_DIR, f"ian_sim_summary_site3{args.tag}.json"), "w") as fh:
         json.dump(summary, fh, indent=2)
     print(f"  ian_sim_summary_site3.json")
 
