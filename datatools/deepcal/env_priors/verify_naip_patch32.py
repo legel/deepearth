@@ -15,6 +15,13 @@ import numpy as np
 PATCH_CHUNK_GLOB = "chunk[0-9]*.npz"
 
 
+def _finite_scalar(value, fallback=0.0) -> np.float32:
+    value = np.float32(value)
+    if np.isfinite(value):
+        return value
+    return np.float32(fallback)
+
+
 def _load_token_ids(path: Path) -> np.ndarray:
     files = sorted(path.glob("*.npz"))
     if not files:
@@ -142,6 +149,7 @@ def main() -> None:
 
     seen, rows, bytes_total = set(), 0, 0
     manifest_set = set(map(int, all_ids))
+    manifest_row = {int(g): i for i, g in enumerate(all_ids)}
     for file in files:
         z = np.load(file, allow_pickle=True)
         if args.coverage_only:
@@ -170,21 +178,36 @@ def main() -> None:
             raise SystemExit(f"{file} patch_lon shape {z['patch_lon'].shape}")
         if "patch_elev" in z and z["patch_elev"].shape != (len(gid), 32, 32):
             raise SystemExit(f"{file} patch_elev shape {z['patch_elev'].shape}")
+        if not np.isfinite(patch_tensor).all():
+            raise SystemExit(f"{file} patch tensor must be finite")
         if not (np.isfinite(z["patch_lat"]).all() and np.isfinite(z["patch_lon"]).all()):
             raise SystemExit(f"{file} patch coordinates must be finite")
-        if "patch_elev" in z and not np.isfinite(z["patch_elev"]).all():
-            raise SystemExit(f"{file} patch_elev must be finite")
         if patch_tensor.dtype not in (np.float16, np.float32):
             raise SystemExit(f"{file} patch dtype must be float16 or float32")
         if not np.all(z["has_naip"].astype(bool)):
             raise SystemExit(f"{file} has_naip must be true for every stored row")
-        for g in gid:
+        for row, g in enumerate(gid):
             gi = int(g)
             if gi not in manifest_set:
                 raise SystemExit(f"{file} gbifID {gi} is absent from manifest")
             if gi in seen:
                 raise SystemExit(f"duplicate chunk gbifID {gi}")
             seen.add(gi)
+            m = manifest_row[gi]
+            if "patch_elev" in z:
+                elev = z["patch_elev"][row].astype(np.float32)
+                elev = np.where(np.isfinite(elev), elev, _finite_scalar(manifest["elev_m"][m]))
+            else:
+                elev = np.full((32, 32), _finite_scalar(manifest["elev_m"][m]), np.float32)
+            day = np.full((32, 32), _finite_scalar(manifest["event_day"][m]), np.float32)
+            coords = np.stack([
+                z["patch_lat"][row].astype(np.float32),
+                z["patch_lon"][row].astype(np.float32),
+                elev,
+                day,
+            ], axis=-1)
+            if not np.isfinite(coords).all():
+                raise SystemExit(f"{file} Earth4D coords must be finite")
         rows += len(gid)
         bytes_total += patch_tensor.nbytes
 
