@@ -718,7 +718,9 @@ class MeshModel(nn.Module):
             torch.zeros(len(LENSES), d_model)
         )
         torch.random.set_rng_state(identity_reader_rng)
-        self.lfmc_head = nn.Linear(d_model, 1) if hasattr(source, "lfmc") else None
+        has_lfmc = getattr(source, "lfmc", None) is not None \
+            and getattr(source, "lfmc_valid", None) is not None
+        self.lfmc_head = nn.Linear(d_model, 1) if has_lfmc else None
         if self.lfmc_head is not None:
             lfmc_reader_rng = torch.random.get_rng_state()
             self.lfmc_lens_reader_norm = nn.LayerNorm(d_model)
@@ -729,8 +731,12 @@ class MeshModel(nn.Module):
             nn.init.zeros_(self.lfmc_lens_head.weight)
             nn.init.zeros_(self.lfmc_lens_head.bias)
             torch.random.set_rng_state(lfmc_reader_rng)
-        self.myco_head = nn.Linear(d_model, 5) if hasattr(source, "myco") else None
-        self.flower_head = nn.Linear(d_model, 1) if hasattr(source, "flower") else None
+        has_myco = getattr(source, "myco", None) is not None \
+            and getattr(source, "myco_valid", None) is not None
+        self.myco_head = nn.Linear(d_model, 5) if has_myco else None
+        has_flower = getattr(source, "flower", None) is not None \
+            and getattr(source, "flower_valid", None) is not None
+        self.flower_head = nn.Linear(d_model, 1) if has_flower else None
         self.species_myco_head = None
         if self.myco_head is not None:
             myco_rng = torch.random.get_rng_state()

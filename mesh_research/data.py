@@ -57,6 +57,16 @@ def load(cache_dir: str, device: str, *, subset: dict | None = None):
         clay_v2=settings["clay_v2"],
         prepared=str(prepared),
     )
+    for value_name, valid_name in (
+        ("lfmc", "lfmc_valid"),
+        ("myco", "myco_valid"),
+        ("flower", "flower_valid"),
+    ):
+        if getattr(source, value_name, None) is None \
+                or getattr(source, valid_name, None) is None:
+            for name in (value_name, valid_name):
+                if hasattr(source, name):
+                    delattr(source, name)
 
     dims = source.variable_dims()
     variables = [
