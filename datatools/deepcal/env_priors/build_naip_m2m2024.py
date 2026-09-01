@@ -54,6 +54,7 @@ BATCH_TILES = int(os.environ.get("NAIP_BATCH_TILES", 4))        # scenes per M2M
 DLW = int(os.environ.get("NAIP_DLW", 2))                        # parallel scene downloads
 EMBED_BATCH = int(os.environ.get("NAIP_EMBED_BATCH", 2))        # DINOv3 ViT-L patch forward microbatch
 PATCH_ROWS = int(os.environ.get("NAIP_PATCH_ROWS", 16))         # obs per scene chunk held through DINO + write buffer
+FETCH_TIMEOUT = int(os.environ.get("NAIP_FETCH_TIMEOUT", 600))  # max seconds to wait on a scene stream
 SAVE_IMAGERY = os.environ.get("NAIP_SAVE_IMAGERY", "0") == "1"
 SAVE_PATCH32 = os.environ.get("NAIP_SAVE_PATCH32", "1") == "1"
 PATCH_VIEW = os.environ.get("NAIP_PATCH_VIEW", "rgb")
@@ -106,7 +107,7 @@ def fetch_scene(url, entity):
     if scene.exists() and scene.stat().st_size > 1_000_000:
         return scene
     try:
-        with requests.get(url, stream=True, timeout=1800) as r:
+        with requests.get(url, stream=True, timeout=(60, FETCH_TIMEOUT)) as r:
             r.raise_for_status()
             with open(raw, "wb") as f:
                 for c in r.iter_content(1 << 20): f.write(c)
@@ -346,46 +347,15 @@ def main():
         print(f"  patch chunk {patch_chunk} | {len(patch_done)} patch obs done", flush=True)
         for k in patch_buf: patch_buf[k] = []
 
-    key = None
-    for w in range(0, len(todo), BATCH_TILES):
-        batch = todo[w:w + BATCH_TILES]
-        urls, paths, cleanup = {}, {}, {}
-        m2m_batch = []
-        for t in batch:
-            local = catalog_scene_path(tiles[t])
-            if local is not None:
-                paths[t] = local
-                cleanup[t] = False
-            elif tiles[t].get("url"):
-                urls[tiles[t]["entityId"]] = tiles[t]["url"]
-            else:
-                m2m_batch.append(t)
-        if m2m_batch:
-            ents = [tiles[t]["entityId"] for t in m2m_batch]
-            if key is None:
-                key = login()
-            try:
-                urls.update(scene_urls(key, ents))
-            except Exception as e:                              # apiKey expires ~2h -> re-login
-                print(f"  re-login ({e})", flush=True); key = login(); urls.update(scene_urls(key, ents))
-        # download scenes in parallel
-        with ThreadPoolExecutor(max_workers=DLW) as ex:
-            futs = {ex.submit(fetch_scene, urls[tiles[t]["entityId"]], tiles[t]["entityId"]): t
-                    for t in batch if t not in paths and tiles[t]["entityId"] in urls}
-            for fut in as_completed(futs):
-                p = fut.result()
-                if p is not None:
-                    paths[futs[fut]] = p
-                    cleanup[futs[fut]] = True
-        # tile + embed each scene, upload imagery, delete
-        for t in batch:
-            if t not in paths: continue
-            ent = tiles[t]["entityId"]; yr = int(tiles[t]["displayId"].split("_")[-1][:4])
-            pending = patch_pending if SAVE_PATCH32 else pool_pending
-            idxs = [i for i in by_scene[t] if int(gid[i]) not in done and int(gid[i]) not in pending]
-            if not idxs:
-                continue
-            with rasterio.open(paths[t]) as src:
+    def process_scene(t, path, cleanup_scene):
+        nonlocal n_ok
+        ent = tiles[t]["entityId"]; yr = int(tiles[t]["displayId"].split("_")[-1][:4])
+        pending = patch_pending if SAVE_PATCH32 else pool_pending
+        idxs = [i for i in by_scene[t] if int(gid[i]) not in done and int(gid[i]) not in pending]
+        if not idxs:
+            return
+        try:
+            with rasterio.open(path) as src:
                 for patches, keep in iter_scene_patches(src, idxs, lon, lat):
                     rgb_img = [a[:3] for a in patches]
                     need_pool = any(int(gid[i]) not in pool_done for i in keep)
@@ -413,18 +383,54 @@ def main():
                             patch_buf["patch_lat"].append(patch_lat[j]); patch_buf["patch_lon"].append(patch_lon[j])
                             patch_pending.add(gid_i)
                     n_ok += len(keep)
-                    if SAVE_IMAGERY:                            # raw imagery -> per-chunk npz -> NERSC -> delete
+                    if SAVE_IMAGERY:
                         imp = IMG / f"{ent}_{n_ok:08d}.npz"
                         np.savez_compressed(imp, gbifID=np.array([int(gid[i]) for i in keep], np.int64),
                                             patch=np.stack(patches).astype(np.uint8))
                         if nersc_put(imp, imp.name): imp.unlink()
                     if len(patch_buf["gbifID"]) >= 64:
                         flush_patch_tokens()
-            if cleanup.get(t, True):
-                paths[t].unlink(missing_ok=True)                # delete downloaded scene GeoTIFFs; keep catalog local_path files
+        finally:
+            if cleanup_scene:
+                Path(path).unlink(missing_ok=True)
+
+    key = None
+    for w in range(0, len(todo), BATCH_TILES):
+        batch = todo[w:w + BATCH_TILES]
+        urls, local_paths = {}, {}
+        m2m_batch = []
+        for t in batch:
+            local = catalog_scene_path(tiles[t])
+            if local is not None:
+                local_paths[t] = local
+            elif tiles[t].get("url"):
+                urls[tiles[t]["entityId"]] = tiles[t]["url"]
+            else:
+                m2m_batch.append(t)
+        if m2m_batch:
+            ents = [tiles[t]["entityId"] for t in m2m_batch]
+            if key is None:
+                key = login()
+            try:
+                urls.update(scene_urls(key, ents))
+            except Exception as e:                              # apiKey expires ~2h -> re-login
+                print(f"  re-login ({e})", flush=True); key = login(); urls.update(scene_urls(key, ents))
+        scenes_done = 0
+        for t, path in local_paths.items():
+            process_scene(t, path, False)
+            scenes_done += 1
+        # Download scenes in parallel and embed each scene as soon as it arrives.
+        with ThreadPoolExecutor(max_workers=DLW) as ex:
+            futs = {ex.submit(fetch_scene, urls[tiles[t]["entityId"]], tiles[t]["entityId"]): t
+                    for t in batch if t not in local_paths and tiles[t]["entityId"] in urls}
+            for fut in as_completed(futs):
+                p = fut.result()
+                if p is not None:
+                    process_scene(futs[fut], p, True)
+                scenes_done += 1
         if len(buf["gbifID"]) >= 4000: flush_tokens()
         if len(patch_buf["gbifID"]) >= 64: flush_patch_tokens()
-        print(f"  scenes {min(w+BATCH_TILES,len(todo))}/{len(todo)} | {n_ok} obs embedded | {n_ok/max(time.time()-t0,1):.1f} obs/s", flush=True)
+        print(f"  scenes {min(w+BATCH_TILES,len(todo))}/{len(todo)} | {scenes_done}/{len(batch)} scene files handled | {n_ok} obs embedded | {n_ok/max(time.time()-t0,1):.1f} obs/s", flush=True)
     flush_tokens()
     flush_patch_tokens()
     print(f"DONE: {n_ok} obs on NAIP scenes (scene-pinned).", flush=True)
