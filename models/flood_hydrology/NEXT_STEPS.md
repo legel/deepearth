@@ -171,23 +171,48 @@ poorly-connected, ponding-prone terrain was pulling the domain-wide number *down
 observed, not diluting a better answer. **This meaningfully weakens the domain-area-mismatch
 hypothesis** rather than confirming it.
 
+### AMC (antecedent-moisture) factor sweep, Milton — 2026-08-31, insufficient
+
+`AMC3_FACTOR = 0.07` is documented as calibrated specifically for Ian's pre-saturated antecedent
+conditions (2 weeks of above-average rain beforehand) — it was never re-derived for Milton, whose
+own pre-storm baseflow (7.87 cfs) is 5.7× lower than Ian's (45.2 cfs), strong evidence the ground
+was much drier beforehand. Swept the factor for Milton alone, everything else held at the current
+default:
+
+| AMC factor | effective Ksat | runoff coefficient |
+|---|---|---|
+| 0.07 (Ian's wet factor, reused for Milton) | 24.9 mm/hr | 67.70 % |
+| 0.20 | 71.1 mm/hr | 64.44 % |
+| 0.50 | 177.7 mm/hr | 61.42 % |
+| **1.00 (no wet-antecedent reduction at all)** | 355.4 mm/hr | **58.51 %** |
+| observed | — | 34.4-36.6 % |
+
+Direction is correct — drier assumption, less runoff — but even removing the correction
+*entirely* (assuming completely dry soil, which is not physically true; Milton had real rain
+building for several days beforehand) only closes about a third of the gap. **Insufficient alone,
+same as every other mechanism tested.**
+
 ### Where this leaves the magnitude gap — 2026-08-31
 
 Every mechanism this project's physics could plausibly explain has now been tested and found
 insufficient or wrong-directioned: roughness (3 independent methods), storage-capacity size,
-infiltration access, capacity+access combined at any physically plausible value, and now
-domain-vs-watershed area. Two independent real storms show the same ~2× overshoot despite clean
-mass balance and good timing on both, so this reads as a genuine structural property of the
-model rather than a parameter waiting to be found.
+infiltration access, capacity+access combined at any physically plausible value,
+domain-vs-watershed area, and antecedent-moisture calibration. That is six independent tests,
+across two real storms, all with clean mass balance, none closing the gap and one (domain area)
+actively pointing the wrong direction. **This is a strong, consistent signal that the gap is not
+a single missing parameter — treating it as one to keep searching for is no longer the productive
+path.**
 
-**Untested candidates that remain, further out from what's been checked:** whether
-`AMC3_FACTOR = 0.07` (the antecedent-moisture correction applied to SSURGO Ksat for Ian's
-saturated conditions) is itself miscalibrated; whether the single point-station rainfall input
-(KSFB) overstates what actually fell across the real watershed; and — a real possibility given
-Florida's documented depression-dominated terrain — whether the real 33.15 km² USGS-documented
-drainage area itself overstates what actually contributes during any single storm, meaning the
-observed benchmark's own denominator may be too generous, not just the model's numerator too
-large.
+**Current stopping point, stated plainly:** timing is genuinely solved (rising-limb error at or
+near the gauge's own sampling resolution on both storms). Magnitude has a real, now
+well-characterized, ~2× overshoot that survives every mechanism this model can express. Logged
+here as an honest open limitation rather than continuing to sweep blindly.
+
+**What would actually move this forward is new data, not new parameter sweeps:** independent
+gridded/radar rainfall (e.g. MRMS) to check whether the single point-gauge input is
+representative of what actually fell across the real watershed; or a fundamentally different
+comparison method than boundary-outflow-vs-single-channel-gauge, which the project's own
+validation script has called "structurally approximate" since it was written.
 
 ### Re-run required before any of these are quoted again
 
@@ -322,13 +347,13 @@ instead of a single unreproducible number; use it rather than quoting a figure.
    "Combined: ponded infiltration + capacity sweep" above: 0.5×-4× SSURGO capacity, with ponded
    infiltration on, tops out at 59.25 % runoff against an observed 28.9-31.4 %. Only literally
    infinite capacity gets close. Not the answer on its own.
-2b. **Domain-vs-real-watershed mismatch, tested 2026-08-31 — ruled out, wrong direction.** See
-    "Domain-clip test" above: restricting to the real 3.7 km² delineated watershed made the
-    overshoot *worse* (85.5 % / 82.4 % vs the domain-box's 71.4 % / 67.7 %), because the
-    connected catchment is the flashiest part of the domain, not a diluting factor. Remaining
-    untested candidates: the AMC3 antecedent-moisture factor, rainfall-input representativeness,
-    and whether the observed 33.15 km² gauge area itself overstates true contributing area
-    during any single storm. See "Where this leaves the magnitude gap" above.
+2b. **Six mechanisms tested 2026-08-31, all insufficient or wrong-directioned — stop sweeping
+    parameters.** Roughness, storage capacity, infiltration access, capacity+access combined,
+    domain-vs-watershed area (wrong direction), and AMC antecedent-moisture calibration (closes
+    ~1/3 of the gap at best, at a physically unrealistic extreme). See "Where this leaves the
+    magnitude gap" above — logged as an honest open limitation. What would actually move this
+    forward is new data (independent gridded rainfall) or a different comparison methodology,
+    not another single-parameter sweep.
 3. **Re-run Johns Lake's probability ensemble.** The main AOI's and site3's are both done
    (site3: 30.08 → 56.33 ha any risk, 18.53 → 33.54 at ≥1 %/yr, 8.47 → 13.68 at ≥10 %/yr, with
    peak depths falling as areas rise — the correct signature for removing fabricated depression
