@@ -1,6 +1,6 @@
 # Next steps
 
-Updated 2026-08-29. Full session log for the solver work below is in
+Updated 2026-08-31. Full session log for the solver work below is in
 [`../PROGRESS_2026-08-29.md`](../PROGRESS_2026-08-29.md); the preceding session is in
 [`../PROGRESS_2026-08-26.md`](../PROGRESS_2026-08-26.md); site detail is in each site's README.
 
@@ -42,15 +42,34 @@ gauge hydrograph now peaks, which it never did before. **Magnitude overshoots ~2
 (~7 min vs ~7.4 hours) — but it does NOT reproduce the 5 m instability, so any CFL or stability
 question must be checked at production resolution.
 
-### The leading candidate for the remaining overshoot
+### Ponded infiltration — implemented and tested, 2026-08-31
 
-Infiltration draws only from instantaneous rainfall (`Pe = max(P - inf, 0)`), so once rain stops,
-ponded water sits on a half-empty soil profile and cannot enter it. **138 mm of the 206 mm cap is
-structurally unreachable.** If ponded water could reach it, infiltration would go from 17.3 % to
-~52 % of rain and runoff from 72 % to roughly 37 %, against an observed 28.9-31.4 %.
+The leading candidate identified above: infiltration drew only from instantaneous rainfall
+(`Pe = max(P - inf, 0)`), so once rain stopped, ponded water sitting on a half-empty soil profile
+had no way to enter it. Predicted effect if fixed: infiltration 17.3 % → ~52 % of rain, runoff
+72 % → ~37 %.
 
-That is a genuine missing process rather than a tuning knob, but it is a modelling change, not a
-bug fix — flagged for decision, not yet implemented.
+**Implemented in `run_sim()` as `ponded_infiltration` (default `True`, restructures the depth
+update so all rainfall reaches the surface first, then infiltration draws from whatever depth is
+standing — freshly fallen or already ponded — capped by remaining capacity and rate).
+`--no-ponded-infiltration` reproduces the old behaviour exactly, kept for comparison.**
+
+**Result: the fix works correctly (mass balance -0.0001 % → -0.0002 %, both clean) but the effect
+is far smaller than predicted:**
+
+| | old (rainfall-only-limited) | new (ponded infiltration) | observed |
+|---|---|---|---|
+| runoff coefficient | 72.08 % | **71.35 %** | 28.9-31.4 % |
+| infiltrated | 17.3 % of rain | 18.2 % of rain | — |
+
+Only a 0.7-point move, not the ~35-point jump predicted. **Why:** the prediction implicitly
+assumed the "138 mm unreachable" was sitting around as a static reservoir waiting to be soaked
+up. This is a routed shallow-water model — during an intense storm, water is actively flowing
+downstream and exiting the domain boundary well before there is a lull for infiltration to catch
+up. By the time rain stops, most of the excess has already left as outflow, not sitting on the
+ground as standing depth. The fix is doing exactly what it should; the volume actually reachable
+through this mechanism alone is just small. **This substantially weakens the hypothesis above
+rather than confirming it.**
 
 ### Storage-cap sensitivity sweep — done, 2026-08-31, on the current solver
 
@@ -66,13 +85,70 @@ the scalar 0.040, everything else identical), site3 @ 25 m, `simulation/run_site
 | **uncapped** (infinite storage) | — | **43.92 %** |
 
 Monotonic and clean — more capacity, less runoff, exactly as expected. **But it floors at 43.9 %
-even with literally unlimited storage**, against an observed 28.9–31.4 %. That floor is close to
-this section's own prediction above (~37 % if ponded water could reach the existing 206 mm cap),
-which is not the same lever as this sweep (this scales *capacity*; the prediction above is about
-*access* to capacity that already exists) — the two landing near each other is corroborating,
-not redundant. **Conclusion: storage capacity alone cannot close the magnitude gap, at any
-value.** The ponded-infiltration access problem is the more promising remaining lever, not a
-larger cap.
+even with literally unlimited storage**, against an observed 28.9–31.4 %. **Conclusion: storage
+capacity alone cannot close the magnitude gap, at any value.** (The above sweep used the OLD
+rainfall-only-limited access rule; see the combined sweep below for the same test with ponded
+infiltration also on.)
+
+### Combined: ponded infiltration + capacity sweep — 2026-08-31
+
+With the ponded-infiltration fix's small standalone effect and the capacity sweep's floor both
+independently insufficient, the two were tested together — same capacity multipliers, ponded
+infiltration on for all arms:
+
+| capacity | mean cap | runoff coefficient |
+|---|---|---|
+| 0.5× SSURGO | 103 mm | 79.12 % |
+| 1.0× SSURGO (survey value) | 206 mm | 71.35 % |
+| 2.0× SSURGO | 412 mm | 65.32 % |
+| 4.0× SSURGO | 824 mm | 59.25 % |
+| **uncapped** | — | **33.57 %** |
+
+All mass-conserving (-0.0008 % to +0.0025 %). **The two effects are synergistic, not additive** —
+neither alone gets close (71.35 % / 43.9 %), but combined at the physically implausible uncapped
+extreme, runoff lands within a few points of observed. Mechanism: with the old access rule, even
+unlimited capacity couldn't help, because infiltration could only draw from the instantaneous
+rain rate — excess ran off immediately during intense bursts no matter how much capacity existed
+elsewhere. With ponded access, water that can't infiltrate instantly during a burst now sits and
+keeps draining afterward, but only if there is still room to receive it.
+
+**The bounded, physically defensible steps (0.5×-4×) show a clean ~-6 points per doubling — not
+enough to reach observed at any plausible multiplier** (4× SSURGO already implies a water table
+4× deeper than the survey says; even that only reaches 59.25 %). The jump to 33.57 % only happens
+at literally infinite capacity, which is not real soil. **This is a genuine result, not a
+calibration knob**: the soil-storage-capacity axis (however combined with infiltration access)
+cannot be pushed to the observed range without an unphysical assumption.
+
+### Second real-storm validation: Hurricane Milton (Oct 2024) — 2026-08-31
+
+Everything above was calibrated against exactly one event (Ian) — a real methodological risk, so
+a second, independent real storm was pulled from the same gauge's continuous record: real USGS
+NWIS discharge (02234400) and real KSFB hourly rainfall, Oct 4-15 2024, current solver (ponded
+infiltration on, SSURGO 1× cap), same scoring methodology.
+
+| | Hurricane Ian (2022) | Hurricane Milton (2024) |
+|---|---|---|
+| storm total | 392 mm | 288 mm |
+| rising-limb error | 0.2-0.3 h | 1.53 h |
+| modeled runoff coeff | 71.35 % | 67.70 % |
+| observed runoff coeff | 28.9-31.4 % | 34.4-36.6 % |
+| **shortfall (model/observed)** | **~2.3×** | **~1.9×** |
+| mass balance | clean | clean (-0.0009 %) |
+
+**Two completely independent real storms — different year, different total rainfall, different
+antecedent conditions — show the same ~2× overshoot.** Timing is good on both. This is the
+strongest evidence yet that the magnitude gap is a structural property of the model, not an
+artifact of Ian's particular intensity or antecedent soil moisture: if it were Ian-specific,
+Milton should have looked meaningfully different, and it did not.
+
+**Where this points:** the solver's numerics are not the problem — mass balance closes to
+±0.002 % across every configuration tested, on both storms. What has not been validated is the
+*setup*: a small, artificially-bounded rectangular domain (previously documented 35 % capture of
+the real 33.15 km² gauge watershed), fed only by direct rainfall with no external inflow and no
+baseflow/groundwater return, compared against a real single-channel gauge via a domain-boundary
+outflow sum the project's own validation script already calls "structurally approximate."
+**Next: test whether restricting the runoff calculation to the real delineated Gee Creek
+watershed (rather than the full domain box) closes some of this gap — not yet done.**
 
 ### Re-run required before any of these are quoted again
 
@@ -203,10 +279,15 @@ instead of a single unreproducible number; use it rather than quoting a figure.
    along-channel bed slope on the solver grid is 1.94e-3, matching the natural 1.90e-3, and at
    the existing n=0.040 a channel depth of only 0.14–0.62 m yields 0.30–0.80 m/s, precisely the
    documented range for this stream class. Manning's *n* is not the bottleneck; do not tune it.
-2. **The soil storage cap is the leading remaining candidate.** site3's mean cap is 206 mm
-   against the main AOI's 36 mm, both SSURGO-derived. The main AOI, with the tighter cap,
-   produces a plausible 26 % runoff; site3, with the looser one, produces 8.9 %. That contrast
-   is worth a direct sensitivity test — it has never had one.
+2. **Storage capacity, tested 2026-08-31 — ruled out at any physically plausible value.** See
+   "Combined: ponded infiltration + capacity sweep" above: 0.5×-4× SSURGO capacity, with ponded
+   infiltration on, tops out at 59.25 % runoff against an observed 28.9-31.4 %. Only literally
+   infinite capacity gets close. Not the answer on its own.
+2b. **Domain-vs-real-watershed mismatch — now the leading candidate, not yet tested.** Two
+    independent real storms (Ian, Milton) both show ~2× runoff overshoot despite clean mass
+    balance and good timing on both — the signature of a structural setup issue, not a
+    parameter. Test: restrict the runoff calculation to the real delineated Gee Creek
+    watershed rather than the full domain box, and see how much of the gap that alone closes.
 3. **Re-run Johns Lake's probability ensemble.** The main AOI's and site3's are both done
    (site3: 30.08 → 56.33 ha any risk, 18.53 → 33.54 at ≥1 %/yr, 8.47 → 13.68 at ≥10 %/yr, with
    peak depths falling as areas rise — the correct signature for removing fabricated depression

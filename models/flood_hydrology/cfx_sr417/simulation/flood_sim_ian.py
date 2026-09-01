@@ -490,7 +490,7 @@ def load_dem_for_sim(cell_size_m):
 
 def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
             use_infiltration=True, horton_arrays=None, max_deficit_m=None, gauge_rc=None,
-            initial_h=None, manning_n=None):
+            initial_h=None, manning_n=None, ponded_infiltration=True):
     """
     Bates et al. (2010) local inertia solver.
     use_infiltration=False sets Horton inf=0 so Pe=rain (all rain stays on surface).
@@ -503,6 +503,15 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
     internally). None uses the scalar MANNING_N, which is the original code path. Built by
     segmentation/rasterize_parameters.py from SAM-style surface classes over NAIP + a LiDAR
     canopy-height model.
+    ponded_infiltration: True (default) lets infiltration draw from standing depth after
+    routing and rainfall, not just the instantaneous rain rate — so already-ponded water keeps
+    draining into soil storage once rain stops, instead of infiltration halting the moment
+    P hits zero. False reproduces the previous rainfall-only-limited behaviour exactly
+    (Pe = max(P - inf, 0)), kept for direct comparison. See the 2026-08-31 storage-cap
+    sensitivity sweep in NEXT_STEPS.md for why this was the leading remaining candidate for
+    the runoff-magnitude gap: scaling storage capacity to infinity only got runoff down to
+    ~44% against an observed 28.9-31.4%, meaning capacity access, not capacity size, was the
+    binding constraint.
     Returns:
       h_max, cum_infil, flooded_ha_ts, frame_data
       where frame_data = {'frames': [...], 'infil_frames': [...], 'times_min': [...],
@@ -666,7 +675,8 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
                 remaining = np.maximum(max_deficit_m - cum_infil, 0.0)
                 inf = np.minimum(inf, remaining / dt)   # cannot infiltrate more than is left
 
-            Pe  = np.maximum(P - inf, 0.0)
+            if not ponded_infiltration:
+                Pe = np.maximum(P - inf, 0.0)
 
             eta = z_work + h
 
@@ -710,26 +720,45 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
             outflow_south_ts_step = out_south
             outflow_total_ts_step = out_west + out_east + out_north + out_south
 
-            # Depth update
-            h += dt / dx * (qx[:, :-1] - qx[:, 1:] + qy[:-1, :] - qy[1:, :]) + dt * Pe
-            h  = np.maximum(h, 0.0)
-            h[~valid] = 0.0
+            flux_div = dt / dx * (qx[:, :-1] - qx[:, 1:] + qy[:-1, :] - qy[1:, :])
 
-            # Charge the soil only for water that ACTUALLY infiltrated. `inf` is a capacity
-            # RATE; the water available to satisfy it is the rain falling this sub-step, since
-            # Pe = max(P - inf, 0) draws infiltration from rainfall only. Charging the full
-            # capacity regardless of supply let the profile fill without absorbing anything:
-            # over site3's first ~8 h Ian delivers <1 mm/hr while Horton offers 25-58 mm/hr, so
-            # cum_infil accrued ~194 mm of PHANTOM infiltration and hit the 206 mm cap before
-            # the storm arrived. Infiltration then stopped for the rest of the event — measured
-            # 2.9 % of rain infiltrating against the ~50 % the cap implies, and a 92.8 % runoff
-            # coefficient against an observed 28.9-31.4 %.
-            #
-            # This was invisible until the sub-stepping fix of 2026-08-28: the clock previously
-            # ran ~10x ahead of the physics, so cum_infil accrued over a fraction of the real
-            # time and never reached the cap. One bug was masking the other.
-            cum_infil += np.minimum(inf, P) * dt
+            if ponded_infiltration:
+                # All rainfall reaches the surface; infiltration is then drawn from whatever
+                # depth is standing (freshly fallen or already ponded), not from the rain rate
+                # directly. This is the fix for the gap the 2026-08-31 storage-cap sweep
+                # narrowed down: the previous Pe = max(P - inf, 0) formulation drew
+                # infiltration only from the instant it was raining, so once rain stopped,
+                # water already sitting on unsaturated ground had no way to soak in — 138 of
+                # 206 mm of capacity was structurally unreachable even though the profile
+                # still had room. Real ponded water keeps infiltrating after rain stops; this
+                # makes the solver do the same.
+                h += flux_div + dt * P
+                h  = np.maximum(h, 0.0)
+                h[~valid] = 0.0
+                # Cannot infiltrate more than is actually standing this sub-step.
+                inf_amount = np.minimum(inf * dt, h)
+                h -= inf_amount
+                h  = np.maximum(h, 0.0)
+            else:
+                # Original behaviour, kept behind the flag for direct comparison: infiltration
+                # competes with rainfall only. `inf` is a capacity RATE; the water available to
+                # satisfy it is the rain falling this sub-step. Charging the full capacity
+                # regardless of supply let the profile fill on paper without absorbing
+                # anything — see the 2026-08-29 fix note this replaced for the full history.
+                h += flux_div + dt * Pe
+                h  = np.maximum(h, 0.0)
+                h[~valid] = 0.0
+                inf_amount = np.minimum(inf, P) * dt
+
+            cum_infil += inf_amount
             h_max = np.maximum(h_max, h)
+            # For reporting only: the net rate actually reaching/leaving the surface this
+            # sub-step, and the infiltration rate actually applied (inf_amount/dt) rather than
+            # the uncapped capacity rate — under ponded_infiltration this can be negative
+            # (net drying, water draining into soil faster than it's raining), which is real
+            # and worth seeing, not an error.
+            inf_rate_applied = inf_amount / dt
+            Pe_rate = P - inf_rate_applied
 
             # advance the clock by what was ACTUALLY integrated
             t_s += dt
@@ -739,8 +768,8 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
 
             acc_out_s += outflow_south_ts_step * dt
             acc_out_t += outflow_total_ts_step * dt
-            acc_Pe    += float(np.mean(Pe[valid]) if isinstance(Pe, np.ndarray) else Pe) * dt
-            acc_inf   += float(np.mean(inf[valid]) if isinstance(inf, np.ndarray) else inf) * dt
+            acc_Pe    += float(np.mean(Pe_rate[valid]) if isinstance(Pe_rate, np.ndarray) else Pe_rate) * dt
+            acc_inf   += float(np.mean(inf_rate_applied[valid]) if isinstance(inf_rate_applied, np.ndarray) else inf_rate_applied) * dt
             if gauge_rc is not None:
                 gr, gc = gauge_rc
                 gqx = 0.5 * (qx[gr, gc] + qx[gr, gc + 1])
@@ -872,6 +901,11 @@ def main():
     ap.add_argument("--no-impervious-mask", action="store_true",
                     help="Don't force zero infiltration under OSM roads/buildings "
                          "(legacy behavior: hard surfaces get soil-derived infiltration too)")
+    ap.add_argument("--no-ponded-infiltration", action="store_true",
+                    help="Restore the previous rainfall-only-limited infiltration "
+                         "(Pe = max(P - inf, 0)): already-ponded water cannot infiltrate once "
+                         "rain stops. Default (ponded infiltration on) lets standing depth "
+                         "keep draining into any remaining soil storage after rain ends.")
     ap.add_argument("--dry-run", action="store_true",
                     help="Print setup info and exit")
     args = ap.parse_args()
@@ -958,6 +992,7 @@ def main():
         use_infiltration=use_infiltration,
         horton_arrays=horton_arrays,
         max_deficit_m=max_deficit_m,
+        ponded_infiltration=not args.no_ponded_infiltration,
     )
     elapsed = time.time() - t0
 

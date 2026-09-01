@@ -108,6 +108,11 @@ def main():
                           "a conveying channel moves water across more distinct cells, and each "
                           "one it wets unlocks its own soil storage. Kept for that experiment, "
                           "not because it improves the result.")
+    ap.add_argument("--no-ponded-infiltration", action="store_true",
+                     help="Restore the previous rainfall-only-limited infiltration "
+                          "(Pe = max(P - inf, 0)): already-ponded water cannot infiltrate "
+                          "once rain stops. Default (ponded infiltration on) lets standing "
+                          "depth keep draining into any remaining soil storage after rain ends.")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -231,7 +236,7 @@ def main():
     h_max, cum_infil, flooded_ha_ts, rain_ts, Pe_ts, mean_depth_ts, frame_data = fsi.run_sim(
         z, dx, rain_sim, args.dt, frame_interval_min=args.frame_interval, use_infiltration=True,
         horton_arrays=horton_arrays, max_deficit_m=max_deficit_m, gauge_rc=gauge_rc,
-        initial_h=initial_h,
+        initial_h=initial_h, ponded_infiltration=not args.no_ponded_infiltration,
     )
     elapsed = time.time() - t0
 
