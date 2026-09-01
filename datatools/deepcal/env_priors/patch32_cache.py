@@ -7,6 +7,30 @@ import numpy as np
 CHUNK_GLOB = "chunk[0-9]*.npz"
 
 
+def _finite_scalar(value, fallback=0.0):
+    value = np.float32(value)
+    if np.isfinite(value):
+        return value
+    return np.float32(fallback)
+
+
+def _finite_obs_elev(elev):
+    elev = _finite_scalar(elev)
+    if np.isfinite(elev):
+        return np.float32(elev)
+    return np.float32(0.0)
+
+
+def _patch_elev_or_obs(chunk, row, obs_elev, shape):
+    obs_elev = _finite_obs_elev(obs_elev)
+    if "patch_elev" not in chunk:
+        return np.full(shape, obs_elev, np.float32)
+    elev = chunk["patch_elev"][row].astype(np.float32)
+    if np.isfinite(elev).all():
+        return elev
+    return np.where(np.isfinite(elev), elev, np.float32(obs_elev))
+
+
 class Patch32Cache:
     def __init__(self, root, patch_dir="gbif_naip_dinov3_patch32_v1"):
         self.root = Path(root).expanduser()
@@ -94,10 +118,11 @@ class Patch32Cache:
         lon = row["patch_lon"].astype(np.float32)
         elev = row["patch_elev"]
         if elev is None:
-            elev = np.full(lat.shape, row["elev_m"], np.float32)
+            elev = np.full(lat.shape, _finite_obs_elev(row["elev_m"]), np.float32)
         else:
             elev = elev.astype(np.float32)
-        day = np.full(lat.shape, row["event_day"], np.float32)
+            elev = np.where(np.isfinite(elev), elev, _finite_obs_elev(row["elev_m"]))
+        day = np.full(lat.shape, _finite_scalar(row["event_day"]), np.float32)
         coords = np.stack([lat, lon, elev, day], axis=-1)
         valid = np.isfinite(lat) & np.isfinite(lon)
         return {
@@ -130,11 +155,10 @@ class Patch32Cache:
                 lon = z["patch_lon"][j].astype(np.float32)
                 coords[row, ..., 0] = lat
                 coords[row, ..., 1] = lon
-                if "patch_elev" in z:
-                    coords[row, ..., 2] = z["patch_elev"][j].astype(np.float32)
-                else:
-                    coords[row, ..., 2] = self.manifest["elev_m"][m]
-                coords[row, ..., 3] = self.manifest["event_day"][m]
+                coords[row, ..., 2] = _patch_elev_or_obs(
+                    z, j, self.manifest["elev_m"][m], lat.shape
+                )
+                coords[row, ..., 3] = _finite_scalar(self.manifest["event_day"][m])
                 valid[row] = np.isfinite(lat).all() and np.isfinite(lon).all()
         return patch, coords, valid
 
