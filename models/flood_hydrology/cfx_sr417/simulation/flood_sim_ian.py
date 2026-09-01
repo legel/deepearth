@@ -490,7 +490,7 @@ def load_dem_for_sim(cell_size_m):
 
 def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
             use_infiltration=True, horton_arrays=None, max_deficit_m=None, gauge_rc=None,
-            initial_h=None, manning_n=None, ponded_infiltration=True):
+            initial_h=None, manning_n=None, ponded_infiltration=True, watershed_mask=None):
     """
     Bates et al. (2010) local inertia solver.
     use_infiltration=False sets Horton inf=0 so Pe=rain (all rain stays on surface).
@@ -512,6 +512,13 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
     the runoff-magnitude gap: scaling storage capacity to infinity only got runoff down to
     ~44% against an observed 28.9-31.4%, meaning capacity access, not capacity size, was the
     binding constraint.
+    watershed_mask: optional 2D boolean array, True where a cell is inside the real delineated
+    watershed. When given, frame_data['watershed_outflow_cms'] tracks net flux crossing the
+    watershed's own internal boundary (an aggregate over every face where the mask changes
+    value, not a single cell) instead of only the 4 outer domain edges — the domain box is
+    typically much larger than the real hydrologically-connected catchment, so boundary-outflow
+    metrics computed against the full domain structurally over- or under-state what actually
+    drains through the real watershed.
     Returns:
       h_max, cum_infil, flooded_ha_ts, frame_data
       where frame_data = {'frames': [...], 'infil_frames': [...], 'times_min': [...],
@@ -573,6 +580,22 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
     Pe_mm_hr_ts     = []
     infil_mm_hr_ts  = []
     mean_depth_ts   = []    # instantaneous mean depth of flooded cells per step
+    watershed_outflow_cms_ts = []   # only populated when watershed_mask is given
+
+    # Precompute which interior faces sit on the real watershed's own boundary, and which
+    # direction across each one counts as "leaving" — once, since the mask never changes.
+    # sign[face] = +1 where the lower-index cell is inside and the higher-index cell is
+    # outside (positive q there is outflow); -1 the other way round; 0 where both cells agree
+    # (not a watershed-boundary face at all, so it never contributes).
+    ws_sign_x = ws_sign_y = None
+    if watershed_mask is not None:
+        wm = watershed_mask.astype(bool)
+        inside_left,  inside_right  = wm[:, :-1], wm[:, 1:]     # (nrows, ncols-1), matches qx[:,1:-1]
+        ws_sign_x = np.where(inside_left & ~inside_right, 1.0,
+                     np.where(~inside_left & inside_right, -1.0, 0.0)).astype(np.float32)
+        inside_top,   inside_bottom = wm[:-1, :], wm[1:, :]     # (nrows-1, ncols), matches qy[1:-1,:]
+        ws_sign_y = np.where(inside_top & ~inside_bottom, 1.0,
+                     np.where(~inside_top & inside_bottom, -1.0, 0.0)).astype(np.float32)
 
     frame_depths    = []   # depth snapshots at frame_interval_min intervals
     frame_infil     = []   # cumulative infiltration snapshots [m]
@@ -639,7 +662,7 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
         # The per-step series are RATES that get integrated downstream against a dt_s-spaced
         # axis, so each must be this interval's TIME-WEIGHTED MEAN, not whatever the final
         # sub-step happened to leave behind.
-        acc_out_s = acc_out_t = acc_gauge = 0.0
+        acc_out_s = acc_out_t = acc_gauge = acc_ws = 0.0
         acc_Pe = acc_inf = 0.0
         sub_elapsed = 0.0
         n_sub = 0
@@ -720,6 +743,12 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
             outflow_south_ts_step = out_south
             outflow_total_ts_step = out_west + out_east + out_north + out_south
 
+            if watershed_mask is not None:
+                ws_outflow_ts_step = float(
+                    (ws_sign_x * qx[:, 1:-1]).sum() * dx +
+                    (ws_sign_y * qy[1:-1, :]).sum() * dx
+                )
+
             flux_div = dt / dx * (qx[:, :-1] - qx[:, 1:] + qy[:-1, :] - qy[1:, :])
 
             if ponded_infiltration:
@@ -775,12 +804,16 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
                 gqx = 0.5 * (qx[gr, gc] + qx[gr, gc + 1])
                 gqy = 0.5 * (qy[gr, gc] + qy[gr + 1, gc])
                 acc_gauge += float(np.hypot(gqx, gqy)) * dx * dt
+            if watershed_mask is not None:
+                acc_ws += ws_outflow_ts_step * dt
 
         if n_sub >= SUBSTEP_CAP:
             substep_cap_hits += 1
         w = sub_elapsed if sub_elapsed > 0 else 1.0
         outflow_south_ts_step = acc_out_s / w
         outflow_total_ts_step = acc_out_t / w
+        if watershed_mask is not None:
+            watershed_outflow_cms_ts.append(acc_ws / w)
 
         n_flooded = int((h[valid] > DEPTH_THR).sum())
         flooded_ha_ts.append(n_flooded * cell_ha)
@@ -838,6 +871,7 @@ def run_sim(z, dx, rain_sim, dt_s, frame_interval_min=30, verbose=True,
             "outflow_south_cms": np.array(outflow_south_cms_ts),
             "outflow_total_cms": np.array(outflow_total_cms_ts),
             "gauge_cms": np.array(gauge_cms_ts) if gauge_rc is not None else None,
+            "watershed_outflow_cms": np.array(watershed_outflow_cms_ts) if watershed_mask is not None else None,
             "initial_volume_m3": initial_volume_m3,
         },
     )

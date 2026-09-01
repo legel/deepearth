@@ -143,12 +143,51 @@ Milton should have looked meaningfully different, and it did not.
 
 **Where this points:** the solver's numerics are not the problem — mass balance closes to
 ±0.002 % across every configuration tested, on both storms. What has not been validated is the
-*setup*: a small, artificially-bounded rectangular domain (previously documented 35 % capture of
-the real 33.15 km² gauge watershed), fed only by direct rainfall with no external inflow and no
-baseflow/groundwater return, compared against a real single-channel gauge via a domain-boundary
-outflow sum the project's own validation script already calls "structurally approximate."
-**Next: test whether restricting the runoff calculation to the real delineated Gee Creek
-watershed (rather than the full domain box) closes some of this gap — not yet done.**
+*setup*: a small, artificially-bounded rectangular domain, fed only by direct rainfall with no
+external inflow and no baseflow/groundwater return, compared against a real single-channel gauge
+via a domain-boundary outflow sum the project's own validation script already calls
+"structurally approximate." That raised the domain-vs-real-watershed-area mismatch to the top
+candidate — tested directly below.
+
+### Domain-clip test — 2026-08-31, ruled out (in the wrong direction)
+
+Direct test of the hypothesis above. `flood_sim_ian.py`'s `run_sim()` gained a `watershed_mask`
+parameter: instead of summing outflow at the 4 outer domain-box edges, it now accumulates net
+flux across every internal face where the real delineated watershed boundary sits (an aggregate
+over the whole boundary, not a single noisy cell — a genuinely new diagnostic, not the unreliable
+gauge-cell metric). The current delineated catchment is **3.708 km²** — smaller than a
+previously-documented 11.65 km² figure, only ~11 % of the real 33.15 km² gauge area.
+
+| | domain-box runoff coeff | watershed-boundary runoff coeff | observed |
+|---|---|---|---|
+| Hurricane Ian | 71.35 % | **85.48 %** | 28.9-31.4 % |
+| Hurricane Milton | 67.70 % | **82.44 %** | 34.4-36.6 % |
+
+**Restricting to the real watershed made the overshoot worse on both storms, not better.**
+Mechanism, in hindsight: the 3.7 km² connected catchment isn't a random or representative slice
+of the domain — it's specifically the part D8 found efficiently connected to the channel, i.e.
+the flashiest, most well-drained part of the whole domain. Averaging in the other ~43 km² of
+poorly-connected, ponding-prone terrain was pulling the domain-wide number *down* toward
+observed, not diluting a better answer. **This meaningfully weakens the domain-area-mismatch
+hypothesis** rather than confirming it.
+
+### Where this leaves the magnitude gap — 2026-08-31
+
+Every mechanism this project's physics could plausibly explain has now been tested and found
+insufficient or wrong-directioned: roughness (3 independent methods), storage-capacity size,
+infiltration access, capacity+access combined at any physically plausible value, and now
+domain-vs-watershed area. Two independent real storms show the same ~2× overshoot despite clean
+mass balance and good timing on both, so this reads as a genuine structural property of the
+model rather than a parameter waiting to be found.
+
+**Untested candidates that remain, further out from what's been checked:** whether
+`AMC3_FACTOR = 0.07` (the antecedent-moisture correction applied to SSURGO Ksat for Ian's
+saturated conditions) is itself miscalibrated; whether the single point-station rainfall input
+(KSFB) overstates what actually fell across the real watershed; and — a real possibility given
+Florida's documented depression-dominated terrain — whether the real 33.15 km² USGS-documented
+drainage area itself overstates what actually contributes during any single storm, meaning the
+observed benchmark's own denominator may be too generous, not just the model's numerator too
+large.
 
 ### Re-run required before any of these are quoted again
 
@@ -283,11 +322,13 @@ instead of a single unreproducible number; use it rather than quoting a figure.
    "Combined: ponded infiltration + capacity sweep" above: 0.5×-4× SSURGO capacity, with ponded
    infiltration on, tops out at 59.25 % runoff against an observed 28.9-31.4 %. Only literally
    infinite capacity gets close. Not the answer on its own.
-2b. **Domain-vs-real-watershed mismatch — now the leading candidate, not yet tested.** Two
-    independent real storms (Ian, Milton) both show ~2× runoff overshoot despite clean mass
-    balance and good timing on both — the signature of a structural setup issue, not a
-    parameter. Test: restrict the runoff calculation to the real delineated Gee Creek
-    watershed rather than the full domain box, and see how much of the gap that alone closes.
+2b. **Domain-vs-real-watershed mismatch, tested 2026-08-31 — ruled out, wrong direction.** See
+    "Domain-clip test" above: restricting to the real 3.7 km² delineated watershed made the
+    overshoot *worse* (85.5 % / 82.4 % vs the domain-box's 71.4 % / 67.7 %), because the
+    connected catchment is the flashiest part of the domain, not a diluting factor. Remaining
+    untested candidates: the AMC3 antecedent-moisture factor, rainfall-input representativeness,
+    and whether the observed 33.15 km² gauge area itself overstates true contributing area
+    during any single storm. See "Where this leaves the magnitude gap" above.
 3. **Re-run Johns Lake's probability ensemble.** The main AOI's and site3's are both done
    (site3: 30.08 → 56.33 ha any risk, 18.53 → 33.54 at ≥1 %/yr, 8.47 → 13.68 at ≥10 %/yr, with
    peak depths falling as areas rise — the correct signature for removing fabricated depression
