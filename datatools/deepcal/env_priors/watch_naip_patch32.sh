@@ -15,6 +15,7 @@ set -euo pipefail
 : "${NAIP_WATCHDOG_LOG:=/workspace/logs/naip_patch32_watchdog.log}"
 : "${NAIP_RUN_LOG:=/workspace/logs/naip_patch32_full.log}"
 : "${NAIP_IDLE_SECONDS:=300}"
+: "${NAIP_STALE_SECONDS:=1800}"
 
 mkdir -p "$(dirname "$NAIP_WATCHDOG_LOG")"
 lock=/tmp/naip_patch32_watchdog.lock
@@ -24,7 +25,25 @@ fi
 trap 'rmdir "$lock"' EXIT
 
 while true; do
-  if ! pgrep -f "[b]uild_naip_m2m2024.py" >/dev/null; then
+  pid="$(pgrep -f "[b]uild_naip_m2m2024.py" | head -1 || true)"
+  if [ -n "$pid" ] && [ -f "$NAIP_RUN_LOG" ]; then
+    now="$(date +%s)"
+    modified="$(stat -c %Y "$NAIP_RUN_LOG" 2>/dev/null || echo "$now")"
+    age="$((now - modified))"
+    if [ "$age" -gt "$NAIP_STALE_SECONDS" ]; then
+      {
+        date -Is
+        echo "restarting stale build_naip_m2m2024.py pid=$pid log_age=${age}s"
+      } >> "$NAIP_WATCHDOG_LOG"
+      kill "$pid" 2>/dev/null || true
+      sleep 20
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+      fi
+      pid=""
+    fi
+  fi
+  if [ -z "$pid" ]; then
     {
       date -Is
       echo "starting build_naip_m2m2024.py"
