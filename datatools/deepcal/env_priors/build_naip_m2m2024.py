@@ -54,6 +54,7 @@ BATCH_TILES = int(os.environ.get("NAIP_BATCH_TILES", 4))        # scenes per M2M
 DLW = int(os.environ.get("NAIP_DLW", 2))                        # parallel scene downloads
 EMBED_BATCH = int(os.environ.get("NAIP_EMBED_BATCH", 2))        # DINOv3 ViT-L patch forward microbatch
 PATCH_ROWS = int(os.environ.get("NAIP_PATCH_ROWS", 16))         # obs per scene chunk held through DINO + write buffer
+PATCH_FLUSH_ROWS = int(os.environ.get("NAIP_PATCH_FLUSH_ROWS", 64))
 FETCH_TIMEOUT = int(os.environ.get("NAIP_FETCH_TIMEOUT", 600))  # max seconds to wait on a scene stream
 SAVE_IMAGERY = os.environ.get("NAIP_SAVE_IMAGERY", "0") == "1"
 SAVE_PATCH32 = os.environ.get("NAIP_SAVE_PATCH32", "1") == "1"
@@ -402,7 +403,7 @@ def main():
                         np.savez_compressed(imp, gbifID=np.array([int(gid[i]) for i in keep], np.int64),
                                             patch=np.stack(patches).astype(np.uint8))
                         if nersc_put(imp, imp.name): imp.unlink()
-                    if len(patch_buf["gbifID"]) >= 64:
+                    if len(patch_buf["gbifID"]) >= PATCH_FLUSH_ROWS:
                         flush_patch_tokens()
         finally:
             if cleanup_scene:
@@ -443,7 +444,7 @@ def main():
                     process_scene(futs[fut], p, True)
                 scenes_done += 1
         if len(buf["gbifID"]) >= 4000: flush_tokens()
-        if len(patch_buf["gbifID"]) >= 64: flush_patch_tokens()
+        if len(patch_buf["gbifID"]) >= PATCH_FLUSH_ROWS: flush_patch_tokens()
         print(f"  scenes {min(w+BATCH_TILES,len(todo))}/{len(todo)} | {scenes_done}/{len(batch)} scene files handled | {n_ok} obs embedded | {n_ok/max(time.time()-t0,1):.1f} obs/s", flush=True)
     flush_tokens()
     flush_patch_tokens()
