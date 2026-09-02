@@ -1,9 +1,9 @@
-"""Fill no-NAIP rows with Sentinel-2 RGB DINOv3 patch32 embeddings.
+"""Fill missing rows with Sentinel-2 RGB DINOv3 patch32 embeddings.
 
-This builder is intentionally narrow: it reads the NAIP patch32 manifest,
-selects rows where public NAIP/STAC has no candidate, and writes compatible
-`chunk*.npz` files under a separate fallback directory. The primary NAIP cache
-remains untouched while long extraction is running.
+By default this reads the NAIP patch32 manifest, selects rows where public
+NAIP/STAC has no candidate, and writes compatible `chunk*.npz` files under a
+separate fallback directory. With `--only-ids-csv`, it instead backfills the
+listed observation ids. The primary NAIP cache remains untouched.
 """
 from __future__ import annotations
 
@@ -129,8 +129,26 @@ def fetch_rgb(row):
     return ((rgb * 255).astype(np.uint8), item.get("id", "")), None
 
 
-def load_rows(manifest):
-    mask = ~manifest["has_candidate_tile"].astype(bool)
+def load_only_ids(path):
+    if not path:
+        return None
+    ids = set()
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        field = "gbifID" if "gbifID" in (reader.fieldnames or []) else (reader.fieldnames or [""])[0]
+        for row in reader:
+            value = row.get(field, "")
+            if value:
+                ids.add(int(value))
+    return ids
+
+
+def load_rows(manifest, only_ids=None):
+    if only_ids is None:
+        mask = ~manifest["has_candidate_tile"].astype(bool)
+    else:
+        ids = manifest["gbifID"].astype(np.int64)
+        mask = np.array([int(g) in only_ids for g in ids], bool)
     rows = []
     for i in np.flatnonzero(mask):
         rows.append({
@@ -149,6 +167,7 @@ def main():
     parser.add_argument("--cache", default=os.environ.get("DEEPCAL_CACHE", "."))
     parser.add_argument("--patch-dir", default="gbif_naip_dinov3_patch32_v1")
     parser.add_argument("--out-dir", default="gbif_sentinel2_dinov3_patch32_fallback_v1")
+    parser.add_argument("--only-ids-csv", default=os.environ.get("SENTINEL_ONLY_IDS_CSV", ""))
     parser.add_argument("--max-rows", type=int, default=int(os.environ.get("SENTINEL_PATCH_MAX_ROWS", "0")))
     args = parser.parse_args()
 
@@ -157,7 +176,8 @@ def main():
     out = root / args.out_dir
     out.mkdir(parents=True, exist_ok=True)
     manifest = np.load(primary / "manifest.npz")
-    rows_all = load_rows(manifest)
+    only_ids = load_only_ids(args.only_ids_csv)
+    rows_all = load_rows(manifest, only_ids)
     rows = rows_all
     if args.max_rows:
         rows = rows[:args.max_rows]
@@ -180,7 +200,7 @@ def main():
     with open(out / "metadata.json", "w") as f:
         json.dump({
             "model": "facebook/dinov3-vitl16-pretrain-sat493m",
-            "source": "Sentinel-2 L2A RGB fallback for rows without public NAIP/STAC candidate",
+            "source": "Sentinel-2 L2A RGB fallback for requested missing rows" if only_ids else "Sentinel-2 L2A RGB fallback for rows without public NAIP/STAC candidate",
             "source_year": YEAR,
             "cloud_lt": CLOUD_LT,
             "patch_extent_m": EXT,
@@ -189,6 +209,7 @@ def main():
             "dtype": "float16",
             "row_key": "gbifID",
             "primary_patch_dir": args.patch_dir,
+            "only_ids_csv": args.only_ids_csv,
         }, f, indent=2)
 
     print(f"{len(rows)} Sentinel fallback rows remaining | out={out}", flush=True)
