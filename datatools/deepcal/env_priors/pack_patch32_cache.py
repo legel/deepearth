@@ -57,38 +57,41 @@ def main():
     chunks_seen = 0
     for file, is_fallback in chunk_files(root, args.patch_dir, args.fallback_dir):
         z = np.load(file, allow_pickle=True)
-        gids = z["gbifID"].astype(np.int64)
-        p = z["patch"]
-        lat = z["patch_lat"].astype(np.float32)
-        lon = z["patch_lon"].astype(np.float32)
-        elev = z["patch_elev"].astype(np.float32) if "patch_elev" in z else None
-        chunks_seen += 1
-        rows = np.array([row_for_id.get(int(g), -1) for g in gids], np.int64)
-        if (rows < 0).any():
-            bad = int(gids[int(np.flatnonzero(rows < 0)[0])])
-            raise SystemExit(f"{file} gbifID {bad} is absent from manifest")
-        keep = ~np.asarray(valid[rows], dtype=bool)
-        if not is_fallback and not keep.all():
-            bad = int(gids[int(np.flatnonzero(~keep)[0])])
-            raise SystemExit(f"duplicate primary gbifID {bad} in {file}")
-        if not keep.any():
-            continue
-        src_rows = np.flatnonzero(keep)
-        dst_rows = rows[keep]
-        patch[dst_rows] = p[src_rows]
-        coords[dst_rows, ..., 0] = lat[src_rows]
-        coords[dst_rows, ..., 1] = lon[src_rows]
-        if elev is None:
-            coords[dst_rows, ..., 2] = manifest["elev_m"][dst_rows, None, None].astype(np.float32)
-        else:
-            fallback_elev = manifest["elev_m"][dst_rows, None, None].astype(np.float32)
-            coords[dst_rows, ..., 2] = np.where(
-                np.isfinite(elev[src_rows]), elev[src_rows], fallback_elev
-            )
-        coords[dst_rows, ..., 3] = manifest["event_day"][dst_rows, None, None].astype(np.float32)
-        valid[dst_rows] = np.isfinite(lat[src_rows]).all(axis=(1, 2)) \
-            & np.isfinite(lon[src_rows]).all(axis=(1, 2))
-        rows_written += len(src_rows)
+        try:
+            gids = z["gbifID"].astype(np.int64)
+            p = z["patch"]
+            lat = z["patch_lat"].astype(np.float32)
+            lon = z["patch_lon"].astype(np.float32)
+            elev = z["patch_elev"].astype(np.float32) if "patch_elev" in z else None
+            chunks_seen += 1
+            rows = np.array([row_for_id.get(int(g), -1) for g in gids], np.int64)
+            if (rows < 0).any():
+                bad = int(gids[int(np.flatnonzero(rows < 0)[0])])
+                raise SystemExit(f"{file} gbifID {bad} is absent from manifest")
+            keep = ~np.asarray(valid[rows], dtype=bool)
+            if not is_fallback and not keep.all():
+                bad = int(gids[int(np.flatnonzero(~keep)[0])])
+                raise SystemExit(f"duplicate primary gbifID {bad} in {file}")
+            if not keep.any():
+                continue
+            src_rows = np.flatnonzero(keep)
+            dst_rows = rows[keep]
+            patch[dst_rows] = p[src_rows]
+            coords[dst_rows, ..., 0] = lat[src_rows]
+            coords[dst_rows, ..., 1] = lon[src_rows]
+            if elev is None:
+                coords[dst_rows, ..., 2] = manifest["elev_m"][dst_rows, None, None].astype(np.float32)
+            else:
+                fallback_elev = manifest["elev_m"][dst_rows, None, None].astype(np.float32)
+                coords[dst_rows, ..., 2] = np.where(
+                    np.isfinite(elev[src_rows]), elev[src_rows], fallback_elev
+                )
+            coords[dst_rows, ..., 3] = manifest["event_day"][dst_rows, None, None].astype(np.float32)
+            valid[dst_rows] = np.isfinite(lat[src_rows]).all(axis=(1, 2)) \
+                & np.isfinite(lon[src_rows]).all(axis=(1, 2))
+            rows_written += len(src_rows)
+        finally:
+            z.close()
         if chunks_seen % 100 == 0:
             patch.flush()
             coords.flush()
