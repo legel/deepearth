@@ -143,12 +143,12 @@ def main() -> None:
         )
         return
 
-    files = sorted(glob.glob(str(patch / PATCH_CHUNK_GLOB)))
+    files = [(Path(file), False) for file in sorted(glob.glob(str(patch / PATCH_CHUNK_GLOB)))]
     for fallback in args.fallback_dir:
         fpath = Path(fallback)
         if not fpath.is_absolute():
             fpath = root / fpath
-        files.extend(sorted(glob.glob(str(fpath / PATCH_CHUNK_GLOB))))
+        files.extend((Path(file), True) for file in sorted(glob.glob(str(fpath / PATCH_CHUNK_GLOB))))
     if not files:
         raise SystemExit(f"no patch chunks under {patch}")
     total_files = len(files)
@@ -158,20 +158,24 @@ def main() -> None:
     seen, rows, bytes_total = set(), 0, 0
     manifest_set = set(map(int, all_ids))
     manifest_row = {int(g): i for i, g in enumerate(all_ids)}
-    for file in files:
+    for file, is_fallback in files:
         z = np.load(file, allow_pickle=True)
         if args.coverage_only:
             if "gbifID" not in z:
                 raise SystemExit(f"{file} missing gbifID")
             gid = z["gbifID"].astype(np.int64)
+            added = 0
             for g in gid:
                 gi = int(g)
                 if gi not in manifest_set:
                     raise SystemExit(f"{file} gbifID {gi} is absent from manifest")
                 if gi in seen:
+                    if is_fallback:
+                        continue
                     raise SystemExit(f"duplicate chunk gbifID {gi}")
                 seen.add(gi)
-            rows += len(gid)
+                added += 1
+            rows += added
             continue
         for key in ("gbifID", "naip_year", "naip_scene", "patch", "patch_lat", "patch_lon", "has_naip"):
             if key not in z:
@@ -199,8 +203,11 @@ def main() -> None:
             if gi not in manifest_set:
                 raise SystemExit(f"{file} gbifID {gi} is absent from manifest")
             if gi in seen:
+                if is_fallback:
+                    continue
                 raise SystemExit(f"duplicate chunk gbifID {gi}")
             seen.add(gi)
+            rows += 1
             m = manifest_row[gi]
             if "patch_elev" in z:
                 elev = z["patch_elev"][row].astype(np.float32)
@@ -216,7 +223,6 @@ def main() -> None:
             ], axis=-1)
             if not np.isfinite(coords).all():
                 raise SystemExit(f"{file} Earth4D coords must be finite")
-        rows += len(gid)
         bytes_total += patch_tensor.nbytes
 
     missing = len(all_ids) - len(seen)

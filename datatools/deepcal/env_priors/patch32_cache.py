@@ -72,10 +72,10 @@ class Patch32Cache:
         self.build_index(write=False)
 
     def _chunk_files(self):
-        files = list(self.path.glob(CHUNK_GLOB))
+        files = sorted(self.path.glob(CHUNK_GLOB))
         for path in self.fallback_paths:
-            files.extend(path.glob(CHUNK_GLOB))
-        return sorted(files)
+            files.extend(sorted(path.glob(CHUNK_GLOB)))
+        return files
 
     def build_index(self, write=True, chunks=None):
         append = chunks is not None
@@ -88,10 +88,13 @@ class Patch32Cache:
             ids, chunk_names, rows = [], [], []
         seen = set(ids)
         for chunk in sorted(chunks or self._chunk_files()):
+            is_fallback = not chunk.is_relative_to(self.path)
             z = np.load(chunk, allow_pickle=True)
             for row, g in enumerate(z["gbifID"].astype(np.int64)):
                 gid = int(g)
                 if gid in seen:
+                    if is_fallback:
+                        continue
                     raise ValueError(f"duplicate gbifID {gid} in {chunk}")
                 seen.add(gid)
                 self.chunk_row_for_id[gid] = (chunk, row)
