@@ -217,14 +217,32 @@ def main() -> None:
             if patch_tensor.dtype not in (np.float16, np.float32):
                 raise SystemExit(f"{file} patch dtype must be float16 or float32")
             patch_nbytes = patch_tensor.nbytes
-        if z["patch_lat"].shape != (len(gid), 32, 32):
-            raise SystemExit(f"{file} patch_lat shape {z['patch_lat'].shape}")
-        if z["patch_lon"].shape != (len(gid), 32, 32):
-            raise SystemExit(f"{file} patch_lon shape {z['patch_lon'].shape}")
-        if "patch_elev" in z and z["patch_elev"].shape != (len(gid), 32, 32):
-            raise SystemExit(f"{file} patch_elev shape {z['patch_elev'].shape}")
-        if not (np.isfinite(z["patch_lat"]).all() and np.isfinite(z["patch_lon"]).all()):
-            raise SystemExit(f"{file} patch coordinates must be finite")
+        if args.schema_only_payload:
+            for coord_key in ("patch_lat", "patch_lon"):
+                coord_shape, coord_dtype, coord_fortran = _npz_header(file, coord_key)
+                if coord_fortran:
+                    raise SystemExit(f"{file} {coord_key} must be C-contiguous")
+                if coord_shape != (len(gid), 32, 32):
+                    raise SystemExit(f"{file} {coord_key} shape {coord_shape}")
+                if coord_dtype != np.dtype(np.float32):
+                    raise SystemExit(f"{file} {coord_key} dtype must be float32")
+            if "patch_elev" in z:
+                elev_shape, elev_dtype, elev_fortran = _npz_header(file, "patch_elev")
+                if elev_fortran:
+                    raise SystemExit(f"{file} patch_elev must be C-contiguous")
+                if elev_shape != (len(gid), 32, 32):
+                    raise SystemExit(f"{file} patch_elev shape {elev_shape}")
+                if elev_dtype != np.dtype(np.float32):
+                    raise SystemExit(f"{file} patch_elev dtype must be float32")
+        else:
+            if z["patch_lat"].shape != (len(gid), 32, 32):
+                raise SystemExit(f"{file} patch_lat shape {z['patch_lat'].shape}")
+            if z["patch_lon"].shape != (len(gid), 32, 32):
+                raise SystemExit(f"{file} patch_lon shape {z['patch_lon'].shape}")
+            if "patch_elev" in z and z["patch_elev"].shape != (len(gid), 32, 32):
+                raise SystemExit(f"{file} patch_elev shape {z['patch_elev'].shape}")
+            if not (np.isfinite(z["patch_lat"]).all() and np.isfinite(z["patch_lon"]).all()):
+                raise SystemExit(f"{file} patch coordinates must be finite")
         if not np.all(z["has_naip"].astype(bool)):
             raise SystemExit(f"{file} has_naip must be true for every stored row")
         for row, g in enumerate(gid):
@@ -238,20 +256,21 @@ def main() -> None:
             seen.add(gi)
             rows += 1
             m = manifest_row[gi]
-            if "patch_elev" in z:
+            if not args.schema_only_payload and "patch_elev" in z:
                 elev = z["patch_elev"][row].astype(np.float32)
                 elev = np.where(np.isfinite(elev), elev, _finite_scalar(manifest["elev_m"][m]))
             else:
                 elev = np.full((32, 32), _finite_scalar(manifest["elev_m"][m]), np.float32)
             day = np.full((32, 32), _finite_scalar(manifest["event_day"][m]), np.float32)
-            coords = np.stack([
-                z["patch_lat"][row].astype(np.float32),
-                z["patch_lon"][row].astype(np.float32),
-                elev,
-                day,
-            ], axis=-1)
-            if not np.isfinite(coords).all():
-                raise SystemExit(f"{file} Earth4D coords must be finite")
+            if not args.schema_only_payload:
+                coords = np.stack([
+                    z["patch_lat"][row].astype(np.float32),
+                    z["patch_lon"][row].astype(np.float32),
+                    elev,
+                    day,
+                ], axis=-1)
+                if not np.isfinite(coords).all():
+                    raise SystemExit(f"{file} Earth4D coords must be finite")
         bytes_total += patch_nbytes
 
     missing = len(all_ids) - len(seen)
