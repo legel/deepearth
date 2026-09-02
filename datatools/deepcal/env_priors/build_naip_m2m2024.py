@@ -40,8 +40,8 @@ TOKENS = CACHE / "gbif_tokens"                                  # train/test sha
 COORDS = CACHE / "env_priors" / "obs_coords.npz"                # fallback: {gbifID, lat, lon}
 TOK = CACHE / os.environ.get("NAIP_TOKEN_DIR", "gbif_naip_tokens"); TOK.mkdir(parents=True, exist_ok=True)
 PATCH = CACHE / os.environ.get("NAIP_PATCH_DIR", "gbif_naip_dinov3_patch32_v1"); PATCH.mkdir(parents=True, exist_ok=True)
-IMG = CACHE / "env_priors" / "_naip2024_imagery"; IMG.mkdir(parents=True, exist_ok=True)
-SCENES = CACHE / "env_priors" / "_naip2024_scenes"; SCENES.mkdir(parents=True, exist_ok=True)
+IMG = CACHE / os.environ.get("NAIP_IMAGE_DIR", "env_priors/_naip2024_imagery"); IMG.mkdir(parents=True, exist_ok=True)
+SCENES = CACHE / os.environ.get("NAIP_SCENES_DIR", "env_priors/_naip2024_scenes"); SCENES.mkdir(parents=True, exist_ok=True)
 CKPT = Path(os.environ.get("NAIP_POOL_CKPT", str(CACHE / "env_priors" / "naip_m2m2024_ckpt.pkl")))
 PATCH_CKPT = Path(os.environ.get("NAIP_PATCH_CKPT", str(CACHE / "env_priors" / "naip_m2m2024_patch32_ckpt.pkl")))
 BASE = "https://m2m.cr.usgs.gov/api/api/json/stable"
