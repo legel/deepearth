@@ -3,6 +3,7 @@ import argparse
 import ctypes
 import gc
 import json
+import mmap
 import shutil
 from pathlib import Path
 
@@ -16,6 +17,17 @@ def trim_memory():
         ctypes.CDLL("libc.so.6").malloc_trim(0)
     except Exception:
         pass
+
+
+def release_mmap_pages(*arrays):
+    for array in arrays:
+        handle = getattr(array, "_mmap", None)
+        if handle is None or not hasattr(handle, "madvise"):
+            continue
+        try:
+            handle.madvise(mmap.MADV_DONTNEED)
+        except Exception:
+            pass
 
 
 def chunk_files(root, patch_dir, fallback_dirs):
@@ -112,12 +124,14 @@ def main():
             patch.flush()
             coords.flush()
             valid.flush()
+            release_mmap_pages(patch, coords, valid)
             trim_memory()
             print(f"packed chunks={chunks_seen:,} rows={int(valid.sum()):,}/{n:,}", flush=True)
 
     patch.flush()
     coords.flush()
     valid.flush()
+    release_mmap_pages(patch, coords, valid)
     trim_memory()
     meta = {
         "source_patch_dir": args.patch_dir,
