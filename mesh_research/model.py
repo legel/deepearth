@@ -56,7 +56,7 @@ class Experiment:
 
     seed: int = int(os.environ.get("MESH_SEED", "1337"))
     steps: int = int(os.environ.get("MESH_STEPS", "1000"))
-    batch: int = 256
+    batch: int = int(os.environ.get("MESH_BATCH", "256"))
     width: int = int(os.environ.get("MESH_WIDTH", "192"))
     levels: int = int(os.environ.get("MESH_LEVELS", "12"))
     hash_log2: int = int(os.environ.get("MESH_HASH_LOG2", "14"))
@@ -2775,6 +2775,20 @@ def attach_naip_patches(source, cache: str, device: str) -> None:
 
             patch_cache = Patch32Cache(root)
             original_batch = source.batch
+            source_ids = np.asarray(source.gbifID).astype(np.int64)
+            train_rows = source.train_index.detach().cpu().numpy() \
+                if torch.is_tensor(source.train_index) else np.asarray(source.train_index)
+            rows_by_chunk = {}
+            for row in train_rows:
+                gid = int(source_ids[int(row)])
+                item = patch_cache.chunk_row_for_id.get(gid)
+                if item is None:
+                    continue
+                rows_by_chunk.setdefault(item[0].name, []).append(int(row))
+            source.naip_patch_train_chunks = [
+                np.asarray(rows, dtype=np.int64) for rows in rows_by_chunk.values()
+                if rows
+            ]
 
             def batch_with_naip(idx):
                 values, observed, coords, neighbors, manifolds, neighbor_values = original_batch(idx)
@@ -2795,7 +2809,8 @@ def attach_naip_patches(source, cache: str, device: str) -> None:
             source.naip_patch_streaming = True
             print(
                 f"NAIP DINOv3 patch32 streaming enabled for {source.n:,} observations  "
-                f"estimated eager tensor {eager_gb:.1f}GB",
+                f"estimated eager tensor {eager_gb:.1f}GB  "
+                f"train shards {len(source.naip_patch_train_chunks):,}",
                 flush=True,
             )
             return
@@ -2865,6 +2880,18 @@ def attach_naip_patches(source, cache: str, device: str) -> None:
         f"tokens {tuple(source.naip_patch_tokens.shape)}",
         flush=True,
     )
+
+
+def sample_train_index(source, design: Experiment, device: str) -> torch.Tensor:
+    chunks = getattr(source, "naip_patch_train_chunks", None)
+    if chunks:
+        chunk_id = int(torch.randint(len(chunks), (1,), device=device).item())
+        rows = torch.as_tensor(chunks[chunk_id], device=device)
+        take = torch.randint(len(rows), (design.batch,), device=device)
+        return rows[take]
+    return source.train_index[
+        torch.randint(len(source.train_index), (design.batch,), device=device)
+    ]
 
 
 def train(
@@ -3102,7 +3129,7 @@ def train(
                 f"graph lr scale {design.graph_learning_rate_scale:g}",
                 flush=True,
             )
-        index = source.train_index[torch.randint(len(source.train_index), (design.batch,), device=device)]
+        index = sample_train_index(source, design, device)
         values, observed, coords, neighbors, manifolds, neighbor_values = source.batch(index)
         context = model.context(
             coords, neighbors, manifolds, neighbor_values
