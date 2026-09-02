@@ -67,6 +67,7 @@ class Experiment:
     weight_decay: float = 1e-3
     reader_steps: int = int(os.environ.get("MESH_READER_STEPS", "100"))
     graph_learning_rate_scale: float = float(os.environ.get("MESH_GRAPH_LR_SCALE", "0.02"))
+    patch_shard_steps: int = int(os.environ.get("MESH_PATCH_SHARD_STEPS", "8"))
     init_checkpoint: str = os.environ.get("MESH_INIT_CHECKPOINT", "")
     reader_only: bool = os.environ.get("MESH_READER_ONLY", "0") == "1"
 
@@ -2882,10 +2883,18 @@ def attach_naip_patches(source, cache: str, device: str) -> None:
     )
 
 
-def sample_train_index(source, design: Experiment, device: str) -> torch.Tensor:
+def sample_train_index(
+    source, design: Experiment, device: str, step: int = 0
+) -> torch.Tensor:
     chunks = getattr(source, "naip_patch_train_chunks", None)
     if chunks:
-        chunk_id = int(torch.randint(len(chunks), (1,), device=device).item())
+        shard_steps = max(1, int(design.patch_shard_steps))
+        chunk_id = int(
+            torch.randint(len(chunks), (1,), device=device).item()
+            if step % shard_steps == 0
+            else getattr(source, "_naip_patch_train_chunk_id", 0)
+        )
+        source._naip_patch_train_chunk_id = chunk_id
         rows = torch.as_tensor(chunks[chunk_id], device=device)
         take = torch.randint(len(rows), (design.batch,), device=device)
         return rows[take]
@@ -3129,7 +3138,7 @@ def train(
                 f"graph lr scale {design.graph_learning_rate_scale:g}",
                 flush=True,
             )
-        index = sample_train_index(source, design, device)
+        index = sample_train_index(source, design, device, step)
         values, observed, coords, neighbors, manifolds, neighbor_values = source.batch(index)
         context = model.context(
             coords, neighbors, manifolds, neighbor_values

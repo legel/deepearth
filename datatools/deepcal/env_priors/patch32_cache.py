@@ -1,5 +1,7 @@
 """Read DINOv3 patch32 caches by gbifID."""
 import argparse
+import os
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +25,7 @@ def _finite_obs_elev(elev):
 
 def _patch_elev_or_obs(chunk, row, obs_elev, shape):
     obs_elev = _finite_obs_elev(obs_elev)
-    if "patch_elev" not in chunk:
+    if "patch_elev" not in chunk or chunk["patch_elev"] is None:
         return np.full(shape, obs_elev, np.float32)
     elev = chunk["patch_elev"][row].astype(np.float32)
     if np.isfinite(elev).all():
@@ -35,6 +37,8 @@ class Patch32Cache:
     def __init__(self, root, patch_dir="gbif_naip_dinov3_patch32_v1"):
         self.root = Path(root).expanduser()
         self.path = self.root / patch_dir
+        self.max_open_chunks = int(os.environ.get("PATCH32_OPEN_CHUNKS", "2"))
+        self._chunks = OrderedDict()
         self.manifest = np.load(self.path / "manifest.npz")
         self.ids = self.manifest["gbifID"].astype(np.int64)
         self.row = {int(g): i for i, g in enumerate(self.ids)}
@@ -86,6 +90,26 @@ class Patch32Cache:
                 row=np.array(rows, np.int32),
             )
 
+    def _chunk(self, path):
+        path = Path(path)
+        cached = self._chunks.get(path)
+        if cached is not None:
+            self._chunks.move_to_end(path)
+            return cached
+        z = np.load(path, allow_pickle=True)
+        cached = {
+            "patch": z["patch"],
+            "patch_lat": z["patch_lat"],
+            "patch_lon": z["patch_lon"],
+            "patch_elev": z["patch_elev"] if "patch_elev" in z else None,
+            "naip_year": z["naip_year"] if "naip_year" in z else None,
+            "naip_scene": z["naip_scene"] if "naip_scene" in z else None,
+        }
+        self._chunks[path] = cached
+        while len(self._chunks) > self.max_open_chunks:
+            self._chunks.popitem(last=False)
+        return cached
+
     def has(self, gbif_id):
         return int(gbif_id) in self.chunk_row_for_id
 
@@ -106,14 +130,14 @@ class Patch32Cache:
         if not out["has_naip"]:
             return out
         chunk, j = self.chunk_row_for_id[gid]
-        z = np.load(chunk, allow_pickle=True)
+        z = self._chunk(chunk)
         out.update({
             "patch": z["patch"][j],
             "patch_lat": z["patch_lat"][j],
             "patch_lon": z["patch_lon"][j],
-            "patch_elev": z["patch_elev"][j] if "patch_elev" in z else None,
-            "naip_year": z["naip_year"][j],
-            "naip_scene": z["naip_scene"][j],
+            "patch_elev": z["patch_elev"][j] if z["patch_elev"] is not None else None,
+            "naip_year": z["naip_year"][j] if z["naip_year"] is not None else None,
+            "naip_scene": z["naip_scene"][j] if z["naip_scene"] is not None else None,
         })
         return out
 
@@ -161,7 +185,7 @@ class Patch32Cache:
             chunk, j = item
             by_chunk.setdefault(chunk, []).append((row, j, gid))
         for chunk, rows in by_chunk.items():
-            z = np.load(chunk, allow_pickle=True)
+            z = self._chunk(chunk)
             for row, j, gid in rows:
                 m = self.row[gid]
                 patch[row] = z["patch"][j]
