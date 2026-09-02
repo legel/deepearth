@@ -27,6 +27,53 @@ CENSUS_SAMPLES = 512
 CENSUS_SEED = 20260814
 
 
+def load_model(experiment, cache: str, device: str):
+    """Build the experiment model and load a checkpoint without taking a train step."""
+    source, variable_specs, always_dims = experiment.load_data(cache, device)
+    experiment.attach_naip_patches(source, cache, device)
+    design = experiment.EXPERIMENT
+    if design.width != 128:
+        candidate_rng = torch.random.get_rng_state()
+        candidate_cuda_rng = torch.cuda.get_rng_state_all() \
+            if str(device).startswith("cuda") else None
+        control = experiment.build_model(
+            source, variable_specs, always_dims, device,
+            experiment.replace(design, width=128),
+        )
+        control_rng = torch.random.get_rng_state()
+        control_cuda_rng = torch.cuda.get_rng_state_all() \
+            if str(device).startswith("cuda") else None
+        del control
+        if str(device).startswith("cuda"):
+            torch.cuda.empty_cache()
+            torch.cuda.set_rng_state_all(candidate_cuda_rng)
+        torch.random.set_rng_state(candidate_rng)
+        model = experiment.build_model(
+            source, variable_specs, always_dims, device, design
+        )
+        torch.random.set_rng_state(control_rng)
+        if str(device).startswith("cuda"):
+            torch.cuda.set_rng_state_all(control_cuda_rng)
+    else:
+        model = experiment.build_model(
+            source, variable_specs, always_dims, device, design
+        )
+    checkpoint = Path(
+        design.init_checkpoint
+        or os.environ.get("MESH_INIT_CHECKPOINT", "")
+        or Path(experiment.__file__).with_name("checkpoint.pt")
+    ).expanduser()
+    state = torch.load(checkpoint, map_location=device, weights_only=True)
+    incompatible = model.load_state_dict(state, strict=False)
+    print(
+        f"loaded checkpoint {checkpoint}  "
+        f"missing={len(incompatible.missing_keys)}  "
+        f"unexpected={len(incompatible.unexpected_keys)}",
+        flush=True,
+    )
+    return model, source
+
+
 @torch.no_grad()
 def likelihood(model, source, args):
     """Run the production autoresearch likelihood methods on this model's decoder."""
@@ -80,7 +127,7 @@ def main():
     import model as experiment
     from deepearth.autoresearch.main.harness import evaluate as canonical
     os.environ.setdefault("MESH_SAVE_CHECKPOINT", "0")
-    model, source = experiment.train(args.cache, args.device)
+    model, source = load_model(experiment, args.cache, args.device)
     if BENCHMARK_ROWS:
         source.test = source.test[:BENCHMARK_ROWS]
     if BENCHMARK_TRAIN_ROWS:
