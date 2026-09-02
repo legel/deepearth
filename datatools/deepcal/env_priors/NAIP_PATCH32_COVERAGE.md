@@ -44,3 +44,14 @@ python datatools/deepcal/env_priors/verify_naip_patch32.py \
   --require-complete \
   --split-summary
 ```
+
+If fallback remote-sensing chunks are needed for no-NAIP rows, verify the
+combined artifact with:
+
+```bash
+python datatools/deepcal/env_priors/verify_naip_patch32.py \
+  --cache "$DEEPCAL_CACHE" \
+  --fallback-dir gbif_sentinel2_dinov3_patch32_fallback_v1 \
+  --require-complete \
+  --split-summary
+```

@@ -57,6 +57,16 @@ Best input for Lance to provide:
 
 That avoids repeated catalog/download negotiation and lets the builder stream patches directly from the provided scenes.
 
+Fallback for rows outside NAIP/STAC coverage:
+
+- `build_sentinel_dinov3_patch32_fallback.py` fills only manifest rows where
+  `has_candidate_tile=False`.
+- It uses Sentinel-2 L2A RGB from STAC, runs the same DINOv3-SAT493M patch
+  extractor, and writes compatible `(32,32,1024)` chunks under
+  `gbif_sentinel2_dinov3_patch32_fallback_v1`.
+- Use this as a fallback directory rather than writing into the active NAIP
+  cache while NAIP extraction is still appending chunks.
+
 Feedback routing:
 
 - Use `/build` for concrete implementation requirements, data engineering

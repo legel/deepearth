@@ -40,6 +40,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=".")
     ap.add_argument("--patch-dir", default="gbif_naip_dinov3_patch32_v1")
+    ap.add_argument("--fallback-dir", action="append", default=[])
     ap.add_argument("--allow-prefix", action="store_true")
     ap.add_argument("--require-complete", action="store_true")
     ap.add_argument("--estimate-only", action="store_true")
@@ -143,6 +144,11 @@ def main() -> None:
         return
 
     files = sorted(glob.glob(str(patch / PATCH_CHUNK_GLOB)))
+    for fallback in args.fallback_dir:
+        fpath = Path(fallback)
+        if not fpath.is_absolute():
+            fpath = root / fpath
+        files.extend(sorted(glob.glob(str(fpath / PATCH_CHUNK_GLOB))))
     if not files:
         raise SystemExit(f"no patch chunks under {patch}")
     total_files = len(files)

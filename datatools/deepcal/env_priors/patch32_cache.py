@@ -34,16 +34,23 @@ def _patch_elev_or_obs(chunk, row, obs_elev, shape):
 
 
 class Patch32Cache:
-    def __init__(self, root, patch_dir="gbif_naip_dinov3_patch32_v1"):
+    def __init__(self, root, patch_dir="gbif_naip_dinov3_patch32_v1", fallback_dirs=None):
         self.root = Path(root).expanduser()
         self.path = self.root / patch_dir
+        fallback_dirs = fallback_dirs or os.environ.get("PATCH32_FALLBACK_DIRS", "")
+        if isinstance(fallback_dirs, str):
+            fallback_dirs = [p for p in fallback_dirs.split(":") if p]
+        self.fallback_paths = [
+            (self.root / p if not Path(p).is_absolute() else Path(p))
+            for p in fallback_dirs
+        ]
         self.max_open_chunks = int(os.environ.get("PATCH32_OPEN_CHUNKS", "2"))
         self._chunks = OrderedDict()
         self.manifest = np.load(self.path / "manifest.npz")
         self.ids = self.manifest["gbifID"].astype(np.int64)
         self.row = {int(g): i for i, g in enumerate(self.ids)}
         self.chunk_row_for_id = {}
-        chunks = sorted(self.path.glob(CHUNK_GLOB))
+        chunks = self._chunk_files()
         index = self.path / "chunk_index.npz"
         indexed = set()
         if index.exists():
@@ -61,6 +68,12 @@ class Patch32Cache:
                 return
         self.build_index(write=False)
 
+    def _chunk_files(self):
+        files = list(self.path.glob(CHUNK_GLOB))
+        for path in self.fallback_paths:
+            files.extend(path.glob(CHUNK_GLOB))
+        return sorted(files)
+
     def build_index(self, write=True, chunks=None):
         append = chunks is not None
         if append:
@@ -71,7 +84,7 @@ class Patch32Cache:
             self.chunk_row_for_id = {}
             ids, chunk_names, rows = [], [], []
         seen = set(ids)
-        for chunk in sorted(chunks or self.path.glob(CHUNK_GLOB)):
+        for chunk in sorted(chunks or self._chunk_files()):
             z = np.load(chunk, allow_pickle=True)
             for row, g in enumerate(z["gbifID"].astype(np.int64)):
                 gid = int(g)
