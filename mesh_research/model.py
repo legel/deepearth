@@ -1516,8 +1516,9 @@ class MeshModel(nn.Module):
         selected_score, scale_index = scale_score.topk(
             min(8, scale_score.shape[-1]), dim=-1
         )
+        selected_weight = selected_score.softmax(-1).to(scale_score.dtype)
         sparse_weight = torch.zeros_like(scale_score).scatter(
-            -1, scale_index, selected_score.softmax(-1)
+            -1, scale_index, selected_weight
         )
         route = sparse_weight.detach() + dense_weight - dense_weight.detach()
         scale_read = torch.einsum(
@@ -1569,7 +1570,7 @@ class MeshModel(nn.Module):
         reader_mix = torch.sigmoid(
             self.scale_mesh_reader_mix[name]
             + self.scale_mesh_reader_router(reader_features).squeeze(-1)
-        ).unsqueeze(-1)
+        ).unsqueeze(-1).to(shared_scale_attention.dtype)
         scale_attention = torch.lerp(
             shared_scale_attention, dedicated_scale_attention, reader_mix
         )
@@ -1695,8 +1696,9 @@ class MeshModel(nn.Module):
         selected_score, scale_index = scale_score.topk(
             min(8, scale_score.shape[-1]), dim=-1
         )
+        selected_weight = selected_score.softmax(-1).to(scale_score.dtype)
         sparse_weight = torch.zeros_like(scale_score).scatter(
-            -1, scale_index, selected_score.softmax(-1)
+            -1, scale_index, selected_weight
         )
         route = sparse_weight.detach() + dense_weight - dense_weight.detach()
         scale_read = torch.einsum(
@@ -1759,7 +1761,7 @@ class MeshModel(nn.Module):
         ]).view(1, tasks)
         reader_mix = torch.sigmoid(
             reader_bias + self.scale_mesh_reader_router(reader_features).squeeze(-1)
-        ).unsqueeze(-1)
+        ).unsqueeze(-1).to(shared_attention.dtype)
         scale_attention = torch.lerp(
             shared_attention, dedicated_attention, reader_mix
         )

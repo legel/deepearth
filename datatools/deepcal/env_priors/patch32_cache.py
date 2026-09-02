@@ -41,19 +41,33 @@ class Patch32Cache:
         self.chunk_row_for_id = {}
         chunks = sorted(self.path.glob(CHUNK_GLOB))
         index = self.path / "chunk_index.npz"
+        indexed = set()
         if index.exists():
             z = np.load(index, allow_pickle=True)
             indexed = set(map(str, z["chunk"]))
-            if indexed == {chunk.name for chunk in chunks}:
-                for gid, chunk, row in zip(z["gbifID"], z["chunk"], z["row"]):
-                    self.chunk_row_for_id[int(gid)] = (self.path / str(chunk), int(row))
+            for gid, chunk, row in zip(z["gbifID"], z["chunk"], z["row"]):
+                chunk_path = self.path / str(chunk)
+                if chunk_path.exists():
+                    self.chunk_row_for_id[int(gid)] = (chunk_path, int(row))
+        missing = [chunk for chunk in chunks if chunk.name not in indexed]
+        if missing:
+            self.build_index(write=True, chunks=missing)
+            return
+        if self.chunk_row_for_id:
                 return
         self.build_index(write=False)
 
-    def build_index(self, write=True):
-        ids, chunks, rows = [], [], []
-        seen = set()
-        for chunk in sorted(self.path.glob(CHUNK_GLOB)):
+    def build_index(self, write=True, chunks=None):
+        append = chunks is not None
+        if append:
+            ids = list(self.chunk_row_for_id)
+            chunk_names = [self.chunk_row_for_id[gid][0].name for gid in ids]
+            rows = [self.chunk_row_for_id[gid][1] for gid in ids]
+        else:
+            self.chunk_row_for_id = {}
+            ids, chunk_names, rows = [], [], []
+        seen = set(ids)
+        for chunk in sorted(chunks or self.path.glob(CHUNK_GLOB)):
             z = np.load(chunk, allow_pickle=True)
             for row, g in enumerate(z["gbifID"].astype(np.int64)):
                 gid = int(g)
@@ -62,13 +76,13 @@ class Patch32Cache:
                 seen.add(gid)
                 self.chunk_row_for_id[gid] = (chunk, row)
                 ids.append(gid)
-                chunks.append(chunk.name)
+                chunk_names.append(chunk.name)
                 rows.append(row)
         if write:
             np.savez(
                 self.path / "chunk_index.npz",
                 gbifID=np.array(ids, np.int64),
-                chunk=np.array(chunks, object),
+                chunk=np.array(chunk_names, object),
                 row=np.array(rows, np.int32),
             )
 
