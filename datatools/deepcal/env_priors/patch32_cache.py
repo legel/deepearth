@@ -265,8 +265,12 @@ class PackedPatch32Cache:
         have[have] = self.valid[rows[have]]
         safe_rows = rows.copy()
         safe_rows[~have] = 0
-        patch = np.asarray(self.patch[safe_rows]).copy()
-        coords = np.asarray(self.coords[safe_rows]).copy()
+        order = np.argsort(safe_rows, kind="stable")
+        inverse = np.empty_like(order)
+        inverse[order] = np.arange(len(order))
+        sorted_rows = safe_rows[order]
+        patch = np.asarray(self.patch[sorted_rows]).copy()[inverse]
+        coords = np.asarray(self.coords[sorted_rows]).copy()[inverse]
         patch[~have] = 0
         coords[~have] = 0
         return patch, coords, have
