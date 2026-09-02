@@ -36,6 +36,8 @@ STAC_API = os.environ.get("STAC_API", "https://earth-search.aws.element84.com/v1
 GDAL_ENV = {
     "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
     "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.TIF",
+    "GDAL_HTTP_CONNECTTIMEOUT": os.environ.get("SENTINEL_GDAL_CONNECT_TIMEOUT", "10"),
+    "GDAL_HTTP_TIMEOUT": os.environ.get("SENTINEL_GDAL_TIMEOUT", "45"),
     "GDAL_HTTP_MAX_RETRY": "3",
     "GDAL_HTTP_RETRY_DELAY": "1",
     "VSI_CACHE": "TRUE",
