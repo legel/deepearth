@@ -63,25 +63,32 @@ def main():
         lon = z["patch_lon"].astype(np.float32)
         elev = z["patch_elev"].astype(np.float32) if "patch_elev" in z else None
         chunks_seen += 1
-        for j, gid in enumerate(gids):
-            row = row_for_id.get(int(gid))
-            if row is None:
-                raise SystemExit(f"{file} gbifID {int(gid)} is absent from manifest")
-            if valid[row]:
-                if is_fallback:
-                    continue
-                raise SystemExit(f"duplicate primary gbifID {int(gid)} in {file}")
-            patch[row] = p[j]
-            coords[row, ..., 0] = lat[j]
-            coords[row, ..., 1] = lon[j]
-            if elev is None:
-                coords[row, ..., 2] = np.float32(manifest["elev_m"][row])
-            else:
-                fallback_elev = np.float32(manifest["elev_m"][row])
-                coords[row, ..., 2] = np.where(np.isfinite(elev[j]), elev[j], fallback_elev)
-            coords[row, ..., 3] = np.float32(manifest["event_day"][row])
-            valid[row] = np.isfinite(lat[j]).all() and np.isfinite(lon[j]).all()
-            rows_written += 1
+        rows = np.array([row_for_id.get(int(g), -1) for g in gids], np.int64)
+        if (rows < 0).any():
+            bad = int(gids[int(np.flatnonzero(rows < 0)[0])])
+            raise SystemExit(f"{file} gbifID {bad} is absent from manifest")
+        keep = ~np.asarray(valid[rows], dtype=bool)
+        if not is_fallback and not keep.all():
+            bad = int(gids[int(np.flatnonzero(~keep)[0])])
+            raise SystemExit(f"duplicate primary gbifID {bad} in {file}")
+        if not keep.any():
+            continue
+        src_rows = np.flatnonzero(keep)
+        dst_rows = rows[keep]
+        patch[dst_rows] = p[src_rows]
+        coords[dst_rows, ..., 0] = lat[src_rows]
+        coords[dst_rows, ..., 1] = lon[src_rows]
+        if elev is None:
+            coords[dst_rows, ..., 2] = manifest["elev_m"][dst_rows, None, None].astype(np.float32)
+        else:
+            fallback_elev = manifest["elev_m"][dst_rows, None, None].astype(np.float32)
+            coords[dst_rows, ..., 2] = np.where(
+                np.isfinite(elev[src_rows]), elev[src_rows], fallback_elev
+            )
+        coords[dst_rows, ..., 3] = manifest["event_day"][dst_rows, None, None].astype(np.float32)
+        valid[dst_rows] = np.isfinite(lat[src_rows]).all(axis=(1, 2)) \
+            & np.isfinite(lon[src_rows]).all(axis=(1, 2))
+        rows_written += len(src_rows)
         if chunks_seen % 100 == 0:
             patch.flush()
             coords.flush()
