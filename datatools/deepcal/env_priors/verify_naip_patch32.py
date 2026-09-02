@@ -181,6 +181,8 @@ def main() -> None:
             if key not in z:
                 raise SystemExit(f"{file} missing {key}")
         gid = z["gbifID"].astype(np.int64)
+        if is_fallback and all(int(g) in seen for g in gid):
+            continue
         patch_tensor = z["patch"]
         if patch_tensor.shape != (len(gid), 32, 32, 1024):
             raise SystemExit(f"{file} patch shape {patch_tensor.shape}")
