@@ -79,6 +79,7 @@ def main():
 
     import model as experiment
     from deepearth.autoresearch.main.harness import evaluate as canonical
+    os.environ.setdefault("MESH_SAVE_CHECKPOINT", "0")
     model, source = experiment.train(args.cache, args.device)
     if BENCHMARK_ROWS:
         source.test = source.test[:BENCHMARK_ROWS]

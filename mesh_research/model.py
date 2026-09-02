@@ -3316,10 +3316,11 @@ def train(
                 flush=True,
             )
 
-    checkpoint = Path(__file__).with_name("checkpoint.pt")
-    checkpoint.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), checkpoint)
-    print(f"checkpoint: {checkpoint}", flush=True)
+    if os.environ.get("MESH_SAVE_CHECKPOINT", "1") != "0":
+        checkpoint = Path(__file__).with_name("checkpoint.pt")
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), checkpoint)
+        print(f"checkpoint: {checkpoint}", flush=True)
     return model, source
 
 
