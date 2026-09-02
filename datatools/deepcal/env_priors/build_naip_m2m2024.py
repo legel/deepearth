@@ -38,12 +38,12 @@ CACHE = Path(os.environ.get("DEEPCAL_CACHE", HERE.parent)).expanduser()
 TILES_JSON = Path(os.environ.get("NAIP_TILES_JSON", str(CACHE / "env_priors" / "naip2024_tiles.json")))
 TOKENS = CACHE / "gbif_tokens"                                  # train/test shards: {gbifID, lat, lon, ...}
 COORDS = CACHE / "env_priors" / "obs_coords.npz"                # fallback: {gbifID, lat, lon}
-TOK = CACHE / "gbif_naip_tokens"; TOK.mkdir(parents=True, exist_ok=True)
-PATCH = CACHE / "gbif_naip_dinov3_patch32_v1"; PATCH.mkdir(parents=True, exist_ok=True)
+TOK = CACHE / os.environ.get("NAIP_TOKEN_DIR", "gbif_naip_tokens"); TOK.mkdir(parents=True, exist_ok=True)
+PATCH = CACHE / os.environ.get("NAIP_PATCH_DIR", "gbif_naip_dinov3_patch32_v1"); PATCH.mkdir(parents=True, exist_ok=True)
 IMG = CACHE / "env_priors" / "_naip2024_imagery"; IMG.mkdir(parents=True, exist_ok=True)
 SCENES = CACHE / "env_priors" / "_naip2024_scenes"; SCENES.mkdir(parents=True, exist_ok=True)
-CKPT = CACHE / "env_priors" / "naip_m2m2024_ckpt.pkl"
-PATCH_CKPT = CACHE / "env_priors" / "naip_m2m2024_patch32_ckpt.pkl"
+CKPT = Path(os.environ.get("NAIP_POOL_CKPT", str(CACHE / "env_priors" / "naip_m2m2024_ckpt.pkl")))
+PATCH_CKPT = Path(os.environ.get("NAIP_PATCH_CKPT", str(CACHE / "env_priors" / "naip_m2m2024_patch32_ckpt.pkl")))
 BASE = "https://m2m.cr.usgs.gov/api/api/json/stable"
 USERNAME = os.environ.get("M2M_USER", "ecological")
 TOKEN_PATH = Path(os.environ.get("USGS_M2M_TOKEN", str(Path.home() / ".usgs_m2m_token")))
@@ -57,6 +57,7 @@ PATCH_ROWS = int(os.environ.get("NAIP_PATCH_ROWS", 16))         # obs per scene 
 FETCH_TIMEOUT = int(os.environ.get("NAIP_FETCH_TIMEOUT", 600))  # max seconds to wait on a scene stream
 SAVE_IMAGERY = os.environ.get("NAIP_SAVE_IMAGERY", "0") == "1"
 SAVE_PATCH32 = os.environ.get("NAIP_SAVE_PATCH32", "1") == "1"
+SAVE_POOL = os.environ.get("NAIP_SAVE_POOL", "1") == "1"
 PATCH_VIEW = os.environ.get("NAIP_PATCH_VIEW", "rgb")
 PATCH_DTYPE = np.float16 if os.environ.get("NAIP_PATCH_DTYPE", "float16") == "float16" else np.float32
 PATCH_COMPRESSED = os.environ.get("NAIP_PATCH_COMPRESSED", "0") == "1"
@@ -237,6 +238,17 @@ def main():
         z = np.load(COORDS)
         gid, lat, lon = z["gbifID"].astype(np.int64), z["lat"].astype(float), z["lon"].astype(float)
         obs_ord = np.full(len(gid), -1, np.int32)
+    only_ids_csv = os.environ.get("NAIP_ONLY_IDS_CSV", "")
+    if only_ids_csv:
+        allowed = set()
+        with open(only_ids_csv) as f:
+            next(f, None)
+            for line in f:
+                cell = line.split(",", 1)[0].strip()
+                if cell:
+                    allowed.add(int(cell))
+        mask = np.array([int(g) in allowed for g in gid], bool)
+        gid, lat, lon, obs_ord = gid[mask], lat[mask], lon[mask], obs_ord[mask]
     elev = load_elevation(gid)
     event_day = load_event_day(gid)
     # map each obs -> covering tile indices (check nearest tile centers for bbox containment)
@@ -253,10 +265,11 @@ def main():
             tile_candidates[row].append(int(ti[row]))
         inside = (tile_of < 0) & inside_any
         tile_of[inside] = ti[inside]
-    pool_done = pickle.load(open(CKPT, "rb")) if CKPT.exists() else set()
-    for f in TOK.glob("chunk*.npz"):
-        try: pool_done |= set(int(x) for x in np.load(f)["gbifID"])
-        except Exception: pass
+    pool_done = pickle.load(open(CKPT, "rb")) if SAVE_POOL and CKPT.exists() else set()
+    if SAVE_POOL:
+        for f in TOK.glob("chunk*.npz"):
+            try: pool_done |= set(int(x) for x in np.load(f)["gbifID"])
+            except Exception: pass
     patch_done = pickle.load(open(PATCH_CKPT, "rb")) if PATCH_CKPT.exists() else set()
     for f in PATCH.glob(CHUNK_GLOB):
         try: patch_done |= set(int(x) for x in np.load(f)["gbifID"])
@@ -315,6 +328,7 @@ def main():
 
     def flush_tokens():
         nonlocal chunk, pool_done
+        if not SAVE_POOL: return
         if not buf["gbifID"]: return
         ids = list(buf["gbifID"])
         np.savez_compressed(TOK / f"chunk{chunk:04d}.npz",
@@ -358,9 +372,9 @@ def main():
             with rasterio.open(path) as src:
                 for patches, keep in iter_scene_patches(src, idxs, lon, lat):
                     rgb_img = [a[:3] for a in patches]
-                    need_pool = any(int(gid[i]) not in pool_done for i in keep)
+                    need_pool = SAVE_POOL and any(int(gid[i]) not in pool_done for i in keep)
                     rgb_patch = emb.patch32(rgb_img)
-                    rgb = rgb_patch.reshape(rgb_patch.shape[0], -1, rgb_patch.shape[-1]).mean(1)
+                    rgb = rgb_patch.reshape(rgb_patch.shape[0], -1, rgb_patch.shape[-1]).mean(1) if SAVE_POOL else None
                     ir_patch = irp = None
                     if need_pool or PATCH_VIEW == "ir":
                         ir_img = [(INFERNO((a[3].astype(np.float32) - a[3].min()) / (np.ptp(a[3]) + 1e-6))[:, :, :3] * 255)
@@ -373,7 +387,7 @@ def main():
                         patch_lat, patch_lon = patch_latlon(lat[keep_idx], lon[keep_idx], patch_offset_m)
                     for j, i in enumerate(keep):
                         gid_i = int(gid[i])
-                        if gid_i not in pool_done:
+                        if SAVE_POOL and gid_i not in pool_done:
                             buf["gbifID"].append(gid_i); buf["naip_year"].append(yr); buf["naip_scene"].append(ent)
                             buf["rgb_pool"].append(rgb[j]); buf["ir_pool"].append(irp[j])
                             pool_pending.add(gid_i)
