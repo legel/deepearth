@@ -46,6 +46,8 @@ class Patch32Cache:
         ]
         self.max_open_chunks = int(os.environ.get("PATCH32_OPEN_CHUNKS", "2"))
         self._chunks = OrderedDict()
+        self.max_cached_rows = int(os.environ.get("PATCH32_ROW_CACHE", "0"))
+        self._earth4d_rows = OrderedDict()
         self.manifest = np.load(self.path / "manifest.npz")
         self.ids = self.manifest["gbifID"].astype(np.int64)
         self.row = {int(g): i for i, g in enumerate(self.ids)}
@@ -198,6 +200,11 @@ class Patch32Cache:
         valid = np.zeros(n, bool)
         by_chunk = {}
         for row, gid in enumerate(gids):
+            cached = self._earth4d_rows.get(gid)
+            if cached is not None:
+                patch[row], coords[row], valid[row] = cached
+                self._earth4d_rows.move_to_end(gid)
+                continue
             item = self.chunk_row_for_id.get(gid)
             if item is None:
                 continue
@@ -217,6 +224,12 @@ class Patch32Cache:
                 )
                 coords[row, ..., 3] = _finite_scalar(self.manifest["event_day"][m])
                 valid[row] = np.isfinite(lat).all() and np.isfinite(lon).all()
+                if self.max_cached_rows > 0:
+                    self._earth4d_rows[gid] = (
+                        patch[row].copy(), coords[row].copy(), bool(valid[row])
+                    )
+                    while len(self._earth4d_rows) > self.max_cached_rows:
+                        self._earth4d_rows.popitem(last=False)
         return patch, coords, valid
 
 
