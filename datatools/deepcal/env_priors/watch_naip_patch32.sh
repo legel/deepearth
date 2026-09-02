@@ -8,9 +8,10 @@ set -euo pipefail
 : "${NAIP_PATCH_DTYPE:=float16}"
 : "${NAIP_PATCH_COMPRESSED:=0}"
 : "${NAIP_PATCH_VIEW:=rgb}"
-: "${NAIP_BATCH_TILES:=8}"
-: "${NAIP_DLW:=4}"
+: "${NAIP_BATCH_TILES:=16}"
+: "${NAIP_DLW:=8}"
 : "${NAIP_EMBED_BATCH:=4}"
+: "${NAIP_FETCH_TIMEOUT:=600}"
 : "${NAIP_SAVE_IMAGERY:=0}"
 : "${NAIP_WATCHDOG_LOG:=/workspace/logs/naip_patch32_watchdog.log}"
 : "${NAIP_RUN_LOG:=/workspace/logs/naip_patch32_full.log}"
@@ -61,6 +62,7 @@ while true; do
         NAIP_BATCH_TILES="$NAIP_BATCH_TILES" \
         NAIP_DLW="$NAIP_DLW" \
         NAIP_EMBED_BATCH="$NAIP_EMBED_BATCH" \
+        NAIP_FETCH_TIMEOUT="$NAIP_FETCH_TIMEOUT" \
         NAIP_SAVE_IMAGERY="$NAIP_SAVE_IMAGERY" \
         /venv/main/bin/python datatools/deepcal/env_priors/build_naip_m2m2024.py \
           > "$NAIP_RUN_LOG" 2>&1

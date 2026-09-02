@@ -5,9 +5,10 @@ set -euo pipefail
 : "${NAIP_SAVE_PATCH32:=1}"
 : "${NAIP_PATCH_DTYPE:=float16}"
 : "${NAIP_PATCH_VIEW:=rgb}"
-: "${NAIP_BATCH_TILES:=4}"
-: "${NAIP_DLW:=2}"
-: "${NAIP_EMBED_BATCH:=2}"
+: "${NAIP_BATCH_TILES:=16}"
+: "${NAIP_DLW:=8}"
+: "${NAIP_EMBED_BATCH:=4}"
+: "${NAIP_FETCH_TIMEOUT:=600}"
 : "${NAIP_PATCH_ROWS:=16}"
 : "${NAIP_SAVE_IMAGERY:=0}"
 : "${USGS_M2M_TOKEN:=/root/.usgs_m2m_token}"
@@ -21,6 +22,7 @@ export NAIP_PATCH_VIEW
 export NAIP_BATCH_TILES
 export NAIP_DLW
 export NAIP_EMBED_BATCH
+export NAIP_FETCH_TIMEOUT
 export NAIP_PATCH_ROWS
 export NAIP_SAVE_IMAGERY
 export USGS_M2M_TOKEN
