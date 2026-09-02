@@ -8,9 +8,11 @@ import argparse
 import csv
 import glob
 import json
+import zipfile
 from pathlib import Path
 
 import numpy as np
+from numpy.lib import format as npformat
 
 PATCH_CHUNK_GLOB = "chunk[0-9]*.npz"
 
@@ -36,6 +38,19 @@ def _load_ids(path: Path) -> np.ndarray:
     return z["gbifID"].astype(np.int64)
 
 
+def _npz_header(path: Path, key: str):
+    with zipfile.ZipFile(path) as archive:
+        with archive.open(f"{key}.npy") as member:
+            version = npformat.read_magic(member)
+            if version == (1, 0):
+                shape, fortran, dtype = npformat.read_array_header_1_0(member)
+            elif version == (2, 0):
+                shape, fortran, dtype = npformat.read_array_header_2_0(member)
+            else:
+                shape, fortran, dtype = npformat._read_array_header(member, version)
+    return tuple(shape), dtype, bool(fortran)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=".")
@@ -47,6 +62,7 @@ def main() -> None:
     ap.add_argument("--max-chunks", type=int, default=0)
     ap.add_argument("--latest", action="store_true")
     ap.add_argument("--coverage-only", action="store_true")
+    ap.add_argument("--schema-only-payload", action="store_true")
     ap.add_argument("--split-summary", action="store_true")
     ap.add_argument("--holdout-fraction", type=float, default=1 / 6)
     ap.add_argument("--write-missing")
@@ -183,21 +199,32 @@ def main() -> None:
         gid = z["gbifID"].astype(np.int64)
         if is_fallback and all(int(g) in seen for g in gid):
             continue
-        patch_tensor = z["patch"]
-        if patch_tensor.shape != (len(gid), 32, 32, 1024):
-            raise SystemExit(f"{file} patch shape {patch_tensor.shape}")
+        if args.schema_only_payload:
+            patch_shape, patch_dtype, patch_fortran = _npz_header(file, "patch")
+            if patch_fortran:
+                raise SystemExit(f"{file} patch tensor must be C-contiguous")
+            if patch_shape != (len(gid), 32, 32, 1024):
+                raise SystemExit(f"{file} patch shape {patch_shape}")
+            if patch_dtype not in (np.dtype(np.float16), np.dtype(np.float32)):
+                raise SystemExit(f"{file} patch dtype must be float16 or float32")
+            patch_nbytes = int(np.prod(patch_shape)) * patch_dtype.itemsize
+        else:
+            patch_tensor = z["patch"]
+            if patch_tensor.shape != (len(gid), 32, 32, 1024):
+                raise SystemExit(f"{file} patch shape {patch_tensor.shape}")
+            if not np.isfinite(patch_tensor).all():
+                raise SystemExit(f"{file} patch tensor must be finite")
+            if patch_tensor.dtype not in (np.float16, np.float32):
+                raise SystemExit(f"{file} patch dtype must be float16 or float32")
+            patch_nbytes = patch_tensor.nbytes
         if z["patch_lat"].shape != (len(gid), 32, 32):
             raise SystemExit(f"{file} patch_lat shape {z['patch_lat'].shape}")
         if z["patch_lon"].shape != (len(gid), 32, 32):
             raise SystemExit(f"{file} patch_lon shape {z['patch_lon'].shape}")
         if "patch_elev" in z and z["patch_elev"].shape != (len(gid), 32, 32):
             raise SystemExit(f"{file} patch_elev shape {z['patch_elev'].shape}")
-        if not np.isfinite(patch_tensor).all():
-            raise SystemExit(f"{file} patch tensor must be finite")
         if not (np.isfinite(z["patch_lat"]).all() and np.isfinite(z["patch_lon"]).all()):
             raise SystemExit(f"{file} patch coordinates must be finite")
-        if patch_tensor.dtype not in (np.float16, np.float32):
-            raise SystemExit(f"{file} patch dtype must be float16 or float32")
         if not np.all(z["has_naip"].astype(bool)):
             raise SystemExit(f"{file} has_naip must be true for every stored row")
         for row, g in enumerate(gid):
@@ -225,7 +252,7 @@ def main() -> None:
             ], axis=-1)
             if not np.isfinite(coords).all():
                 raise SystemExit(f"{file} Earth4D coords must be finite")
-        bytes_total += patch_tensor.nbytes
+        bytes_total += patch_nbytes
 
     missing = len(all_ids) - len(seen)
     if args.split_summary:
