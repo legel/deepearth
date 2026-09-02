@@ -3092,33 +3092,36 @@ def train(
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, reader_budget
             )
-            detail_optimizer = torch.optim.AdamW(
-                detail_parameters,
-                lr=design.learning_rate * 0.2,
-                weight_decay=design.weight_decay,
-                fused=device.startswith("cuda"),
-            )
-            detail_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                detail_optimizer, reader_budget
-            )
-            lens_optimizer = torch.optim.AdamW(
-                lens_parameters,
-                lr=design.learning_rate * 0.4,
-                weight_decay=design.weight_decay,
-                fused=device.startswith("cuda"),
-            )
-            lens_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                lens_optimizer, reader_budget
-            )
-            calibration_optimizer = torch.optim.AdamW(
-                calibration_parameters,
-                lr=design.learning_rate * 10.0,
-                weight_decay=0.0,
-                fused=device.startswith("cuda"),
-            )
-            calibration_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                calibration_optimizer, reader_budget
-            )
+            if detail_parameters:
+                detail_optimizer = torch.optim.AdamW(
+                    detail_parameters,
+                    lr=design.learning_rate * 0.2,
+                    weight_decay=design.weight_decay,
+                    fused=device.startswith("cuda"),
+                )
+                detail_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    detail_optimizer, reader_budget
+                )
+            if lens_parameters:
+                lens_optimizer = torch.optim.AdamW(
+                    lens_parameters,
+                    lr=design.learning_rate * 0.4,
+                    weight_decay=design.weight_decay,
+                    fused=device.startswith("cuda"),
+                )
+                lens_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    lens_optimizer, reader_budget
+                )
+            if calibration_parameters:
+                calibration_optimizer = torch.optim.AdamW(
+                    calibration_parameters,
+                    lr=design.learning_rate * 10.0,
+                    weight_decay=0.0,
+                    fused=device.startswith("cuda"),
+                )
+                calibration_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    calibration_optimizer, reader_budget
+                )
             position_optimizer = torch.optim.AdamW(
                 position_parameters,
                 lr=design.learning_rate * 2.0,
