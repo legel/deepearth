@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 EVAL_BATCH = int(os.environ.get("MESH_EVAL_BATCH", "1280"))
 VAL_BATCHES = int(os.environ.get("MESH_VAL_BATCHES", "48"))
+BENCHMARK_ROWS = int(os.environ.get("MESH_BENCHMARK_ROWS", "0"))
+BENCHMARK_TRAIN_ROWS = int(os.environ.get("MESH_BENCHMARK_TRAIN_ROWS", "0"))
 EVAL_SEED = 20260806
 HIDE_PROBABILITY = 0.5
 CENSUS_SAMPLES = 512
@@ -78,6 +80,10 @@ def main():
     import model as experiment
     from deepearth.autoresearch.main.harness import evaluate as canonical
     model, source = experiment.train(args.cache, args.device)
+    if BENCHMARK_ROWS:
+        source.test = source.test[:BENCHMARK_ROWS]
+    if BENCHMARK_TRAIN_ROWS:
+        source.train = source.train[:BENCHMARK_TRAIN_ROWS]
 
     raw = canonical.evaluate_benchmarks(model, source, args.device, batch=EVAL_BATCH)
     print(canonical.format_benchmarks(raw), flush=True)
