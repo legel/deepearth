@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 CHUNK_GLOB = "chunk[0-9]*.npz"
+PACKED_DIR = "gbif_naip_dinov3_patch32_packed_v1"
 
 
 def _finite_scalar(value, fallback=0.0):
@@ -231,6 +232,44 @@ class Patch32Cache:
                     while len(self._earth4d_rows) > self.max_cached_rows:
                         self._earth4d_rows.popitem(last=False)
         return patch, coords, valid
+
+
+class PackedPatch32Cache:
+    def __init__(self, root, packed_dir=PACKED_DIR):
+        self.root = Path(root).expanduser()
+        self.path = self.root / packed_dir
+        self.manifest = np.load(self.path / "manifest.npz")
+        self.ids = self.manifest["gbifID"].astype(np.int64)
+        self.row = {int(g): i for i, g in enumerate(self.ids)}
+        self.patch = np.load(self.path / "patch.npy", mmap_mode="r")
+        self.coords = np.load(self.path / "coords.npy", mmap_mode="r")
+        self.valid = np.load(self.path / "valid.npy", mmap_mode="r")
+        if self.patch.shape != (len(self.ids), 32, 32, 1024):
+            raise ValueError(f"packed patch shape {self.patch.shape}")
+        if self.coords.shape != (len(self.ids), 32, 32, 4):
+            raise ValueError(f"packed coords shape {self.coords.shape}")
+        if self.valid.shape != (len(self.ids),):
+            raise ValueError(f"packed valid shape {self.valid.shape}")
+
+    def has(self, gbif_id):
+        row = self.row.get(int(gbif_id))
+        return row is not None and bool(self.valid[row])
+
+    def get_many_earth4d(self, gbif_ids):
+        rows = np.fromiter(
+            (self.row.get(int(g), -1) for g in gbif_ids),
+            dtype=np.int64,
+            count=len(gbif_ids),
+        )
+        have = rows >= 0
+        have[have] = self.valid[rows[have]]
+        safe_rows = rows.copy()
+        safe_rows[~have] = 0
+        patch = np.asarray(self.patch[safe_rows]).copy()
+        coords = np.asarray(self.coords[safe_rows]).copy()
+        patch[~have] = 0
+        coords[~have] = 0
+        return patch, coords, have
 
 
 def main():

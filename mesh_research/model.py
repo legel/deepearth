@@ -2768,6 +2768,48 @@ def build_model(source, variable_specs, always_dims, device: str, design: Experi
 def attach_naip_patches(source, cache: str, device: str) -> None:
     root = Path(cache).expanduser()
     patch32 = root / "gbif_naip_dinov3_patch32_v1"
+    packed32 = root / "gbif_naip_dinov3_patch32_packed_v1"
+    if (
+        (packed32 / "manifest.npz").exists()
+        and (packed32 / "patch.npy").exists()
+        and os.environ.get("MESH_NAIP_PATCH_DISABLE_PACKED") != "1"
+    ):
+        from datatools.deepcal.env_priors.patch32_cache import PackedPatch32Cache
+
+        patch_cache = PackedPatch32Cache(root)
+        original_batch = source.batch
+        source_ids = np.asarray(source.gbifID).astype(np.int64)
+        train_rows = source.train_index.detach().cpu().numpy() \
+            if torch.is_tensor(source.train_index) else np.asarray(source.train_index)
+        source.naip_patch_train_chunks = [
+            np.asarray(rows, dtype=np.int64)
+            for rows in np.array_split(train_rows, max(1, len(train_rows) // 1024))
+            if len(rows)
+        ]
+
+        def batch_with_naip(idx):
+            values, observed, coords, neighbors, manifolds, neighbor_values = original_batch(idx)
+            rows = idx.detach().cpu().numpy() if torch.is_tensor(idx) else np.asarray(idx)
+            gbif_ids = source_ids[rows]
+            patch, patch_coords, have = patch_cache.get_many_earth4d(gbif_ids)
+            batch = len(gbif_ids)
+            values["naip_patch_tokens"] = torch.from_numpy(patch).to(device)
+            values["naip_patch_coords"] = torch.from_numpy(patch_coords).to(device)
+            values["naip_patch_index"] = torch.arange(batch, device=device)
+            values["naip_patch_have"] = torch.from_numpy(have).to(device)
+            return values, observed, coords, neighbors, manifolds, neighbor_values
+
+        source.batch = batch_with_naip
+        source.naip_patch_dim = 1024
+        source.naip_patch_grid = 32
+        source.naip_patch_views = 1
+        source.naip_patch_streaming = True
+        print(
+            f"NAIP DINOv3 patch32 packed mmap enabled for {source.n:,} observations  "
+            f"train shards {len(source.naip_patch_train_chunks):,}",
+            flush=True,
+        )
+        return
     if (patch32 / "manifest.npz").exists():
         manifest = np.load(patch32 / "manifest.npz")
         bytes_per_row = 32 * 32 * 1024 * np.dtype(np.float16).itemsize
