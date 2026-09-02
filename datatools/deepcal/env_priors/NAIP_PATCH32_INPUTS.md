@@ -57,6 +57,17 @@ Best input for Lance to provide:
 
 That avoids repeated catalog/download negotiation and lets the builder stream patches directly from the provided scenes.
 
+Feedback routing:
+
+- Use `/build` for concrete implementation requirements, data engineering
+  tasks, artifact formats, and delivery blockers. Example: "compute DINOv3
+  SAT-493M `(32,32,1024)` patch embeddings for all train/test rows."
+- Use `/science` for scientific requirements that should update the modeling
+  thesis or evaluation rationale. Example: "Earth4D is the positional encoder
+  for each patch, so each patch needs its own GPS coordinate."
+- Include the required artifact shape, target split, required modality,
+  acceptable missing-data policy, and any preferred source credentials/catalog.
+
 DINOv3 model input options:
 
 1. Hugging Face Transformers
