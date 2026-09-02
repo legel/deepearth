@@ -18,3 +18,29 @@ The exact no-candidate rows are written on the data box at:
 Those `739` rows need a fallback remote-sensing source or an accepted masked
 missing policy before the cache can truthfully satisfy real patch tensors for
 all train/test rows.
+
+Live extraction status is measured, not inferred, with:
+
+```bash
+python datatools/deepcal/env_priors/verify_naip_patch32.py \
+  --cache "$DEEPCAL_CACHE" \
+  --coverage-only \
+  --allow-prefix \
+  --split-summary
+```
+
+Latest measured extraction coverage:
+
+- train: `570,075 / 591,890`
+- test: `26,722 / 29,668`
+- total: `596,797 / 621,558`
+- missing extracted rows: `24,761`
+
+The final acceptance check is:
+
+```bash
+python datatools/deepcal/env_priors/verify_naip_patch32.py \
+  --cache "$DEEPCAL_CACHE" \
+  --require-complete \
+  --split-summary
+```
