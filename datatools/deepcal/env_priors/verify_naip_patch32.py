@@ -46,6 +46,8 @@ def main() -> None:
     ap.add_argument("--max-chunks", type=int, default=0)
     ap.add_argument("--latest", action="store_true")
     ap.add_argument("--coverage-only", action="store_true")
+    ap.add_argument("--split-summary", action="store_true")
+    ap.add_argument("--holdout-fraction", type=float, default=1 / 6)
     ap.add_argument("--write-missing")
     ap.add_argument("--write-no-candidate")
     args = ap.parse_args()
@@ -212,6 +214,22 @@ def main() -> None:
         bytes_total += patch_tensor.nbytes
 
     missing = len(all_ids) - len(seen)
+    if args.split_summary:
+        cell = (
+            np.floor(manifest["lat"].astype(np.float32) / 0.5).astype(np.int64) * 10007
+            + np.floor(manifest["lon"].astype(np.float32) / 0.5).astype(np.int64)
+        )
+        cells = np.unique(cell)
+        np.random.default_rng(0).shuffle(cells)
+        test_cells = cells[: max(1, int(len(cells) * args.holdout_fraction))]
+        test_mask = np.isin(cell, test_cells)
+        covered = np.array([int(g) in seen for g in all_ids], bool)
+        train_mask = ~test_mask
+        print(
+            "SPLIT COVERAGE "
+            f"train={int((covered & train_mask).sum()):,}/{int(train_mask.sum()):,} "
+            f"test={int((covered & test_mask).sum()):,}/{int(test_mask.sum()):,}"
+        )
     if args.write_missing:
         with open(args.write_missing, "w", newline="") as f:
             writer = csv.writer(f)
