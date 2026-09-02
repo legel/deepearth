@@ -63,7 +63,7 @@ class Experiment:
     latents: int = int(os.environ.get("MESH_LATENTS", "16"))
     layers: int = int(os.environ.get("MESH_LAYERS", "2"))
     hide_probability: float = 0.5
-    learning_rate: float = 5e-4
+    learning_rate: float = float(os.environ.get("MESH_LEARNING_RATE", "5e-4"))
     weight_decay: float = 1e-3
     reader_steps: int = int(os.environ.get("MESH_READER_STEPS", "100"))
     graph_learning_rate_scale: float = float(os.environ.get("MESH_GRAPH_LR_SCALE", "0.02"))
@@ -2066,8 +2066,10 @@ class MeshModel(nn.Module):
                 patch_coords[..., 2:] = torch.nan_to_num(
                     patch_coords[..., 2:], nan=0.0
                 )
+            patches = torch.nan_to_num(patches.float(), nan=0.0, posinf=0.0, neginf=0.0)
+            patches = F.layer_norm(patches, (patches.shape[-1],))
             if patches.dim() == 4:
-                patch_grid = patches.float().permute(0, 3, 1, 2)
+                patch_grid = patches.permute(0, 3, 1, 2)
                 fine_raw = F.adaptive_avg_pool2d(patch_grid, (8, 8))
                 mid_raw = F.adaptive_avg_pool2d(patch_grid, (4, 4))
                 coarse_raw = F.adaptive_avg_pool2d(patch_grid, (1, 1))
