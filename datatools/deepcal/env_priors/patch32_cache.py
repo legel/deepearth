@@ -51,6 +51,9 @@ class Patch32Cache:
         self.row = {int(g): i for i, g in enumerate(self.ids)}
         self.chunk_row_for_id = {}
         chunks = self._chunk_files()
+        if self.fallback_paths:
+            self.build_index(write=False, chunks=chunks)
+            return
         index = self.path / "chunk_index.npz"
         indexed = set()
         if index.exists():
