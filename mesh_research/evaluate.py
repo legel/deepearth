@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from types import MethodType
@@ -16,8 +17,8 @@ sys.path.insert(0, str(REPO.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
-EVAL_BATCH = 1280
-VAL_BATCHES = 48
+EVAL_BATCH = int(os.environ.get("MESH_EVAL_BATCH", "1280"))
+VAL_BATCHES = int(os.environ.get("MESH_VAL_BATCHES", "48"))
 EVAL_SEED = 20260806
 HIDE_PROBABILITY = 0.5
 CENSUS_SAMPLES = 512
