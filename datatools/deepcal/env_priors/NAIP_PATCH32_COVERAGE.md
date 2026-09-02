@@ -31,10 +31,10 @@ python datatools/deepcal/env_priors/verify_naip_patch32.py \
 
 Latest measured extraction coverage:
 
-- train: `570,075 / 591,890`
+- train: `571,397 / 591,890`
 - test: `26,722 / 29,668`
-- total: `596,797 / 621,558`
-- missing extracted rows: `24,761`
+- total: `598,119 / 621,558`
+- missing extracted rows: `23,439`
 
 The final acceptance check is:
 
@@ -55,3 +55,8 @@ python datatools/deepcal/env_priors/verify_naip_patch32.py \
   --require-complete \
   --split-summary
 ```
+
+Current fallback status:
+
+- Sentinel-2 DINOv3 patch32 fallback rows: `739 / 739`
+- fallback schema sample: pass
