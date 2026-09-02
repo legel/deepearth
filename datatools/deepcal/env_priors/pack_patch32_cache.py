@@ -1,11 +1,21 @@
 """Pack DINOv3 patch32 chunks into row-ordered mmap arrays."""
 import argparse
+import ctypes
+import gc
 import json
 import shutil
 from pathlib import Path
 
 import numpy as np
 from numpy.lib.format import open_memmap
+
+
+def trim_memory():
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
 
 
 def chunk_files(root, patch_dir, fallback_dirs):
@@ -92,15 +102,23 @@ def main():
             rows_written += len(src_rows)
         finally:
             z.close()
+            try:
+                del gids, p, lat, lon, elev, rows, keep, src_rows, dst_rows
+            except UnboundLocalError:
+                pass
+            if chunks_seen % 10 == 0:
+                trim_memory()
         if chunks_seen % 100 == 0:
             patch.flush()
             coords.flush()
             valid.flush()
+            trim_memory()
             print(f"packed chunks={chunks_seen:,} rows={int(valid.sum()):,}/{n:,}", flush=True)
 
     patch.flush()
     coords.flush()
     valid.flush()
+    trim_memory()
     meta = {
         "source_patch_dir": args.patch_dir,
         "fallback_dirs": args.fallback_dir,
