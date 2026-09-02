@@ -66,6 +66,8 @@ Fallback for rows outside NAIP/STAC coverage:
   `gbif_sentinel2_dinov3_patch32_fallback_v1`.
 - Use this as a fallback directory rather than writing into the active NAIP
   cache while NAIP extraction is still appending chunks.
+- Set `PATCH32_FALLBACK_DIRS=gbif_sentinel2_dinov3_patch32_fallback_v1`
+  when training or evaluating against the combined NAIP + fallback artifact.
 
 Feedback routing:
 
