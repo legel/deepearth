@@ -87,7 +87,7 @@ class Patch32Cache:
             self.chunk_row_for_id = {}
             ids, chunk_names, rows = [], [], []
         seen = set(ids)
-        for chunk in sorted(chunks or self._chunk_files()):
+        for chunk in chunks or self._chunk_files():
             is_fallback = not chunk.is_relative_to(self.path)
             z = np.load(chunk, allow_pickle=True)
             for row, g in enumerate(z["gbifID"].astype(np.int64)):
