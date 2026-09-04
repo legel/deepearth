@@ -114,6 +114,14 @@ def main():
                           "once rain stops. Default (ponded infiltration on) lets standing "
                           "depth keep draining into any remaining soil storage after rain ends.")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--extend-hours", type=float, default=0.0,
+                     help="Append this many hours of zero-rain runtime after the historical "
+                          "72h hyetograph ends, so the solver's own recession has time to run "
+                          "out instead of being cut off mid-drain. Tests whether the magnitude "
+                          "gap documented in ../../NEXT_STEPS.md is inflated by comparing both "
+                          "sides over an artificially short window rather than each side's own "
+                          "full hydrologic response — see the 2026-09-03 entry there. 0 "
+                          "(default) reproduces the exact prior 72h behaviour.")
     args = ap.parse_args()
 
     print("=" * 70)
@@ -135,6 +143,15 @@ def main():
 
     print(f"\n[3/4] Ian hyetograph (ASOS KSFB hourly, {fsi.IAN_START} – {fsi.IAN_END} UTC) …")
     rain_sim, hours, rain_mm = fsi.load_ian_hyetograph(args.dt)
+    if args.extend_hours > 0:
+        n_extra_steps = int(round(args.extend_hours * 3600 / args.dt))
+        n_extra_hours = int(round(args.extend_hours))
+        rain_sim = np.concatenate([rain_sim, np.zeros(n_extra_steps)])
+        rain_mm = np.concatenate([rain_mm, np.zeros(n_extra_hours)])
+        hours = np.arange(len(rain_mm))
+        print(f"  Extended with {args.extend_hours:.0f}h of zero rain "
+              f"({n_extra_steps} extra steps) -> total window "
+              f"{len(rain_sim) * args.dt / 3600:.1f}h")
     total_rain = rain_mm.sum()
     n_steps = len(rain_sim)
     print(f"  Sep 28: {rain_mm[:24].sum():.0f} mm  Sep 29: {rain_mm[24:48].sum():.0f} mm  "

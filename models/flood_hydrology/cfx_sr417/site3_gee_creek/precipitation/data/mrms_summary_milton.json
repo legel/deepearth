@@ -1,0 +1,11 @@
+{
+  "storm": "milton",
+  "product": "MultiSensor_QPE_01H_Pass2",
+  "window_start_utc": "2024-10-06 00:00",
+  "window_end_utc": "2024-10-10 23:00",
+  "n_hours": 120,
+  "n_missing_hours": 0,
+  "mrms_watershed_total_mm": 282.13333706744015,
+  "point_gauge_ksfb_total_mm": 288.04,
+  "ratio_mrms_over_gauge": 0.9794936018172481
+}

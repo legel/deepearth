@@ -1,0 +1,11 @@
+{
+  "storm": "ian",
+  "product": "MultiSensor_QPE_01H_Pass2",
+  "window_start_utc": "2022-09-28 00:00",
+  "window_end_utc": "2022-09-30 23:00",
+  "n_hours": 72,
+  "n_missing_hours": 1,
+  "mrms_watershed_total_mm": 376.0555611550808,
+  "point_gauge_ksfb_total_mm": 391.74,
+  "ratio_mrms_over_gauge": 0.9599621206797385
+}

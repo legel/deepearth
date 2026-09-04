@@ -10,6 +10,11 @@ lidar/data/raw/*.laz
 # Site3 raw LiDAR bbox cache — reproducible via lidar/cache_bbox_points.py
 site3_gee_creek/lidar/data/bbox_cache/*.npz
 
+# Raw MRMS GRIB2 hourly grids (~100MB for both storm windows) — reproducible via
+# site3_gee_creek/precipitation/fetch_mrms_site3.py; the derived per-hour CSV/summary JSON are
+# the actual result and stay tracked
+site3_gee_creek/precipitation/data/mrms_raw/
+
 # USGS 3DHP national Flow Network Derivatives archive (880MB zip + 1.68GB extracted CSV) —
 # fetched for TASK_3DHP_FLOW_NETWORK_DERIVATIVES.md, never actually consumed by any script;
 # re-fetchable from source, not worth versioning

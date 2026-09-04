@@ -1,0 +1,16 @@
+{
+  "site": "site3",
+  "storm": "milton",
+  "cell_size_m": 25.0,
+  "grid_shape": [
+    272,
+    274
+  ],
+  "dt_s": 20.0,
+  "n_steps": 51840,
+  "wall_s": 1613.6354067325592,
+  "total_rain_mm": 288.036,
+  "peak_rain_mm_hr": 30.479999999999997,
+  "peak_depth_m": 3.1433074474334717,
+  "peak_flooded_ha": 1528.375
+}
