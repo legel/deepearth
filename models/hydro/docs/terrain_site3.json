@@ -1,0 +1,11 @@
+{
+ "cell_size_m": 0.8775327556352192,
+ "acc_threshold_cells": 50131.363152816724,
+ "burn_mean_drop_m": 0.0025661385152488947,
+ "stream_cells": 111935,
+ "stream_features": 51495,
+ "hand_mean_m": 2.047995090484619,
+ "hand_lt_1m_pct": 17.153538959810792,
+ "catchment_km2": 3.7235007121387627,
+ "pour_point": "gauge"
+}
