@@ -1,0 +1,11 @@
+{
+ "peak_depth_m": 3.2411959171295166,
+ "peak_flooded_ha": 1783.1875,
+ "peak_outflow_total_cfs": 14084.667085410532,
+ "peak_outflow_time_hr": 33.95,
+ "total_rain_mm": 391.7441999999999,
+ "mass_residual_pct": -0.00031558062462400783,
+ "wall_s": 372.13100695610046,
+ "n_substeps": 302921,
+ "substep_cap_hits": 0
+}
