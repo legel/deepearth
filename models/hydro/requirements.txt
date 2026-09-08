@@ -1,0 +1,32 @@
+# hydro — flood digital twin. Python 3.9 for the pipeline.
+#
+# The version split is forced by dependencies, not preference:
+#   3.9   the pipeline. richdem does NOT build on 3.11 (its vendored pybind11 predates the
+#         change that made PyFrameObject opaque), and pysheds 0.5 calls np.in1d, removed in
+#         numpy 2.0, in nine places. Both are load-bearing; see README.
+#   3.11  cli.py segment only. SAM3 ships in transformers 5.x, which needs >= 3.10.
+#
+#   python3 -m pip install --user -r requirements.txt
+
+numpy>=1.26.4,<2      # capped for pysheds; nothing else here needs the cap
+scipy
+pandas
+matplotlib
+Pillow
+
+rasterio              # raster I/O and warping
+geopandas             # vector I/O
+shapely
+pyproj
+
+py3dep                # USGS 3DEP elevation; pulls rioxarray, which fetch.dem needs
+planetary-computer    # NAIP via the Planetary Computer STAC API; pulls pystac-client
+pysheds               # D8 routing, accumulation, HAND
+richdem               # depression breaching. PYTHON 3.9 ONLY.
+
+requests
+flask                 # viewer
+pytest                # tests
+
+# Segmentation only, and only under Python 3.11:
+#   transformers>=5.16   torch   accelerate

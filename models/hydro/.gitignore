@@ -1,0 +1,19 @@
+# Fetched and derived data — every file here is reproducible by `python3 cli.py fetch`.
+data/
+outputs/
+# There is no trailing-comment syntax here: `cache/  # why` is a pattern ending in "# why"
+# and matches nothing, which is how py3dep's 7.9 MB aiohttp cache nearly shipped.
+cache/
+.pytest_cache/
+*.tif
+*.laz
+*.npz
+
+# The viewer payload is the one exception: small, downsampled, and committed so the viewer
+# works on a fresh clone. Two rules are needed, not one. `data/` above excludes viewer/data as
+# a directory, and git cannot re-include a file whose parent directory is excluded, so the
+# directory must be un-excluded first. The `**` then reaches the per-site subdirectory: an
+# earlier `!viewer/data/*.bin` matched only one level down and silently left dem.bin and the
+# whole flood animation untracked, which is a broken viewer on a clone.
+!viewer/data/
+!viewer/data/**
