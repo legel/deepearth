@@ -16,7 +16,7 @@ from sites import SiteConfig, get_site
 BASE = Path(__file__).resolve().parent
 
 LAYERS = [
-    {"id": "naip", "label": "NAIP aerial, 0.6 m", "file": "naip.png", "kind": "drape"},
+    {"id": "naip", "label": "NAIP aerial imagery", "file": "naip.png", "kind": "drape"},
     {"id": "hand", "label": "Height above nearest drainage", "file": "hand.png", "kind": "drape"},
     {"id": "impervious", "label": "NLCD impervious surface", "file": "impervious.png",
      "kind": "drape"},

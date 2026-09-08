@@ -6,6 +6,7 @@ failure is something a first-time reader would hit within a minute of cloning.
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +75,25 @@ def test_no_fetched_file_is_a_symlink():
     assert not links, (
         f"symlinked into this tree rather than fetched: {links}. Nothing here is reproducible "
         f"from a coordinate while these exist -- delete them and run `python3 cli.py fetch`.")
+
+
+def test_no_committed_overlay_paints_the_terrain_black():
+    """A draped overlay must show terrain through its gaps, not cover them.
+
+    The RGB branch of `export_overlay` wrote no alpha, so wherever the source raster did not
+    reach it emitted opaque black -- 23 % of the aerial drape, because NAIP ships in UTM and the
+    DEM is in Albers, ~8.8 deg apart, and the imagery rectangle cannot reach the domain's
+    corners. It reads as burnt ground rather than as missing data, and the earlier check for it
+    measured the opaque FRACTION, where 100 % is the symptom and not the reassurance.
+    """
+    from PIL import Image
+
+    for png in sorted((ROOT / "viewer" / "data").rglob("*.png")):
+        a = np.asarray(Image.open(png).convert("RGBA"))
+        opaque_black = ((a[..., :3].sum(axis=2) == 0) & (a[..., 3] > 0)).mean()
+        assert opaque_black < 0.02, (
+            f"{png.relative_to(ROOT)} is {opaque_black:.1%} opaque black -- uncovered ground "
+            f"must be transparent so the terrain shows through")
 
 
 def test_the_readme_test_count_is_current():

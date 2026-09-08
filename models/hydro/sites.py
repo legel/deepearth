@@ -247,7 +247,7 @@ class SiteConfig:
     # Surface parameterisation
     @property
     def landcover(self) -> Path:
-        return self.path("surface", "landcover_0.6m.tif")
+        return self.path("surface", "landcover.tif")
 
     @property
     def manning_n(self) -> Path:

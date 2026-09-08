@@ -2,8 +2,8 @@
 
 Shallow-water solvers are portable; their parameters are not. Roughness, infiltration capacity
 and storage normally come from SSURGO and NLCD, which exist in a handful of countries. This
-module derives the same fields from open-vocabulary segmentation of aerial imagery, which is
-the part that could run anywhere. The canopy-height model that produced the channel finding
+module derives the same fields from open-vocabulary segmentation of 0.6 m aerial imagery,
+which is the part that could run anywhere. The canopy-height model that produced the channel finding
 below is not shipped here; it was a LiDAR-derived raster built during the investigation, and the
 rule it justified survives it.
 
@@ -221,9 +221,9 @@ def summary(fields: Dict[str, np.ndarray], scalar_manning_n: float = 0.040) -> D
 
 MODEL_ID = "facebook/sam3"
 TILE_PX = 1024
-"""SAM3's native working resolution, in PIXELS -- the ground footprint follows the imagery.
-NAIP over this site was 0.6 m in 2021 (~614 m per tile) and 0.3 m in 2023 (~307 m, so 4x the
-tiles). `fetch.naip` takes the latest year, so this is not a fixed scale."""
+"""SAM3's native working resolution. On the 0.6 m mosaic `fetch.NAIP_RES_M` pins, that is
+~614 m of ground per tile -- fixed, because the fetch resamples rather than inheriting whatever
+resolution NAIP last flew."""
 
 OVERLAP_PX = 128
 SCORE_THRESHOLD = 0.35

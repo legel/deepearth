@@ -157,18 +157,29 @@ def export_overlay(site: SiteConfig, name: str, source: Path, cmap: str = "virid
         bottom, top = sorted([ref.bounds.bottom, ref.bounds.top])
         dst_crs, dst_tf = ref.crs, from_bounds(left, bottom, right, top, size, size)
 
+    # NaN, not zero, is the "nothing reprojected here" sentinel. Zero is a legal pixel value in
+    # every one of these rasters, so a zero-filled destination cannot be told apart from real
+    # data -- which is how the aerial drape came to paint 23 % of the domain opaque black.
     with rasterio.open(source) as src:
         bands = min(src.count, 3)
-        out = np.zeros((bands, size, size), dtype=np.float32)
+        out = np.full((bands, size, size), np.nan, dtype=np.float32)
         for b in range(bands):
             reproject(src.read(b + 1).astype(np.float32), out[b],
                       src_transform=src.transform, src_crs=src.crs,
+                      src_nodata=src.nodata, dst_nodata=np.nan,
                       dst_transform=dst_tf, dst_crs=dst_crs, resampling=Resampling.bilinear)
 
     path = _data_dir(site) / f"{name}.png"
     if bands == 3:
+        # Alpha, not black. NAIP ships in UTM and the DEM is in Albers, ~8.8 deg apart at this
+        # longitude, so the imagery rectangle does not reach the domain's corners however large
+        # the mosaic is. Uncovered ground must show the terrain through, not a black wall.
         rgb = np.moveaxis(out, 0, -1)
-        plt.imsave(path, np.clip(rgb / max(float(rgb.max()), 1e-6), 0, 1))
+        covered = np.isfinite(rgb).all(axis=-1)
+        rgba = np.zeros((size, size, 4), dtype=np.float32)
+        rgba[..., :3] = np.clip(np.nan_to_num(rgb) / max(float(np.nanmax(rgb)), 1e-6), 0.0, 1.0)
+        rgba[..., 3] = covered
+        plt.imsave(path, rgba)
         return name
 
     a = out[0]

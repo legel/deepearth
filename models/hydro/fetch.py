@@ -47,6 +47,17 @@ perfectly good response and silently write a fallback table -- which is the exac
 the provenance field exists to catch.
 """
 
+NAIP_RES_M = 0.6
+"""Ground resolution [m] the NAIP mosaic is built at, PINNED rather than inherited.
+
+NAIP's native resolution improves by survey year -- 0.6 m over this site in 2021, 0.3 m in
+2023 -- so taking whatever the latest year flew makes the fetch cost, and every downstream
+raster's size, drift with the calendar. Nothing here benefits from finer: the viewer drape is
+downsampled to 256 px and the segmentation tiles by pixel count, so 0.3 m only quadruples the
+tiles. Pinning it also keeps this the cheapest thing that covers the domain -- resampling to
+0.6 m during the merge is what makes covering the DEM's full footprint affordable at all.
+"""
+
 HORTON_K_BY_TEXTURE = {
     "sand": 1.5, "loamy sand": 1.8, "sandy loam": 2.0, "loam": 2.5, "silt loam": 3.0,
     "silt": 3.0, "sandy clay loam": 3.5, "clay loam": 4.0, "silty clay loam": 4.0,
@@ -368,12 +379,12 @@ def nlcd(site: SiteConfig) -> None:
 
 
 def naip(site: SiteConfig) -> Optional[str]:
-    """NAIP aerial imagery, mosaicked, via the Planetary Computer STAC API.
+    """NAIP aerial imagery at `NAIP_RES_M`, mosaicked, via the Planetary Computer STAC API.
 
-    The most recent year available is taken, so the ground resolution is whatever NAIP flew last
-    and improves over time: 0.6 m over this site in 2021, 0.3 m in 2023. That is a 965 MB mosaic
-    built in memory by `merge`, ~18 minutes and ~2.7 GB of RSS for a 6 km box -- by far the most
-    expensive fetch here, and the reason this one is worth running last.
+    Covers the DEM's own footprint, not `site.bbox()`. The modelled domain is the DEM, which is
+    the axis-aligned Albers box of the lat/lon request and so ~14 % wider per side; sizing the
+    mosaic to the smaller box left the corners of every downstream product without imagery --
+    an opaque black drape in the viewer and, worse, ground the segmentation never saw.
 
     Feeds the surface parameterisation and the viewer's aerial drape; the solver never reads it.
 
@@ -386,19 +397,41 @@ def naip(site: SiteConfig) -> Optional[str]:
     from rasterio.merge import merge
     from rasterio.warp import transform_bounds
 
+    # Cover the DEM, not `site.bbox()`. The modelled domain is the DEM's own footprint, which is
+    # the axis-aligned Albers box of the lat/lon request and so is ~14 % wider per side; sizing
+    # the mosaic to the smaller box left the corners of every downstream product without
+    # imagery -- a black drape in the viewer and, worse, ground the segmentation never saw.
+    box_crs, box = "epsg:4326", site.bbox()
+    if site.dem.exists():
+        with rasterio.open(site.dem) as dem:
+            b, box_crs = dem.bounds, dem.crs
+        left, right = sorted((b.left, b.right))
+        bottom, top = sorted((b.bottom, b.top))
+        box = (left, bottom, right, top)
+
     catalog = pystac_client.Client.open(PC_STAC_URL, modifier=planetary_computer.sign_inplace)
-    items = list(catalog.search(collections=["naip"], bbox=site.bbox()).items())
+    search_bbox = transform_bounds(box_crs, "epsg:4326", *box)
+    items = list(catalog.search(collections=["naip"], bbox=search_bbox).items())
     if not items:
         return None
     year = max(i.properties["datetime"][:4] for i in items)
     latest = [i for i in items if i.properties["datetime"][:4] == year]
 
-    srcs = [rasterio.open(i.assets["image"].href) for i in latest]
-    # merge() interprets `bounds` in the SOURCE crs. NAIP ships in UTM, so handing it the site's
-    # WGS84 box silently intersects to nothing and rasterio then refuses to write a 0x0 raster.
-    bounds = transform_bounds("epsg:4326", srcs[0].crs, *site.bbox())
-    mosaic, transform = merge(srcs, bounds=bounds)
-    profile = srcs[0].profile.copy()
+    # Every other fetch here goes through `_get`, which has a timeout and backoff. This one
+    # reads COGs through GDAL instead, and GDAL will wait on a stalled socket forever: one run
+    # sat 25 minutes on a single open connection with the CPU clock frozen. Bound it.
+    with rasterio.Env(GDAL_HTTP_TIMEOUT=60, GDAL_HTTP_MAX_RETRY=3, GDAL_HTTP_RETRY_DELAY=2):
+        srcs = [rasterio.open(i.assets["image"].href) for i in latest]
+        try:
+            # merge() interprets `bounds` in the SOURCE crs. NAIP ships in UTM, so handing it a
+            # WGS84 box silently intersects to nothing and rasterio refuses to write a 0x0 raster.
+            mosaic, transform = merge(srcs, res=NAIP_RES_M,
+                                      bounds=transform_bounds(box_crs, srcs[0].crs, *box))
+            profile = srcs[0].profile.copy()
+        finally:
+            for src in srcs:
+                src.close()
+
     profile.update(height=mosaic.shape[1], width=mosaic.shape[2],
                    transform=transform, count=3, compress="deflate")
     with rasterio.open(site.naip_rgb, "w", **profile) as dst:
@@ -407,8 +440,6 @@ def naip(site: SiteConfig) -> Optional[str]:
         profile.update(count=1)
         with rasterio.open(site.naip_nir, "w", **profile) as dst:
             dst.write(mosaic[3:4])
-    for s in srcs:
-        s.close()
     return year
 
 

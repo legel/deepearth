@@ -33,10 +33,6 @@ Both numbers survive a change of grid. At the 5 m production grid the runoff coe
 run is shipped as an artefact; the 5 m figures quoted here and below are from a production run
 that takes ~15 hours to reproduce. Flood *extent* does not transfer that way; see Limitations.
 
-`fetch` takes the most recent NAIP year available, so its ground resolution improves over
-time — 0.6 m for this site in 2021, 0.3 m in 2023, which is a 965 MB mosaic and ~18 minutes of
-the fetch. Nothing downstream assumes a resolution; the segmentation tiles by pixel count.
-
 **Timing is effectively solved. Magnitude is not, and is stated as an open problem.** Seven
 mechanisms have been tested and none closes it: roughness by three independent methods, soil
 storage capacity, infiltration access, capacity and access combined, domain-versus-watershed
@@ -55,7 +51,7 @@ produces.)
 
 ```
 coordinate
-  ├── fetch      3DEP DEM · SSURGO soils · NLCD impervious · NAIP · 3DHP hydrography
+  ├── fetch      3DEP DEM · SSURGO soils · NLCD impervious · NAIP 0.6 m · 3DHP hydrography
   │              FEMA NFHL · OSM roads+buildings · ASOS rainfall · NWIS discharge · Atlas 14
   ├── terrain    stream burn → depression breach → D8 → accumulation → HAND → watershed
   ├── segment    SAM3 open-vocabulary classes → Manning's n, impervious fraction   (optional)
@@ -72,7 +68,7 @@ channel network the storm fills; grey is where D8 could not resolve drainage at 
 
 **Parameters, not solvers, are what stop flood twins being deployable anywhere.** Shallow-water
 solvers are mature and portable; roughness, infiltration capacity and storage come from national
-surveys that exist in a handful of countries. `surface.py` derives them instead from aerial
+surveys that exist in a handful of countries. `surface.py` derives them instead from 0.6 m
 imagery. The vision route reproduces the soil survey's basin
 water budget to within 0.6 % while sharing almost no spatial structure with it — it agrees on how
 much water the basin sheds and disagrees on where.
@@ -90,7 +86,7 @@ structural: a mapped feature outranks a spectral inference, extended to hydrogra
 cd models/hydro
 python3 -m pip install --user -r requirements.txt
 
-python3 cli.py fetch    --site site3 --storm ian   # ~20 min; NAIP is nearly all of it
+python3 cli.py fetch    --site site3 --storm ian   # ~15 min; NAIP is nearly all of it
 python3 cli.py terrain  --site site3
 python3 cli.py simulate --site site3 --storm ian --cell-size 25   # ~6 min; 5 m is ~15 h
 python3 cli.py validate --site site3 --storm ian --cell-size 25
@@ -104,7 +100,7 @@ after a re-run: it is what keeps the committed payload from drifting away from t
 derived from.
 
 ```bash
-python3 -m pytest         # 106 tests, ~10 s, no network and no site data
+python3 -m pytest         # 107 tests, ~10 s, no network and no site data
 ```
 
 This was rewritten from an older implementation, so it is held to that one numerically.
