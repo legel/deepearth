@@ -5,6 +5,7 @@ solver's own outputs are not: a full-resolution point cloud is 1,011 MB and the 
 gigabytes. The payload is a view, not the data.
 """
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Dict, Optional
@@ -36,6 +37,21 @@ def _storm_label(storm_name: str) -> str:
 
     storm = STORMS.get(storm_name)
     return storm.label if storm is not None else storm_name
+
+
+def payload_digest(site: SiteConfig) -> str:
+    """Content hash of everything the viewer serves for one site.
+
+    The two README screenshots are photographs of this payload, and nothing else can tell that
+    they have gone stale: git carries no mtimes, and a picture of a fixed bug looks exactly like
+    a picture of a working viewer. `docs/screenshots.json` records the digest each was taken
+    against, and a test compares it to the payload on disk.
+    """
+    h = hashlib.sha256()
+    for f in sorted(_data_dir(site).iterdir()):
+        h.update(f.name.encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()[:16]
 
 
 def export_terrain(site: SiteConfig, storm_name: Optional[str] = None,
@@ -207,4 +223,5 @@ def export_all(site: SiteConfig, storm_name: str = "ian", cell_size_m: float = 2
         export_overlay(site, "hand", site.hand, cmap="RdYlBu"),
         export_overlay(site, "impervious", site.nlcd_impervious, cmap="inferno"),
     ) if n]
+    summary["payload_digest"] = payload_digest(site)
     return summary

@@ -45,6 +45,20 @@ controls.target.set(0, relief * state.exag * 0.4, 0);
 controls.update();
 document.getElementById('loading').remove();
 
+/* The panel is opaque and fixed to the top-left, and the scene is centred on the canvas, so the
+   terrain's near corner sits underneath it. Shifting the PROJECTION rather than the camera
+   keeps the orbit centre on the terrain -- move the camera instead and every drag rotates about
+   a point off in space. A negative x view-offset renders a window left of the virtual origin,
+   which slides the scene right by that many pixels. */
+function frameClearOfPanel() {
+  const panel = document.getElementById('panel').getBoundingClientRect();
+  const shift = innerWidth > 2.5 * panel.width ? (panel.right + 16) / 2 : 0;
+  camera.setViewOffset(innerWidth, innerHeight, -shift, 0, innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+frameClearOfPanel();
+
 /* Layer panel. A layer whose file is absent is shown disabled rather than hidden, so the page
    says what this site does not have instead of quietly differing from another site. */
 const panel = document.getElementById('layers');
@@ -112,11 +126,10 @@ function setFrame(i) {
 function chartCaption() {
   const domain = meta.domain_km2 ? `${meta.domain_km2.toFixed(1)}\u00a0km\u00b2` : 'the domain';
   const gauge = meta.gauge
-    ? `the gauge measures one channel draining ${meta.gauge.documented_area_km2}\u00a0km\u00b2, so`
-    : 'there is no gauge here, so';
-  return `Log axis. Simulated outflow crosses all four edges of ${domain}; ${gauge} read timing `
-       + 'and shape, not relative height. The gauge samples at 15\u00a0min, so no timing '
-       + 'difference below 0.25\u00a0h is measurable.';
+    ? `the gauge drains ${meta.gauge.documented_area_km2}\u00a0km\u00b2, so`
+    : 'no gauge here, so';
+  return `Log axis. Simulated outflow leaves all four edges of ${domain}; ${gauge} read timing `
+       + 'and shape, not height \u2014 and nothing below the gauge\u2019s 15\u00a0min sampling.';
 }
 
 async function loadChart() {
@@ -156,9 +169,8 @@ setInterval(() => {
 }, 400);
 
 addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  frameClearOfPanel();
   if (state.chart) state.chart.draw(state.flood ? state.flood.timesHours[state.frame] : 0);
 });
 

@@ -61,8 +61,9 @@ coordinate
   └── viewer     Flask + three.js
 ```
 
-Height above nearest drainage, the conditioning stage's own product, in the viewer. Blue is the
-channel network the storm fills; grey is where D8 could not resolve drainage at all:
+Height above nearest drainage, the conditioning stage's own product, in the viewer. The colour
+scale runs `RdYlBu` over HAND itself, so **red is the channel network** the storm fills and blue
+is high ground; grey is where D8 could not resolve drainage at all:
 
 [![Height above nearest drainage](docs/viewer_hand.jpg)](docs/viewer_hand.jpg)
 
@@ -100,7 +101,7 @@ after a re-run: it is what keeps the committed payload from drifting away from t
 derived from.
 
 ```bash
-python3 -m pytest         # 107 tests, ~10 s, no network and no site data
+python3 -m pytest         # 108 tests, ~10 s, no network and no site data
 ```
 
 This was rewritten from an older implementation, so it is held to that one numerically.
