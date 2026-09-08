@@ -1,0 +1,11 @@
+{
+ "area_any_risk_ha": 1263.9375,
+ "area_gt_1pct_ha": 887.9375,
+ "area_gt_10pct_ha": 429.25,
+ "cells_total": 74528,
+ "cells_at_risk": 20223,
+ "monotonicity_fixed_cells": 0,
+ "loglinearity_r2": 0.9703029181087981,
+ "threshold_m": 0.15,
+ "duration_hr": 24.0
+}
