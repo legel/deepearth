@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ label }} — DeepEarth hydro</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script type="importmap">
+{"imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<aside id="panel">
+  <h1>{{ label }}</h1>
+  <p id="subtitle" class="muted"></p>
+
+  <section>
+    <h2>Layers</h2>
+    <div id="layers"></div>
+  </section>
+
+  <section>
+    <h2>Vertical exaggeration <span id="exag-value" class="muted">2&times;</span></h2>
+    <input type="range" id="exag" min="1" max="40" step="1" value="20">
+  </section>
+
+  <section id="playback" hidden>
+    <h2 id="playback-title">Flood animation</h2>
+    <div class="row">
+      <button id="play">Play</button>
+      <span id="clock" class="muted">t = 0.0 h</span>
+    </div>
+    <input type="range" id="frame" min="0" max="0" step="1" value="0">
+    <p id="readout" class="muted"></p>
+  </section>
+
+  <section id="chart-section" hidden>
+    <h2>Discharge vs USGS gauge</h2>
+    <canvas id="chart" width="600" height="260"></canvas>
+    <p id="chart-caption" class="muted"></p>
+  </section>
+</aside>
+
+<div id="loading">loading terrain&hellip;</div>
+<script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
