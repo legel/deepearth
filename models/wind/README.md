@@ -86,7 +86,7 @@ class per column) with `parameters.json` (z0, cd, LAI and closure per class), an
 rasters; without one, the 46-class table in [`physics.py`](physics.py#L46) applies.
 
 ```bash
-python3 -m pytest         # 0 tests, no network and no site data
+python3 -m pytest         # 85 tests, no network and no site data
 ```
 
 ## License
