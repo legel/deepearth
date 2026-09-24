@@ -15,11 +15,11 @@ Validated at Gee Creek near Longwood, Florida, against **USGS gauge 02234400** f
 | momentum, per face | $q^{n+1} = \dfrac{q^n - g h_f \Delta t\, \partial_x \eta}{1 + g \Delta t\, n^2 \lvert q^n \rvert / h_f^{7/3}}$, $\lvert q \rvert \le 0.9\, h_f \sqrt{g h_f}$ | [`solver.py` `_face_flux`](solver.py#L255) |
 | continuity | $h^{n+1} = h^n + \Delta t\,(P + \nabla \cdot q) - i$ | [`solver.py` `_substep`](solver.py#L270) |
 | time step | $\Delta t = \alpha\, \Delta x / \sqrt{g h_{\max}}$, $\alpha = 0.15$ | [`solver.py` `_cfl_dt`](solver.py#L248) |
-| infiltration, ponded | $d - S \ln\!\left(1 + \dfrac{d}{F + S}\right) = K_s \Delta t$, $S = G(\theta_b, \theta_s)(\theta_s - \theta_b)$ | [`infiltration.py` `ponded_increment`](infiltration.py#L134) |
-| infiltration, actual | $i = \min(d,\ h,\ F_{\max} - F_1 - F_2)$ | [`infiltration.py` `step`](infiltration.py#L167) |
-| redistribution | $Z \dfrac{d\theta}{dt} = r - [K(\theta) - K(\theta_b)] - p\, K_s \dfrac{G(\theta_b, \theta)}{Z}$, $p = 1.7$ dry, $1.0$ wetting | [`infiltration.py` `_rate`](infiltration.py#L150) |
-| conductivity | $K(\theta) = K_s S_e^{3 + 2/\lambda}$, $S_e = \dfrac{\theta - \theta_r}{\theta_s - \theta_r}$ | [`infiltration.py` `conductivity`](infiltration.py#L109) |
-| capillary drive | $G(\theta_b, \theta) = \psi_f \dfrac{S_e^{c} - S_{e,b}^{c}}{1 - S_{e,b}^{c}}$, $c = 3 + 1/\lambda$ | [`infiltration.py` `capillary_drive`](infiltration.py#L114) |
+| infiltration, ponded | $d - S \ln\!\left(1 + \dfrac{d}{F + S}\right) = K_s \Delta t$, $S = G(\theta_b, \theta_s)(\theta_s - \theta_b)$ | [`infiltration.py` `ponded_increment`](infiltration.py#L160) |
+| infiltration, actual | $i = \min(d,\ h,\ F_{\max} - F_1 - F_2)$ | [`infiltration.py` `step`](infiltration.py#L193) |
+| redistribution | $Z \dfrac{d\theta}{dt} = r - [K(\theta) - K(\theta_b)] - p\, K_s \dfrac{G(\theta_b, \theta)}{Z}$, $p = 1.7$ dry, $1.0$ wetting | [`infiltration.py` `_rate`](infiltration.py#L176) |
+| conductivity | $K(\theta) = K_s S_e^{3 + 2/\lambda}$, $S_e = \dfrac{\theta - \theta_r}{\theta_s - \theta_r}$ | [`infiltration.py` `conductivity`](infiltration.py#L135) |
+| capillary drive | $G(\theta_b, \theta) = \psi_f \dfrac{S_e^{c} - S_{e,b}^{c}}{1 - S_{e,b}^{c}}$, $c = 3 + 1/\lambda$ | [`infiltration.py` `capillary_drive`](infiltration.py#L140) |
 
 The surface is the local-inertial approximation of Bates, Horritt and Fewtrell (2010), *J. Hydrol.*
 387, 33-45, with Manning friction treated semi-implicitly. Infiltration is Green-Ampt with
@@ -52,25 +52,29 @@ invents, reported rather than absorbed.
 | volume with rain, inflow, GAR or Horton, surface storage | closes to 1e-6 (float64), 1e-4 (float32) |
 | lake at rest over an uneven bed | stays at rest to the bit |
 
-**Against the gauge.** Hurricane Ian, 391.7 mm over 120 h, Horton on SSURGO
-([`docs/validation_site3_ian_25m.json`](docs/validation_site3_ian_25m.json)):
+**Against the gauge.** Hurricane Ian at USGS 02234400, 391.7 mm of rain, 25 m grid, scored over the 175
+gauge samples of the 72 h window. The same terrain, rain and roughness; only the infiltration differs.
+GAR takes K_s, saturated and field-capacity water from the SSURGO surface horizon, the rest from its USDA
+texture, and room above the seasonal-high water table ([`domain.py` `gar_soil`](domain.py#L230)):
 
 [![Simulated against observed discharge](docs/hydrograph_ian.png)](docs/hydrograph_ian.png)
 
-| | 25 m | 5 m | observed |
+| | Horton | GAR | observed |
 |---|---|---|---|
-| peak discharge | 342.02 m³/s at 33.52 h | 314.78 m³/s at 33.52 h | 32.42 m³/s at 37.52 h |
-| runoff coefficient | 0.800 | 0.796 | 0.289 to 0.314 |
-| Kling-Gupta | −5.23 (r 0.54) | −4.75 (r 0.56) | |
-| mass-balance residual | −0.00012 % | −0.197 % | |
+| peak discharge | 342.02 m³/s at 33.52 h | 260.93 m³/s at 34.52 h | 32.42 m³/s at 37.52 h |
+| runoff coefficient | 0.800 | 0.628 | 0.289 to 0.314 |
+| Nash-Sutcliffe | −39.88 | −19.69 | |
+| Kling-Gupta | −5.23 (r 0.54) | −3.28 (r 0.60) | |
+| mass-balance residual | −0.00012 % | 0.00003 % | |
 
-The overshoot is the infiltration parameterization, not the grid: refining 5× moves the runoff
-coefficient by 0.4 % ([`docs/resolution_site3_ian.json`](docs/resolution_site3_ian.json)). The Horton
-fields cap infiltration at 19.30 % of the storm and the solver takes 18.64 %
-([`docs/infiltration_ceiling_site3.json`](docs/infiltration_ceiling_site3.json)); a third of the
-catchment has a soil store under 10 mm because SSURGO puts its seasonal-high water table at the surface.
-GAR replaces that store with the soil's own water capacity above the water table, carried through time;
-its Ian run is the next receipt here.
+Receipts: [`docs/validation_site3_ian_25m.json`](docs/validation_site3_ian_25m.json),
+[`docs/validation_site3_ian_25m_gar.json`](docs/validation_site3_ian_25m_gar.json).
+
+GAR halves the error but does not close it. Refining the grid 5× moves the runoff coefficient by 0.4 %
+([`docs/resolution_site3_ian.json`](docs/resolution_site3_ian.json)), so the grid is not the cause. What
+remains is storage: SSURGO puts the seasonal-high water table at the surface under a third of the
+catchment, so those cells take nothing ([`docs/infiltration_ceiling_site3.json`](docs/infiltration_ceiling_site3.json)),
+and the delineated catchment is 15.3 of the gauge's 33.2 km² ([`docs/terrain_site3.json`](docs/terrain_site3.json)).
 
 ## How it works
 
@@ -109,7 +113,7 @@ res = simulate(Surface(z=z, soil=soil, soil_state=res.soil_state), next_storm, c
 ```
 
 ```bash
-python3 -m pytest         # 164 tests, no network and no site data
+python3 -m pytest         # 176 tests, no network and no site data
 ```
 
 ## Limitations

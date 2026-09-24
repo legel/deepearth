@@ -19,6 +19,7 @@ from rasterio.transform import from_bounds, rowcol
 from rasterio.warp import reproject
 
 from physics import IMPERVIOUS_FC_MM_HR, road_buffer_m
+from infiltration import RAWLS_1983, Soil, usda_texture
 from sites import SiteConfig
 from solver import Surface
 
@@ -160,15 +161,8 @@ def spatial_horton(site: SiteConfig, shape: Tuple[int, int],
     return {"f0": f0 / 1000 / 3600, "fc": fc / 1000 / 3600, "k": k / 3600}
 
 
-def apply_impervious(site: SiteConfig, horton: Dict[str, np.ndarray], shape: Tuple[int, int],
-                     profile: Dict) -> Dict[str, np.ndarray]:
-    """Zero infiltration under OSM roads and buildings, then grade the rest by NLCD.
-
-    The binary OSM mask is a hard cut: a real road is fully impervious whatever NLCD's 30 m
-    pixel reports. Everywhere else, capacity is scaled by (1 - impervious fraction), which
-    catches driveways and compacted ground that OSM does not map. `k` is untouched --
-    imperviousness changes how much can infiltrate, not the shape of the decay curve.
-    """
+def impervious(site: SiteConfig, shape: Tuple[int, int], profile: Dict) -> Tuple[np.ndarray, np.ndarray]:
+    """(OSM roads and buildings as a hard mask, NLCD impervious fraction) on the solver grid."""
     import geopandas as gpd
     from rasterio.features import rasterize
 
@@ -181,15 +175,25 @@ def apply_impervious(site: SiteConfig, horton: Dict[str, np.ndarray], shape: Tup
     shapes = [(row.geometry.buffer(road_buffer_m(str(row.get("highway")))), 1)
               for _, row in roads.iterrows()]
     shapes += [(geom, 1) for geom in buildings.geometry]
-
     hard = rasterize(shapes, out_shape=shape, transform=profile["transform"],
                      fill=0, dtype=np.uint8).astype(bool)
+    nlcd = _warp_onto(site.nlcd_impervious, shape, profile, Resampling.bilinear)
+    return hard, np.clip(np.nan_to_num(nlcd, nan=0.0) / 100.0, 0.0, 1.0)
+
+
+def apply_impervious(site: SiteConfig, horton: Dict[str, np.ndarray], shape: Tuple[int, int],
+                     profile: Dict) -> Dict[str, np.ndarray]:
+    """Zero infiltration under OSM roads and buildings, then grade the rest by NLCD.
+
+    The binary OSM mask is a hard cut: a real road is fully impervious whatever NLCD's 30 m
+    pixel reports. Everywhere else, capacity is scaled by (1 - impervious fraction), which
+    catches driveways and compacted ground that OSM does not map. `k` is untouched --
+    imperviousness changes how much can infiltrate, not the shape of the decay curve.
+    """
+    hard, frac = impervious(site, shape, profile)
     fc_hard = IMPERVIOUS_FC_MM_HR / 1000 / 3600
     horton["fc"] = np.where(hard, fc_hard, horton["fc"])
     horton["f0"] = np.where(hard, fc_hard, horton["f0"])
-
-    nlcd = _warp_onto(site.nlcd_impervious, shape, profile, Resampling.bilinear)
-    frac = np.clip(np.nan_to_num(nlcd, nan=0.0) / 100.0, 0.0, 1.0)
     grade = np.where(np.isclose(horton["fc"], fc_hard), 1.0, 1.0 - frac)
     horton["fc"] = horton["fc"] * grade
     horton["f0"] = horton["f0"] * grade
@@ -223,6 +227,49 @@ def soil_storage(site: SiteConfig, shape: Tuple[int, int], profile: Dict) -> np.
     return out
 
 
+def gar_soil(site: SiteConfig, shape: Tuple[int, int], profile: Dict) -> Soil:
+    """Per-cell Green-Ampt soil from SSURGO, at field capacity, above its seasonal-high water table.
+
+    K_s is the dominant component's surface-horizon `ksat_r`, zero-graded by impervious cover as the Horton path
+    is; theta_s is `wsatiated_r` and the antecedent theta_i `wthirdbar_r` (field capacity: Ian followed two weeks
+    of above-average rain). theta_r, lambda and psi_f come from the Rawls et al. (1983) row of the horizon's
+    USDA texture. What the profile can take, F_max, is the water-table depth times (theta_s - theta_i): the
+    measured pore space, where the Horton path multiplies by a fixed `DRAINABLE_POROSITY`. A map unit the
+    survey leaves blank takes the Rawls row of loam.
+    """
+    for p in (site.mukey_map, site.mukey_legend, site.soil_hydraulics, site.soil_storage):
+        assert p.exists(), f"{p} missing; run `python3 cli.py fetch --site {site.name}`"
+    hyd = json.loads(site.soil_hydraulics.read_text())
+    names = json.loads(site.soil_params.read_text()) if site.soil_params.exists() else {}
+    with open(site.soil_storage, newline="") as fh:
+        wt_cm = {str(r["mukey"]): float(r["wtdepannmin"]) if (r.get("wtdepannmin") or "").strip()
+                 else NO_WATER_TABLE_DEPTH_CM for r in csv.DictReader(fh)}
+    with open(site.mukey_legend, newline="") as fh:
+        legend = {int(r["mukey_int"]): str(r["mukey"]) for r in csv.DictReader(fh)}
+    mukey = _warp_onto(site.mukey_map, shape, profile, Resampling.nearest, np.int32).astype(np.int32)
+
+    fields = {k: np.zeros(shape) for k in ("ks", "psi_f", "theta_s", "theta_r", "lam", "theta_i", "f_max")}
+    for code in np.unique(mukey):
+        key = legend.get(int(code), "")
+        h = hyd.get(key, {})
+        sand, clay = h.get("sandtotal_r"), h.get("claytotal_r")
+        row = RAWLS_1983[usda_texture(sand, clay) if sand is not None and clay is not None else "loam"]
+        theta_s = (h.get("wsatiated_r") or 100.0 * row["theta_s"]) / 100.0
+        theta_i = min((h.get("wthirdbar_r") or 100.0 * (row["theta_r"] + 0.5 * (row["theta_s"] - row["theta_r"])))
+                      / 100.0, theta_s)
+        water = "water" in str(names.get(key, {}).get("muname", "")).lower()
+        ks = 0.0 if water else (h["ksat_r"] * 1e-6 if h.get("ksat_r") is not None else row["ks_cm_h"] / 3.6e5)
+        m = mukey == code
+        for k, v in (("ks", ks), ("psi_f", row["psi_f_cm"] / 100.0), ("theta_s", theta_s),
+                     ("theta_r", min(row["theta_r"], theta_i)), ("lam", row["lam"]), ("theta_i", theta_i),
+                     ("f_max", wt_cm.get(key, NO_WATER_TABLE_DEPTH_CM) * 0.01 * (theta_s - theta_i))):
+            fields[k][m] = v
+
+    hard, frac = impervious(site, shape, profile)
+    fields["ks"] = np.where(hard, IMPERVIOUS_FC_MM_HR / 1000 / 3600, fields["ks"] * (1.0 - frac))
+    return Soil(**fields)
+
+
 def snap_gauge(site: SiteConfig, z: np.ndarray, profile: Dict, dx: float,
                search_m: float = 25.0) -> Tuple[int, int]:
     """Locate the streamgauge on the solver grid, snapped onto the channel.
@@ -247,7 +294,7 @@ def snap_gauge(site: SiteConfig, z: np.ndarray, profile: Dict, dx: float,
     return r0 + flat // sub.shape[1], c0 + flat % sub.shape[1]
 
 
-def build_surface(site: SiteConfig, cell_size_m: float) -> Tuple[Surface, Dict, float]:
+def build_surface(site: SiteConfig, cell_size_m: float, infiltration: str = "horton") -> Tuple[Surface, Dict, float]:
     """Terrain, soil and impervious cover for one site on one grid.
 
     Roughness is deliberately not a parameter here. A caller wanting the segmentation-derived
@@ -258,11 +305,16 @@ def build_surface(site: SiteConfig, cell_size_m: float) -> Tuple[Surface, Dict, 
     Args:
         site: Site to assemble.
         cell_size_m: Solver resolution.
+        infiltration: "horton" (spatial Horton against a finite store) or "gar" (Green-Ampt with
+            redistribution from the survey's hydraulics, `gar_soil`).
 
     Returns:
         (Surface, rasterio profile for the grid, cell size [m]).
     """
     z, profile, dx = load_dem(site, cell_size_m)
+    if infiltration == "gar":
+        return Surface(z=z, soil=gar_soil(site, z.shape, profile)), profile, dx
+    assert infiltration == "horton", infiltration
     horton = apply_impervious(site, spatial_horton(site, z.shape, profile), z.shape, profile)
     return (
         Surface(z=z, f0=horton["f0"], fc=horton["fc"], k=horton["k"],

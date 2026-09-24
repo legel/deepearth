@@ -178,3 +178,11 @@ def test_horton_runs_unchanged_without_a_soil():
     res = simulate(Surface(z=z, f0=25.0 * MM_HR, fc=10.0 * MM_HR, k=2.0 / 3600.0), [60.0 * MM_HR] * 30,
                    SolverConfig(dx=5.0, dt_s=60.0, dtype="float64", device="cpu"), verbose=False)
     assert res.soil_state is None and res.mass.infiltrated > 0
+
+
+@pytest.mark.parametrize("sand,clay,name", [
+    (92, 3, "sand"), (80, 5, "loamy sand"), (65, 10, "sandy loam"), (40, 20, "loam"), (20, 15, "silt loam"),
+    (5, 5, "silt loam"), (60, 25, "sandy clay loam"), (35, 33, "clay loam"), (10, 33, "silty clay loam"),
+    (50, 42, "sandy clay"), (5, 45, "silty clay"), (20, 60, "clay")])
+def test_usda_texture_triangle(sand, clay, name):
+    assert gar.usda_texture(sand, clay) == name and name in gar.RAWLS_1983

@@ -1,0 +1,33 @@
+{
+ "site": "site3",
+ "storm": "ian",
+ "hydrograph": "hydrograph_ian_25m_gar.csv",
+ "cell_size_m": 25.0,
+ "grid": [
+  272,
+  274
+ ],
+ "total_rain_mm": 391.67562,
+ "mass_residual_pct": 2.858295425212392e-05,
+ "gauge": "02234400",
+ "baseflow_cfs": 45.2,
+ "score": {
+  "peak_sim_cms": 260.92819960175547,
+  "peak_obs_cms": 32.41712598768,
+  "peak_time_sim_h": 34.516666666666666,
+  "peak_time_obs_h": 37.516666666666666,
+  "nse": -19.691532482351235,
+  "kge": -3.2827663495282557,
+  "kge_r": 0.6015695687834006,
+  "kge_alpha": 4.742375531305728,
+  "kge_beta": 3.044007382280286,
+  "n_samples": 175,
+  "window_h": [
+   0.0,
+   71.75
+  ],
+  "peak_ratio": 8.049084909653008,
+  "peak_lag_h": -3.0,
+  "gauge_dt_h": 0.25
+ }
+}

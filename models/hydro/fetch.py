@@ -569,12 +569,50 @@ def atlas14(site: SiteConfig) -> str:
     return source
 
 
+def soil_hydraulics(site: SiteConfig) -> Dict[str, int]:
+    """Green-Ampt inputs per map unit, from the dominant component's surface horizon.
+
+    Writes `soil_hydraulics.json`: saturated conductivity `ksat_r` [um/s], sand and clay [%], saturated
+    water content `wsatiated_r` and water content at 1/3 bar `wthirdbar_r` (field capacity) [% volume].
+    Reads the map units `soil` wrote, so it runs on an earlier fetch without re-rasterizing.
+    """
+    import csv
+
+    with open(site.mukey_legend, newline="") as fh:
+        mukeys = [str(r["mukey"]) for r in csv.DictReader(fh)]
+    in_list = ",".join(f"'{m}'" for m in mukeys)
+    rows = _sda(
+        f"SELECT co.mukey, co.comppct_r, ch.hzdept_r, ch.ksat_r, ch.sandtotal_r, ch.claytotal_r, "
+        f"ch.wsatiated_r, ch.wthirdbar_r FROM component co JOIN chorizon ch ON ch.cokey = co.cokey "
+        f"WHERE co.mukey IN ({in_list})")
+    assert rows and len(rows) > 1, f"SDA returned no horizons for {site.name}"
+    head = rows[0]
+
+    def num(v: object) -> Optional[float]:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    best: Dict[str, Tuple[float, float, Dict[str, Optional[float]]]] = {}
+    for r in rows[1:]:
+        d = dict(zip(head, r))
+        key = (-(num(d["comppct_r"]) or 0.0), num(d["hzdept_r"]) or 0.0)
+        if str(d["mukey"]) not in best or key < best[str(d["mukey"])][:2]:
+            best[str(d["mukey"])] = (*key, {k: num(d[k]) for k in (
+                "ksat_r", "sandtotal_r", "claytotal_r", "wsatiated_r", "wthirdbar_r")})
+    out = {m: v[2] for m, v in best.items()}
+    site.soil_hydraulics.write_text(json.dumps(out, indent=1))
+    return {"map_units": len(out)}
+
+
 def all_sources(site: SiteConfig, storms: Sequence[Storm] = ()) -> Dict[str, object]:
     """Fetch everything the pipeline needs for a site, in dependency order."""
     summary: Dict[str, object] = {}
     dem(site)
     summary["hydrography"] = hydrography(site)
     summary["soil"] = soil(site)          # needs the DEM grid to rasterise onto
+    summary["soil_hydraulics"] = soil_hydraulics(site)
     nlcd(site)
     summary["naip_year"] = naip(site)
     summary["osm"] = roads_and_buildings(site)

@@ -211,6 +211,10 @@ class SiteConfig:
         return self.path("soil", "soil_storage.csv")
 
     @property
+    def soil_hydraulics(self) -> Path:
+        return self.path("soil", "soil_hydraulics.json")
+
+    @property
     def nlcd_impervious(self) -> Path:
         return self.path("soil", "nlcd_impervious.tif")
 

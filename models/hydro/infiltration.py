@@ -64,6 +64,32 @@ RAWLS_1983: Dict[str, Dict[str, float]] = {
 }
 
 
+def usda_texture(sand_pct: float, clay_pct: float) -> str:
+    """The USDA soil texture class of a sand and clay percentage (Soil Survey Manual, 2017), in `RAWLS_1983`'s names.
+
+    Silt, which Rawls et al. do not tabulate, falls to silt loam, its nearest class.
+    """
+    sand, clay = float(sand_pct), float(clay_pct)
+    silt = 100.0 - sand - clay
+    if silt + 1.5 * clay < 15:
+        return "sand"
+    if silt + 2 * clay < 30:
+        return "loamy sand"
+    if clay >= 40:
+        return "clay" if sand <= 45 and silt < 40 else ("silty clay" if silt >= 40 else "sandy clay")
+    if clay >= 35 and sand > 45:
+        return "sandy clay"
+    if clay >= 27:
+        return "silty clay loam" if sand <= 20 else ("clay loam" if sand <= 45 else "sandy clay loam")
+    if clay >= 20 and silt < 28 and sand > 45:
+        return "sandy clay loam"
+    if silt >= 50:
+        return "silt loam"
+    if clay >= 7 and silt >= 28 and sand <= 52:
+        return "loam"
+    return "sandy loam"
+
+
 @dataclass
 class Soil:
     """Per-cell soil for GAR, NumPy arrays of the grid's shape (or scalars).

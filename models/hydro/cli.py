@@ -38,9 +38,10 @@ def _summary_path(site: sites.SiteConfig, name: str) -> Path:
     return site.out_path(f"{name}.json")
 
 
-def _tag(storm_name: str, cell_size_m: float, surface_field: bool) -> str:
+def _tag(storm_name: str, cell_size_m: float, surface_field: bool, infiltration: str = "horton") -> str:
     """Run identifier shared by every stage that reads or writes a run's files."""
-    return f"{storm_name}_{cell_size_m:g}m" + ("_surface" if surface_field else "")
+    return (f"{storm_name}_{cell_size_m:g}m" + ("_surface" if surface_field else "")
+            + ("" if infiltration == "horton" else f"_{infiltration}"))
 
 
 def _receipt(res: Result, extra: Dict[str, object]) -> Dict[str, object]:
@@ -90,9 +91,9 @@ def cmd_segment(args: argparse.Namespace) -> None:
 
 def _run(site: sites.SiteConfig, rain: Sequence[float], cell_size: float, dt_s: float,
          frame_min: float, with_gauge: bool = True,
-         use_surface: bool = False) -> Tuple[Result, dict, float]:
+         use_surface: bool = False, infiltration: str = "horton") -> Tuple[Result, dict, float]:
     """Assemble the domain and integrate one storm."""
-    surf, profile, dx = domain.build_surface(site, cell_size)
+    surf, profile, dx = domain.build_surface(site, cell_size, infiltration)
     if use_surface:
         fields = surface.rasterize(site, surf.z.shape, profile)
         surf.manning_n = fields["manning_n"]
@@ -110,9 +111,9 @@ def cmd_simulate(args: argparse.Namespace) -> None:
     site, storm = sites.get_site(args.site), sites.get_storm(args.storm)
     rain, hourly = forcing.observed_hyetograph(site, storm, args.dt, args.extend_hours)
     res, profile, dx = _run(site, rain, args.cell_size, args.dt, args.frame_interval,
-                            use_surface=args.surface)
+                            use_surface=args.surface, infiltration=args.infiltration)
 
-    tag = _tag(storm.name, args.cell_size, args.surface)
+    tag = _tag(storm.name, args.cell_size, args.surface, args.infiltration)
     t_h = np.arange(len(rain)) * args.dt / 3600.0
     columns = {"time_h": t_h, "rain_mm_hr": res.series["rain_mm_hr"],
                "flooded_ha": res.series["flooded_ha"],
@@ -125,6 +126,7 @@ def cmd_simulate(args: argparse.Namespace) -> None:
 
     summary = _receipt(res, {
         "site": site.name, "storm": storm.name, "cell_size_m": dx, "dt_s": args.dt,
+        "infiltration": args.infiltration,
         "total_rain_mm": float(hourly.sum()),
         "peak_flooded_ha": float(res.series["flooded_ha"].max()),
         "peak_outflow_cfs": float(res.series["outflow_total_cms"].max() * CFS_PER_CMS)})
@@ -163,7 +165,7 @@ def cmd_ensemble(args: argparse.Namespace) -> None:
 def cmd_validate(args: argparse.Namespace) -> None:
     """Score the most recent simulated hydrograph against the gauge and write the receipt."""
     site, storm = sites.get_site(args.site), sites.get_storm(args.storm)
-    tag = _tag(storm.name, args.cell_size, args.surface)
+    tag = _tag(storm.name, args.cell_size, args.surface, args.infiltration)
     path = site.out_path(f"hydrograph_{tag}.csv")
     assert path.exists(), f"{path} missing; run `simulate` with the same options first"
 
@@ -241,6 +243,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                    help="zero-rain hours appended so the drainage tail is not truncated")
     p.add_argument("--surface", action="store_true",
                    help="use the segmentation-derived Manning field instead of the scalar")
+    p.add_argument("--infiltration", choices=("horton", "gar"), default="horton",
+                   help="gar: Green-Ampt with redistribution from the survey's hydraulics")
 
     p = add("ensemble", cmd_ensemble, "design-storm ensemble to a probability surface")
     p.add_argument("--cell-size", type=float, default=25.0)
@@ -253,6 +257,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--cell-size", type=float, default=25.0)
     p.add_argument("--surface", action="store_true",
                    help="score the segmentation-derived arm rather than the scalar baseline")
+    p.add_argument("--infiltration", choices=("horton", "gar"), default="horton")
 
     p = add("export", cmd_export, "rebuild the committed viewer payload")
     p.add_argument("--storm", default="ian", choices=sorted(sites.STORMS))
