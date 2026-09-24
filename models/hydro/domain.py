@@ -15,7 +15,7 @@ from typing import Dict, Tuple
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
-from rasterio.transform import from_bounds
+from rasterio.transform import from_bounds, rowcol
 from rasterio.warp import reproject
 
 from physics import IMPERVIOUS_FC_MM_HR, road_buffer_m
@@ -236,8 +236,8 @@ def snap_gauge(site: SiteConfig, z: np.ndarray, profile: Dict, dx: float,
     assert site.gauge is not None, f"site {site.name} has no gauge"
     x, y = Transformer.from_crs("epsg:4326", profile["crs"], always_xy=True).transform(
         site.gauge.lon, site.gauge.lat)
-    col, row = ~profile["transform"] * (x, y)
-    row, col = int(round(row)), int(round(col))
+    row, col = rowcol(profile["transform"], x, y, op=round)
+    row, col = int(row), int(col)
 
     rad = max(1, int(round(search_m / dx)))
     r0, r1 = max(0, row - rad), min(z.shape[0], row + rad + 1)

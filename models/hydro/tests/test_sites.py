@@ -1,6 +1,9 @@
 """The registry is the only source of coordinates, so its invariants are worth asserting."""
 
+import json
 import math
+import os
+from pathlib import Path
 
 import pytest
 
@@ -46,16 +49,18 @@ def test_site_names_match_their_registry_keys():
 
 
 def test_gauge_capture_fraction_is_reported_not_assumed():
-    """site3 validates against ~11 % of the gauge's documented area. The caveat must travel.
+    """site3 validates against less than half the gauge's documented area; the caveat travels.
 
-    Pinned because the superseded 11.65 km2 figure (~35 %) is still in older write-ups and is
-    easy to reintroduce. `cli.py terrain` on a freshly fetched DEM gives 3.7235 km2.
+    The value moves with the DELIVERED DEM, not only with the terrain: 3.72 km2 on the 0.88 m
+    DEM this site was first built on, 15.27 km2 on the 3 m DEM 3DEP returns for a 1 m request
+    today. Both are `cli.py terrain` on a fresh fetch. What must not come back is the
+    superseded 11.65 km2 figure, which predates the stream-burn and threshold fixes.
     """
     g = get_site("site3").gauge
     assert g is not None
-    assert g.delineated_area_km2 == pytest.approx(3.72)
-    assert g.capture_fraction == pytest.approx(3.72 / 33.15, rel=1e-9)
-    assert g.capture_fraction < 0.15
+    assert g.delineated_area_km2 == pytest.approx(15.27)
+    assert g.capture_fraction == pytest.approx(15.27 / 33.15, rel=1e-9)
+    assert g.capture_fraction < 0.5
 
 
 def test_delineated_area_matches_the_recorded_terrain_run():
@@ -80,3 +85,19 @@ def test_storm_windows_are_ordered():
         assert storm.start < storm.end
         assert storm.gauge_start <= storm.start[:10]
         assert storm.gauge_end >= storm.end[:10]
+
+
+BUNDLE = Path(os.environ.get("HYDRO_BUNDLE", "/nonexistent"))  # a bundle directory, when one is at hand
+
+
+@pytest.mark.parametrize("name", [n for n in SITES if (BUNDLE / "surface" / f"aoi_{n}.json").exists()]
+                         or [pytest.param("none", marks=pytest.mark.skip(reason="no bundle"))])
+def test_registry_matches_the_bundle_aoi_exactly(name):
+    """The anchor is a copied constant held by every solver; the copies must agree to the digit."""
+    doc = json.loads((BUNDLE / "surface" / f"aoi_{name}.json").read_text())
+    site = get_site(name)
+    assert list(site.anchor_m) == doc["scene_frame"]["anchor_utm"]
+    assert site.epsg == doc["aoi"]["centre_utm10n"]["epsg"]
+    assert site.lat == doc["aoi"]["centre_wgs84"]["lat"] and site.lon == doc["aoi"]["centre_wgs84"]["lon"]
+    assert site.anchor_m[0] == doc["aoi"]["centre_utm10n"]["easting"]
+    assert site.anchor_m[1] == doc["aoi"]["centre_utm10n"]["northing"]

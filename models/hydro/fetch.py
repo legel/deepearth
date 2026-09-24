@@ -12,6 +12,7 @@ it.
 
 import io
 import json
+import math
 import subprocess
 import time
 import urllib.request
@@ -91,15 +92,51 @@ def _get(url: str, params: Optional[Dict] = None, retries: int = 4,
 
 # ── Terrain ──────────────────────────────────────────────────────────────────────────────
 
+M_PER_DEG_LAT = 111_320.0
+"""Metres per degree of latitude, for checking a geographic pixel against a metric request."""
+
+RESOLUTION_TOL = 0.1
+"""Relative tolerance between the requested and the delivered DEM pixel size."""
+
+
+def pixel_size_m(crs: object, resolution: Tuple[float, float], lat: float) -> Tuple[float, float]:
+    """A raster's pixel size in metres, from either a projected or a geographic CRS."""
+    from pyproj import CRS
+
+    c = CRS.from_user_input(crs)
+    dx, dy = abs(resolution[0]), abs(resolution[1])
+    if c.is_projected:
+        assert c.axis_info[0].unit_name in ("metre", "meter"), f"{c} is not in metres"
+        return dx, dy
+    return dx * M_PER_DEG_LAT * math.cos(math.radians(lat)), dy * M_PER_DEG_LAT
+
+
+def check_dem(crs: object, resolution: Tuple[float, float], requested_m: float, lat: float) -> None:
+    """Fail unless the delivered pixel is the requested size, in metres."""
+    dx, dy = pixel_size_m(crs, resolution, lat)
+    for got in (dx, dy):
+        assert abs(got - requested_m) <= RESOLUTION_TOL * requested_m, (
+            f"requested {requested_m} m, delivered {dx:.3f} x {dy:.3f} m")
+
+
 def dem(site: SiteConfig, resolution_m: int = 1) -> None:
-    """USGS 3DEP elevation, falling back through 3 m and 10 m if the finest is unavailable."""
+    """USGS 3DEP elevation on `site.crs`, falling back through 3 m and 10 m.
+
+    py3dep returns EPSG:4326 whatever the request CRS; the delivered pixel is checked against
+    the request in metres before the raster is warped onto the site's metric grid.
+    """
     import py3dep
     import rioxarray  # noqa: F401  imported for its side effect: the .rio accessor
+    from pyproj import CRS
 
+    assert CRS.from_user_input(site.crs).is_projected, f"{site.crs} is not projected"
     attempts = []
     for res in sorted({resolution_m, 3, 10}):
         try:
             raster = py3dep.get_dem(site.bbox(), crs="epsg:4326", resolution=res)
+            check_dem(raster.rio.crs, raster.rio.resolution(), float(res), site.lat)
+            raster = raster.rio.reproject(site.crs, resolution=float(res))
+            check_dem(raster.rio.crs, raster.rio.resolution(), float(res), site.lat)
         except Exception as exc:  # 3DEP raises several unrelated types on an unavailable tile
             attempts.append(f"{res} m: {type(exc).__name__}: {exc}")
             continue

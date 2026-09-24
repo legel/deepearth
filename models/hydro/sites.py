@@ -36,18 +36,15 @@ class Gauge:
         lat: Station latitude, WGS84.
         lon: Station longitude, WGS84.
         documented_area_km2: Drainage area USGS publishes for the station.
-        delineated_area_km2: Area this pipeline's own D8 delineation recovers. The gap is
-            real and must travel with every comparison: central Florida's depression-dominated
-            flat terrain only connects isolated wetlands to the channel network during
-            high-water events, so D8 under-captures. It is not a box-size artifact -- the
-            delineated catchment does not touch the DEM download boundary.
-
-            An 11.65 km2 figure appears in older write-ups. It predates the stream-burn and
-            accumulation-threshold fixes and is superseded. Quote the smaller number -- the model
-            is scored against ~11 % of the gauge's real contributing area, not ~35 %. The value
-            here is what `cli.py terrain` produces from a freshly fetched 3DEP DEM, recorded in
-            `docs/terrain_site3.json`; a 3.71 figure in older notes is the same measurement
-            rounded from a slightly different accumulation threshold.
+        delineated_area_km2: Area this pipeline's own D8 delineation recovers, as recorded in
+            `docs/terrain_site3.json`. It is a property of the DELIVERED DEM as much as of the
+            terrain: the same code delineates 3.72 km2 on an 0.88 m DEM and 15.27 km2 on the
+            3 m DEM py3dep returns for a 1 m request today. The remaining gap to the documented
+            area must travel with every comparison: central Florida's depression-dominated
+            flats only connect isolated wetlands to the channel network during high-water
+            events, so D8 under-captures. It is not a box-size artifact -- the delineated
+            catchment does not touch the DEM download boundary. An 11.65 km2 figure in older
+            write-ups predates the stream-burn and threshold fixes and is superseded.
         baseflow_cfs: Pre-storm baseflow, subtracted when separating storm runoff.
     """
 
@@ -106,6 +103,9 @@ class SiteConfig:
         cfl_alpha: CFL safety factor. 0.15, reduced from 0.30 after a measured -517.8 % mass
             residual with 8.99 m depths oscillating under zero rain at 5 m.
         gauge: Observed-discharge station, when the site has a valid one.
+        crs: Projected CRS in metres every raster for the site is warped onto.
+        anchor_m: (x, y, z) in `crs` that the scene frame is translated to; None leaves
+            scene coordinates equal to `crs` coordinates.
     """
 
     name: str
@@ -117,6 +117,18 @@ class SiteConfig:
     cell_size_m: float = 5.0
     cfl_alpha: float = 0.15
     gauge: Optional[Gauge] = None
+    crs: str = "epsg:5070"
+    anchor_m: Optional[Tuple[float, float, float]] = None
+    timezone: str = "America/New_York"
+
+    @property
+    def epsg(self) -> int:
+        return int(self.crs.split(":")[1])
+
+    def scene_origin(self, transform: object) -> Tuple[float, float, float]:
+        """Scene metres of a raster's north-west corner from its affine transform."""
+        ax, ay, az = self.anchor_m or (0.0, 0.0, 0.0)
+        return (float(transform.c) - ax, float(transform.f) - ay, -az)
 
     # ── Geometry ─────────────────────────────────────────────────────────────────────────
 
@@ -278,6 +290,19 @@ STORMS: Dict[str, Storm] = {
 }
 
 SITES: Dict[str, SiteConfig] = {
+    "campanile": SiteConfig(
+        name="campanile",
+        label="Sather Tower parcel, UC Berkeley, 112.32 m radius disc",
+        lat=37.87217,
+        lon=-122.25778,
+        radius_km=0.11232,
+        asos_station="OAK",
+        cell_size_m=0.2,
+        gauge=None,
+        crs="epsg:32610",
+        anchor_m=(565278.3393294326, 4191891.744672124, 119.81544136816949),
+        timezone="America/Los_Angeles",
+    ),
     "main_aoi": SiteConfig(
         name="main_aoi",
         label="CFX SR417 corridor test landscape, Lake Nona, Orlando FL",
@@ -306,7 +331,7 @@ SITES: Dict[str, SiteConfig] = {
             lat=28.7041629,
             lon=-81.2906221,
             documented_area_km2=33.15,
-            delineated_area_km2=3.72,
+            delineated_area_km2=15.27,
             baseflow_cfs=45.2,
         ),
     ),

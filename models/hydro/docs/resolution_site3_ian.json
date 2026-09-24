@@ -1,0 +1,22 @@
+{
+ "_": "Hurricane Ian at site3 on identical fetched inputs and identical parameters, at two grids. The question was whether the discharge overshoot is a resolution artefact. It is not: refining 5x moves the runoff coefficient by 0.4 % and the peak ratio by 8 %.",
+ "storm": "ian", "total_rain_mm": 391.67562, "dt_s": 20.0, "cfl_alpha": 0.15,
+ "dem_delivered_m": 3.0, "dtype": "float32",
+ "25m": {
+  "grid": [272, 274], "cells": 74528, "n_substeps": 209430,
+  "wall_s": 601.5, "device": "cpu (e2-standard-8, 8 threads)",
+  "runoff_sim": 0.7999, "infiltrated_fraction": 0.1864, "stored_fraction": 0.0137,
+  "peak_sim_cms": 342.0158, "peak_ratio": 10.5505, "peak_lag_h": -4.0,
+  "nse": -39.8804, "kge": -5.2296, "mass_residual_pct": -0.000123
+ },
+ "5m": {
+  "grid": [1363, 1372], "cells": 1870036, "n_substeps": 1254899,
+  "wall_s": 1732.7, "device": "cuda (NVIDIA L4, torch.compile)",
+  "runoff_sim": 0.7964, "infiltrated_fraction": 0.1853, "stored_fraction": 0.0203,
+  "peak_sim_cms": 314.7793, "peak_ratio": 9.7104, "peak_lag_h": -4.0,
+  "nse": -33.5966, "kge": -4.7511, "mass_residual_pct": -0.196910
+ },
+ "change_5x_refinement": {"runoff_sim_rel": -0.0044, "peak_ratio_rel": -0.0796},
+ "observed_runoff_coefficient": [0.289, 0.314],
+ "conclusion": "resolution is not the cause; see infiltration_ceiling_site3.json"
+}

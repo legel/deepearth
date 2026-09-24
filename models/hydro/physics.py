@@ -32,6 +32,9 @@ being worst in this project's own operating regime (median wet depth 7-8 cm). Se
 MIN_DEPTH: Final = 1e-4
 """Wet/dry threshold [m]. Below this a cell is dry and carries no flux."""
 
+FROUDE_CAP: Final = 0.9
+"""Upper bound on the Froude number at a face: |q| <= FROUDE_CAP * hf * sqrt(g * hf)."""
+
 FLOODED_DEPTH_THR_M: Final = 0.05
 """Depth [m] at or above which a raster cell counts as flooded in extent products."""
 

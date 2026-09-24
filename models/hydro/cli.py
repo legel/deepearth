@@ -15,7 +15,7 @@ package to install and no path manipulation anywhere.
 import argparse
 import json
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -27,9 +27,10 @@ import sites
 import surface
 import terrain
 import validate
-from solver import Probes, SolverConfig, simulate as run_solver
+from solver import FIELDS, Probes, Result, SolverConfig, simulate as run_solver
 
 CFS_PER_CMS = 35.3146667
+DOCS = Path(__file__).resolve().parent / "docs"
 
 
 def _summary_path(site: sites.SiteConfig, name: str) -> Path:
@@ -38,13 +39,24 @@ def _summary_path(site: sites.SiteConfig, name: str) -> Path:
 
 
 def _tag(storm_name: str, cell_size_m: float, surface_field: bool) -> str:
-    """Run identifier shared by every stage that reads or writes a run's files.
-
-    One helper rather than one f-string per stage: simulate wrote a `_surface` suffix that
-    validate never looked for, so the segmented arm could not be scored -- which is the exact
-    A/B the surface parameterisation exists to support.
-    """
+    """Run identifier shared by every stage that reads or writes a run's files."""
     return f"{storm_name}_{cell_size_m:g}m" + ("_surface" if surface_field else "")
+
+
+def _receipt(res: Result, extra: Dict[str, object]) -> Dict[str, object]:
+    """What every run records."""
+    m = res.mass
+    return {
+        **extra,
+        "grid": list(res.h_final.shape), "device": res.device,
+        "peak_depth_m": float(res.h_max.max()), "n_substeps": res.n_substeps,
+        "substep_cap_hits": res.substep_cap_hits, "wall_s": res.wall_s,
+        "substeps_per_s": res.n_substeps / max(res.wall_s, 1e-9),
+        "mass_m3": {"rain": m.rain, "initial": m.initial, "inflow": m.inflow, "created": m.created,
+                    "infiltrated": m.infiltrated, "abstracted": m.abstracted,
+                    "stored": m.stored, "outflow": m.outflow},
+        "mass_residual": m.residual, "mass_residual_pct": m.residual_pct,
+    }
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
@@ -78,7 +90,7 @@ def cmd_segment(args: argparse.Namespace) -> None:
 
 def _run(site: sites.SiteConfig, rain: Sequence[float], cell_size: float, dt_s: float,
          frame_min: float, with_gauge: bool = True,
-         use_surface: bool = False) -> Tuple[object, dict, float]:
+         use_surface: bool = False) -> Tuple[Result, dict, float]:
     """Assemble the domain and integrate one storm."""
     surf, profile, dx = domain.build_surface(site, cell_size)
     if use_surface:
@@ -111,18 +123,19 @@ def cmd_simulate(args: argparse.Namespace) -> None:
                np.column_stack(list(columns.values())), delimiter=",",
                header=",".join(columns), comments="")
 
-    summary = {
+    summary = _receipt(res, {
         "site": site.name, "storm": storm.name, "cell_size_m": dx, "dt_s": args.dt,
-        "grid": list(res.h_final.shape), "total_rain_mm": float(hourly.sum()),
-        "peak_depth_m": float(res.h_max.max()),
+        "total_rain_mm": float(hourly.sum()),
         "peak_flooded_ha": float(res.series["flooded_ha"].max()),
-        "peak_outflow_cfs": float(res.series["outflow_total_cms"].max() * CFS_PER_CMS),
-        "mass_residual_pct": res.mass.residual_pct,
-        "wall_s": res.wall_s, "substep_cap_hits": res.substep_cap_hits,
-    }
+        "peak_outflow_cfs": float(res.series["outflow_total_cms"].max() * CFS_PER_CMS)})
     print(json.dumps(summary, indent=1))
     _summary_path(site, f"summary_{tag}").write_text(json.dumps(summary, indent=1))
-    frames.write(site.out_path(f"frames_{tag}.bin"), res.frames, res.frame_times_min)
+    frames.write(site.out_path(f"frames_{tag}.bin"), [f[0] for f in res.frames],
+                 [t / 60.0 for t in res.frame_times_s])
+    t0 = storm.start.replace(" ", "T") + ":00+00:00"
+    frames.write_fields(site.out_path(f"fields_{tag}.bin"), FIELDS, res.frame_times_s, res.frames,
+                        cell_m=dx, origin=site.scene_origin(profile["transform"]),
+                        sidecar=_sidecar(site, t0, {"storm": storm.name, "summary": f"summary_{tag}.json"}))
 
 
 def cmd_ensemble(args: argparse.Namespace) -> None:
@@ -148,7 +161,7 @@ def cmd_ensemble(args: argparse.Namespace) -> None:
 
 
 def cmd_validate(args: argparse.Namespace) -> None:
-    """Score the most recent simulated hydrograph against the gauge."""
+    """Score the most recent simulated hydrograph against the gauge and write the receipt."""
     site, storm = sites.get_site(args.site), sites.get_storm(args.storm)
     tag = _tag(storm.name, args.cell_size, args.surface)
     path = site.out_path(f"hydrograph_{tag}.csv")
@@ -156,21 +169,23 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
     data = np.genfromtxt(path, delimiter=",", names=True)
     summary = json.loads(_summary_path(site, f"summary_{tag}").read_text())
-    rows, cols = summary["grid"]
-    score = validate.score(site, storm, data["time_h"], data["outflow_total_cms"],
-                           rain_mm=summary["total_rain_mm"],
-                           domain_m2=rows * cols * summary["cell_size_m"] ** 2)
+    score = validate.score(site, storm, data["time_h"], data["outflow_total_cms"])
+    receipt = {
+        "site": site.name, "storm": storm.name, "hydrograph": path.name,
+        "cell_size_m": summary["cell_size_m"], "grid": summary["grid"],
+        "total_rain_mm": summary["total_rain_mm"],
+        "mass_residual_pct": summary["mass_residual_pct"],
+        "gauge": site.gauge.site_no, "baseflow_cfs": site.gauge.baseflow_cfs,
+        "score": score.as_dict(),
+    }
     print(score.report())
+    out = _summary_path(site, f"validation_{tag}")
+    out.write_text(json.dumps(receipt, indent=1))
+    print(f"wrote {out}")
 
 
 def cmd_export(args: argparse.Namespace) -> None:
-    """Rebuild the committed viewer payload from this site's outputs.
-
-    A stage, not a one-liner in a docstring. The payload is derived data that is nonetheless
-    committed, so it goes stale silently against the source it was derived from: the shipped
-    `meta.json` served a delineated area of 11.65 km2 to the browser long after `sites.py` was
-    corrected to 3.71, because rebuilding it had no front door.
-    """
+    """Rebuild the committed viewer payload from this site's outputs."""
     from viewer.export import export_all
 
     site = sites.get_site(args.site)
@@ -184,6 +199,17 @@ def cmd_viewer(args: argparse.Namespace) -> None:
     from viewer.server import serve
 
     serve(sites.get_site(args.site), port=args.port)
+
+
+def _sidecar(site: sites.SiteConfig, t0: str, provenance: Dict[str, object]) -> Dict[str, object]:
+    """The frame sidecar for one run."""
+    return frames.sidecar(
+        t0=t0, timezone=site.timezone, site=site.name, epsg=site.epsg,
+        anchor_utm=list(site.anchor_m or (0.0, 0.0, 0.0)),
+        fields={"depth": {"domain": [0.0, 0.5], "lut": "turbo"},
+                "u": {"domain": [-1.0, 1.0], "lut": "turbo"},
+                "v": {"domain": [-1.0, 1.0], "lut": "turbo"}},
+        provenance=provenance)
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -238,6 +264,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--port", type=int, default=5051)
 
     args = parser.parse_args(argv)
+    import solver
+
+    solver.PROGRESS_LINES = True       # every run the command line makes says how far it is (`PROGRESS hydro k/n`)
     args.func(args)
 
 

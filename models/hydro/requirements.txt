@@ -13,13 +13,14 @@ scipy
 pandas
 matplotlib
 Pillow
+torch>=2.4            # the solver; CPU wheels suffice, CUDA is used when present
 
 rasterio              # raster I/O and warping
 geopandas             # vector I/O
 shapely
 pyproj
 
-py3dep                # USGS 3DEP elevation; pulls rioxarray, which fetch.dem needs
+py3dep==0.17.1        # USGS 3DEP elevation; returns EPSG:4326, fetch.dem warps it to metres
 planetary-computer    # NAIP via the Planetary Computer STAC API; pulls pystac-client
 pysheds               # D8 routing, accumulation, HAND
 richdem               # depression breaching. PYTHON 3.9 ONLY.

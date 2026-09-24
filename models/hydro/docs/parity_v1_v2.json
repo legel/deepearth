@@ -1,0 +1,14 @@
+{
+ "_": "tests/test_parity.py: the torch solver against the verbatim v1 NumPy solver (tests/reference_v1.py) on a 90x100 cell, 5 m domain with a burned channel, micro-relief, per-cell Horton fields, a finite soil store and 0.02 m of initial channel water; 30 intervals of 40 mm/hr then 10 dry, dt_s = 20 s, cfl_alpha = 0.15, gauge at (45, 50). v1 keeps h in float32 whatever the input dtype, which sets the float64 floor.",
+ "float32": {
+  "n_substeps_v1": 1746, "n_substeps_v2": 1746,
+  "max_abs_dh_m": 2.202e-06, "max_abs_dh_max_m": 2.805e-06, "max_abs_dcum_infil_m": 2.295e-07,
+  "outflow_volume_rel": 5.46e-07, "gauge_series_rel": 1.351e-05
+ },
+ "float64": {
+  "n_substeps_v1": 1746, "n_substeps_v2": 1746,
+  "max_abs_dh_m": 2.575e-07, "max_abs_dh_max_m": 2.575e-07, "max_abs_dcum_infil_m": 3.557e-09,
+  "outflow_volume_rel": 5.156e-08, "gauge_series_rel": 8.417e-07
+ },
+ "host": "e2-standard-8, torch 2.14.0+cpu, numpy 1.26.4, python 3.12"
+}
