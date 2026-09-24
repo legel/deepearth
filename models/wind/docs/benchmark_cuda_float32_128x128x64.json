@@ -1,0 +1,88 @@
+{
+ "device": "cuda",
+ "dtype": "torch.float32",
+ "lateral": "profile",
+ "grid": [
+  64,
+  128,
+  128
+ ],
+ "cells": 1048576,
+ "torch": "2.9.1+cu129",
+ "gpu": "NVIDIA L4",
+ "projection_s": 0.8053479194641113,
+ "projection_iterations": 26,
+ "projection_cells_per_s": 1302016.1530903757,
+ "step_s": 1.0879944960276287,
+ "step_cells_per_s": 963769.5813981143,
+ "steps": 3,
+ "poisson_iterations": [
+  26,
+  29,
+  23,
+  31
+ ],
+ "divergence_rel": 6.907564297956334e-05,
+ "profile_top10_by_tottime": [
+  {
+   "function": "poisson.py:64 apply",
+   "ncalls": 8449,
+   "tottime_s": 2.2107,
+   "cumtime_s": 2.2107
+  },
+  {
+   "function": "poisson.py:112 cg",
+   "ncalls": 133,
+   "tottime_s": 0.5892,
+   "cumtime_s": 3.9089
+  },
+  {
+   "function": "~:0 <built-in method torch.where>",
+   "ncalls": 13128,
+   "tottime_s": 0.2661,
+   "cumtime_s": 0.2661
+  },
+  {
+   "function": "poisson.py:184 _smooth",
+   "ncalls": 1260,
+   "tottime_s": 0.241,
+   "cumtime_s": 1.7044
+  },
+  {
+   "function": "~:0 <method 'sum' of 'torch._C.TensorBase' objects>",
+   "ncalls": 8332,
+   "tottime_s": 0.1396,
+   "cumtime_s": 0.1396
+  },
+  {
+   "function": "~:0 <built-in method torch.zeros_like>",
+   "ncalls": 8836,
+   "tottime_s": 0.116,
+   "cumtime_s": 0.116
+  },
+  {
+   "function": "poisson.py:104 _dot",
+   "ncalls": 8330,
+   "tottime_s": 0.1097,
+   "cumtime_s": 0.2493
+  },
+  {
+   "function": "~:0 <method 'all' of 'torch._C.TensorBase' objects>",
+   "ncalls": 2779,
+   "tottime_s": 0.0678,
+   "cumtime_s": 0.0678
+  },
+  {
+   "function": "~:0 <method 'view' of 'torch._C.TensorBase' objects>",
+   "ncalls": 7931,
+   "tottime_s": 0.0348,
+   "cumtime_s": 0.0348
+  },
+  {
+   "function": "~:0 <method 'sqrt' of 'torch._C.TensorBase' objects>",
+   "ncalls": 2918,
+   "tottime_s": 0.0322,
+   "cumtime_s": 0.0322
+  }
+ ]
+}
