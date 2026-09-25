@@ -178,11 +178,15 @@ DP1.00001, 2019 to 2025), each level's speed over the 28.91 m level at the tower
 The pressure-driven k-l is the first closure with the 5 m level within 20 % in both seasons: the sparse trunk space
 runs faster than the crown's base when a pressure gradient drives it, as measured in July (0.189 at 5.26 m against
 0.183 at 17.11 m), and a stress-driven column, whose stress is down-gradient everywhere, cannot. The price is the
-leaf-on crown: July's 17 m level is 89 % too fast, and 25 m 22 %. Every closure reads the July crown too fast, which
-points at the leaf-on crown's drag (the season's plant area from MODIS LAI and the clumping of 0.8, or c_d) rather than
-at the turbulence; the survey's summer plant area against Harvard's published 5 to 6 is not yet compared. Stable
-nights are excluded: in July they read 0.54 at 25 m against 0.66 on neutral hours. The fetch beyond the survey is
-open ground in the model, and the column is the site's mean canopy.
+leaf-on crown: July's 17 m level is 89 % too fast, and 25 m 22 %. Every closure reads the July crown too fast. The
+plant area is not the cause: the survey's July plant area index is 6.5 over the site (Harvard's published leaf area
+index is 5 to 6, with wood about 1 more), and within 15 m of the tower a(z) peaks at 16 to 24 m, 0.67 to 1.0 of the
+crown's 24 m, as published profiles do (0.77 of it above half the height, 0.53 above two thirds; a beta profile of
+deciduous crowns, Meyers et al. 1998, gives 0.77 and 0.47). The tower's column is sparse, a plant area index of 3.4,
+and its 17.11 m sonic sits inside the densest band (0.22 m² m⁻³), sheltered by the crowns around it (it reads slower
+than 5.26 m in July), which 2 m cells and 4 m profile bands do not resolve. Stable nights are excluded: in July
+they read 0.54 at 25 m against 0.66 on neutral hours. The fetch beyond the survey is open ground in the model, and the
+column is the site's mean canopy.
 
 At UC Berkeley the stop leaves the 10 and 25 m medians 0.7 to 2.1 % high and the 4 and 5 m medians at most 0.6 %
 high (Stopping error).
