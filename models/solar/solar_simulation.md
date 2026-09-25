@@ -92,11 +92,19 @@ Light below the canopy, as a fraction of open-sky PAR, against Harvard Forest's 
     model, 12.7 m    0.56     0.46     0.163    0.244
     model, 0.5 m     0.21     0.22     0.101    0.118
 
+At one floor point, the ground by US-Ha1, as a share of open-sky shortwave by month from September 2023 to September
+2025: winter 0.18 to 0.22, spring 0.17 to 0.29, summer 0.08 to 0.09, fall 0.07 to 0.18; over 2024, 0.149. Over the
+site's ground points under 8 m, 2024: 10th percentile 0.036, median 0.149, 90th percentile 0.353. The per-point year
+and the hourly engine agree within 1 % at that floor, a crown and a tilted ground point.
+
 ## Known errors
 
 Below the canopy the model is right in summer and off in the other seasons: winter 14 % bright, spring 15 % dark and
 fall 28 % bright. MODIS counts green leaves, and oaks keep brown ones into winter. The comparison is a site mean;
 HF004 is not a mapped column.
+
+The floor by US-Ha1 reads 0.08 to 0.09 of open sky in summer, under the 0.101 of the site-mean column at 0.5 m; a
+denser canopy over that point than the site's mean would explain it, and is not yet checked.
 
 The canopy's transmission is fitted to PAR and applied to all shortwave. Leaves pass far more near infrared than PAR,
 so under a summer canopy the model's shortwave reads low by a factor of 1.7 at 12.7 m and 2.1 at 0.5 m; PAR itself is
