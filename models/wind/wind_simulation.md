@@ -6,8 +6,14 @@ acres is 10 million cells.
 
 ## What is solved
 
-The model finds the steady flow of air driven by a logarithmic wind profile at the domain's sides [inflow]. Two
-conditions hold at every cell when it is done.
+The model finds the steady flow of air over a site. At the domain's sides it carries the steady wind of a
+horizontally uniform column over the site's mean canopy: the same momentum balance with nothing varying across,
+solved first, with the canopy drag averaged over the fluid cells at each height above their ground [column]. Each
+side cell takes the column's speed at its own height above its ground [sides], and the top holds the speed of the
+upwind logarithmic profile at the domain's top [inflow]. The column is a steady state of the model over a uniform
+canopy, so the canopy does not keep slowing the inflow downwind. A logarithmic profile at the sides is not one, and
+the canopy slowed it for hundreds of meters (see Experiments). The solved square reaches at least 128 m beyond the
+site. Two conditions hold at every cell when the solve is done.
 
 Mass is conserved. The face velocities are corrected by the gradient of one scalar field, found from a Poisson
 equation, so that no cell gains or loses air [project]. Solid cells (buildings, trunks, the ground) have closed
@@ -43,7 +49,9 @@ mixing length and the strain feed back on each other and the iteration oscillate
 alternate steps; the relaxation removes the oscillation and does not move the steady state.
 
 A heading is done when the median, the 95th percentile and the RMS of the horizontal speed 2 to 30 m above the
-surface each move less than 0.2 %, 0.2 % and 1 % between two successive 40-step means, twice running [settle].
+surface each move less than 0.2 %, 0.2 % and 1 % between two successive 40-step means, twice running [settle]. How
+far that stop is from the fixed point is measured under Experiments. A stop on the estimated change still to come
+is also available [tail].
 
 ## One field per heading, then any wind
 
@@ -92,49 +100,68 @@ The earlier scheme against the converged finite volumes, medians of the four pub
     Harvard Forest     -15 %, -16 %, -18 %, -18 %
     UC Berkeley        +5 %, +12 %, +22 %, +15 %
 
+Stopping error. Harvard Forest, heading 270°, run to a 40-step change of 0.02 %: CFL 8, 16 and 32 agree within 0.1 %
+at every published level's median and p95, and the 0.2 % stop (160 steps) is within 0.2 % of them. UC Berkeley,
+heading 270°, CFL 16: the 0.2 % stop (320 steps) against the same run at 1,000 steps, median and p95:
+
+    4 m          +0.21 %   +0.27 %
+    5 m          +0.55 %   +0.41 %
+    10 m         +2.06 %   +0.82 %
+    25 m         +1.75 %   +0.67 %
+
+At 1,000 steps UC still moves 0.03 % a window at 10 m; the window changes decay by about 0.92 a window, which puts
+0.1 to 0.2 % more beyond it. The levels fall monotonically in every window and the window-to-window change decays
+smoothly, from 9 % to 0.04 %: a steady solution with a slow mode, not an unsteady wake. Tighter inner solves, a
+warm start from a settled 4 m solve and Anderson acceleration (depth 5) each left that tail as it was.
+
+Fetch. Harvard Forest, heading 270°, 1 m cells, medians per 1 m/s at 4, 5, 10 and 25 m against the side of the
+solved square, with the earlier logarithmic inflow and with the column:
+
+                      256 m                     384 m                     512 m                     768 m
+    log law     .173 .188 .280 .725       .125 .140 .238 .674       .088 .102 .204 .622       .069 .080 .179 .588
+    column      .066 .085 .188 .577       .074 .087 .186 .591       .069 .082 .184 .589       .069 .080 .179 .585
+
+With the column, 512 m is within 2.6 % of 768 m at every level; with the log law the 4 m median fell 44 % between
+384 and 768 m. On one 512 m square, 2 m cells against 1 m change the four medians by +0.5, -2.9, -3.2 and -0.4 %.
+
 Cost of one heading at 1 m (one GPU, list prices):
 
                                          steps   seconds   USD
-    Harvard, 10.6 M cells, L4            160     241       0.057
-    Harvard, A100 80 GB                  160     129       0.105
-    UC Berkeley, 42.6 M cells, A100      320     418       0.34
-    earlier scheme, UC, H100 (64-bit)    160     1,996     2.61
+    Harvard, 512 m square, 18.9 M cells, L4   280     499       0.12
+    Harvard, 384 m square, 10.6 M cells, L4   160     241       0.057
+    Harvard, 384 m square, A100 80 GB         160     129       0.105
+    UC Berkeley, 42.6 M cells, A100           320     418       0.34
+    earlier scheme, UC, H100 (64-bit)         160     1,996     2.61
 
 ## Known errors
 
-The wind below the canopy is overstated, about 1.5 times at 4 m, because the inflow is not in equilibrium with the
-canopy. The sides carry a displaced log law, and the canopy's drag keeps slowing it for hundreds of meters, so the
-field inside depends on how much fetch the solved square holds. Harvard Forest, heading 270°, 1 m cells, medians per
-1 m/s against the square's side:
+Before the column inflow, the wind below the canopy was overstated about 1.5 times at 4 m: on Harvard's 384 m square
+the 4 m median over the 25 m median was 0.185, and with the column on a 512 m square it is 0.117. The fetch beyond the
+survey is open ground in the model, and the column is the site's mean canopy, so the column is right for a site
+inside a wide canopy and approximate at a canopy's edge. The residual fetch dependence from 512 to 768 m is at most
+2.6 %. The modeled profile has not yet been scored against a tower's own profile.
 
-                 256 m     384 m     512 m     768 m
-    4 m          0.173     0.125     0.088     0.069
-    5 m          0.188     0.140     0.102     0.080
-    10 m         0.280     0.238     0.204     0.179
-    25 m         0.725     0.674     0.622     0.588
-
-The product's square is 384 m. The grid is not the cause: on one 512 m square, 2 m cells against 1 m change the four
-medians by +0.5, -2.9, -3.2 and -0.4 %. An inflow solved as a column in equilibrium with the same canopy drag and
-mixing length is in progress.
+At UC Berkeley the stop leaves the 10 and 25 m medians 0.7 to 2.1 % high and the 4 and 5 m medians at most 0.6 %
+high (Stopping error).
 
 The canopy's wake cells keep moving by about 1 % of the median between successive means after the level
 statistics have settled; the steady residual falls to 3 to 10 % of its first value and holds there. The delivered
 field is the mean over the last 40 steps.
 
-At UC Berkeley the settled medians move by up to 1.5 % between CFL 8 and 32, which follows the stop rather than the
-scheme: each run is still converging when a 40-step window changes by 0.2 %. A stop bounded on the change still to
-come is being validated. The tower comparison of the
-simulated wind at a second, independent sonic has not been made.
+The tower comparison of the simulated wind at a second, independent sonic has not been made.
 
-[inflow]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/forcing.py#L24
-[project]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/solver.py#L380
-[residual]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/solver.py#L557
-[convection]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/solver.py#L536
-[viscosity]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/solver.py#L480
-[drag]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/physics.py#L97
-[wall]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/solver.py#L205
-[step]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/solver.py#L648
-[convective]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/poisson.py#L154
-[cg]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/poisson.py#L263
-[settle]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/solver.py#L635
-[verification]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/docs/verification_cpu.json
+[inflow]: https://github.com/legel/deepearth/blob/33490a5/models/wind/forcing.py#L24
+[column]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L397
+[sides]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L448
+[project]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L574
+[residual]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L751
+[convection]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L730
+[viscosity]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L674
+[drag]: https://github.com/legel/deepearth/blob/33490a5/models/wind/physics.py#L97
+[wall]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L311
+[step]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L883
+[convective]: https://github.com/legel/deepearth/blob/33490a5/models/wind/poisson.py#L154
+[cg]: https://github.com/legel/deepearth/blob/33490a5/models/wind/poisson.py#L263
+[settle]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L847
+[tail]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L200
+[verification]: https://github.com/legel/deepearth/blob/33490a5/models/wind/docs/verification_cpu.json

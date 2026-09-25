@@ -1,25 +1,26 @@
 # Wind
 
-A steady 3D wind field over terrain, buildings and canopy, in PyTorch. An upwind log profile is made
-mass-consistent around the obstacles by a Poisson projection, then iterated to the steady state of the
-momentum equations with advection, turbulent mixing, canopy drag and wall stress. The converged field does not
+A steady 3D wind field over terrain, buildings and canopy, in PyTorch. The sides carry the steady wind of a column
+over the site's mean canopy; the field is made mass-consistent around the obstacles by a Poisson projection, then
+iterated to the steady state of the momentum equations with advection, turbulent mixing, canopy drag and wall stress. The converged field does not
 depend on the pseudo-time step. The full account, with every experiment and known error, is
 [wind_simulation.md](wind_simulation.md).
 
-[![Speed and vorticity on the centre section](docs/wind_tower_0.8m_section.png)](docs/wind_tower_0.8m_section.png)
+[![Speed and vorticity on the center section](docs/wind_tower_0.8m_section.png)](docs/wind_tower_0.8m_section.png)
 
 ## Equations
 
 | process | equation | code |
 |---|---|---|
-| inflow | $u(z) = \dfrac{u_*}{\kappa} \ln\dfrac{z - d}{z_0}$ from the reference speed | [`forcing.py` `LogProfile`](forcing.py#L24) |
-| mass consistency | $\nabla^2 \lambda = \nabla \cdot \mathbf{u}^*$, $\mathbf{u} = \mathbf{u}^* - \nabla \lambda$ | [`solver.py` `project`](solver.py#L380) |
-| steady residual | $R(\mathbf{u}) = -\sum_f F_f \mathbf{u}_f + \nabla\cdot(\nu_t \nabla \mathbf{u}) - (c_w + c_d a)\lvert\mathbf{u}\rvert\mathbf{u}$ | [`solver.py` `fv_increment`](solver.py#L557) |
-| convection | face value $\mathbf{u}_f$ by MUSCL, van Leer limited, on the divergence-free face fluxes $F_f$ | [`solver.py` `convection`](solver.py#L536), [`_muscl`](solver.py#L198) |
-| turbulent mixing | $\nu_t = (\kappa\, \bar h)^2 \lvert S \rvert + \nu$, under-relaxed 0.5 between steps | [`solver.py` `viscosity`](solver.py#L480) |
+| upwind profile | $u(z) = \dfrac{u_*}{\kappa} \ln\dfrac{z - d}{z_0}$ from the reference speed, held at the top | [`forcing.py` `LogProfile`](forcing.py#L24) |
+| inflow at the sides | the steady column over the site's mean canopy, $\dfrac{d}{dh}\left(\nu_t \dfrac{dU}{dh}\right) = (\bar{c_d a} + c_w)\,U^2$, at each cell's height above its ground | [`solver.py` `equilibrium_column`](solver.py#L397) |
+| mass consistency | $\nabla^2 \lambda = \nabla \cdot \mathbf{u}^*$, $\mathbf{u} = \mathbf{u}^* - \nabla \lambda$ | [`solver.py` `project`](solver.py#L574) |
+| steady residual | $R(\mathbf{u}) = -\sum_f F_f \mathbf{u}_f + \nabla\cdot(\nu_t \nabla \mathbf{u}) - (c_w + c_d a)\lvert\mathbf{u}\rvert\mathbf{u}$ | [`solver.py` `fv_increment`](solver.py#L751) |
+| convection | face value $\mathbf{u}_f$ by MUSCL, van Leer limited, on the divergence-free face fluxes $F_f$ | [`solver.py` `convection`](solver.py#L730), [`_muscl`](solver.py#L304) |
+| turbulent mixing | $\nu_t = (\kappa\, \bar h)^2 \lvert S \rvert + \nu$, under-relaxed 0.5 between steps | [`solver.py` `viscosity`](solver.py#L674) |
 | canopy drag | $c_d\, a\, \lvert \mathbf{u} \rvert \mathbf{u}$, $a = \mathrm{LAI}/h$ | [`physics.py` `drag_density`](physics.py#L97) |
-| wall stress | $\left(\kappa / \ln(\delta / z_0)\right)^2 \lvert \mathbf{u} \rvert \mathbf{u}$ at half a cell | [`solver.py` `_wall`](solver.py#L205) |
-| pseudo-time step | $M\,\delta\mathbf{u} = \Delta t\, R(\mathbf{u}) + V \nabla \Pi$, $M = V(1 + \Delta t\, c\lvert\mathbf{u}\rvert) + \Delta t\,(D + A_\mathrm{upwind})$; then project, $\Pi \mathrel{+}= \lambda$ | [`solver.py` `run`](solver.py#L648), [`poisson.py` `Convective`](poisson.py#L154) |
+| wall stress | $\left(\kappa / \ln(\delta / z_0)\right)^2 \lvert \mathbf{u} \rvert \mathbf{u}$ at half a cell | [`solver.py` `_wall`](solver.py#L311) |
+| pseudo-time step | $M\,\delta\mathbf{u} = \Delta t\, R(\mathbf{u}) + V \nabla \Pi$, $M = V(1 + \Delta t\, c\lvert\mathbf{u}\rvert) + \Delta t\,(D + A_\mathrm{upwind})$; then project, $\Pi \mathrel{+}= \lambda$ | [`solver.py` `run`](solver.py#L860), [`poisson.py` `Convective`](poisson.py#L154) |
 
 Where $\delta\mathbf{u} = 0$ the steady equations hold whatever $\Delta t$, so the step only sets how fast the
 iteration arrives. $M$ is solved by BiCGSTAB and the projection by conjugate gradients, both preconditioned by one
@@ -49,8 +50,9 @@ Step independence, Harvard Forest, one heading, 10.6 M cells: the published leve
 | 25 m | 0.00 % | −0.05 % | −0.15 % |
 
 The earlier semi-Lagrangian scheme's settled field depended on its step, and its medians sat 15 to 18 % below the
-converged field at Harvard's four levels. The wind below the canopy is overstated, about 1.5 times at 4 m, because
-the inflow is not in equilibrium with the canopy ([known errors](wind_simulation.md#known-errors)).
+converged field at Harvard's four levels. With the column inflow the field changes at most 2.6 % between a 512 m and
+a 768 m square; with a log-law inflow the canopy slowed the sides for hundreds of meters and the 4 m median fell 44 %
+between 384 and 768 m ([wind_simulation.md](wind_simulation.md#experiments)).
 
 ## Run it
 

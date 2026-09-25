@@ -63,13 +63,14 @@ The separation, leave one tower out at a time over the 51 towers, error of the h
     Erbs, Klein and Duffie (1982)              RMSE 57.6, bias +3.7
     NSRDB's own diffuse                        RMSE 72.4, bias -2.3
 
-One tower's SW_IN standing for a point 150 m away: US-xHA against US-Ha1 at Harvard Forest, 2019 to 2024, over hours
-both measured:
+One tower's SW_IN standing for a point 140 m away: US-xHA against US-Ha1 at Harvard Forest, 2019 to 2024, over hours
+both measured. Bias is US-xHA minus US-Ha1 (other minus reference; US-Ha1's mean is 158.3 W m-2). US-Ha1's SW_IN is
+its PAR sensor converted at a fixed ratio, not a pyranometer.
 
                  n        bias                 RMSE          r
-    hour         51,570   +1.6 W m-2 (+1.0 %)  24.2 W m-2    0.995
-    day          2,099    +1.6                 10.3          0.995
-    month        69       +1.7                 6.4           0.997
+    hour         51,570   -1.6 W m-2 (-1.0 %)  24.2 W m-2    0.995
+    day          2,099    -1.6                 10.3          0.995
+    month        69       -1.7                 6.4           0.997
 
 The hourly RMSE is cloud edges passing one sensor before the other.
 

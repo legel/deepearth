@@ -28,13 +28,15 @@ from the ground. The full account, with every experiment and known error, is [so
 | clear sky against Harvard's 2,531 clearest hours, median $k_c$ | 0.991 (Ineichen-Perez on the Linke climatology: 1.061) |
 | separation, leave-one-site-out, DHI at 51 US towers | RMSE 53.0 W m⁻², MBE −1.6 (Erbs 57.6, NSRDB 72.4) |
 
-The tower's SW_IN carried 150 m to a second tower (US-xHA against US-Ha1, Harvard Forest, 2019 to 2024):
+The tower's SW_IN carried 140 m to a second tower, Harvard Forest, 2019 to 2024. Bias is US-xHA minus US-Ha1 (other
+minus reference; US-Ha1's mean is 158.3 W m⁻²). US-Ha1's SW_IN is its PAR sensor converted at a fixed ratio, not a
+pyranometer:
 
 | SW_IN | hours | bias | RMSE | r |
 |---|---|---|---|---|
-| hour | 51,570 | +1.6 W m⁻² (+1.0 %) | 24.2 W m⁻² | 0.995 |
-| day | 2,099 | +1.6 | 10.3 | 0.995 |
-| month | 69 | +1.7 | 6.4 | 0.997 |
+| hour | 51,570 | −1.6 W m⁻² (−1.0 %) | 24.2 W m⁻² | 0.995 |
+| day | 2,099 | −1.6 | 10.3 | 0.995 |
+| month | 69 | −1.7 | 6.4 | 0.997 |
 
 Below the canopy, PAR transmission at 12.7 m against HF004 (1991 to 2023), by season:
 
