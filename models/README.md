@@ -21,7 +21,7 @@ One measured variable per simulation, from the nearest tower's hourly record (FL
 | water | `P` | the rain on every cell, hour by hour | carried 150 m to a second gauge, total bias +3.5 %, hourly r 0.76; the storm solver against a stream gauge (hydro) |
 
 Known errors that bound these numbers: below the canopy, PAR is right in summer (0.163 against HF004's 0.16 at
-12.7 m) and off by 14 to 30 % in the other seasons, and shortwave reads 1.7 to 2.1 times low under a summer canopy
+12.7 m) and off by 14 to 28 % in the other seasons, and shortwave reads 1.7 to 2.1 times low under a summer canopy
 because the canopy's PAR transmission is applied to near infrared; the 1 m wind grid is not mesh-converged near the
 ground (a 2 m grid gives a 4 m median 29 % lower); the Gee Creek storm peak is 8 times the gauge's.
 

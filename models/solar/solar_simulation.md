@@ -83,7 +83,7 @@ Light below the canopy, as a fraction of open-sky PAR, against Harvard Forest's 
 ## Known errors
 
 Below the canopy the model is right in summer and off in the other seasons: winter 14 % bright, spring 15 % dark and
-fall 30 % bright. MODIS counts green leaves, and oaks keep brown ones into winter. The comparison is a site mean;
+fall 28 % bright. MODIS counts green leaves, and oaks keep brown ones into winter. The comparison is a site mean;
 HF004 is not a mapped column.
 
 The canopy's transmission is fitted to PAR and applied to all shortwave. Leaves pass far more near infrared than PAR,
