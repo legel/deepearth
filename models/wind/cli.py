@@ -65,7 +65,8 @@ def _config(args: argparse.Namespace) -> SolverConfig:
                        lateral=args.lateral, verbose=True, settle_tol=getattr(args, "settle_tol", None),
                        settle_every=getattr(args, "settle_every", 20), max_steps=getattr(args, "max_steps", None),
                        scheme=getattr(args, "scheme", "fv"), tol_momentum=getattr(args, "tol_momentum", 1e-5),
-                       settle_rule=getattr(args, "settle_rule", "window"), inflow=getattr(args, "inflow", "log"))
+                       settle_rule=getattr(args, "settle_rule", "window"), inflow=getattr(args, "inflow", "log"),
+                       closure=getattr(args, "closure", "mixing"), drive=getattr(args, "drive", "shear"))
     return cfg.fast() if getattr(args, "fast", False) else cfg
 
 
@@ -340,6 +341,10 @@ def main(argv: Optional[List[str]] = None) -> None:
                            help="tail: stop when the estimated change still to come is under --settle-tol")
             p.add_argument("--inflow", default="log", choices=("canopy", "log"),
                            help="canopy: the sides carry the steady column over the site's mean canopy")
+            p.add_argument("--closure", default="mixing", choices=("mixing", "k-l"),
+                           help="k-l: transported turbulent kinetic energy with a prescribed length (Katul et al. 2004)")
+            p.add_argument("--drive", default="shear", choices=("shear", "pressure"),
+                           help="pressure: a mean pressure gradient drives the column and the domain, no stress on top")
             p.add_argument("--max-steps", type=int, help="the most steps a settling run takes; then it says so")
             p.add_argument("--cfl", type=float, default=2.0)
             p.add_argument("--tol", type=float, default=1e-6)

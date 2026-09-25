@@ -35,6 +35,14 @@ None prints nothing. It changes no number the solver computes."""
 PROGRESS_EVERY = 10
 from poisson import Convective, Operator, Solver as Poisson
 
+# The k-l closure's constants, each from the literature and none fitted here.
+KL_C_MU = 0.09          # Launder and Spalding (1974): nu_t = C_mu^(1/4) l sqrt(k), eps = C_mu^(3/4) k^(3/2) / l
+KL_SIGMA_K = 1.0        # Launder and Spalding (1974): k diffuses with nu_t / sigma_k
+KL_BETA_P = 1.0         # Katul et al. (2004): the share of the canopy's drag work that becomes wake turbulence
+KL_BETA_D = 5.1         # Katul et al. (2004): the canopy's short-circuit of the cascade, beta_d c_d a |u| k
+KL_D_OVER_H = 2.0 / 3.0  # displacement height d = 2 h_c / 3 (Raupach 1994); l = kappa (h_c - d) within the canopy
+KL_WALL = 1.0e3         # the pseudo-time rate (per step) holding a wall cell at k = u*^2 / sqrt(C_mu) (Richards and Hoxey 1993)
+
 Tensor = torch.Tensor
 Faces = Tuple[Tensor, Tensor, Tensor]
 
@@ -85,6 +93,9 @@ class SolverConfig:
             log law, which the canopy keeps slowing downwind. A unit's boundary overrides both.
         anderson: Depth of Anderson acceleration of the finite volumes' outer fixed point (faces, multiplier and relaxed
             eddy viscosity); 0 is none. It changes how fast the steps arrive, not where.
+        closure: The eddy viscosity. "mixing": the mixing length (kappa h)^2 |S|. "k-l": a transported turbulent
+            kinetic energy k with a prescribed length (Katul et al. 2004), nu_t = C_mu^(1/4) l sqrt(k), whose canopy
+            makes turbulence in the wakes of its leaves and loses it to the cascade (`KL_*`). Finite volumes only.
     """
 
     steps: int = 200
@@ -112,6 +123,8 @@ class SolverConfig:
     anderson: int = 0
     anderson_store: Optional[str] = None
     inflow_ring_m: float = 0.0
+    closure: str = "mixing"
+    drive: str = "shear"
 
     def fast(self) -> "SolverConfig":
         """The production numerics: advection, mixing and the implicit momentum solve in float32, the projection's
@@ -157,7 +170,9 @@ class Result:
     settled: Optional[bool] = None
     settle: Optional[List[dict]] = None
     state: Optional[dict] = None
-    """The finite-volume state to continue from (`solve(initial=...)`): faces and pressure [m^2/s^2]."""
+    """The finite-volume state to continue from (`solve(initial=...)`): faces and pressure [m^2/s^2], and k under k-l."""
+    tke: Optional[np.ndarray] = None
+    """Turbulent kinetic energy k [m^2/s^2], (nz, ny, nx), under the k-l closure."""
 
     @property
     def speed(self) -> np.ndarray:
@@ -314,6 +329,15 @@ def _wall(delta: Tensor, z0: Tensor, size: Tensor) -> Tensor:
     return (KAPPA / torch.log(delta / z0)) ** 2 / size
 
 
+def _kl_length(hf, hc):
+    """The k-l closure's length: kappa (h_c - d) within a canopy of height h_c, kappa (h - d) above it (d = 2 h_c / 3),
+    never more than kappa h near the ground; kappa h without a canopy."""
+    d = KL_D_OVER_H * hc
+    if torch.is_tensor(hf):
+        return torch.minimum(KAPPA * hf, torch.maximum(KAPPA * (hc - d), KAPPA * (hf - d)))
+    return np.minimum(KAPPA * hf, np.maximum(KAPPA * (hc - d), KAPPA * (hf - d)))
+
+
 class Model:
     """A scene and its forcing, discretized and ready to run.
 
@@ -371,8 +395,25 @@ class Model:
         self.height = torch.clamp(self.zc[:, None, None] - below, min=1e-3 * self.dx)
         self.wall = self._wall_coefficient(z0)
         self.column = None
+        self.k, self.k_bc = None, None
+        assert cfg.closure in ("mixing", "k-l"), f"unknown closure {cfg.closure!r}"
+        if cfg.closure == "k-l":
+            assert cfg.scheme == "fv" and not cfg.anderson, "the k-l closure steps with the finite volumes, alone"
+            assert boundary is None, "a unit's boundary carries no k yet: the k-l closure runs a whole domain"
+            self._kl_geometry(z0)
+            self.k_log = profile.u_star ** 2 / math.sqrt(KL_C_MU)     # the log layer's k (Richards and Hoxey 1993)
+            self.k_floor = 1e-6 * self.u_top ** 2
+        self.body_vec = None
+        assert cfg.drive in ("shear", "pressure"), f"unknown drive {cfg.drive!r}"
         if cfg.inflow == "canopy" and boundary is None:
             self._equilibrium_inflow(z0, ex, ey)
+        if cfg.drive == "pressure":
+            assert cfg.closure == "k-l" and self.column is not None, "the pressure drive runs k-l over the canopy column"
+            self.body_vec = torch.tensor([ex, ey, 0.0], **kw) * float(self.column["body"])
+        if cfg.closure == "k-l" and self.k is None:
+            self.k = torch.where(self.solid, torch.zeros_like(self.sink), torch.full_like(self.sink, self.k_log))
+            self.k_bc = {"west": self.k[..., 0].clone(), "east": self.k[..., -1].clone(),
+                         "south": self.k[:, 0, :].clone(), "north": self.k[:, -1, :].clone()}
         self.poisson = Poisson(self._projection_operator(), precond_dtype=cfg.precond_dtype)
         self._lam: Optional[Tensor] = None
         self._momentum_factors = None
@@ -386,6 +427,8 @@ class Model:
                 setattr(w, k, v.to(dtype))
         if self.bc is not None:
             w.bc = {k: v.to(dtype) for k, v in self.bc.items()}
+        if self.k_bc is not None:
+            w.k_bc = {k: v.to(dtype) for k, v in self.k_bc.items()}
         w.poisson, w._work = None, w
         return w
 
@@ -425,9 +468,13 @@ class Model:
         drag[0] += wall0
         h_top, u_top = h[-1] + self.d_top, self.u_top
         lm = lambda a, b: np.where(np.isclose(a, b), a, (b - a) / np.log(b / a))  # noqa: E731
+        u = np.maximum(u_top * np.log(np.maximum(h / z0m, 1.0 + 1e-9)) / np.log(h_top / z0m), 1e-3 * u_top)
+        if self.cfg.closure == "k-l":
+            hc = float(self.canopy_height[fluid[0]].double().mean()) if bool(fluid[0].any()) else 0.0
+            hf = np.concatenate([lm(h[:-1], h[1:]), lm(h[-1:], np.array([h_top]))])
+            return self._kl_column(h, dz, dzc, hf, s, drag, z0m, hc, u, iterations)
         l_int = (KAPPA * lm(h[:-1], h[1:])) ** 2
         l_top = (KAPPA * lm(h[-1:], np.array([h_top]))) ** 2
-        u = np.maximum(u_top * np.log(np.maximum(h / z0m, 1.0 + 1e-9)) / np.log(h_top / z0m), 1e-3 * u_top)
         nu_int = l_int * np.abs(np.diff(u)) / dzc + NU_AIR
         nu_top = l_top * abs(u_top - u[-1]) / self.d_top + NU_AIR
         for it in range(iterations):
@@ -445,6 +492,84 @@ class Model:
                 break
         return {"h": h, "u": u, "h_top": h_top, "u_top": u_top, "iterations": it + 1, "drag": s, "z0": z0m}
 
+    def _kl_column(self, h: np.ndarray, dz: np.ndarray, dzc: np.ndarray, hf: np.ndarray, s: np.ndarray,
+                   drag: np.ndarray, z0m: float, hc: float, u: np.ndarray, iterations: int) -> Dict[str, np.ndarray]:
+        """The precursor column under the k-l closure: U from d/dh(nu dU/dh) = (s + w) U^2 with nu = C_mu^(1/4) l sqrt(k)
+        on each face, and k from d/dh(nu / sigma_k dk/dh) + nu (dU/dh)^2 - eps + s (beta_p U^3 - beta_d U k) = 0, the
+        ground cell held at the log law's k and no k through the top, as in the 3D model. `hf`: the heights of the
+        faces above each cell (the log means the mixing length uses), `hc` the site's mean canopy height."""
+        n, u_top, d_top = h.size, self.u_top, self.d_top
+        h_top = h[-1] + d_top
+        ell = _kl_length(hf, hc)                                      # on the faces above cells 0..n-1
+        ell_inv = 0.5 * (1.0 / np.concatenate([ell[:1], ell[:-1]]) + 1.0 / ell)
+        delta = dz[0] / 2
+        fr0 = (KAPPA / math.log(delta / min(z0m, delta * math.exp(-1.0)))) ** 2
+        ust0 = KAPPA * u_top / math.log(h_top / z0m)
+        k = np.full(n, ust0 ** 2 / math.sqrt(KL_C_MU))
+        pressure = self.cfg.drive == "pressure"
+        body = ust0 ** 2 / h_top if pressure else 0.0     # -dp/dx / rho: the column's stress u*^2 over its depth
+        nu = None
+        for it in range(iterations):
+            kf = np.concatenate([0.5 * (k[:-1] + k[1:]), k[-1:]])
+            new = KL_C_MU ** 0.25 * ell * np.sqrt(kf) + NU_AIR
+            nu = new if nu is None else 0.5 * nu + 0.5 * new
+            c_lo = np.concatenate([[0.0], nu[:-1] / dzc])
+            c_hi = np.concatenate([nu[:-1] / dzc, [0.0] if pressure else nu[-1:] / d_top])   # pressure: no stress on top
+            rhs = dz * body
+            rhs[-1] += c_hi[-1] * u_top
+            if pressure:                 # drag alone restrains the speed: Newton on U|U|, half a step
+                u_new = _tridiagonal(-c_lo[1:], c_lo + c_hi + 2.0 * dz * drag * np.abs(u), -c_hi[:-1],
+                                     rhs + dz * drag * np.abs(u) * u)
+                u_new = 0.5 * u + 0.5 * u_new
+            else:
+                u_new = _tridiagonal(-c_lo[1:], c_lo + c_hi + dz * drag * np.abs(u), -c_hi[:-1], rhs)
+            top_shear = 0.0 if pressure else (u_top - u_new[-1]) / d_top
+            prod_f = (nu - NU_AIR) * np.concatenate([np.diff(u_new) / dzc, [top_shear]]) ** 2
+            prod = 0.5 * (np.concatenate([prod_f[:1], prod_f[:-1]]) + prod_f)
+            sp = np.abs(u_new)
+            rate = KL_C_MU ** 0.75 * np.sqrt(k) * ell_inv                   # eps / k
+            kc_lo = np.concatenate([[0.0], nu[:-1] / KL_SIGMA_K / dzc])
+            kc_hi = np.concatenate([nu[:-1] / KL_SIGMA_K / dzc, [0.0]])
+            diag = kc_lo + kc_hi + dz * (1.5 * rate + KL_BETA_D * s * sp)   # eps linearized about the last k
+            kr = dz * (prod + KL_BETA_P * s * sp ** 3 + 0.5 * rate * k)
+            lo, hi = -kc_lo[1:], -kc_hi[:-1].copy()
+            diag[0], kr[0], hi[0] = 1.0, fr0 * sp[0] ** 2 / math.sqrt(KL_C_MU), 0.0
+            k_new = 0.5 * k + 0.5 * np.maximum(_tridiagonal(lo, diag, hi, kr), 1e-6 * u_top ** 2)
+            done = (np.max(np.abs(u_new - u)) <= self.COLUMN_TOL * u_top
+                    and np.max(np.abs(k_new - k)) <= self.COLUMN_TOL * np.max(k))
+            u, k = u_new, k_new
+            if done:
+                break
+        if pressure:                     # every term is quadratic in the speed: scaled so the top cell has u_top
+            c = u_top / max(u[-1], 1e-9)
+            u, k, body = u * c, k * c * c, body * c * c
+        return {"h": h, "u": u, "k": k, "h_top": h_top, "u_top": u_top, "iterations": it + 1, "drag": s, "z0": z0m,
+                "canopy_height": hc, "body": body}
+
+    def _kl_geometry(self, z0: Tensor) -> None:
+        """The k-l closure's fixed geometry: each column's canopy height (the top of its highest drag cell above its
+        ground), the length on every z-face, the mean inverse length of each cell, and each wall cell's log-law
+        (u* / |u|)^2."""
+        h, dz = self.height, self.dz[:, None, None]
+        self.canopy_height = torch.where(self.sink > 0, h + 0.5 * dz, torch.zeros_like(h)).max(dim=0).values
+        hf = torch.cat([_logmean(h[:1], h[1:2]), _logmean(h[:-1], h[1:]), _logmean(h[-1:], h[-1:] + self.d_top)])
+        self.ell_z = _kl_length(hf, self.canopy_height[None])
+        self.ell_inv = 0.5 * (1.0 / self.ell_z[:-1] + 1.0 / self.ell_z[1:])
+        s = self.solid
+        half = torch.full_like(self.sink, self.dx / 2)
+        dzh = (dz / 2).expand_as(self.sink)
+        coef = lambda delta, z: (KAPPA / torch.log(delta / torch.minimum(z, delta * math.exp(-1.0)))) ** 2  # noqa: E731
+        fr = torch.zeros_like(self.sink)
+        fr[..., :-1] = torch.maximum(fr[..., :-1], s[..., 1:] * coef(half[..., 1:], z0[..., 1:]))
+        fr[..., 1:] = torch.maximum(fr[..., 1:], s[..., :-1] * coef(half[..., :-1], z0[..., :-1]))
+        fr[:, :-1, :] = torch.maximum(fr[:, :-1, :], s[:, 1:, :] * coef(half[:, 1:, :], z0[:, 1:, :]))
+        fr[:, 1:, :] = torch.maximum(fr[:, 1:, :], s[:, :-1, :] * coef(half[:, :-1, :], z0[:, :-1, :]))
+        fr[:-1] = torch.maximum(fr[:-1], s[1:] * coef(dzh[:-1], z0[1:]))
+        fr[1:] = torch.maximum(fr[1:], s[:-1] * coef(dzh[1:], z0[:-1]))
+        fr[0] = torch.maximum(fr[0], coef(dzh[0], z0[0]))
+        self.wall_friction = torch.where(s, torch.zeros_like(fr), fr)
+        self.wall_mask = (self.wall_friction > 0).to(self.sink.dtype)
+
     def _equilibrium_inflow(self, z0: Tensor, ex: float, ey: float) -> None:
         """Prescribe the equilibrium column on every side and start from it, at each cell's height above its ground."""
         kw = dict(device=self.sink.device, dtype=self.sink.dtype)
@@ -457,11 +582,21 @@ class Model:
             u = torch.as_tensor(np.interp(height, hh, uu), **kw)[None] * vec
             u[:, self.solid] = 0.0
             return u
+        def kfield(col):
+            hh = np.concatenate([[0.0], col["h"], [col["h_top"]]])
+            kk = np.concatenate([col["k"][:1], col["k"], col["k"][-1:]])
+            return torch.where(self.solid, torch.zeros_like(self.sink),
+                               torch.as_tensor(np.interp(height, hh, kk), **kw))[None]
+        kl = self.cfg.closure == "k-l"
         self.column = self.equilibrium_column(z0)
         u = field(self.column)
         self.initial = u
         sides = {"west": u[..., 0].clone(), "east": u[..., -1].clone(), "south": u[:, :, 0, :].clone(),
                  "north": u[:, :, -1, :].clone()}
+        if kl:
+            self.k = kfield(self.column)[0]
+            k_sides = {"west": self.k[..., 0].clone(), "east": self.k[..., -1].clone(),
+                       "south": self.k[:, 0, :].clone(), "north": self.k[:, -1, :].clone()}
         ring = int(round(self.cfg.inflow_ring_m / self.dx))
         if ring > 0:            # each side from the canopy of its own strip: the canopy the wind crosses to arrive
             strips = {"west": (slice(None), slice(0, ring)), "east": (slice(None), slice(-ring, None)),
@@ -471,8 +606,13 @@ class Model:
             for side, (sy, sx) in strips.items():
                 where = torch.zeros(self.ny, self.nx, dtype=torch.bool, device=self.sink.device)
                 where[sy, sx] = True
-                sides[side] = take[side](field(self.equilibrium_column(z0, where=where))).clone()
+                col = self.equilibrium_column(z0, where=where)
+                sides[side] = take[side](field(col)).clone()
+                if kl:
+                    k_sides[side] = take[side](kfield(col))[0].clone()
         self.bc = dict(sides, top=self.u0_top[:, None, None].expand(3, self.ny, self.nx).clone())
+        if kl:
+            self.k_bc = k_sides
 
     # ── Geometry ─────────────────────────────────────────────────────────────────────────
 
@@ -682,13 +822,21 @@ class Model:
         rest = self.strain_rest(u)
         shear = (u[:2, 1:] - u[:2, :-1]).norm(dim=0) / self.dzc[:, None, None]
         s_int = torch.clamp(shear ** 2 + 0.5 * (rest[:-1] + rest[1:]), min=0).sqrt()
-        nu_int = (KAPPA * _logmean(h[:-1], h[1:])) ** 2 * s_int + NU_AIR
         h_ghost = h[-1] + self.d_top
         above = self.bc["top"][:2] if self.bc is not None else self.u0_top[:2, None, None]
         shear_top = (above - u[:2, -1]).norm(dim=0) / self.d_top
         s_top = torch.clamp(shear_top ** 2 + rest[-1], min=0).sqrt()
-        nu_top = (KAPPA * _logmean(h[-1], h_ghost)) ** 2 * s_top + NU_AIR
-        nu_z = torch.cat([nu_int[:1], nu_int, nu_top[None]])
+        if self.k is not None:          # k-l: nu_t = C_mu^(1/4) l sqrt(k) on each z-face, |S|^2 kept for k's production
+            self._s2 = torch.cat([s_int[:1], s_int, s_top[None]]) ** 2
+            if self.body_vec is not None:
+                self._s2[-1] = 0.0            # no stress through a pressure-driven top
+            k = self.k
+            kf = torch.cat([k[:1], 0.5 * (k[:-1] + k[1:]), k[-1:]]).clamp(min=0)
+            nu_z = KL_C_MU ** 0.25 * self.ell_z * kf.sqrt() + NU_AIR
+        else:
+            nu_int = (KAPPA * _logmean(h[:-1], h[1:])) ** 2 * s_int + NU_AIR
+            nu_top = (KAPPA * _logmean(h[-1], h_ghost)) ** 2 * s_top + NU_AIR
+            nu_z = torch.cat([nu_int[:1], nu_int, nu_top[None]])
         nu_c = 0.5 * (nu_z[:-1] + nu_z[1:])
         padded = F.pad(nu_c[None], (1, 1, 1, 1), mode="replicate")[0]
         nu_x = 0.5 * (padded[:, 1:-1, :-1] + padded[:, 1:-1, 1:])
@@ -727,10 +875,11 @@ class Model:
         out[:, -1] += op.az[-1] * (self.bc["top"] if self.bc is not None else self.u0_top[:, None, None])
         return out
 
-    def convection(self, u: Tensor, fx: Tensor, fy: Tensor, fz: Tensor) -> Tensor:
+    def convection(self, u: Tensor, fx: Tensor, fy: Tensor, fz: Tensor, padded: Optional[Tensor] = None) -> Tensor:
         """Net outflow sum_f F_f u_f of each cell [m^4/s^2]: the face volume flux times the upwind MUSCL face value,
-        van Leer limited (van Leer 1979), the halo carrying the prescribed sides and top and zero at the ground."""
-        p = F.pad(self._padded(u), (1, 1, 1, 1, 1, 1), mode="replicate")
+        van Leer limited (van Leer 1979), the halo carrying the prescribed sides and top and zero at the ground
+        (`padded`: another field's own halo)."""
+        p = F.pad(self._padded(u) if padded is None else padded, (1, 1, 1, 1, 1, 1), mode="replicate")
 
         def flux(q: Tensor, f: Tensor, dim: int) -> Tensor:
             n = q.shape[dim]
@@ -761,11 +910,16 @@ class Model:
         if a < 1.0 and getattr(self, "_nu", None) is not None:     # the eddy viscosity under-relaxed (Picard)
             nu_x, nu_y, nu_z = (a * n + (1.0 - a) * o for n, o in zip((nu_x, nu_y, nu_z), self._nu))
         self._nu = (nu_x, nu_y, nu_z)
+        if self.body_vec is not None:      # driven by the mean pressure gradient: no stress through the top
+            nu_z = nu_z.clone()
+            nu_z[-1] = 0.0
         diff_op = self._operator(nu_x, nu_y, nu_z, torch.zeros_like(self.sink), True)
         speed = u.norm(dim=0)
         drag = self.wall + self.sink
         residual = (self._boundary_terms(diff_op) - diff_op.apply(u) - self.convection(u, fx, fy, fz)
                     - self.vol * drag * speed * u)
+        if self.body_vec is not None:
+            residual = residual + self.vol * self.body_vec[:, None, None, None] * (~self.solid)
         dt = self.dt
         m = Convective(ident=self.vol * (1.0 + dt * drag * speed), ax=dt * diff_op.ax, ay=dt * diff_op.ay,
                        az=dt * diff_op.az, fx=dt * fx, fy=dt * fy, fz=dt * fz)
@@ -783,6 +937,55 @@ class Model:
         du[:, self.solid] = 0.0
         self.last_residual = rhs.norm() / dt                  # the steady momentum residual, pressure included
         return du, it
+
+    def _padded_k(self, k: Tensor) -> Tensor:
+        """k with a one-cell halo, (1, nz+2, ny+2, nx+2): the inflow's k on the sides, no gradient at the ground and top."""
+        pad = F.pad(k, (1, 1, 1, 1, 1, 1))
+        b = self.k_bc
+        pad[1:-1, 1:-1, 0], pad[1:-1, 1:-1, -1] = b["west"], b["east"]
+        pad[1:-1, 0, 1:-1], pad[1:-1, -1, 1:-1] = b["south"], b["north"]
+        pad[1:-1, 0, 0], pad[1:-1, 0, -1] = b["south"][..., 0], b["south"][..., -1]
+        pad[1:-1, -1, 0], pad[1:-1, -1, -1] = b["north"][..., 0], b["north"][..., -1]
+        pad[0], pad[-1] = pad[1], pad[-2]
+        return pad[None]
+
+    def k_step(self, faces: Faces, u: Tensor) -> int:
+        """One implicit pseudo-time step of the turbulent kinetic energy, in delta form as the momentum's:
+            dk/dt + div(u k) = div(nu_t / sigma_k grad k) + nu_t |S|^2 - eps + c_d a (beta_p |u|^3 - beta_d |u| k),
+            eps = C_mu^(3/4) k^(3/2) / l          (Katul et al. 2004),
+        a wall cell held at the log law's k = u*^2 / sqrt(C_mu), the inflow's k on the sides, and no flux of k through
+        the top. Takes this step's divergence-free faces and the eddy viscosity the momentum step used."""
+        k, dt, vol = self.k, self.dt, self.vol
+        ux, uy, uz = faces
+        fx, fy, fz = ux * self.area_x, uy * self.area_x, uz * self.area_z
+        nu_x, nu_y, nu_z = self._nu
+        nu_zk = nu_z.clone()
+        nu_zk[-1] = 0.0
+        op = self._operator(nu_x / KL_SIGMA_K, nu_y / KL_SIGMA_K, nu_zk / KL_SIGMA_K, torch.zeros_like(k), True)
+        b = self.k_bc
+        inflow = torch.zeros_like(k)
+        inflow[..., 0] += op.ax[..., 0] * b["west"]
+        inflow[..., -1] += op.ax[..., -1] * b["east"]
+        inflow[:, 0, :] += op.ay[:, 0, :] * b["south"]
+        inflow[:, -1, :] += op.ay[:, -1, :] * b["north"]
+        speed = u.norm(dim=0)
+        s2 = self._s2
+        production = 0.5 * ((nu_z[:-1] - NU_AIR) * s2[:-1] + (nu_z[1:] - NU_AIR) * s2[1:])
+        rate = KL_C_MU ** 0.75 * k.clamp(min=0).sqrt() * self.ell_inv          # eps / k
+        canopy = self.sink * speed
+        k_wall = self.wall_friction * speed ** 2 / math.sqrt(KL_C_MU)
+        source = (production + KL_BETA_P * canopy * speed ** 2 - (rate + KL_BETA_D * canopy) * k
+                  + (KL_WALL / dt) * self.wall_mask * (k_wall - k))
+        residual = inflow - op.apply(k[None])[0] - self.convection(k[None], fx, fy, fz, self._padded_k(k))[0] + vol * source
+        m = Convective(ident=vol * (1.0 + dt * (1.5 * rate + KL_BETA_D * canopy) + KL_WALL * self.wall_mask),
+                       ax=dt * op.ax, ay=dt * op.ay, az=dt * op.az, fx=dt * fx, fy=dt * fy, fz=dt * fz)
+        del op
+        mg = Poisson(m, factors=self._momentum_factors)
+        dk, it, _ = mg.solve((dt * residual)[None], tol=self.cfg.tol_momentum, max_iter=self.cfg.max_iter)
+        k = (k + dk[0]).clamp(min=self.k_floor)
+        k[self.solid] = 0.0
+        self.k = k
+        return it
 
     def add_increment(self, faces: Faces, du: Tensor) -> Faces:
         """Faces plus the cell increment interpolated onto them; prescribed faces keep their values."""
@@ -879,6 +1082,8 @@ class Model:
         pi = torch.zeros_like(u[0])                 # the accumulated multiplier: -dt times the pressure
         if isinstance(initial, dict):               # a finite-volume state: its faces and pressure carry on
             pi = -torch.as_tensor(initial["pressure"], device=cfg.device, dtype=cfg.dtype) * self.dt
+            if self._work.k is not None and initial.get("k") is not None:
+                self._work.k = torch.as_tensor(initial["k"], device=cfg.device, dtype=self._work.sink.dtype)
         aa = _Anderson(cfg.anderson, cfg.anderson_store) if fv and cfg.anderson else None
         for step in range(last):
             prev = u
@@ -901,6 +1106,8 @@ class Model:
                 mixed = aa.step(x0, (*faces, pi, *w._nu), residual_parts=3)
                 faces, pi, w._nu = tuple(mixed[:3]), mixed[3], tuple(mixed[4:])
             u = self.cells(faces)
+            if w.k is not None:                     # k-l: k follows the step's divergence-free field
+                w.k_step(tuple(f.to(wd) for f in faces), u.to(wd))
             iterations.append(it)
             change.append(float((u - prev).abs().max()) / self.u_top)
             if PROGRESS is not None and ((step + 1) % PROGRESS_EVERY == 0 or step + 1 == last):
@@ -950,6 +1157,7 @@ class Model:
             iterations.append(it)
         div = self.divergence(faces)
         flux_in, flux_out = self.boundary_flux(faces)
+        tke = self._work.k.double().cpu().numpy() if self._work.k is not None else None
         return Result(
             velocity=u.cpu().numpy(),
             vorticity=self.vorticity(u).cpu().numpy(),
@@ -961,7 +1169,9 @@ class Model:
             poisson_iterations=iterations, change=change,
             wall_s=time.time() - t0, cells=self.nz * self.ny * self.nx,
             steps=step + 1 if settling else cfg.steps, settled=settled, settle=settle or None,
-            state={"faces": tuple(f.cpu().numpy() for f in faces), "pressure": (-pi / self.dt).cpu().numpy()} if fv else None,
+            state=(dict({"faces": tuple(f.cpu().numpy() for f in faces), "pressure": (-pi / self.dt).cpu().numpy()},
+                        **({"k": tke} if tke is not None else {})) if fv else None),
+            tke=tke,
         )
 
 
