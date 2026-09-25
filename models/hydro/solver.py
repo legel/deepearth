@@ -55,6 +55,11 @@ class SolverConfig:
         device: torch device name; None picks CUDA when available.
         compile: torch.compile the sub-step; None enables it on CUDA only.
         block: Sub-steps between host synchronisations; None picks 8 on CUDA, 1 on CPU.
+        soil_dt_s: The soil's own step [s]: infiltration, then surface storage, over the time since the soil's last
+            update, taken after the first block of sub-steps that reaches it and at every forcing interval's end.
+            0 updates it every sub-step. Green-Ampt's increment is exact over any step and its redistribution
+            implicit, so a longer soil step is an operator split, first order in its length; the soil is 94 % of the
+            sub-step's GPU time under GAR in float64 (`bench_substep.py`, 2026-09-25).
     """
 
     dx: float
@@ -68,6 +73,7 @@ class SolverConfig:
     device: Optional[str] = None
     compile: Optional[bool] = None
     block: Optional[int] = None
+    soil_dt_s: float = 0.0
 
 
 @dataclass
@@ -221,6 +227,8 @@ class State:
     acc: Tensor
     bank: Optional[Tensor] = None
     """GAR's per-cell soil state, [5, rows, cols] as `infiltration.BANK`; None under Horton."""
+    t_soil: Optional[Tensor] = None
+    """When the soil was last updated [s] (`SolverConfig.soil_dt_s` above 0)."""
 
 
 @dataclass
@@ -245,6 +253,7 @@ class Kernel:
     dt_s: float
     alpha: float
     cell_cfl: bool
+    split: bool = False
 
 
 def horton_rate(t_s: float, f0: Field, fc: Field, k: Field) -> Field:
@@ -283,11 +292,6 @@ def _substep(s: State, g: Grid, f: Forcing, kern: Kernel) -> None:
     peak = h.max() if kern.cell_cfl else torch.maximum(hf_x.max(), hf_y.max())
     dt = torch.minimum(_cfl_dt(peak.double(), kern, f.t_end - s.t), f.source_dt)
 
-    if g.gar is None:
-        inf = g.fc + (g.f0 - g.fc) * torch.exp(-g.k * s.t)
-        if g.deficit is not None:
-            inf = torch.minimum(inf, (g.deficit - s.cum).clamp(min=0.0) / dt.clamp(min=1e-30))
-
     qxi = _face_flux(s.qx[:, 1:-1], hf_x, eta[:, 1:] - eta[:, :-1], g.n2_x, dt, kern.dx)
     qyi = _face_flux(s.qy[1:-1, :], hf_y, eta[1:, :] - eta[:-1, :], g.n2_y, dt, kern.dx)
     qx = torch.cat([_edge(qxi[:, :1].clamp(max=0.0), f.west), qxi,
@@ -305,18 +309,10 @@ def _substep(s: State, g: Grid, f: Forcing, kern: Kernel) -> None:
     # It is zeroed here, so it is measured here or it is lost from the mass balance.
     spilled = torch.where(g.invalid, h, 0.0)
     h = h - spilled
-    if g.gar is None:
-        inf_amount = torch.minimum(inf * dt, h)
+    if kern.split:                         # the soil takes its share on its own step (`_soil`)
+        inf_amount = take = torch.zeros((), dtype=h.dtype, device=h.device)
     else:
-        inf_amount, bank = infiltration.step(h, s.bank, dt.to(h.dtype), g.gar, MIN_DEPTH)
-        s.bank.copy_(bank)
-    h = (h - inf_amount).clamp(min=0.0)
-    if g.smax is not None:
-        take = torch.minimum(h, (g.smax - s.abstracted).clamp(min=0.0))
-        h = h - take
-        s.abstracted.add_(take)
-    else:
-        take = inf_amount * 0.0
+        h, inf_amount, take = _losses(h, s, g, dt, s.t)
 
     leaving = ((-qx[:, 0]).clamp(min=0.0).sum(dtype=torch.float64) + qx[:, -1].clamp(min=0.0).sum(dtype=torch.float64)
                + (-qy[0, :]).clamp(min=0.0).sum(dtype=torch.float64) + qy[-1, :].clamp(min=0.0).sum(dtype=torch.float64)
@@ -333,16 +329,58 @@ def _substep(s: State, g: Grid, f: Forcing, kern: Kernel) -> None:
     if g.ws_sx is not None:
         ws = ((g.ws_sx * qxi).sum(dtype=torch.float64) + (g.ws_sy * qyi).sum(dtype=torch.float64))
 
-    s.acc[:6].add_(torch.stack([leaving * kern.dx, entering * kern.dx, inf_amount.sum(dtype=torch.float64),
-                                take.sum(dtype=torch.float64), gauge * kern.dx, ws * kern.dx]) * dt)
+    # rates times dt for the fluxes; the depths infiltrated and abstracted are already amounts (they were once
+    # multiplied by dt too, which put infil_mm_hr a sub-step's length too low)
+    zero = torch.zeros((), dtype=torch.float64, device=h.device)
+    s.acc[:6].add_(torch.stack([leaving * kern.dx, entering * kern.dx, zero, zero, gauge * kern.dx, ws * kern.dx]) * dt
+                   + torch.stack([zero, zero, inf_amount.sum(dtype=torch.float64), take.sum(dtype=torch.float64),
+                                  zero, zero]))
     s.acc[6].add_((dt > 0.0).double())
     s.acc[7].sub_(created.sum(dtype=torch.float64))
     s.h.copy_(h)
     s.qx.copy_(qx)
     s.qy.copy_(qy)
-    s.h_max.copy_(torch.maximum(s.h_max, h))
+    if not kern.split:                     # split, the peak is taken after the soil's share (`_soil`)
+        s.h_max.copy_(torch.maximum(s.h_max, h))
     s.cum.add_(inf_amount)
     s.t.add_(dt)
+
+
+def _losses(h: Tensor, s: State, g: Grid, dt: Tensor, t0: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    """Infiltration, then surface storage, over a step `dt` from `t0`: (depth after, infiltrated, abstracted) [m].
+    Advances the soil bank and surface storage; `cum` and the mass balance are the caller's."""
+    if g.gar is None:
+        inf = g.fc + (g.f0 - g.fc) * torch.exp(-g.k * t0)
+        if g.deficit is not None:
+            inf = torch.minimum(inf, (g.deficit - s.cum).clamp(min=0.0) / dt.clamp(min=1e-30))
+        inf_amount = torch.minimum(inf * dt, h)
+    else:
+        inf_amount, bank = infiltration.step(h, s.bank, dt.to(h.dtype), g.gar, MIN_DEPTH)
+        s.bank.copy_(bank)
+    h = (h - inf_amount).clamp(min=0.0)
+    if g.smax is not None:
+        take = torch.minimum(h, (g.smax - s.abstracted).clamp(min=0.0))
+        h = h - take
+        s.abstracted.add_(take)
+    else:
+        take = inf_amount * 0.0
+    return h, inf_amount, take
+
+
+def _soil(s: State, g: Grid) -> None:
+    """The soil's update over the time since its last (`SolverConfig.soil_dt_s`), counted in the mass balance as
+    the sub-step counts it (acc[2] infiltrated, acc[3] abstracted, per unit area)."""
+    dt = s.t - s.t_soil
+    before = None if s.bank is None else s.bank.clone()
+    h, inf_amount, take = _losses(s.h, s, g, dt, s.t_soil)
+    if before is not None:               # an empty step (the interval already closed) is not a hiatus
+        s.bank.copy_(torch.where(dt > 0.0, s.bank, before))
+    s.acc[2].add_(inf_amount.sum(dtype=torch.float64))
+    s.acc[3].add_(take.sum(dtype=torch.float64))
+    s.h.copy_(h)
+    s.h_max.copy_(torch.maximum(s.h_max, h))
+    s.cum.add_(inf_amount)
+    s.t_soil.copy_(s.t)
 
 
 def _velocity(h: Tensor, qx: Tensor, qy: Tensor) -> Tuple[Tensor, Tensor]:
@@ -533,8 +571,13 @@ def simulate(
     n_valid = int(valid.sum())
     device, dtype, compiled, block, mode = _runtime(cfg, surface.z.size)
     grid, state, forcing = _build(surface, cfg, probes, device, dtype)
-    kern = Kernel(dx=cfg.dx, dt_s=cfg.dt_s, alpha=cfg.cfl_alpha, cell_cfl=cfg.cfl_depth == "cell")
+    split = float(cfg.soil_dt_s) > 0.0
+    kern = Kernel(dx=cfg.dx, dt_s=cfg.dt_s, alpha=cfg.cfl_alpha, cell_cfl=cfg.cfl_depth == "cell", split=split)
     step = torch.compile(_substep, dynamic=False, mode=mode) if compiled else _substep
+    soil = (torch.compile(_soil, dynamic=False, mode=mode) if compiled else _soil) if split else None
+    if split:
+        state.t_soil = torch.zeros((), dtype=torch.float64, device=device)
+        torch._dynamo.mark_static_address(state.t_soil)
 
     dx, cell_ha = cfg.dx, cfg.dx * cfg.dx / 1e4
     frame_interval_s = cfg.frame_interval_min * 60.0
@@ -552,7 +595,7 @@ def simulate(
         (frames.append(frame) if sink is None else sink(t_s, frame))
 
     t0 = time.time()
-    t_s, last_frame_t, cap_hits, n_substeps = 0.0, -1e9, 0, 0
+    t_s, last_frame_t, cap_hits, n_substeps, t_soil = 0.0, -1e9, 0, 0, 0.0
     acc_prev = np.zeros(8)
     hourly, hour_now = None, -1
     if surface.rain_hourly is not None:        # every cell its own hours: the share field changes hour by hour
@@ -572,9 +615,15 @@ def simulate(
                 step(state, grid, forcing, kern)
             n_sub += block
             t_s = float(state.t.item())
+            if split and t_s - t_soil >= cfg.soil_dt_s:      # the host reads t every block anyway
+                soil(state, grid)
+                t_soil = t_s
             if t_s >= t_target - 1e-9 or n_sub >= cfg.substep_cap:
                 break
         cap_hits += n_sub >= cfg.substep_cap
+        if split:                        # the soil is current at every interval's end, so its series and balance are
+            soil(state, grid)
+            t_soil = t_s
         acc = np.array(state.acc.tolist())
         d, w = acc - acc_prev, max(t_s - (t_target - cfg.dt_s), 1e-30)
         acc_prev = acc

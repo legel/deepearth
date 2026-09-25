@@ -186,3 +186,53 @@ def test_horton_runs_unchanged_without_a_soil():
     (50, 42, "sandy clay"), (5, 45, "silty clay"), (20, 60, "clay")])
 def test_usda_texture_triangle(sand, clay, name):
     assert gar.usda_texture(sand, clay) == name and name in gar.RAWLS_1983
+
+
+def solve_every(z, rain, soil, every_s, dtype="float64", dx=5.0, dt_s=60.0):
+    surface = Surface(z=z, soil=soil, smax_m=np.full(z.shape, 0.001, dtype=np.float32))
+    cfg = SolverConfig(dx=dx, dt_s=dt_s, dtype=dtype, device="cpu", frame_interval_min=30.0, soil_dt_s=every_s, block=1)
+    return simulate(surface, rain, cfg, verbose=False)
+
+
+@pytest.mark.parametrize("dtype", ["float64", "float32"])
+def test_the_soil_on_its_own_step_closes_mass_and_its_bank(dtype):
+    z = plane()
+    soil = Soil.texture("loam", theta_i=0.15, shape=z.shape)
+    res = solve_every(z, [60.0 * MM_HR] * 60 + [0.0] * 60, soil, 20.0, dtype)
+    m = res.mass
+    assert m.infiltrated > 0 and m.abstracted > 0 and m.outflow > 0
+    assert abs(m.supplied - (m.infiltrated + m.abstracted + m.stored + m.outflow)) / m.supplied < \
+        (1e-6 if dtype == "float64" else 1e-4)
+    np.testing.assert_allclose(res.soil_state[0] + res.soil_state[2], res.cum_infil, rtol=1e-5, atol=1e-9)
+
+
+def test_the_soil_split_converges_to_the_every_sub_step_soil():
+    """First order in the soil's step, on a 0.2 m grid (sub-steps near 0.1 s): the storm's partition (of what fell)
+    and its peak depth move by less as the soil's step shrinks, and at 1 s by under 0.5 % against the soil on every
+    sub-step, on a soil that takes most of the rain (sandy loam) and one that sheds half (clay loam)."""
+    rows = np.arange(40, dtype=np.float64)[:, None]
+    z = np.repeat(20.0 - rows * 0.2 * 0.02, 40, axis=1).astype(np.float32)
+    rain = [120.0 * MM_HR] * 20 + [20.0 * MM_HR] * 20 + [0.0] * 20
+    for texture in ("sandy loam", "clay loam"):
+        soil = Soil.texture(texture, theta_i=0.12, shape=z.shape)
+        ref = solve_every(z, rain, soil, 0.0, dx=0.2, dt_s=15.0)
+        err = {}
+        for s in (0.5, 1.0, 4.0, 16.0):
+            r = solve_every(z, rain, soil, s, dx=0.2, dt_s=15.0)
+            err[s] = max(abs(r.mass.infiltrated - ref.mass.infiltrated) / ref.mass.supplied,
+                         abs(r.mass.outflow - ref.mass.outflow) / ref.mass.supplied,
+                         abs(float(r.h_max.max()) / float(ref.h_max.max()) - 1))
+        assert err[0.5] <= err[1.0] <= err[4.0] <= err[16.0], (texture, err)
+        assert err[1.0] < 5e-3, (texture, err)
+
+
+def test_ponded_green_and_ampt_stays_exact_on_a_longer_soil_step():
+    z = np.full((12, 12), 10.0, dtype=np.float32)
+    z[0, :] = z[-1, :] = z[:, 0] = z[:, -1] = 200.0
+    soil = Soil.texture("clay loam", theta_i=0.20, shape=z.shape)
+    surface = Surface(z=z, soil=soil, initial_h=np.where(z < 50.0, 0.5, 0.0))
+    res = simulate(surface, [0.0] * 120, SolverConfig(dx=5.0, dt_s=60.0, dtype="float64", device="cpu", soil_dt_s=60.0),
+                   verbose=False)
+    F = float(res.cum_infil[5, 5])
+    S = soil.psi_f[0, 0] * (soil.theta_s[0, 0] - 0.20)
+    assert green_ampt_time(F, S, soil.ks[0, 0]) == pytest.approx(7200.0, rel=1e-6)

@@ -381,3 +381,11 @@ def test_each_cell_takes_its_own_hours_and_the_mass_balance_counts_them():
     uniform = run(z, rain, max_deficit_m=np.full(z.shape, 1.0, dtype=np.float32), f0=1e-9, fc=1e-9, k=1.0)
     assert res.mass.rain == pytest.approx(uniform.mass.rain, rel=1e-12), "the domain's rain is the mean series'"
     assert res.frames[1][0][:, :10].sum() > res.frames[1][0][:, 10:].sum(), "after the first hour the west is wetter"
+
+
+def test_the_infiltration_series_is_a_rate_in_mm_per_hour():
+    """20 mm/h of capacity under 60 mm/h of rain: the series reads 20 while the soil has room (it read a sub-step's
+    length times that, the depth once multiplied by dt as the fluxes are)."""
+    z = plane()
+    res = run(z, [60.0 * MM_HR] * 20, f0=20.0 * MM_HR, fc=20.0 * MM_HR, k=0.0)
+    assert res.series["infil_mm_hr"][5:] == pytest.approx(20.0, rel=1e-3)
