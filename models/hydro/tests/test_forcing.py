@@ -76,3 +76,17 @@ def test_pfds_grid_shape_is_not_the_ensemble_shape():
 def test_pfds_duration_rows_match_the_documented_service_shape():
     assert len(fetch.PFDS_DURATIONS_HR) == 19
     assert 24 in fetch.PFDS_DURATIONS_HR and 1 in fetch.PFDS_DURATIONS_HR
+
+
+def test_tower_rain_is_the_forcing_read_hour_by_hour_over_the_storm(tmp_path):
+    """The flux tower's hourly rain under the P rule (models/flux) drives a storm: its hours inside the window, each
+    hour's depth conserved on the solver's steps."""
+    from forcing import tower_hyetograph
+    from sites import Storm
+    csv = tmp_path / "rain.csv"
+    csv.write_text("time_utc,p\n2024-07-09T21:00:00Z,0.0\n2024-07-09T22:00:00Z,12.0\n"
+                   "2024-07-09T23:00:00Z,39.9\n2024-07-10T00:00:00Z,3.0\n2024-07-10T01:00:00Z,0.0\n")
+    storm = Storm("t", "t", "2024-07-09 22:00", "2024-07-10 00:00", "2024-07-09", "2024-07-10")
+    rate, hourly = tower_hyetograph(csv, storm, 600.0)
+    assert hourly.tolist() == [12.0, 39.9, 3.0] and np.all(rate >= 0.0)
+    assert float(rate[0]) == pytest.approx(12.0 / 1000 / 3600)

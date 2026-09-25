@@ -1,7 +1,15 @@
-"""Rainfall forcing: observed storms from ASOS, and NOAA Atlas 14 design storms.
+"""Rainfall forcing. The forcing is the site's measured rain; a design storm is only a stated what-if.
 
-Both routes produce the same thing -- rainfall rate [m/s] on a `dt_s`-spaced axis -- so the
-solver never knows which it is running.
+- **Tower rain (the forcing):** the nearest flux tower's hourly rain under the P rule of `models/flux`
+  (`rain.rain`): the reference gauge where it measured, else the tower gauge vetted hour by hour and month by month
+  against the site's independent sources, else AORC. `tower_hyetograph` reads that hourly record over a storm.
+- **Gridded or station rain:** AORC's 1 km hourly grid (`aorc_hyetograph`), or a site's ASOS gauge
+  (`observed_hyetograph`) where no tower is near.
+- **What-if only:** NOAA Atlas 14 depths on an SCS Type II curve (`design_hyetograph`), named as a design storm
+  wherever it is shown, never as a measured one.
+
+Every route produces the same thing, a rainfall rate [m/s] on a `dt_s`-spaced axis, so the solver never knows which
+it is running.
 """
 
 import json
@@ -20,6 +28,30 @@ about 60 % of the duration, which suits convective storms here."""
 RETURN_PERIODS_YR = (1, 2, 5, 10, 25, 50, 100, 200, 500)
 """Design-storm ensemble. Atlas 14 is queried per coordinate, so this runs unchanged anywhere,
 which is what makes cross-site comparison mean anything."""
+
+
+def tower_hyetograph(path, storm: Storm, dt_s: float, extend_hours: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
+    """Rainfall rate [m/s] from the tower's hourly record under the P rule (`models/flux` `rain.rain`), over the storm.
+
+    Args:
+        path: A CSV of the rule's output, one row an hour: `time_utc` (the hour's start) and `p` (mm in the hour).
+        storm: Storm defining the UTC window.
+        dt_s: Output timestep [s].
+        extend_hours: Zero-rain hours appended for the solver's drainage tail.
+
+    Returns:
+        (rate [m/s] per dt_s step, hourly depth [mm]).
+    """
+    df = pd.read_csv(path)
+    assert {"time_utc", "p"} <= set(df.columns), f"{path} needs time_utc and p columns (the P rule's hourly output)"
+    df["time_utc"] = pd.to_datetime(df["time_utc"], utc=True)
+    df = df.set_index("time_utc").sort_index()
+    window = df[pd.Timestamp(storm.start, tz="UTC"):pd.Timestamp(storm.end, tz="UTC")]
+    assert not window.empty, f"{path} has no hours inside {storm.start}..{storm.end}"
+    rain_mm = pd.to_numeric(window["p"], errors="coerce").fillna(0.0).values
+    hours = np.arange(len(rain_mm), dtype=float)
+    t = np.arange(0.0, (len(rain_mm) + extend_hours) * 3600.0, dt_s)
+    return np.interp(t, hours * 3600.0, rain_mm / 1000 / 3600, right=0.0), rain_mm
 
 
 def observed_hyetograph(site: SiteConfig, storm: Storm, dt_s: float,

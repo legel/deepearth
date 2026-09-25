@@ -131,6 +131,9 @@ def cmd_simulate(args: argparse.Namespace) -> None:
             print("  AORC: " + json.dumps(rec))
             return r
         rain = None
+    elif args.rain == "tower":              # the flux tower's rain under the P rule (models/flux), the forcing
+        assert args.rain_csv, "--rain tower needs --rain-csv: the P rule's hourly output (time_utc, p)"
+        rain, hourly = forcing.tower_hyetograph(args.rain_csv, storm, args.dt, args.extend_hours)
     else:
         rain, hourly = forcing.observed_hyetograph(site, storm, args.dt, args.extend_hours)
     res, profile, dx = _run(site, rain, args.cell_size, args.dt, args.frame_interval,
@@ -142,7 +145,7 @@ def cmd_simulate(args: argparse.Namespace) -> None:
         rain = np.asarray(res.series["rain_mm_hr"])
 
     tag = _tag(storm.name, args.cell_size, args.surface, args.infiltration, args.basin, args.keep_depressions,
-               args.antecedent) + {"aorc": "_aorc", "aorc-hourly": "_aorch"}.get(args.rain, "") \
+               args.antecedent) + {"aorc": "_aorc", "aorc-hourly": "_aorch", "tower": "_tower"}.get(args.rain, "") \
         + ("_nlcdn" if args.manning == "nlcd" else "")
     t_h = np.arange(len(rain)) * args.dt / 3600.0
     columns = {"time_h": t_h, "rain_mm_hr": res.series["rain_mm_hr"],
@@ -197,7 +200,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
     """Score the most recent simulated hydrograph against the gauge and write the receipt."""
     site, storm = sites.get_site(args.site), sites.get_storm(args.storm)
     tag = _tag(storm.name, args.cell_size, args.surface, args.infiltration, args.basin, args.keep_depressions,
-               args.antecedent) + {"aorc": "_aorc", "aorc-hourly": "_aorch"}.get(getattr(args, "rain", "asos"), "") \
+               args.antecedent) + {"aorc": "_aorc", "aorc-hourly": "_aorch", "tower": "_tower"}.get(getattr(args, "rain", "asos"), "") \
         + ("_nlcdn" if getattr(args, "manning", "scalar") == "nlcd" else "")
     path = site.out_path(f"hydrograph_{tag}.csv")
     assert path.exists(), f"{path} missing; run `simulate` with the same options first"
@@ -263,9 +266,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                    help="gar: Green-Ampt with redistribution from the survey's hydraulics")
     p.add_argument("--basin", action="store_true", help="the domain is the gauge's NLDI basin")
     p.add_argument("--keep-depressions", action="store_true", help="the DEM before depression breaching")
-    p.add_argument("--rain", choices=("asos", "aorc", "aorc-hourly"), default="asos",
-                   help="the storm's rain: the site's ASOS gauge; AORC's 1 km grid, each cell's total on the "
+    p.add_argument("--rain", choices=("tower", "asos", "aorc", "aorc-hourly"), default="asos",
+                   help="the storm's rain: the flux tower's under the P rule (--rain-csv, the forcing); the site's ASOS "
+                        "gauge; AORC's 1 km grid, each cell's total on the "
                         "mean's hours; or each cell's own hours (aorc-hourly)")
+    p.add_argument("--rain-csv", default=None,
+                   help="--rain tower: the P rule's hourly output for the site (columns time_utc, p in mm)")
     p.add_argument("--antecedent", default=None,
                    help="raster of theta_i and deficit_mm from a continuous simulation at the storm's start (gar)")
     p.add_argument("--manning", choices=("scalar", "nlcd"), default="scalar",
@@ -285,8 +291,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--infiltration", choices=("horton", "gar"), default="horton")
     p.add_argument("--basin", action="store_true", help="the domain is the gauge's NLDI basin")
     p.add_argument("--keep-depressions", action="store_true", help="the DEM before depression breaching")
-    p.add_argument("--rain", choices=("asos", "aorc", "aorc-hourly"), default="asos",
-                   help="the storm's rain: the site's ASOS gauge; AORC's 1 km grid, each cell's total on the "
+    p.add_argument("--rain", choices=("tower", "asos", "aorc", "aorc-hourly"), default="asos",
+                   help="the storm's rain: the flux tower's under the P rule (--rain-csv, the forcing); the site's ASOS "
+                        "gauge; AORC's 1 km grid, each cell's total on the "
                         "mean's hours; or each cell's own hours (aorc-hourly)")
     p.add_argument("--antecedent", default=None,
                    help="raster of theta_i and deficit_mm from a continuous simulation at the storm's start (gar)")
