@@ -70,7 +70,7 @@ with `parameters.json` (z0, cd, LAI and closure per class), and `surface/` DTM a
 46-class table in [`physics.py` `CLASSES`](physics.py#L46) applies. `--fast` runs momentum in float32.
 
 ```bash
-python3 -m pytest         # 100 tests, no network and no site data
+python3 -m pytest         # 102 tests, no network and no site data
 ```
 
 ## License
