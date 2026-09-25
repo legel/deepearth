@@ -49,8 +49,8 @@ Step independence, Harvard Forest, one heading, 10.6 M cells: the published leve
 | 25 m | 0.00 % | −0.05 % | −0.15 % |
 
 The earlier semi-Lagrangian scheme's settled field depended on its step, and its medians sat 15 to 18 % below the
-converged field at Harvard's four levels. The 1 m grid is not mesh-converged near the ground: a 2 m grid gives a
-4 m median 29 % lower.
+converged field at Harvard's four levels. The wind below the canopy is overstated, about 1.5 times at 4 m, because
+the inflow is not in equilibrium with the canopy ([known errors](wind_simulation.md#known-errors)).
 
 ## Run it
 

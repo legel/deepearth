@@ -102,14 +102,28 @@ Cost of one heading at 1 m (one GPU, list prices):
 
 ## Known errors
 
-The 1 m grid is not converged near the ground. Against a 2 m grid, the 1 m medians change by 29 % at 4 m, 24 % at 5
-m, 12 % at 10 m and 6 % at 25 m; a 0.5 m comparison has not run to completion.
+The wind below the canopy is overstated, about 1.5 times at 4 m, because the inflow is not in equilibrium with the
+canopy. The sides carry a displaced log law, and the canopy's drag keeps slowing it for hundreds of meters, so the
+field inside depends on how much fetch the solved square holds. Harvard Forest, heading 270°, 1 m cells, medians per
+1 m/s against the square's side:
+
+                 256 m     384 m     512 m     768 m
+    4 m          0.173     0.125     0.088     0.069
+    5 m          0.188     0.140     0.102     0.080
+    10 m         0.280     0.238     0.204     0.179
+    25 m         0.725     0.674     0.622     0.588
+
+The product's square is 384 m. The grid is not the cause: on one 512 m square, 2 m cells against 1 m change the four
+medians by +0.5, -2.9, -3.2 and -0.4 %. An inflow solved as a column in equilibrium with the same canopy drag and
+mixing length is in progress.
 
 The canopy's wake cells keep moving by about 1 % of the median between successive means after the level
 statistics have settled; the steady residual falls to 3 to 10 % of its first value and holds there. The delivered
 field is the mean over the last 40 steps.
 
-Step independence has been measured at Harvard; at UC Berkeley it is running. The tower comparison of the
+At UC Berkeley the settled medians move by up to 1.5 % between CFL 8 and 32, which follows the stop rather than the
+scheme: each run is still converging when a 40-step window changes by 0.2 %. A stop bounded on the change still to
+come is being validated. The tower comparison of the
 simulated wind at a second, independent sonic has not been made.
 
 [inflow]: https://github.com/legel/deepearth/blob/b9b5b1c/models/wind/forcing.py#L24
