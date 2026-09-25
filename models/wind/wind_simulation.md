@@ -135,11 +135,21 @@ Cost of one heading at 1 m (one GPU, list prices):
 
 ## Known errors
 
-Before the column inflow, the wind below the canopy was overstated about 1.5 times at 4 m: on Harvard's 384 m square
-the 4 m median over the 25 m median was 0.185, and with the column on a 512 m square it is 0.117. The fetch beyond the
-survey is open ground in the model, and the column is the site's mean canopy, so the column is right for a site
-inside a wide canopy and approximate at a canopy's edge. The residual fetch dependence from 512 to 768 m is at most
-2.6 %. The modeled profile has not yet been scored against a tower's own profile.
+The canopy's drag is spread evenly from the ground to the crown's top (c_d LAI / h), so the model has no open trunk
+space. Against the measured profile of NEON's Harvard Forest tower (2D sonics at five heights, DP1.00001), each level's
+speed over the 28.91 m level at the tower's column, weighted over the measured 30° sectors:
+
+                 measured   log-law inflow   column inflow
+    0.18 m       0.102      0.099            0.050
+    5.26 m       0.248      0.239            0.163
+    17.11 m      0.340      0.555            0.537
+    25.42 m      0.724      0.873            0.868
+
+Within the crown the model is 1.2 to 1.7 times too fast under either inflow. Near the ground the column inflow, the
+model's own equilibrium, is 0.5 to 0.7 times the measured wind; the log-law inflow matched there only because it had
+not yet slowed to that equilibrium. Drag that follows the survey's leaf area with height is the correction in progress.
+The fetch beyond the survey is open ground in the model, and the column is the site's mean canopy. With the column, the
+fetch changes the field by at most 2.6 % from 512 to 768 m.
 
 At UC Berkeley the stop leaves the 10 and 25 m medians 0.7 to 2.1 % high and the 4 and 5 m medians at most 0.6 %
 high (Stopping error).
