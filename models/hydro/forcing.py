@@ -49,9 +49,9 @@ def tower_hyetograph(path, storm: Storm, dt_s: float, extend_hours: float = 0.0)
     window = df[pd.Timestamp(storm.start, tz="UTC"):pd.Timestamp(storm.end, tz="UTC")]
     assert not window.empty, f"{path} has no hours inside {storm.start}..{storm.end}"
     rain_mm = pd.to_numeric(window["p"], errors="coerce").fillna(0.0).values
-    hours = np.arange(len(rain_mm), dtype=float)
     t = np.arange(0.0, (len(rain_mm) + extend_hours) * 3600.0, dt_s)
-    return np.interp(t, hours * 3600.0, rain_mm / 1000 / 3600, right=0.0), rain_mm
+    h = (t // 3600.0).astype(int)                    # each step takes its own hour's rate: every hour's depth exact
+    return np.where(h < len(rain_mm), rain_mm[np.minimum(h, len(rain_mm) - 1)] / 1000 / 3600, 0.0), rain_mm
 
 
 def observed_hyetograph(site: SiteConfig, storm: Storm, dt_s: float,

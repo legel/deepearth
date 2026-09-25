@@ -19,4 +19,4 @@ One measured variable per simulation, from the nearest tower's hourly record (FL
 |---|---|---|---|
 | solar | `SW_IN` | the sky: its clear-sky index sets beam and diffuse every hour | open level ground returns `SW_IN` to 1e-6; carried 140 m to a second tower, hourly bias −1.0 % (US-xHA minus US-Ha1), RMSE 24.2 W m⁻², r 0.995 |
 | wind | `WS` at the sonic | the reference: each heading's unit-speed field is scaled so the speed at the sonic equals `WS` | equal at the sonic by construction; against NEON's tower profile the crown is 1.2 to 1.7 times too fast and the air near the ground 0.5 to 0.7 times too slow (wind_simulation.md) |
-| water | `P` | the rain on every cell, hour by hour, under the P rule ([flux](flux/README.md)) | carried 140 m to a second gauge, total bias −3.4 % (US-xHA minus US-Ha1), hourly r 0.76; the storm solver against a stream gauge (hydro) |
+| water | `P` | the rain on every cell, hour by hour, under the P rule ([flux](flux/README.md)) | under the P rule, the NEON ground gauge where it measured; in full years it matches AORC within 3 % ([flux](flux/README.md)); the storm solver against a stream gauge (hydro) |

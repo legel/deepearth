@@ -90,3 +90,4 @@ def test_tower_rain_is_the_forcing_read_hour_by_hour_over_the_storm(tmp_path):
     rate, hourly = tower_hyetograph(csv, storm, 600.0)
     assert hourly.tolist() == [12.0, 39.9, 3.0] and np.all(rate >= 0.0)
     assert float(rate[0]) == pytest.approx(12.0 / 1000 / 3600)
+    assert float(rate.sum() * 600.0 * 1000.0) == pytest.approx(54.9), "every hour's depth, exactly"
