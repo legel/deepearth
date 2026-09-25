@@ -13,8 +13,8 @@ from the ground. The full account, with every experiment and known error, is [so
 | clear-sky index | $k_c = \mathrm{GHI} / \mathrm{GHI}_{cs}$; a daytime hour no source measured takes $k_c$ interpolated between measured hours | [`sky.py` `fill_ghi`](sky.py#L104) |
 | diffuse fraction | $k_d = c + \dfrac{1 - c}{1 + e^{b_0 + b_1 k_t + b_2 \mathrm{AST} + b_3 z + b_4 \Delta k_{tc}}} + b_5 k_{de}$, refit on 51 US towers | [`sky.py` `engerer2`](sky.py#L88), [`ENGERER2_US`](sky.py#L20) |
 | beam | $\mathrm{DNI} = (\mathrm{GHI} - \mathrm{DHI}) / \cos z$, capped at $1.1\,\mathrm{DNI}_{cs}$; the excess is diffuse, so $\mathrm{DNI}\cos z + \mathrm{DHI} = \mathrm{GHI}$ | [`sky.py` `split`](sky.py#L121) |
-| transposition | $A = \mathrm{DNI}/E_0$, $B = \mathrm{DNI} + A\,\mathrm{DHI}/\cos z$, $D = (1 - A)\,\mathrm{DHI}$ (Hay and Davies 1980) | [`transposition.py` `hay_davies`](transposition.py#L23) |
-| a point | $E = B\,L \max(\mathbf{n}\cdot\mathbf{s}, 0) + D\,V + \rho\,\mathrm{GHI}\,(1 - n_z)/2$, $\rho = 0.2$ | [`transposition.py` `irradiance`](transposition.py#L31) |
+| transposition | $A = \mathrm{DNI}/E_0$, $B = \mathrm{DNI} + A\,\mathrm{DHI}/\cos z$, $D = (1 - A)\,\mathrm{DHI}$ (Hay and Davies 1980) | [`transposition.py` `hay_davies`](transposition.py#L27) |
+| a point | $E = B\,L \max(\mathbf{n}\cdot\mathbf{s}, 0) + D\,V + \rho\,\mathrm{GHI}\,(1 - n_z)/2$, $\rho = 0.2$ | [`transposition.py` `irradiance`](transposition.py#L35) |
 | horizon | ray march over the height field, 64 wedges of 3 rays, samples growing by 3.5 % to 280 m | [`horizon.py` `march`](horizon.py#L64) |
 | sky-view factor | $V = \frac{1}{\pi}\iint_{\mathrm{visible}} \max(\mathbf{n}\cdot\boldsymbol{\omega}, 0)\,\sin\theta\,d\theta\,d\phi$ | [`horizon.py` `sky_view_bins`](horizon.py#L96) |
 | canopy | $\tau_0 = -\ln\dfrac{n_{\mathrm{first,\,ground}} + 0.5}{n_{\mathrm{first}} + 1}$ per 2 m column; $\tau(t) = \tau_0 + G\Omega(\Delta L(t) - \Delta L_{\mathrm{survey}})\,\tau_0/\overline{\tau_0}$, $G = 0.5$, $\Omega = 0.8$ | [`canopy.py` `columns`](canopy.py#L32), [`seasonal_tau`](canopy.py#L63) |

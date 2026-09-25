@@ -13,14 +13,14 @@ depend on the pseudo-time step. The full account, with every experiment and know
 | process | equation | code |
 |---|---|---|
 | upwind profile | $u(z) = \dfrac{u_*}{\kappa} \ln\dfrac{z - d}{z_0}$ from the reference speed, held at the top | [`forcing.py` `LogProfile`](forcing.py#L24) |
-| inflow at the sides | the steady column over the site's mean canopy, $\dfrac{d}{dh}\left(\nu_t \dfrac{dU}{dh}\right) = (\bar{c_d a} + c_w)\,U^2$, at each cell's height above its ground | [`solver.py` `equilibrium_column`](solver.py#L397) |
-| mass consistency | $\nabla^2 \lambda = \nabla \cdot \mathbf{u}^*$, $\mathbf{u} = \mathbf{u}^* - \nabla \lambda$ | [`solver.py` `project`](solver.py#L574) |
-| steady residual | $R(\mathbf{u}) = -\sum_f F_f \mathbf{u}_f + \nabla\cdot(\nu_t \nabla \mathbf{u}) - (c_w + c_d a)\lvert\mathbf{u}\rvert\mathbf{u}$ | [`solver.py` `fv_increment`](solver.py#L751) |
-| convection | face value $\mathbf{u}_f$ by MUSCL, van Leer limited, on the divergence-free face fluxes $F_f$ | [`solver.py` `convection`](solver.py#L730), [`_muscl`](solver.py#L304) |
-| turbulent mixing | $\nu_t = (\kappa\, \bar h)^2 \lvert S \rvert + \nu$, under-relaxed 0.5 between steps | [`solver.py` `viscosity`](solver.py#L674) |
+| inflow at the sides | the steady column over the site's mean canopy, $\dfrac{d}{dh}\left(\nu_t \dfrac{dU}{dh}\right) = (\bar{c_d a} + c_w)\,U^2$, at each cell's height above its ground | [`solver.py` `equilibrium_column`](solver.py#L440) |
+| mass consistency | $\nabla^2 \lambda = \nabla \cdot \mathbf{u}^*$, $\mathbf{u} = \mathbf{u}^* - \nabla \lambda$ | [`solver.py` `project`](solver.py#L714) |
+| steady residual | $R(\mathbf{u}) = -\sum_f F_f \mathbf{u}_f + \nabla\cdot(\nu_t \nabla \mathbf{u}) - (c_w + c_d a)\lvert\mathbf{u}\rvert\mathbf{u}$ | [`solver.py` `fv_increment`](solver.py#L900) |
+| convection | face value $\mathbf{u}_f$ by MUSCL, van Leer limited, on the divergence-free face fluxes $F_f$ | [`solver.py` `convection`](solver.py#L878), [`_muscl`](solver.py#L319) |
+| turbulent mixing | $\nu_t = (\kappa\, \bar h)^2 \lvert S \rvert + \nu$, under-relaxed 0.5 between steps | [`solver.py` `viscosity`](solver.py#L814) |
 | canopy drag | $c_d\, a\, \lvert \mathbf{u} \rvert \mathbf{u}$, $a = \mathrm{LAI}/h$ | [`physics.py` `drag_density`](physics.py#L97) |
-| wall stress | $\left(\kappa / \ln(\delta / z_0)\right)^2 \lvert \mathbf{u} \rvert \mathbf{u}$ at half a cell | [`solver.py` `_wall`](solver.py#L311) |
-| pseudo-time step | $M\,\delta\mathbf{u} = \Delta t\, R(\mathbf{u}) + V \nabla \Pi$, $M = V(1 + \Delta t\, c\lvert\mathbf{u}\rvert) + \Delta t\,(D + A_\mathrm{upwind})$; then project, $\Pi \mathrel{+}= \lambda$ | [`solver.py` `run`](solver.py#L860), [`poisson.py` `Convective`](poisson.py#L154) |
+| wall stress | $\left(\kappa / \ln(\delta / z_0)\right)^2 \lvert \mathbf{u} \rvert \mathbf{u}$ at half a cell | [`solver.py` `_wall`](solver.py#L326) |
+| pseudo-time step | $M\,\delta\mathbf{u} = \Delta t\, R(\mathbf{u}) + V \nabla \Pi$, $M = V(1 + \Delta t\, c\lvert\mathbf{u}\rvert) + \Delta t\,(D + A_\mathrm{upwind})$; then project, $\Pi \mathrel{+}= \lambda$ | [`solver.py` `run`](solver.py#L1063), [`poisson.py` `Convective`](poisson.py#L154) |
 
 Where $\delta\mathbf{u} = 0$ the steady equations hold whatever $\Delta t$, so the step only sets how fast the
 iteration arrives. $M$ is solved by BiCGSTAB and the projection by conjugate gradients, both preconditioned by one
@@ -67,7 +67,7 @@ python3 cli.py benchmark --site campanile --nx 128 --ny 128 --nz 64 --steps 5
 
 `--bundle <dir>` solves a real site from a directory holding `semantics/class_top_<res>.tif` (a class per column)
 with `parameters.json` (z0, cd, LAI and closure per class), and `surface/` DTM and DSM rasters; without one, the
-46-class table in [`physics.py`](physics.py#L46) applies. `--fast` runs momentum in float32.
+46-class table in [`physics.py` `CLASSES`](physics.py#L46) applies. `--fast` runs momentum in float32.
 
 ```bash
 python3 -m pytest         # 100 tests, no network and no site data

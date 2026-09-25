@@ -8,16 +8,16 @@ full account, with every experiment and known error, is [water_simulation.md](wa
 
 | process | equation | code |
 |---|---|---|
-| momentum, per face | $q^{n+1} = \dfrac{q^n - g h_f \Delta t\, \partial_x \eta}{1 + g \Delta t\, n^2 \lvert q^n \rvert / h_f^{7/3}}$, $\lvert q \rvert \le 0.9\, h_f \sqrt{g h_f}$ | [`solver.py` `_face_flux`](solver.py#L255) |
-| continuity | $h^{n+1} = h^n + \Delta t\,(P + \nabla \cdot q) - i$ | [`solver.py` `_substep`](solver.py#L270) |
-| time step | $\Delta t = \alpha\, \Delta x / \sqrt{g h_{\max}}$, $\alpha = 0.15$ | [`solver.py` `_cfl_dt`](solver.py#L248) |
+| momentum, per face | $q^{n+1} = \dfrac{q^n - g h_f \Delta t\, \partial_x \eta}{1 + g \Delta t\, n^2 \lvert q^n \rvert / h_f^{7/3}}$, $\lvert q \rvert \le 0.9\, h_f \sqrt{g h_f}$ | [`solver.py` `_face_flux`](solver.py#L262) |
+| continuity | $h^{n+1} = h^n + \Delta t\,(P + \nabla \cdot q) - i$ | [`solver.py` `_substep`](solver.py#L277) |
+| time step | $\Delta t = \alpha\, \Delta x / \sqrt{g h_{\max}}$, $\alpha = 0.15$ | [`solver.py` `_cfl_dt`](solver.py#L255) |
 | infiltration, ponded | $d - S \ln\!\left(1 + \dfrac{d}{F + S}\right) = K_s \Delta t$, $S = G(\theta_b, \theta_s)(\theta_s - \theta_b)$ | [`infiltration.py` `ponded_increment`](infiltration.py#L160) |
 | infiltration, actual | $i = \min(d,\ h,\ F_{\max} - F_1 - F_2)$ | [`infiltration.py` `step`](infiltration.py#L193) |
 | redistribution | $Z \dfrac{d\theta}{dt} = r - [K(\theta) - K(\theta_b)] - p\, K_s \dfrac{G(\theta_b, \theta)}{Z}$, $p = 1.7$ dry, $1.0$ wetting | [`infiltration.py` `_rate`](infiltration.py#L176) |
 | conductivity | $K(\theta) = K_s S_e^{3 + 2/\lambda}$, $S_e = \dfrac{\theta - \theta_r}{\theta_s - \theta_r}$ | [`infiltration.py` `conductivity`](infiltration.py#L135) |
 | capillary drive | $G(\theta_b, \theta) = \psi_f \dfrac{S_e^{c} - S_{e,b}^{c}}{1 - S_{e,b}^{c}}$, $c = 3 + 1/\lambda$ | [`infiltration.py` `capillary_drive`](infiltration.py#L140) |
 | soil state | per cell: a deep front $(F_1, \theta_1)$, a surface front $(F_2, \theta_2)$ and a hiatus flag, carried between storms | [`infiltration.py` `BANK`](infiltration.py#L47) |
-| mass balance | rain + initial + inflow + created = infiltrated + abstracted + stored + outflow | [`solver.py` `MassBalance`](solver.py#L125) |
+| mass balance | rain + initial + inflow + created = infiltrated + abstracted + stored + outflow | [`solver.py` `MassBalance`](solver.py#L132) |
 
 The surface is the local-inertial scheme of Bates, Horritt and Fewtrell (2010) with Manning friction treated
 semi-implicitly. Infiltration is Green-Ampt with redistribution (Ogden and Saghafian 1997; Smith, Corradini and
