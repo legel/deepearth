@@ -96,7 +96,7 @@ res = simulate(Surface(z=z, soil=soil, soil_state=res.soil_state), next_storm, c
 ```
 
 ```bash
-python3 -m pytest         # 178 tests, no network and no site data
+python3 -m pytest         # 183 tests, no network and no site data
 ```
 
 ## License
