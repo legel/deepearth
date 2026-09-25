@@ -1,73 +1,56 @@
 # Wind
 
 A steady 3D wind field over terrain, buildings and canopy, in PyTorch. An upwind log profile is made
-mass-consistent around the obstacles by one Poisson projection, then relaxed in pseudo-time with
-advection, turbulent mixing, canopy drag and wall stress until the flow near the ground stops changing.
-Velocity and the three vorticity components come out on one stretched grid.
+mass-consistent around the obstacles by a Poisson projection, then iterated to the steady state of the
+momentum equations with advection, turbulent mixing, canopy drag and wall stress. The converged field does not
+depend on the pseudo-time step. The full account, with every experiment and known error, is
+[wind_simulation.md](wind_simulation.md).
 
 [![Speed and vorticity on the centre section](docs/wind_tower_0.8m_section.png)](docs/wind_tower_0.8m_section.png)
 
-A 94 m tower at 0.8 m cells, 8 m/s from 290°: the log profile arrives from the left, the flow speeds up
-over the roof and separates, and the wake recovers downwind. Vorticity marks the shear layers.
-
 ## Equations
-
-Velocity lives on a staggered grid; every implicit operator is a 7-point solve on one
-multigrid-preconditioned conjugate-gradient kernel ([`poisson.py` `cg`](poisson.py#L116)).
 
 | process | equation | code |
 |---|---|---|
-| inflow | $u(z) = \dfrac{u_*}{\kappa} \ln\dfrac{z - d}{z_0}$, $u_*$ from the reference speed, re-rooted onto the site's fetch at a 60 m blending height | [`forcing.py` `LogProfile`](forcing.py#L24), [`transfer`](forcing.py#L48) |
-| mass consistency | $\nabla^2 \lambda = \nabla \cdot \mathbf{u}^*$, $\mathbf{u} = \mathbf{u}^* - \nabla \lambda$; solids are Neumann faces, the top is open | [`solver.py` `project`](solver.py#L322) |
-| advection | semi-Lagrangian with a MacCormack correction, limited to the departure cell's neighbours | [`solver.py` `advect`](solver.py#L393) |
-| turbulent mixing | $\nu_t = (\kappa\, \bar h)^2 \lvert S \rvert + \nu$, $\bar h$ the logarithmic mean of the heights above the local surface | [`solver.py` `viscosity`](solver.py#L414) |
-| canopy drag | $-c_d\, a\, \lvert \mathbf{u} \rvert \mathbf{u}$, $a = \mathrm{LAI}/h$ | [`physics.py` `drag_density`](physics.py#L97) |
-| wall stress | $\tau / \rho = \left(\dfrac{\kappa}{\ln(\delta / z_0)}\right)^2 \lvert \mathbf{u} \rvert \mathbf{u}$ at half a cell, per surface class | [`solver.py` `_wall`](solver.py#L161) |
-| momentum step | $(I + \Delta t\,(c_w + c_d a)\lvert \mathbf{u} \rvert - \Delta t\, \nabla \cdot \nu_t \nabla)\, \mathbf{u}^{n+1} = \mathcal{A}(\mathbf{u}^n)$, then project | [`solver.py` `diffuse`](solver.py#L438) |
-| settling | stop when the horizontal speed of fluid cells 2 to 30 m above their surface moves < 1 % in median and p95 and < 5 % RMS between 40-step window means, two windows running | [`solver.py` `settle_change`](solver.py#L480), [`run`](solver.py#L493) |
+| inflow | $u(z) = \dfrac{u_*}{\kappa} \ln\dfrac{z - d}{z_0}$ from the reference speed | [`forcing.py` `LogProfile`](forcing.py#L24) |
+| mass consistency | $\nabla^2 \lambda = \nabla \cdot \mathbf{u}^*$, $\mathbf{u} = \mathbf{u}^* - \nabla \lambda$ | [`solver.py` `project`](solver.py#L380) |
+| steady residual | $R(\mathbf{u}) = -\sum_f F_f \mathbf{u}_f + \nabla\cdot(\nu_t \nabla \mathbf{u}) - (c_w + c_d a)\lvert\mathbf{u}\rvert\mathbf{u}$ | [`solver.py` `fv_increment`](solver.py#L557) |
+| convection | face value $\mathbf{u}_f$ by MUSCL, van Leer limited, on the divergence-free face fluxes $F_f$ | [`solver.py` `convection`](solver.py#L536), [`_muscl`](solver.py#L198) |
+| turbulent mixing | $\nu_t = (\kappa\, \bar h)^2 \lvert S \rvert + \nu$, under-relaxed 0.5 between steps | [`solver.py` `viscosity`](solver.py#L480) |
+| canopy drag | $c_d\, a\, \lvert \mathbf{u} \rvert \mathbf{u}$, $a = \mathrm{LAI}/h$ | [`physics.py` `drag_density`](physics.py#L97) |
+| wall stress | $\left(\kappa / \ln(\delta / z_0)\right)^2 \lvert \mathbf{u} \rvert \mathbf{u}$ at half a cell | [`solver.py` `_wall`](solver.py#L205) |
+| pseudo-time step | $M\,\delta\mathbf{u} = \Delta t\, R(\mathbf{u}) + V \nabla \Pi$, $M = V(1 + \Delta t\, c\lvert\mathbf{u}\rvert) + \Delta t\,(D + A_\mathrm{upwind})$; then project, $\Pi \mathrel{+}= \lambda$ | [`solver.py` `run`](solver.py#L648), [`poisson.py` `Convective`](poisson.py#L154) |
 
-The mixing length and the wall law share the logarithmic mean, so the discrete log profile is an exact
-steady state of the whole loop: an unobstructed domain returns its inflow to round-off.
-
-**Linearity.** Every steady term is homogeneous of degree two in velocity, so for one heading the field
-scales with the reference speed: at 2, 5 and 10 m/s the deviation from one field scaled is 1.1e-5 of the
-peak. A year of hours is one unit-speed field per heading, blended between the two nearest headings and
-scaled by the hour's measured speed (`cli.py basis`).
+Where $\delta\mathbf{u} = 0$ the steady equations hold whatever $\Delta t$, so the step only sets how fast the
+iteration arrives. $M$ is solved by BiCGSTAB and the projection by conjugate gradients, both preconditioned by one
+multigrid kernel; momentum runs in float32 and every projection in float64.
 
 ## Validation
 
-Every number is produced by `python3 cli.py verify` and asserted in `tests/test_solver.py`, float64, 1 m
-cells ([`docs/verification_cpu.json`](docs/verification_cpu.json)):
+Physics checks, float64, 1 m cells ([`docs/verification_cpu.json`](docs/verification_cpu.json)):
 
 | check | measured | required |
 |---|---|---|
-| largest cell divergence after the solve, cube, ridge, flat | 7.7e-7, 8.9e-7, 0.0 s⁻¹ | ≤ 1e-6 s⁻¹ |
-| inflow profile returned by an unobstructed domain | bit-exact, crossflow 0.0 | exact |
-| mass flux in against out | 5.6e-10, 1.3e-8, 0 | ≤ 1e-6 |
-| speed inside canopy against none, LAI 0.5, 2, 8 | 0.964, 0.881, 0.706× | falling |
-| wake behind an 8 m cube, min u / u(H) | −0.339, reversed in 10.7 % of the near wake | reversed |
-| speed-up over the cube's roof | 1.076 | > 1 |
-| westerly against southerly over the same cube, rotated | 3.6e-7 | ≤ 1 % |
-| field at 2, 5 and 10 m/s against one field scaled | 1.1e-5 | ≤ 2 % |
-| curl of solid-body rotation over 2Ω | 1.0 | 1 |
+| largest cell divergence, cube, ridge, flat | 3.4e-7, 1.9e-7, 2.7e-13 s⁻¹ | ≤ 1e-6 s⁻¹ |
+| mass flux in against out | 2.3e-9, 1.0e-9, 3.4e-15 | ≤ 1e-6 |
+| inflow profile returned by an unobstructed domain | 6.3e-6 of its peak | the discretization's own |
+| speed inside canopy against none, LAI 0.5, 2, 8 | 0.967, 0.886, 0.702× | falling |
+| wake behind an 8 m cube, min u / u(H) | −0.366, reversed in 12.7 % of the near wake | reversed |
+| westerly against southerly over the same cube, rotated | 1.1e-5 | ≤ 1 % |
+| field at 2, 5 and 10 m/s against one field scaled | 1.4e-5 | ≤ 2 % |
 
-**The steady state depends on the pseudo-time step.** Semi-Lagrangian interpolation diffuses in
-proportion to the step, so the settled median speed 4 m above a 40-acre campus, per 1 m/s at the
-reference, is 0.198, 0.189 and about 0.17 (still falling) at CFL 8, 4 and 2. Fields are delivered at
-CFL 8 and the dependence is stated rather than hidden; a step-independent steady solver is the
-open item.
+Step independence, Harvard Forest, one heading, 10.6 M cells: the published levels' medians at CFL 8, 32 and
+64 against 16.
 
-## Throughput
+| level | CFL 8 | CFL 32 | CFL 64 |
+|---|---|---|---|
+| 4 m | +0.14 % | −0.40 % | −0.80 % |
+| 10 m | +0.04 % | −0.14 % | −0.31 % |
+| 25 m | 0.00 % | −0.05 % | −0.15 % |
 
-`python3 cli.py benchmark`, projection to 1e-6 ([`docs/`](docs/)`benchmark_*.json`):
-
-| device | dtype | cells | projection | one momentum step |
-|---|---|---|---|---|
-| 4 CPU cores | float64 | 1.05 M | 2.73 s, 24 iterations | 5.64 s |
-| NVIDIA L4 | float64 | 1.05 M | 0.76 s, 24 iterations | 1.20 s |
-| NVIDIA L4 | float32 | 9.44 M | 6.7 s, 62 iterations | 7.3 s |
-
-float32 stalls near a true divergence of 5e-5, so the 1e-6 checks are float64.
+The earlier semi-Lagrangian scheme's settled field depended on its step, and its medians sat 15 to 18 % below the
+converged field at Harvard's four levels. The 1 m grid is not mesh-converged near the ground: a 2 m grid gives a
+4 m median 29 % lower.
 
 ## Run it
 
@@ -75,18 +58,17 @@ float32 stalls near a true divergence of 5e-5, so the 1e-6 checks are float64.
 cd models/wind
 python3 -m pip install --user -r requirements.txt
 
-python3 cli.py simulate  --site campanile --dx 0.8 --synthetic tower --speed 8 --direction 290
-python3 cli.py basis     --site campanile --year 2025 --dx 0.8 --synthetic tower
-python3 cli.py verify    --site campanile
+python3 cli.py simulate  --site campanile --dx 0.8 --synthetic tower --speed 8 --direction 290 --cfl 16
+python3 cli.py verify    --site campanile --cfl 16
 python3 cli.py benchmark --site campanile --nx 128 --ny 128 --nz 64 --steps 5
 ```
 
-`--bundle <dir>` solves a real site from a directory holding `semantics/class_top_<res>.tif` (a uint8
-class per column) with `parameters.json` (z0, cd, LAI and closure per class), and `surface/` DTM and DSM
-rasters; without one, the 46-class table in [`physics.py`](physics.py#L46) applies.
+`--bundle <dir>` solves a real site from a directory holding `semantics/class_top_<res>.tif` (a class per column)
+with `parameters.json` (z0, cd, LAI and closure per class), and `surface/` DTM and DSM rasters; without one, the
+46-class table in [`physics.py`](physics.py#L46) applies. `--fast` runs momentum in float32.
 
 ```bash
-python3 -m pytest         # 85 tests, no network and no site data
+python3 -m pytest         # 86 tests, no network and no site data
 ```
 
 ## License
