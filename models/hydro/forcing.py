@@ -5,7 +5,7 @@ solver never knows which it is running.
 """
 
 import json
-from typing import Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -57,6 +57,86 @@ def observed_hyetograph(site: SiteConfig, storm: Storm, dt_s: float,
     total_s = (len(rain_mm) + extend_hours) * 3600.0
     t = np.arange(0.0, total_s, dt_s)
     return np.interp(t, hours * 3600.0, rain_mm / 1000 / 3600, right=0.0), rain_mm
+
+
+AORC = "noaa-nws-aorc-v1-1-1km/{year}.zarr"
+"""NOAA's Analysis of Record for Calibration, hourly on a 1 km grid (public, AWS)."""
+
+
+def zstd_compat() -> None:
+    """Let an older numcodecs read AORC's zarr: its Zstd codec config carries `checksum`, which numcodecs before 0.13
+    does not take. libzstd checks a frame's checksum when it decodes, so the flag is only dropped from the config."""
+    import numcodecs
+    from numcodecs import registry
+    try:
+        numcodecs.Zstd(checksum=False)
+        return
+    except TypeError:
+        pass
+
+    class Zstd(numcodecs.Zstd):
+        codec_id = "zstd"
+
+        def __init__(self, level=0, checksum=False):
+            super().__init__(level=level)
+
+    registry.register_codec(Zstd)
+
+
+def aorc_hyetograph(storm: Storm, dt_s: float, profile: Dict, valid: np.ndarray,
+                    extend_hours: float = 0.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
+    """The storm's rain from AORC on the solver grid: every cell takes its own 1 km cell's hours.
+
+    The field is carried as the domain's mean hourly depth times each cell's share of the storm total (its total over
+    the domain's mean), so the rain the mass balance counts is the grid's own. AORC stamps an hour's accumulation at
+    the hour's end.
+
+    Returns:
+        (rate [m/s] per dt_s step of the domain mean, its hourly depth [mm], the per-cell weight, a record with the
+        domain-mean total and the total at the domain's centroid cell, and each hour's timing as `Surface.rain_hourly`
+        takes it: each source cell's share of the hour's domain mean and each solver cell's source).
+    """
+    import s3fs
+    import xarray as xr
+    from pyproj import Transformer
+
+    zstd_compat()
+    t0, t1 = np.datetime64(storm.start), np.datetime64(storm.end)
+    fs = s3fs.S3FileSystem(anon=True)
+    ds = xr.open_zarr(fs.get_mapper(AORC.format(year=int(str(t0)[:4]))), consolidated=True)
+    rows, cols = valid.shape
+    tr = profile["transform"]
+    xs = tr.c + (np.arange(cols) + 0.5) * tr.a
+    ys = tr.f + (np.arange(rows) + 0.5) * tr.e
+    X, Y = np.meshgrid(xs, ys)
+    lon, lat = Transformer.from_crs(profile["crs"], 4326, always_xy=True).transform(X, Y)
+    la_all, lo_all = ds["latitude"].values, ds["longitude"].values
+    ki = np.flatnonzero((la_all >= lat.min() - 0.02) & (la_all <= lat.max() + 0.02))
+    kj = np.flatnonzero((lo_all >= lon.min() - 0.02) & (lo_all <= lon.max() + 0.02))
+    box = ds["APCP_surface"].isel(latitude=slice(ki.min(), ki.max() + 1), longitude=slice(kj.min(), kj.max() + 1)).sel(
+        time=slice(t0 + np.timedelta64(1, "h"), t1 + np.timedelta64(1, "h")))
+    p = np.nan_to_num(box.values.astype(np.float64))                         # [hours, lat, lon] mm
+    la, lo = box["latitude"].values, box["longitude"].values
+    iy = np.abs(la[None, None, :] - lat[..., None]).argmin(axis=-1)
+    ix = np.abs(lo[None, None, :] - lon[..., None]).argmin(axis=-1)
+    total = p.sum(axis=0)[iy, ix]                                            # each solver cell's storm total
+    mean_h = np.array([p[h][iy, ix][valid].mean() for h in range(p.shape[0])]) if valid.any() else p.mean(axis=(1, 2))
+    weight = np.where(valid, total / max(float(total[valid].mean()), 1e-9), 0.0)
+    r, c = np.nonzero(valid)
+    cy, cx = int(round(r.mean())), int(round(c.mean()))
+    hours = np.arange(len(mean_h), dtype=float)
+    t = np.arange(0.0, (len(mean_h) + extend_hours) * 3600.0, dt_s)
+    rec = {"domain_mean_total_mm": round(float(mean_h.sum()), 1),
+           "centroid_total_mm": round(float(p[:, iy[cy, cx], ix[cy, cx]].sum()), 1),
+           "cell_total_mm_p5_p95": [round(float(np.percentile(total[valid], q)), 1) for q in (5, 95)],
+           "aorc_cells": int(len(np.unique(iy[valid] * len(lo) + ix[valid])))}
+    code = iy * len(lo) + ix
+    src, inv = np.unique(code[valid], return_inverse=True)
+    index = np.zeros(valid.shape, dtype=np.int64)
+    index[valid] = inv
+    by_src = p.reshape(p.shape[0], -1)[:, src]                               # [hours, source cells] mm
+    share = np.where(mean_h[:, None] > 0, by_src / np.maximum(mean_h[:, None], 1e-12), 1.0)
+    return np.interp(t, hours * 3600.0, mean_h / 1000 / 3600, right=0.0), mean_h, weight, rec, (share, index)
 
 
 def design_hyetograph(depth_mm: float, duration_hr: float, dt_s: float) -> np.ndarray:

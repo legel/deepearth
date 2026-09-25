@@ -31,6 +31,7 @@ NFHL_URL = "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer"
 MRLC_WCS = "https://www.mrlc.gov/geoserver/mrlc_display/ows"
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 IEM_ASOS_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
+NLDI_URL = "https://api.water.usgs.gov/nldi"
 NWIS_IV_URL = "https://waterservices.usgs.gov/nwis/iv/"
 PFDS_URL = "https://hdsc.nws.noaa.gov/cgi-bin/new/cgi_readH5.py"
 PC_STAC_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
@@ -400,6 +401,21 @@ def soil(site: SiteConfig) -> Dict[str, int]:
     return {"map_units": len(params), "storage_rows": len(storage) - 1}
 
 
+def nlcd_landcover(site: SiteConfig) -> None:
+    """NLCD 2021 land cover classes, ~30 m, via the MRLC WCS (the roughness of `domain.manning_nlcd`)."""
+    west, south, east, north = site.bbox()
+    pad = 0.005
+    w, s, e, n = west - pad, south - pad, east + pad, north + pad
+    width = max(100, int((e - w) / 0.00027))
+    height = max(100, int((n - s) / 0.00027))
+    url = (f"{MRLC_WCS}?SERVICE=WCS&VERSION=1.0.0&REQUEST=GetCoverage"
+           f"&COVERAGE=NLCD_2021_Land_Cover_L48&BBOX={w},{s},{e},{n}"
+           f"&CRS=EPSG:4326&RESPONSE_CRS=EPSG:4326&FORMAT=GeoTIFF"
+           f"&WIDTH={width}&HEIGHT={height}")
+    with urllib.request.urlopen(url, timeout=120) as resp:
+        site.nlcd_landcover.write_bytes(resp.read())
+
+
 def nlcd(site: SiteConfig) -> None:
     """NLCD 2021 impervious-surface percentage, ~30 m, via the MRLC WCS."""
     west, south, east, north = site.bbox()
@@ -526,6 +542,26 @@ def discharge(site: SiteConfig, storm: Storm) -> Dict[str, float]:
     return {"samples": len(df), "peak_cfs": float(df["discharge_cfs"].max())}
 
 
+def basin(site: SiteConfig) -> Dict[str, float]:
+    """The gauge's drainage basin from the USGS Network-Linked Data Index (NHDPlus catchments accumulated upstream
+    of the gauge's own catchment; the split at the gauge point is not served for this site), written as GeoJSON."""
+    assert site.gauge is not None, f"site {site.name} has no gauge"
+    r = _get(f"{NLDI_URL}/linked-data/nwissite/USGS-{site.gauge.site_no}/basin",
+             {"simplified": "false"}, timeout=180)
+    doc = r.json()
+    assert doc.get("features"), f"NLDI returned no basin for {site.gauge.site_no}"
+    site.basin.write_text(json.dumps(doc))
+    lon = [c[0] for f in doc["features"] for ring in _rings(f["geometry"]) for c in ring]
+    lat = [c[1] for f in doc["features"] for ring in _rings(f["geometry"]) for c in ring]
+    return {"west": min(lon), "south": min(lat), "east": max(lon), "north": max(lat)}
+
+
+def _rings(geometry: Dict) -> List[List[List[float]]]:
+    """The exterior and interior rings of a GeoJSON Polygon or MultiPolygon."""
+    polys = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
+    return [ring for poly in polys for ring in poly]
+
+
 def atlas14(site: SiteConfig) -> str:
     """NOAA Atlas 14 depth-duration-frequency table for the site's coordinate.
 
@@ -603,6 +639,38 @@ def soil_hydraulics(site: SiteConfig) -> Dict[str, int]:
                 "ksat_r", "sandtotal_r", "claytotal_r", "wsatiated_r", "wthirdbar_r")})
     out = {m: v[2] for m, v in best.items()}
     site.soil_hydraulics.write_text(json.dumps(out, indent=1))
+    return {"map_units": len(out)}
+
+
+def soil_balance(site: SiteConfig) -> Dict[str, int]:
+    """What a continuous water balance needs beyond `soil_hydraulics`, per map unit: the dominant component's surface
+    horizon water content at 15 bar `wfifteenbar_r` (wilting point) [% volume], and the map unit's shallowest water
+    table in April to June `wtdepaprjunmin` [cm], the season before Florida's wet months. Writes `soil_balance.json`."""
+    import csv
+
+    with open(site.mukey_legend, newline="") as fh:
+        mukeys = [str(r["mukey"]) for r in csv.DictReader(fh)]
+    in_list = ",".join(f"'{m}'" for m in mukeys)
+    rows = _sda(f"SELECT co.mukey, co.comppct_r, ch.hzdept_r, ch.wfifteenbar_r FROM component co "
+                f"JOIN chorizon ch ON ch.cokey = co.cokey WHERE co.mukey IN ({in_list})")
+    agg = _sda(f"SELECT mukey, wtdepaprjunmin FROM muaggatt WHERE mukey IN ({in_list})")
+    assert rows and len(rows) > 1, f"SDA returned no horizons for {site.name}"
+
+    def num(v: object) -> Optional[float]:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    head, best = rows[0], {}
+    for r in rows[1:]:
+        d = dict(zip(head, r))
+        key = (-(num(d["comppct_r"]) or 0.0), num(d["hzdept_r"]) or 0.0)
+        if str(d["mukey"]) not in best or key < best[str(d["mukey"])][0]:
+            best[str(d["mukey"])] = (key, num(d["wfifteenbar_r"]))
+    wt = {str(dict(zip(agg[0], r))["mukey"]): num(dict(zip(agg[0], r))["wtdepaprjunmin"]) for r in (agg or [[]])[1:]}
+    out = {m: {"wfifteenbar_r": v[1], "wtdepaprjunmin": wt.get(m)} for m, v in best.items()}
+    (site.root / "soil_balance.json").write_text(json.dumps(out, indent=1))
     return {"map_units": len(out)}
 
 

@@ -10,7 +10,8 @@ Both printed a warning and carried on.
 import csv
 import json
 from pathlib import Path
-from typing import Dict, Tuple
+from dataclasses import replace
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import rasterio
@@ -55,20 +56,23 @@ NO_WATER_TABLE_DEPTH_CM = 150.0
 limit. Deeper than any storm can fill, so only the magnitude matters."""
 
 
-def load_dem(site: SiteConfig, cell_size_m: float) -> Tuple[np.ndarray, Dict, float]:
+def load_dem(site: SiteConfig, cell_size_m: float, keep_depressions: bool = False) -> Tuple[np.ndarray, Dict, float]:
     """Read the conditioned DEM, optionally downsampled onto a coarser square grid.
 
     Args:
         site: Site whose conditioned DEM to read.
         cell_size_m: Target resolution. At or below native resolution the raster is used as-is.
+        keep_depressions: Read the stream-burned DEM before depression breaching, so closed depressions (wetlands,
+            ponds, lakes) keep the water they hold instead of draining it through the breach.
 
     Returns:
         (elevation with NaN outside the domain, rasterio profile for the grid, cell size [m]).
     """
-    assert site.dem_conditioned.exists(), (
-        f"{site.dem_conditioned} missing; run `python3 cli.py terrain --site {site.name}`")
+    path = site.dem_burned if keep_depressions else site.dem_conditioned
+    assert path.exists(), (
+        f"{path} missing; run `python3 cli.py terrain --site {site.name}`")
 
-    with rasterio.open(site.dem_conditioned) as src:
+    with rasterio.open(path) as src:
         native_res = abs(src.transform.a)
         crs, bounds = src.crs, src.bounds
         dem = src.read(1).astype(np.float32)
@@ -102,6 +106,31 @@ def load_dem(site: SiteConfig, cell_size_m: float) -> Tuple[np.ndarray, Dict, fl
 
     profile.update(height=height, width=width, transform=transform)
     return out, profile, float(cell_size_m)
+
+
+MANNING_NLCD = {
+    11: 0.030,   # open water: main channel, clean, straight (Chow 1959, Table 5-6 A)
+    21: 0.030,   # developed, open space: flood plain, pasture, short grass (Table 5-6 D-a1)
+    22: 0.040, 23: 0.040, 24: 0.040,   # developed low to high: no class in the table; the model's scalar, as before
+    31: 0.030,   # barren: cultivated area, no crop (D-b1)
+    41: 0.100, 42: 0.100, 43: 0.100,   # forest: heavy stand of timber, little undergrowth, flood below branches (D-d4)
+    52: 0.100,   # shrub and scrub: medium to dense brush, in summer (D-c5)
+    71: 0.035, 81: 0.035,              # grassland, pasture: high grass (D-a2)
+    82: 0.040,   # cultivated crops: mature field crops (D-b3)
+    90: 0.150,   # woody wetlands (cypress and bay swamp): dense willows, summer, the table's densest wooded plain (D-d1)
+    95: 0.100,   # emergent herbaceous wetlands (marsh): medium to dense brush, in summer (D-c5)
+}
+"""Manning's n by NLCD 2021 class, each the normal value of Chow (1959) Table 5-6 for flood plains (Arcement and
+Schneider 1989, USGS WSP 2339, give 0.1 to 0.2 for densely vegetated flood plains). Nothing is fitted to a gauge."""
+
+
+def manning_nlcd(site: SiteConfig, shape: Tuple[int, int], profile: Dict, default: float = 0.040) -> np.ndarray:
+    """Manning's n on the solver grid from the NLCD land cover (`MANNING_NLCD`); `default` where a class is not listed."""
+    codes = _warp_onto(site.nlcd_landcover, shape, profile, Resampling.nearest, dtype=np.int32, fill=0)
+    n = np.full(shape, default, dtype=np.float32)
+    for c, v in MANNING_NLCD.items():
+        n[codes == c] = v
+    return n
 
 
 def _warp_onto(path: Path, shape: Tuple[int, int], profile: Dict, resampling: Resampling,
@@ -270,6 +299,22 @@ def gar_soil(site: SiteConfig, shape: Tuple[int, int], profile: Dict) -> Soil:
     return Soil(**fields)
 
 
+def basin_mask(site: SiteConfig, shape: Tuple[int, int], profile: Dict) -> Tuple[np.ndarray, float]:
+    """The gauge's NLDI drainage basin on the solver grid, and the share of its area the grid covers.
+
+    Cells outside it become nodata, so the domain is the basin and its outflow is the gauge's: water leaves only
+    across the basin's edge, which the NHDPlus catchments draw at the gauge and along the divides."""
+    import geopandas as gpd
+    from rasterio.features import rasterize
+
+    assert site.basin.exists(), f"{site.basin} missing; run fetch.basin for {site.name}"
+    geo = gpd.read_file(site.basin).to_crs(profile["crs"])
+    mask = rasterize([(g, 1) for g in geo.geometry], out_shape=shape, transform=profile["transform"], fill=0,
+                     dtype=np.uint8).astype(bool)
+    cell = abs(profile["transform"].a * profile["transform"].e)
+    return mask, float(mask.sum() * cell / geo.geometry.area.sum())
+
+
 def snap_gauge(site: SiteConfig, z: np.ndarray, profile: Dict, dx: float,
                search_m: float = 25.0) -> Tuple[int, int]:
     """Locate the streamgauge on the solver grid, snapped onto the channel.
@@ -294,7 +339,31 @@ def snap_gauge(site: SiteConfig, z: np.ndarray, profile: Dict, dx: float,
     return r0 + flat // sub.shape[1], c0 + flat % sub.shape[1]
 
 
-def build_surface(site: SiteConfig, cell_size_m: float, infiltration: str = "horton") -> Tuple[Surface, Dict, float]:
+ANTECEDENT_BANDS = ("theta_i", "deficit_mm")
+"""`--antecedent`: a continuous simulation's soil state at the storm's start, one float band each: the water content
+below every front, and the room the column above its water table has left [mm]. NaN keeps the survey's value."""
+
+
+def with_antecedent(soil: Soil, path: Path, shape: Tuple[int, int], profile: Dict) -> Soil:
+    """`soil` with theta_i and F_max taken from a continuous simulation's state (`ANTECEDENT_BANDS`), resampled
+    onto the solver grid by nearest cell centre."""
+    from params import resample_values
+
+    with rasterio.open(path) as src:
+        names = list(src.descriptions)
+        assert set(ANTECEDENT_BANDS) <= set(names), f"{path}: bands {names}, want {ANTECEDENT_BANDS}"
+        vals = {n: src.read(names.index(n) + 1).astype(np.float64) for n in ANTECEDENT_BANDS}
+        tr = src.transform
+    on = {n: resample_values(v, tr, shape, profile["transform"]) for n, v in vals.items()}
+    theta_i = np.where(np.isfinite(on["theta_i"]), np.clip(on["theta_i"], soil.theta_r, soil.theta_s), soil.theta_i)
+    f_max = np.where(np.isfinite(on["deficit_mm"]), np.maximum(on["deficit_mm"], 0.0) / 1000.0,
+                     soil.f_max if soil.f_max is not None else np.inf)
+    return replace(soil, theta_i=theta_i, f_max=f_max)
+
+
+def build_surface(site: SiteConfig, cell_size_m: float, infiltration: str = "horton",
+                  basin: bool = False, keep_depressions: bool = False,
+                  antecedent: Optional[Path] = None) -> Tuple[Surface, Dict, float]:
     """Terrain, soil and impervious cover for one site on one grid.
 
     Roughness is deliberately not a parameter here. A caller wanting the segmentation-derived
@@ -307,13 +376,23 @@ def build_surface(site: SiteConfig, cell_size_m: float, infiltration: str = "hor
         cell_size_m: Solver resolution.
         infiltration: "horton" (spatial Horton against a finite store) or "gar" (Green-Ampt with
             redistribution from the survey's hydraulics, `gar_soil`).
+        basin: The domain is the gauge's NLDI basin (`basin_mask`); cells outside it are nodata.
+        keep_depressions: The DEM before depression breaching (`load_dem`).
+        antecedent: A continuous simulation's soil state at the storm's start (`with_antecedent`), for "gar".
 
     Returns:
         (Surface, rasterio profile for the grid, cell size [m]).
     """
-    z, profile, dx = load_dem(site, cell_size_m)
+    z, profile, dx = load_dem(site, cell_size_m, keep_depressions)
+    if basin:
+        mask, covered = basin_mask(site, z.shape, profile)
+        print(f"  basin: {covered:.1%} of the gauge's basin lies on this grid")
+        z = np.where(mask, z, np.nan).astype(z.dtype)
     if infiltration == "gar":
-        return Surface(z=z, soil=gar_soil(site, z.shape, profile)), profile, dx
+        soil = gar_soil(site, z.shape, profile)
+        if antecedent is not None:
+            soil = with_antecedent(soil, Path(antecedent), z.shape, profile)
+        return Surface(z=z, soil=soil), profile, dx
     assert infiltration == "horton", infiltration
     horton = apply_impervious(site, spatial_horton(site, z.shape, profile), z.shape, profile)
     return (

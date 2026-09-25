@@ -364,3 +364,20 @@ def test_the_command_line_turns_the_progress_lines_on(monkeypatch):
     except SystemExit:
         pass
     assert seen == [True], seen
+
+
+def test_each_cell_takes_its_own_hours_and_the_mass_balance_counts_them():
+    """Two source cells, the west half and the east half: the first hour rains only on the west, the second only on the
+    east (each hour's shares average 1 over the valid cells), so the same domain-mean series lands where and when the
+    source says, and the budget still closes."""
+    z = plane(20, 20, walls=False)
+    index = np.zeros(z.shape, dtype=np.int64)
+    index[:, 10:] = 1
+    share = np.array([[2.0, 0.0], [0.0, 2.0]])                        # [hours, sources]
+    rain = [20.0 * MM_HR] * 120                                       # two hours at dt 60 s
+    res = run(z, rain, rain_hourly=(share, index), max_deficit_m=np.full(z.shape, 1.0, dtype=np.float32),
+              f0=1e-9, fc=1e-9, k=1.0)
+    assert closure(res.mass) < 1e-6, res.mass
+    uniform = run(z, rain, max_deficit_m=np.full(z.shape, 1.0, dtype=np.float32), f0=1e-9, fc=1e-9, k=1.0)
+    assert res.mass.rain == pytest.approx(uniform.mass.rain, rel=1e-12), "the domain's rain is the mean series'"
+    assert res.frames[1][0][:, :10].sum() > res.frames[1][0][:, 10:].sum(), "after the first hour the west is wetter"

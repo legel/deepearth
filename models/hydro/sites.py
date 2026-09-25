@@ -211,12 +211,20 @@ class SiteConfig:
         return self.path("soil", "soil_storage.csv")
 
     @property
+    def basin(self) -> Path:
+        return self.path("basin.geojson")
+
+    @property
     def soil_hydraulics(self) -> Path:
         return self.path("soil", "soil_hydraulics.json")
 
     @property
     def nlcd_impervious(self) -> Path:
         return self.path("soil", "nlcd_impervious.tif")
+
+    @property
+    def nlcd_landcover(self) -> Path:
+        return self.path("soil", "nlcd_landcover.tif")
 
     # Imagery, hydrography, infrastructure
     @property
@@ -336,6 +344,24 @@ SITES: Dict[str, SiteConfig] = {
             lon=-81.2906221,
             documented_area_km2=33.15,
             delineated_area_km2=15.27,
+            baseflow_cfs=45.2,
+        ),
+    ),
+    "site3_basin": SiteConfig(
+        name="site3_basin",
+        label="Gee Creek near Longwood FL over the gauge's whole NLDI basin",
+        # The NLDI basin of 02234400 spans -81.378 to -81.263 and 28.647 to 28.716: site3's box holds only its
+        # eastern half. This box is centered on the basin and reaches 0.45 km past its longer half-width.
+        lat=28.68117,
+        lon=-81.32031,
+        radius_km=6.1,
+        asos_station="SFB",
+        gauge=Gauge(
+            site_no="02234400",
+            lat=28.7041629,
+            lon=-81.2906221,
+            documented_area_km2=33.15,
+            delineated_area_km2=33.15,
             baseflow_cfs=45.2,
         ),
     ),

@@ -36,10 +36,12 @@ def _summary_path(site: sites.SiteConfig, name: str) -> Path:
     return site.out_path(f"{name}.json")
 
 
-def _tag(storm_name: str, cell_size_m: float, surface_field: bool, infiltration: str = "horton") -> str:
+def _tag(storm_name: str, cell_size_m: float, surface_field: bool, infiltration: str = "horton",
+         basin: bool = False, keep_depressions: bool = False, antecedent: Optional[str] = None) -> str:
     """Run identifier shared by every stage that reads or writes a run's files."""
     return (f"{storm_name}_{cell_size_m:g}m" + ("_surface" if surface_field else "")
-            + ("" if infiltration == "horton" else f"_{infiltration}"))
+            + ("" if infiltration == "horton" else f"_{infiltration}") + ("_basin" if basin else "")
+            + ("_depressions" if keep_depressions else "") + ("_antecedent" if antecedent else ""))
 
 
 def _receipt(res: Result, extra: Dict[str, object]) -> Dict[str, object]:
@@ -89,9 +91,18 @@ def cmd_segment(args: argparse.Namespace) -> None:
 
 def _run(site: sites.SiteConfig, rain: Sequence[float], cell_size: float, dt_s: float,
          frame_min: float, with_gauge: bool = True,
-         use_surface: bool = False, infiltration: str = "horton") -> Tuple[Result, dict, float]:
-    """Assemble the domain and integrate one storm."""
-    surf, profile, dx = domain.build_surface(site, cell_size, infiltration)
+         use_surface: bool = False, infiltration: str = "horton", basin: bool = False,
+         keep_depressions: bool = False, antecedent: Optional[str] = None,
+         rain_of: Optional[Callable] = None, manning: str = "scalar") -> Tuple[Result, dict, float]:
+    """Assemble the domain and integrate one storm; `rain_of(surface, profile)`, when given, makes the rain on the
+    assembled grid (a gridded record) instead of `rain`."""
+    surf, profile, dx = domain.build_surface(site, cell_size, infiltration, basin, keep_depressions, antecedent)
+    if rain_of is not None:
+        rain = rain_of(surf, profile)
+    if manning == "nlcd":               # roughness by land cover, each class's published flood-plain n
+        surf.manning_n = domain.manning_nlcd(site, surf.z.shape, profile)
+        v = surf.manning_n[surf.valid]
+        print("  manning nlcd: " + json.dumps({f"{q}": round(float(np.percentile(v, q)), 3) for q in (5, 50, 95)}))
     if use_surface:
         fields = surface.rasterize(site, surf.z.shape, profile)
         surf.manning_n = fields["manning_n"]
@@ -107,11 +118,32 @@ def _run(site: sites.SiteConfig, rain: Sequence[float], cell_size: float, dt_s: 
 def cmd_simulate(args: argparse.Namespace) -> None:
     """Run one real storm and write its hydrograph, frames and summary."""
     site, storm = sites.get_site(args.site), sites.get_storm(args.storm)
-    rain, hourly = forcing.observed_hyetograph(site, storm, args.dt, args.extend_hours)
+    got = {}
+    rain_of = None
+    if args.rain in ("aorc", "aorc-hourly"):
+        def rain_of(surf, profile):
+            r, hourly_, weight, rec, timing = forcing.aorc_hyetograph(storm, args.dt, profile, surf.valid,
+                                                                      args.extend_hours)
+            surf.rain_weight = weight
+            if args.rain == "aorc-hourly":         # every cell its own 1 km cell's hours, not the mean's timing
+                surf.rain_hourly = timing
+            got.update(hourly=hourly_, rec=rec)
+            print("  AORC: " + json.dumps(rec))
+            return r
+        rain = None
+    else:
+        rain, hourly = forcing.observed_hyetograph(site, storm, args.dt, args.extend_hours)
     res, profile, dx = _run(site, rain, args.cell_size, args.dt, args.frame_interval,
-                            use_surface=args.surface, infiltration=args.infiltration)
+                            use_surface=args.surface, infiltration=args.infiltration, basin=args.basin,
+                            keep_depressions=args.keep_depressions, antecedent=args.antecedent, rain_of=rain_of,
+                            manning=args.manning)
+    if rain_of is not None:
+        hourly = got["hourly"]
+        rain = np.asarray(res.series["rain_mm_hr"])
 
-    tag = _tag(storm.name, args.cell_size, args.surface, args.infiltration)
+    tag = _tag(storm.name, args.cell_size, args.surface, args.infiltration, args.basin, args.keep_depressions,
+               args.antecedent) + {"aorc": "_aorc", "aorc-hourly": "_aorch"}.get(args.rain, "") \
+        + ("_nlcdn" if args.manning == "nlcd" else "")
     t_h = np.arange(len(rain)) * args.dt / 3600.0
     columns = {"time_h": t_h, "rain_mm_hr": res.series["rain_mm_hr"],
                "flooded_ha": res.series["flooded_ha"],
@@ -124,8 +156,9 @@ def cmd_simulate(args: argparse.Namespace) -> None:
 
     summary = _receipt(res, {
         "site": site.name, "storm": storm.name, "cell_size_m": dx, "dt_s": args.dt,
-        "infiltration": args.infiltration,
-        "total_rain_mm": float(hourly.sum()),
+        "infiltration": args.infiltration, "basin": args.basin, "keep_depressions": args.keep_depressions,
+        "manning": args.manning, "rain": args.rain,
+        "total_rain_mm": float(hourly.sum()), **({"rain_source": "aorc", "aorc": got["rec"]} if got else {}),
         "peak_flooded_ha": float(res.series["flooded_ha"].max()),
         "peak_outflow_cfs": float(res.series["outflow_total_cms"].max() * CFS_PER_CMS)})
     print(json.dumps(summary, indent=1))
@@ -163,7 +196,9 @@ def cmd_ensemble(args: argparse.Namespace) -> None:
 def cmd_validate(args: argparse.Namespace) -> None:
     """Score the most recent simulated hydrograph against the gauge and write the receipt."""
     site, storm = sites.get_site(args.site), sites.get_storm(args.storm)
-    tag = _tag(storm.name, args.cell_size, args.surface, args.infiltration)
+    tag = _tag(storm.name, args.cell_size, args.surface, args.infiltration, args.basin, args.keep_depressions,
+               args.antecedent) + {"aorc": "_aorc", "aorc-hourly": "_aorch"}.get(getattr(args, "rain", "asos"), "") \
+        + ("_nlcdn" if getattr(args, "manning", "scalar") == "nlcd" else "")
     path = site.out_path(f"hydrograph_{tag}.csv")
     assert path.exists(), f"{path} missing; run `simulate` with the same options first"
 
@@ -226,6 +261,15 @@ def main(argv: Optional[List[str]] = None) -> None:
                    help="use the segmentation-derived Manning field instead of the scalar")
     p.add_argument("--infiltration", choices=("horton", "gar"), default="horton",
                    help="gar: Green-Ampt with redistribution from the survey's hydraulics")
+    p.add_argument("--basin", action="store_true", help="the domain is the gauge's NLDI basin")
+    p.add_argument("--keep-depressions", action="store_true", help="the DEM before depression breaching")
+    p.add_argument("--rain", choices=("asos", "aorc", "aorc-hourly"), default="asos",
+                   help="the storm's rain: the site's ASOS gauge; AORC's 1 km grid, each cell's total on the "
+                        "mean's hours; or each cell's own hours (aorc-hourly)")
+    p.add_argument("--antecedent", default=None,
+                   help="raster of theta_i and deficit_mm from a continuous simulation at the storm's start (gar)")
+    p.add_argument("--manning", choices=("scalar", "nlcd"), default="scalar",
+                   help="roughness: the scalar, or each NLCD class's published flood-plain n (Chow 1959)")
 
     p = add("ensemble", cmd_ensemble, "design-storm ensemble to a probability surface")
     p.add_argument("--cell-size", type=float, default=25.0)
@@ -239,6 +283,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--surface", action="store_true",
                    help="score the segmentation-derived arm rather than the scalar baseline")
     p.add_argument("--infiltration", choices=("horton", "gar"), default="horton")
+    p.add_argument("--basin", action="store_true", help="the domain is the gauge's NLDI basin")
+    p.add_argument("--keep-depressions", action="store_true", help="the DEM before depression breaching")
+    p.add_argument("--rain", choices=("asos", "aorc", "aorc-hourly"), default="asos",
+                   help="the storm's rain: the site's ASOS gauge; AORC's 1 km grid, each cell's total on the "
+                        "mean's hours; or each cell's own hours (aorc-hourly)")
+    p.add_argument("--antecedent", default=None,
+                   help="raster of theta_i and deficit_mm from a continuous simulation at the storm's start (gar)")
+    p.add_argument("--manning", choices=("scalar", "nlcd"), default="scalar",
+                   help="roughness: the scalar, or each NLCD class's published flood-plain n (Chow 1959)")
 
     args = parser.parse_args(argv)
     import solver

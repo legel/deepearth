@@ -92,3 +92,13 @@ def test_a_site_without_a_gauge_is_refused():
     with pytest.raises(AssertionError, match="no gauge"):
         domain.snap_gauge(get_site("main_aoi"), np.zeros((4, 4), np.float32),
                           _profile(Affine.identity()), 5.0)
+
+
+def test_manning_by_land_cover_takes_the_published_flood_plain_values(monkeypatch):
+    """Chow (1959) Table 5-6 normal values by NLCD class; an unlisted class keeps the scalar."""
+    import domain
+    codes = np.array([[90, 95, 42], [11, 81, 99]], dtype=np.int32)
+    monkeypatch.setattr(domain, "_warp_onto", lambda path, shape, profile, resampling, dtype=None, fill=0: codes)
+    n = domain.manning_nlcd(type("S", (), {"nlcd_landcover": None})(), codes.shape, {}, default=0.04)
+    assert np.allclose(n, [[0.15, 0.10, 0.10], [0.03, 0.035, 0.04]])
+    assert all(0.1 <= domain.MANNING_NLCD[c] <= 0.2 for c in (41, 42, 43, 52, 90, 95)), "Arcement and Schneider's range"

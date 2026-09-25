@@ -89,6 +89,11 @@ class Surface:
             the deficit, and the soil's state bank is carried through every sub-step.
         soil_state: The bank an earlier run ended with (`Result.soil_state`). None starts with no
             wetting fronts, at the soil's theta_i.
+        rain_weight: Each cell's share of the rain against the domain's mean (a gridded storm total over its mean); None
+            is uniform. It is normalized over the valid cells, so the rain the mass balance counts is unchanged.
+        rain_hourly: Each cell's hourly timing: (the source grid's share of each hour's domain-mean rain, [hours, sources];
+            each cell's source index, [rows, cols]). The share replaces `rain_weight` hour by hour, so every cell takes its
+            own hours; each hour's shares average 1 over the valid cells, so the rain the mass balance counts is unchanged.
     """
 
     z: np.ndarray
@@ -101,6 +106,8 @@ class Surface:
     smax_m: Optional[np.ndarray] = None
     soil: Optional[Soil] = None
     soil_state: Optional[np.ndarray] = None
+    rain_weight: Optional[np.ndarray] = None
+    rain_hourly: Optional[Tuple[np.ndarray, np.ndarray]] = None
 
     @property
     def valid(self) -> np.ndarray:
@@ -413,6 +420,15 @@ def _gar(soil: Optional[Soil], shape: Tuple[int, int],
     return g
 
 
+def _rain_share(valid: np.ndarray, weight: Optional[np.ndarray]) -> np.ndarray:
+    """Where rain lands and how much of the domain's mean: 0 off the terrain, else the weight normalized to a mean of
+    1 over the valid cells (1 everywhere valid when there is none)."""
+    if weight is None:
+        return valid.astype(np.float64)
+    w = np.where(valid & np.isfinite(weight), np.maximum(weight, 0.0), 0.0)
+    return np.where(valid, w / max(float(w[valid].mean()), 1e-30), 0.0) if valid.any() else w
+
+
 def _build(surface: Surface, cfg: SolverConfig, probes: Probes, device: torch.device,
            dtype: torch.dtype) -> Tuple[Grid, State, Forcing]:
     """Tensors for one run from the NumPy inputs."""
@@ -432,7 +448,7 @@ def _build(surface: Surface, cfg: SolverConfig, probes: Probes, device: torch.de
     grid = Grid(
         z=zt, zmax_x=torch.maximum(zt[:, 1:], zt[:, :-1]), zmax_y=torch.maximum(zt[1:, :], zt[:-1, :]),
         invalid=torch.as_tensor(~valid, device=device),
-        valid_f=torch.as_tensor(valid, dtype=dtype, device=device),
+        valid_f=torch.as_tensor(_rain_share(valid, surface.rain_weight), dtype=dtype, device=device),
         f0=_field(surface.f0, dtype, device), fc=_field(surface.fc, dtype, device),
         k=_field(surface.k, dtype, device),
         deficit=_cells(surface.max_deficit_m, dtype, device), smax=_cells(surface.smax_m, dtype, device),
@@ -538,8 +554,17 @@ def simulate(
     t0 = time.time()
     t_s, last_frame_t, cap_hits, n_substeps = 0.0, -1e9, 0, 0
     acc_prev = np.zeros(8)
+    hourly, hour_now = None, -1
+    if surface.rain_hourly is not None:        # every cell its own hours: the share field changes hour by hour
+        share, index = surface.rain_hourly
+        hourly = (torch.as_tensor(np.asarray(share, dtype=np.float64), dtype=dtype, device=device),
+                  torch.as_tensor(np.where(valid, index, 0).astype(np.int64), device=device),
+                  torch.as_tensor(valid, device=device))
     for i, P in enumerate(rain):
         t_target = t_s + cfg.dt_s
+        if hourly is not None and min(int(t_s // 3600.0), hourly[0].shape[0] - 1) != hour_now:
+            hour_now = min(int(t_s // 3600.0), hourly[0].shape[0] - 1)
+            grid.valid_f.copy_(torch.where(hourly[2], hourly[0][hour_now][hourly[1]], torch.zeros_like(grid.valid_f)))
         _set_forcing(forcing, float(P), t_target, inflow, t_s)
         n_sub = 0
         while True:
