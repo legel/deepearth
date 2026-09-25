@@ -218,9 +218,13 @@ parameters, 96% of them in the processor; its cost against graph size is in sect
 6,186 m²), each 217 steps of 20 min (72 h) before the loader's trimming. The dataset records HEC-RAS's own
 run time: 128.5 s per hydrograph on average (90.8 to 196.7 s). One forward step of the model takes 15 ms on
 the L4, so the 217-step hydrograph takes about 3.3 s, about 40 times faster than HEC-RAS on its (unstated)
-CPU. **Not measured:** we did not reproduce the paper's accuracy. The first GPU was preempted during the
-8.3 GB download and the second ran out of its time limit while the data were still being unpacked, so the
-67% figure above is the authors', not ours.
+CPU. Two things in the release matter for anyone reproducing it: the record carries no test split (all
+500 hydrographs are in `train.txt`, and the `Test/test.txt` the inference script reads is absent), and
+the physics term uses the upstream inflow but not the downstream outflow, although the record has both
+(`M80_US_InF_*`, `M80_DS_OuF_*`); the one-sided ReLU is what keeps the missing outflow from breaking it.
+**Not measured:** the paper's accuracy. The first GPU was preempted during the 8.3 GB download (26 GB unpacked),
+and the second was stopped at its time limit while the loader was still reading the hydrographs (about
+3.4 per second), so the 67% figure above is the authors', not ours.
 
 Verdict. HydroGraphNet is a good emulator of one hydraulic model on one mesh, and three of its parts are
 worth keeping: the MeshGraphNet processor block, residual (incremental) prediction of the state, and the
