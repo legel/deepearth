@@ -28,10 +28,11 @@ of the sun's zenith, capped at 1.1 times the clear-sky beam; any light the cap w
 The diffuse sky is not uniform: the sky around the sun is brighter. Hay and Davies (1980) fold that circumsolar
 part into the beam with the anisotropy index A = DNI / E0 [hay-davies]. A point with unit normal n then receives
 
-    E = (DNI + A DHI / cos z) L max(n.s, 0) + (1 - A) DHI V + 0.2 GHI (1 - n_z) / 2
+    E = (DNI + A DHI / cos z) L max(n.s, 0) + (1 - A) DHI V 2 E3(tau) + 0.2 GHI (1 - n_z) / 2
 
-where L is the share of the sun's direction s that reaches the point, V its sky-view factor, and the last term
-the light reflected from ground of albedo 0.2 [point]. On open level ground (L = 1, V = 1, n_z = 1) E is exactly
+where L is the share of the sun's direction s that reaches the point, V its sky-view factor from solid occluders
+(terrain and buildings), 2 E3(tau) the sky light that passes the canopy above it (below), and the last term the light
+reflected from ground of albedo 0.2 [point]. On open level ground (L = 1, V = 1, tau = 0, n_z = 1) E is exactly
 the tower's GHI. A surface's normal faces the sensor: an airborne return was seen from above, so a fitted normal that
 points down is turned over.
 
@@ -53,7 +54,8 @@ share of first returns that reach within 1 m of the ground is the gap fraction, 
 surveys are flown with the leaves off; the leaves of each day are added from MODIS leaf area index (LAI), with
 spherical leaf angles (G = 0.5) and the clumping of broadleaf forest (Omega = 0.8, Chen et al. 2005), and a leaf that
 has turned stays on the tree ten days (the Harvard Forest phenology record) [season]. The direct beam passes a
-crown as exp(-tau / cos z) and the diffuse sky as 2 E3(tau) [transmittance].
+crown as exp(-tau / cos z) and the diffuse sky as 2 E3(tau) [transmittance]: under Harvard's summer canopy (tau about
+1.75) a floor point reads about 0.1 of open sky [floor].
 
 ## Experiments
 
@@ -108,11 +110,12 @@ been measured.
 [engerer2]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/sky.py#L88
 [coefficients]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/sky.py#L20
 [split]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/sky.py#L121
-[hay-davies]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/transposition.py#L23
-[point]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/transposition.py#L31
+[hay-davies]: https://github.com/legel/deepearth/blob/6eea08a/models/solar/transposition.py#L27
+[point]: https://github.com/legel/deepearth/blob/6eea08a/models/solar/transposition.py#L35
 [march]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/horizon.py#L64
 [sky-view]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/horizon.py#L96
 [canopy]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/canopy.py#L32
 [season]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/canopy.py#L63
-[transmittance]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/canopy.py#L81
-[tests]: https://github.com/legel/deepearth/blob/8670ff2/models/solar/tests/test_solar.py
+[transmittance]: https://github.com/legel/deepearth/blob/6eea08a/models/solar/canopy.py#L81
+[floor]: https://github.com/legel/deepearth/blob/6eea08a/models/solar/tests/test_solar.py#L154
+[tests]: https://github.com/legel/deepearth/blob/6eea08a/models/solar/tests/test_solar.py
