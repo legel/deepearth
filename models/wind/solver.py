@@ -3,11 +3,17 @@
 Face velocities on a staggered grid are projected onto the divergence-free space by one Poisson
 solve for a Lagrange multiplier: the minimal correction to the background profile that conserves
 mass around terrain and buildings. Pseudo-time momentum iterations then add what the projection
-alone has no term for: semi-Lagrangian advection, mixing-length diffusion, canopy drag
-cd a |u| u, and a log-law wall stress carrying each class's roughness length. Every implicit
-operator is a 7-point solve on the multigrid kernel in `poisson`.
+alone has no term for: advection, mixing-length diffusion, canopy drag cd a |u| u, and a log-law
+wall stress carrying each class's roughness length. Every implicit operator is a 7-point solve on
+the multigrid kernel in `poisson`.
+
+The finite-volume scheme (`SolverConfig.scheme = "fv"`, the default) steps the steady residual in
+delta form, with MUSCL convection by the divergence-free face fluxes and the projection's pressure
+carried between steps, so the field it converges to does not depend on the pseudo-time step. The
+semi-Lagrangian scheme ("sl") is kept for comparison: its steady state does.
 """
 
+import copy
 import math
 import time
 from dataclasses import dataclass
@@ -27,7 +33,7 @@ steps the run prints `PROGRESS wind k/n` over all its solves' steps, which a cal
 None prints nothing. It changes no number the solver computes."""
 
 PROGRESS_EVERY = 10
-from poisson import Operator, Solver as Poisson
+from poisson import Convective, Operator, Solver as Poisson
 
 Tensor = torch.Tensor
 Faces = Tuple[Tensor, Tensor, Tensor]
@@ -61,6 +67,14 @@ class SolverConfig:
         device: torch device.
         dtype: torch floating type.
         verbose: Print progress every 50 steps.
+        work_dtype: The momentum phase's precision (advection, mixing, the implicit solve); None is `dtype`.
+        precond_dtype: The projection's V-cycle precision under its `dtype` conjugate gradients; None is `dtype`.
+        warm_projection: Start each semi-Lagrangian projection from the last multiplier.
+        scheme: "fv", the steady finite-volume momentum whose fixed point does not depend on `cfl`; "sl", the
+            semi-Lagrangian pseudo-time step, whose steady state does.
+        limiter: The finite volumes' face reconstruction (`LIMITERS`).
+        relax_nu: Under-relaxation of the eddy viscosity between steps; 1 takes each step's own. Below 1 it damps
+            the odd-even oscillation the mixing-length feedback drives at large steps, and leaves the fixed point alone.
     """
 
     steps: int = 200
@@ -77,6 +91,19 @@ class SolverConfig:
     device: str = "cpu"
     dtype: torch.dtype = torch.float64
     verbose: bool = False
+    work_dtype: Optional[torch.dtype] = None
+    precond_dtype: Optional[torch.dtype] = None
+    warm_projection: bool = False
+    scheme: str = "fv"
+    limiter: str = "vanleer"
+    relax_nu: float = 0.5
+
+    def fast(self) -> "SolverConfig":
+        """The production numerics: advection, mixing and the implicit momentum solve in float32, the projection's
+        conjugate gradients in `dtype` preconditioned by a float32 V-cycle, each projection started from the last
+        one's multiplier. The faces, the divergence and every projection's tolerance stay in `dtype`."""
+        self.work_dtype, self.precond_dtype, self.warm_projection = torch.float32, torch.float32, True
+        return self
 
 
 @dataclass
@@ -84,8 +111,8 @@ class Result:
     """Everything one run produces.
 
     Attributes:
-        velocity: Cell-centred (u, v, w) [m/s], (3, nz, ny, nx).
-        vorticity: Cell-centred curl [1/s], (3, nz, ny, nx).
+        velocity: Cell-centered (u, v, w) [m/s], (3, nz, ny, nx).
+        vorticity: Cell-centered curl [1/s], (3, nz, ny, nx).
         faces: Staggered (ux, uy, uz) [m/s] on x-, y- and z-faces; the divergence-free field.
         divergence_rel: Face divergence after the last projection over that before it.
         divergence_max: Largest face divergence over u_top dx^2.
@@ -114,6 +141,8 @@ class Result:
     steps: int
     settled: Optional[bool] = None
     settle: Optional[List[dict]] = None
+    state: Optional[dict] = None
+    """The finite-volume state to continue from (`solve(initial=...)`): faces and pressure [m^2/s^2]."""
 
     @property
     def speed(self) -> np.ndarray:
@@ -158,6 +187,21 @@ def _logmean(a: Tensor, b: Tensor) -> Tensor:
     return torch.where(a == b, a, (b - a) / torch.log(b / a))
 
 
+LIMITERS = {
+    "vanleer": lambda r: (r + r.abs()) / (1.0 + r.abs()),
+    "vanalbada": lambda r: torch.where(r > 0, (r * r + r) / (r * r + 1.0), torch.zeros_like(r)),
+    "upwind": lambda r: torch.zeros_like(r),
+}
+"""Flux limiters psi(r) of the face reconstruction: van Leer (1974), van Albada et al. (1982), and first-order upwind."""
+
+
+def _muscl(far: Tensor, up: Tensor, down: Tensor, limiter: str = "vanleer") -> Tensor:
+    """The face value between `up` (upwind) and `down`: up + psi(r) (down - up) / 2, r = (up - far) / (down - up)."""
+    jump = down - up
+    r = (up - far) / torch.where(jump == 0, torch.full_like(jump, 1e-30), jump)
+    return up + 0.5 * LIMITERS[limiter](r) * jump
+
+
 def _wall(delta: Tensor, z0: Tensor, size: Tensor) -> Tensor:
     """Log-law stress coefficient per unit volume [1/m]: (kappa / ln(delta / z0))^2 / size."""
     z0 = torch.minimum(z0, delta * math.exp(-1.0))
@@ -165,7 +209,7 @@ def _wall(delta: Tensor, z0: Tensor, size: Tensor) -> Tensor:
 
 
 class Model:
-    """A scene and its forcing, discretised and ready to run.
+    """A scene and its forcing, discretized and ready to run.
 
     Args:
         scene: Geometry, drag and roughness.
@@ -220,12 +264,26 @@ class Model:
                                          torch.zeros_like(self.sink)), dim=0).values
         self.height = torch.clamp(self.zc[:, None, None] - below, min=1e-3 * self.dx)
         self.wall = self._wall_coefficient(z0)
-        self.poisson = Poisson(self._projection_operator())
+        self.poisson = Poisson(self._projection_operator(), precond_dtype=cfg.precond_dtype)
+        self._lam: Optional[Tensor] = None
+        self._momentum_factors = None
+        self._work = self if (cfg.work_dtype or cfg.dtype) == cfg.dtype else self._copy(cfg.work_dtype)
+
+    def _copy(self, dtype: torch.dtype) -> "Model":
+        """This model with every floating tensor (and a unit's boundary) in `dtype`, for the momentum phase."""
+        w = copy.copy(self)
+        for k, v in vars(self).items():
+            if torch.is_tensor(v) and v.is_floating_point():
+                setattr(w, k, v.to(dtype))
+        if self.bc is not None:
+            w.bc = {k: v.to(dtype) for k, v in self.bc.items()}
+        w.poisson, w._work = None, w
+        return w
 
     # ── Geometry ─────────────────────────────────────────────────────────────────────────
 
     def _wall_coefficient(self, z0: Tensor) -> Tensor:
-        """Sum of log-law stress coefficients over each fluid cell's solid neighbours."""
+        """Sum of log-law stress coefficients over each fluid cell's solid neighbors."""
         s, dx = self.solid, self.dx
         half = torch.full_like(self.sink, dx / 2)
         size = torch.full_like(self.sink, dx)
@@ -326,21 +384,29 @@ class Model:
         Returns:
             (corrected faces, PCG iterations, relative residual).
         """
-        ux, uy, uz = faces
         div = self.divergence(faces)
-        lam, it, rel = self.poisson.solve(div[None], tol=tol or self.cfg.tol, max_iter=max_iter or self.cfg.max_iter)
-        lam = lam[0]
+        x0 = self._lam if self.cfg.warm_projection and self.cfg.scheme != "fv" else None
+        lam, it, rel = self.poisson.solve(div[None], x0=x0, tol=tol or self.cfg.tol,
+                                          max_iter=max_iter or self.cfg.max_iter)
+        self._lam = lam
+        return tuple(f + g for f, g in zip(faces, self.face_gradient(lam[0]))), it, rel
+
+    def face_gradient(self, lam: Tensor) -> Faces:
+        """The face velocities a multiplier `lam` adds: its gradient on open faces, and across the boundary faces
+        where the projection holds it at zero (outflow sides and the open top)."""
         op = self.poisson.levels[0].op
-        ux, uy, uz = ux.clone(), uy.clone(), uz.clone()
-        ux[..., 1:-1] += self.open_x * (lam[..., 1:] - lam[..., :-1]) / self.dx
-        uy[:, 1:-1, :] += self.open_y * (lam[:, 1:, :] - lam[:, :-1, :]) / self.dx
-        uz[1:-1] += self.open_z * (lam[1:] - lam[:-1]) / self.dzc[:, None, None]
-        ux[..., 0] += (op.ax[..., 0] > 0) * lam[..., 0] / (self.dx / 2)
-        ux[..., -1] -= (op.ax[..., -1] > 0) * lam[..., -1] / (self.dx / 2)
-        uy[:, 0, :] += (op.ay[:, 0, :] > 0) * lam[:, 0, :] / (self.dx / 2)
-        uy[:, -1, :] -= (op.ay[:, -1, :] > 0) * lam[:, -1, :] / (self.dx / 2)
-        uz[-1] -= (op.az[-1] > 0) * lam[-1] / self.d_top
-        return (ux, uy, uz), it, rel
+        gx = torch.zeros(self.nz, self.ny, self.nx + 1, dtype=lam.dtype, device=lam.device)
+        gy = torch.zeros(self.nz, self.ny + 1, self.nx, dtype=lam.dtype, device=lam.device)
+        gz = torch.zeros(self.nz + 1, self.ny, self.nx, dtype=lam.dtype, device=lam.device)
+        gx[..., 1:-1] = self.open_x * (lam[..., 1:] - lam[..., :-1]) / self.dx
+        gy[:, 1:-1, :] = self.open_y * (lam[:, 1:, :] - lam[:, :-1, :]) / self.dx
+        gz[1:-1] = self.open_z * (lam[1:] - lam[:-1]) / self.dzc[:, None, None]
+        gx[..., 0] = (op.ax[..., 0] > 0) * lam[..., 0] / (self.dx / 2)
+        gx[..., -1] = -((op.ax[..., -1] > 0) * lam[..., -1]) / (self.dx / 2)
+        gy[:, 0, :] = (op.ay[:, 0, :] > 0) * lam[:, 0, :] / (self.dx / 2)
+        gy[:, -1, :] = -((op.ay[:, -1, :] > 0) * lam[:, -1, :]) / (self.dx / 2)
+        gz[-1] = -((op.az[-1] > 0) * lam[-1]) / self.d_top
+        return gx, gy, gz
 
     def boundary_flux(self, faces: Faces) -> Tuple[float, float]:
         """(entering, leaving) volume flux through the domain boundary [m^3/s]."""
@@ -374,7 +440,7 @@ class Model:
         return pad
 
     def _departures(self, u: Tensor, sign: float) -> Tensor:
-        """Sampling grid for the points x - sign dt u, in the halo's normalised index space."""
+        """Sampling grid for the points x - sign dt u, in the halo's normalized index space."""
         nz, ny, nx, dt = self.nz, self.ny, self.nx, sign * self.dt
         ix = torch.arange(nx, device=u.device, dtype=u.dtype) + 1 - dt * u[0] / self.dx
         iy = (torch.arange(ny, device=u.device, dtype=u.dtype) + 1)[:, None] - dt * u[1] / self.dx
@@ -392,7 +458,7 @@ class Model:
 
     def advect(self, u: Tensor) -> Tensor:
         """Semi-Lagrangian advection with a MacCormack correction, limited to the range of the
-        departure point's neighbours."""
+        departure point's neighbors."""
         back, fore = self._departures(u, 1.0), self._departures(u, -1.0)
         forward = self._sample(self._padded(u), back)
         out = forward + 0.5 * (u - self._sample(self._padded(forward), fore))
@@ -436,7 +502,7 @@ class Model:
         return nu_x, nu_y, nu_z
 
     def diffuse(self, u_adv: Tensor, u: Tensor) -> Tuple[Tensor, int]:
-        """Implicit diffusion, canopy drag and wall stress, linearised about `u`."""
+        """Implicit diffusion, canopy drag and wall stress, linearized about `u`."""
         nu_x, nu_y, nu_z = self.viscosity(u)
         speed = u.norm(dim=0)
         ident = self.vol * (1.0 + self.dt * (self.wall + self.sink) * speed)
@@ -448,13 +514,102 @@ class Model:
         rhs[:, :, 0, :] += op.ay[:, 0, :] * bs
         rhs[:, :, -1, :] += op.ay[:, -1, :] * bn
         rhs[:, -1] += op.az[-1] * (self.bc["top"] if self.bc is not None else self.u0_top[:, None, None])
-        out, it, _ = Poisson(op).solve(rhs, x0=u, tol=self.cfg.tol_momentum,
-                                       max_iter=self.cfg.max_iter)
+        mg = Poisson(op, factors=self._momentum_factors)
+        self._momentum_factors = mg.factor_list      # the grid's; rebuilding the hierarchy then needs no host sync
+        out, it, _ = mg.solve(rhs, x0=u, tol=self.cfg.tol_momentum, max_iter=self.cfg.max_iter)
         out[:, self.solid] = 0.0
         return out, it
 
+    # ── Steady finite volume (cfg.scheme == "fv") ────────────────────────────────────────
+
+    def _boundary_terms(self, op: Operator) -> Tensor:
+        """What a diffusion operator's boundary faces carry in from the prescribed side and top velocities."""
+        out = torch.zeros(3, self.nz, self.ny, self.nx, dtype=self.sink.dtype, device=self.sink.device)
+        bw, be, bs, bn = self._sides()
+        out[..., 0] += op.ax[..., 0] * bw
+        out[..., -1] += op.ax[..., -1] * be
+        out[:, :, 0, :] += op.ay[:, 0, :] * bs
+        out[:, :, -1, :] += op.ay[:, -1, :] * bn
+        out[:, -1] += op.az[-1] * (self.bc["top"] if self.bc is not None else self.u0_top[:, None, None])
+        return out
+
+    def convection(self, u: Tensor, fx: Tensor, fy: Tensor, fz: Tensor) -> Tensor:
+        """Net outflow sum_f F_f u_f of each cell [m^4/s^2]: the face volume flux times the upwind MUSCL face value,
+        van Leer limited (van Leer 1979), the halo carrying the prescribed sides and top and zero at the ground."""
+        p = F.pad(self._padded(u), (1, 1, 1, 1, 1, 1), mode="replicate")
+
+        def flux(q: Tensor, f: Tensor, dim: int) -> Tensor:
+            n = q.shape[dim]
+            ll, left, right, rr = (q.narrow(dim, s, n - 3) for s in (0, 1, 2, 3))
+            lim = self.cfg.limiter
+            face = torch.where(f > 0, _muscl(ll, left, right, lim), _muscl(rr, right, left, lim))
+            return f * face
+
+        out = torch.empty_like(u)
+        for c in range(u.shape[0]):                 # one component at a time: a third of the temporaries
+            q = p[c:c + 1]
+            fxu = flux(q[:, 2:-2, 2:-2, :], fx, -1)
+            fyu = flux(q[:, 2:-2, :, 2:-2], fy, -2)
+            fzu = flux(q[:, :, 2:-2, 2:-2], fz, -3)
+            out[c] = ((fxu[..., 1:] - fxu[..., :-1]) + (fyu[:, :, 1:, :] - fyu[:, :, :-1, :]) + (fzu[:, 1:] - fzu[:, :-1]))[0]
+        return out
+
+    def fv_increment(self, faces: Faces, u: Tensor, pressure: Tensor) -> Tuple[Tensor, int]:
+        """One implicit pseudo-time step in delta form:
+            M du = dt R(u) + V G(Pi),   M = V (1 + dt c |u|) + dt (D + A_upwind)
+        R is the steady momentum residual (MUSCL convection, mixing-length diffusion, canopy drag and wall stress),
+        V G(Pi) the accumulated projection gradient (`pressure`, cell-centered). M only sets how fast the iteration
+        moves: where du = 0 the steady equations hold whatever dt, so the delivered field does not depend on it."""
+        ux, uy, uz = faces
+        fx, fy, fz = ux * self.area_x, uy * self.area_x, uz * self.area_z
+        nu_x, nu_y, nu_z = self.viscosity(u)
+        a = self.cfg.relax_nu
+        if a < 1.0 and getattr(self, "_nu", None) is not None:     # the eddy viscosity under-relaxed (Picard)
+            nu_x, nu_y, nu_z = (a * n + (1.0 - a) * o for n, o in zip((nu_x, nu_y, nu_z), self._nu))
+        self._nu = (nu_x, nu_y, nu_z)
+        diff_op = self._operator(nu_x, nu_y, nu_z, torch.zeros_like(self.sink), True)
+        speed = u.norm(dim=0)
+        drag = self.wall + self.sink
+        residual = (self._boundary_terms(diff_op) - diff_op.apply(u) - self.convection(u, fx, fy, fz)
+                    - self.vol * drag * speed * u)
+        dt = self.dt
+        m = Convective(ident=self.vol * (1.0 + dt * drag * speed), ax=dt * diff_op.ax, ay=dt * diff_op.ay,
+                       az=dt * diff_op.az, fx=dt * fx, fy=dt * fy, fz=dt * fz)
+        mg = Poisson(m, factors=self._momentum_factors)
+        del m
+        self._momentum_factors = mg.factor_list
+        rhs = dt * residual + self.vol * pressure
+        del residual, diff_op
+        du, its = torch.empty_like(rhs), []
+        for c in range(rhs.shape[0]):               # one component at a time: a third of the Krylov vectors
+            d, i, _ = mg.solve(rhs[c:c + 1], tol=self.cfg.tol_momentum, max_iter=self.cfg.max_iter)
+            du[c] = d[0]
+            its.append(i)
+        it = max(its)
+        du[:, self.solid] = 0.0
+        self.last_residual = rhs.norm() / dt                  # the steady momentum residual, pressure included
+        return du, it
+
+    def add_increment(self, faces: Faces, du: Tensor) -> Faces:
+        """Faces plus the cell increment interpolated onto them; prescribed faces keep their values."""
+        west, east, south, north, top = self.edge
+        ux, uy, uz = (f.clone() for f in faces)
+        ux[..., 1:-1] += 0.5 * (du[0, ..., :-1] + du[0, ..., 1:]) * self.open_x
+        uy[:, 1:-1, :] += 0.5 * (du[1, :, :-1, :] + du[1, :, 1:, :]) * self.open_y
+        uz[1:-1] += 0.5 * (du[2, :-1] + du[2, 1:]) * self.open_z
+        if not self.inflow[0]:
+            ux[..., 0] += west * du[0, ..., 0]
+        if not self.inflow[1]:
+            ux[..., -1] += east * du[0, ..., -1]
+        if not self.inflow[2]:
+            uy[:, 0, :] += south * du[1, :, 0, :]
+        if not self.inflow[3]:
+            uy[:, -1, :] += north * du[1, :, -1, :]
+        uz[-1] += top * du[2, -1]
+        return ux, uy, uz
+
     def vorticity(self, u: Tensor) -> Tensor:
-        """Curl of the cell-centred velocity, (3, nz, ny, nx) [1/s]."""
+        """Curl of the cell-centered velocity, (3, nz, ny, nx) [1/s]."""
         d = [torch.gradient(u[c], spacing=[self.zc, self.yc, self.xc], dim=(0, 1, 2))
              for c in range(3)]
         return torch.stack([d[2][1] - d[1][0], d[0][0] - d[2][2], d[1][2] - d[0][1]])
@@ -490,12 +645,14 @@ class Model:
 
     # ── Run ──────────────────────────────────────────────────────────────────────────────
 
-    def run(self, initial: Optional[np.ndarray] = None) -> Result:
-        """Project the background (or `initial`) and relax it for `cfg.steps` iterations."""
+    def run(self, initial=None) -> Result:
+        """Project the background (or `initial`: cell velocities, or a finite-volume `Result.state`) and relax it."""
         t0, cfg = time.time(), self.cfg
-        u = self.background() if initial is None else torch.as_tensor(
+        state = initial if isinstance(initial, dict) else None
+        u = self.background() if initial is None or state is not None else torch.as_tensor(
             initial, device=cfg.device, dtype=cfg.dtype)
-        faces = self.faces(u)
+        faces = self.faces(u) if state is None else tuple(torch.as_tensor(f, device=cfg.device, dtype=cfg.dtype)
+                                                            for f in state["faces"])
         div0 = float(self.divergence(faces).norm())
         faces, it, rel = self.project(faces)
         u = self.cells(faces)
@@ -504,12 +661,26 @@ class Model:
         last = cfg.max_steps if settling and cfg.max_steps else cfg.steps
         settle, calm, settled, step = [], 0, None, -1
         ref, acc = None, None
+        fv = cfg.scheme == "fv"
+        pi = torch.zeros_like(u[0])                 # the accumulated multiplier: -dt times the pressure
+        if isinstance(initial, dict):               # a finite-volume state: its faces and pressure carry on
+            pi = -torch.as_tensor(initial["pressure"], device=cfg.device, dtype=cfg.dtype) * self.dt
         for step in range(last):
             prev = u
-            u_star, _ = self.diffuse(self.advect(u), u)
-            faces = self.faces(u_star)
+            w, wd = self._work, self._work.sink.dtype
+            if fv:
+                pressure = self.cells(self.face_gradient(pi))
+                du, _ = w.fv_increment(tuple(f.to(wd) for f in faces), u.to(wd), pressure.to(wd))
+                res_norm = w.last_residual
+                res0 = res_norm if step == 0 else res0
+                faces = self.add_increment(faces, du.to(u.dtype))
+            else:
+                u_star = w.diffuse(w.advect(u.to(wd)), u.to(wd))[0].to(u.dtype)
+                faces = self.faces(u_star)
             div0 = float(self.divergence(faces).norm())
             faces, it, rel = self.project(faces)
+            if fv:
+                pi = pi + self._lam[0]
             u = self.cells(faces)
             iterations.append(it)
             change.append(float((u - prev).abs().max()) / self.u_top)
@@ -519,12 +690,15 @@ class Model:
                 print(f"  step {step + 1:5d}  change {change[-1]:.2e}  poisson {it:3d} it  "
                       f"[{time.time() - t0:.0f}s]")
             if settling:
-                acc = u.clone() if acc is None else acc.add_(u)
+                acc = [f.clone() for f in faces] if acc is None else [a.add_(f) for a, f in zip(acc, faces)]
             if settling and (step + 1) % cfg.settle_every == 0:
-                mean = acc / cfg.settle_every
+                mean_faces = tuple(a / cfg.settle_every for a in acc)
+                mean = self.cells(mean_faces)
                 acc, now = None, self.near_ground(mean)
                 if ref is not None:
                     row = dict(self.settle_change(ref, now), step=step + 1, pseudo_s=round((step + 1) * self.dt, 1))
+                    if fv:
+                        row["residual"] = float(res_norm / res0)
                     settle.append(row)
                     calm = calm + 1 if (row["d_median"] < cfg.settle_tol and row["d_p95"] < cfg.settle_tol
                                         and row["rms_rel"] < self.SETTLE_RMS * cfg.settle_tol) else 0
@@ -532,7 +706,8 @@ class Model:
                         print(f"  settle {json_row(row)}", flush=True)
                     if calm >= 2 and step + 1 >= cfg.steps:
                         settled = True
-                        faces, it, rel = self.project(self.faces(mean))      # the window's mean, divergence-free
+                        # the window's mean, divergence-free (faces averaged as faces under the finite volumes)
+                        faces, it, rel = self.project(mean_faces if fv else self.faces(mean))
                         u = self.cells(faces)
                         break
                 ref = now
@@ -558,6 +733,7 @@ class Model:
             poisson_iterations=iterations, change=change,
             wall_s=time.time() - t0, cells=self.nz * self.ny * self.nx,
             steps=step + 1 if settling else cfg.steps, settled=settled, settle=settle or None,
+            state={"faces": tuple(f.cpu().numpy() for f in faces), "pressure": (-pi / self.dt).cpu().numpy()} if fv else None,
         )
 
 

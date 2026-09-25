@@ -60,10 +60,12 @@ def _grid_bearing(direction_true: float, receipt: Dict[str, object]) -> float:
 
 
 def _config(args: argparse.Namespace) -> SolverConfig:
-    return SolverConfig(steps=args.steps, cfl=args.cfl, tol=args.tol, tol_final=args.tol_final, device=args.device,
-                        dtype=torch.float32 if args.float32 else torch.float64,
-                        lateral=args.lateral, verbose=True, settle_tol=getattr(args, "settle_tol", None),
-                        settle_every=getattr(args, "settle_every", 20), max_steps=getattr(args, "max_steps", None))
+    cfg = SolverConfig(steps=args.steps, cfl=args.cfl, tol=args.tol, tol_final=args.tol_final, device=args.device,
+                       dtype=torch.float32 if args.float32 else torch.float64,
+                       lateral=args.lateral, verbose=True, settle_tol=getattr(args, "settle_tol", None),
+                       settle_every=getattr(args, "settle_every", 20), max_steps=getattr(args, "max_steps", None),
+                       scheme=getattr(args, "scheme", "fv"), tol_momentum=getattr(args, "tol_momentum", 1e-5))
+    return cfg.fast() if getattr(args, "fast", False) else cfg
 
 
 def _tag(args: argparse.Namespace) -> str:
@@ -341,6 +343,12 @@ def main(argv: Optional[List[str]] = None) -> None:
             p.add_argument("--lateral", default="profile", choices=("profile", "open"))
             p.add_argument("--device", default="cpu")
             p.add_argument("--float32", action="store_true")
+            p.add_argument("--scheme", default="fv", choices=("fv", "sl"),
+                           help="fv: the steady finite-volume scheme, independent of the pseudo-time step; sl: semi-Lagrangian")
+            p.add_argument("--fast", action="store_true",
+                           help="float32 momentum and V-cycles under float64 projections (SolverConfig.fast)")
+            p.add_argument("--tol-momentum", type=float, default=1e-5,
+                           help="relative residual of each pseudo-time step's implicit momentum solve")
         p.set_defaults(func=fn)
         return p
 

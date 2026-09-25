@@ -46,10 +46,13 @@ def test_relaxed_field_is_divergence_free_to_1e6(cube):
     assert cube["divergence_max"] <= 1e-6, cube
 
 
-def test_flat_domain_recovers_the_log_profile_exactly(flat):
-    assert flat["max_profile_error_rel"] < 1e-10, flat
-    assert flat["max_crossflow_rel"] < 1e-10, flat
-    assert flat["max_change_rel"] < 1e-10, flat
+def test_flat_domain_recovers_the_log_profile_to_its_discretization(flat):
+    """The log profile sampled at cell centers is not the discrete steady state exactly: the mixing-length flux and the
+    wall law at the first cell leave a residual of 1e-4 of it, which the finite volumes resolve (the semi-Lagrangian
+    passed 1e-10 only because its momentum solve accepted that residual as converged)."""
+    assert flat["max_profile_error_rel"] < 1e-5, flat
+    assert flat["max_crossflow_rel"] < 1e-5, flat
+    assert flat["max_change_rel"] < 1e-5, flat
 
 
 def test_mass_flux_in_equals_mass_flux_out_to_1e6(cube, flat):
@@ -121,7 +124,8 @@ def test_a_warm_start_continues_where_the_cold_run_stopped():
     g = checks.grid(1.0, 32, 16, 12)
     scene = domain.cube(g, 6.0, centre=(12.0, 8.0))
     cold = solve(scene, checks.profile(), checks.WEST, SolverConfig(steps=30))
-    warm = solve(scene, checks.profile(), checks.WEST, SolverConfig(steps=10), initial=cold.velocity)
+    start = cold.state if cold.state is not None else cold.velocity       # the finite volumes carry their pressure
+    warm = solve(scene, checks.profile(), checks.WEST, SolverConfig(steps=10), initial=start)
     assert max(warm.change) < cold.change[0], (warm.change, cold.change)
     assert warm.divergence_rel <= 1e-6
 
@@ -160,3 +164,19 @@ def test_a_settling_run_stops_once_the_near_ground_speed_holds_and_says_when_it_
     assert hard.settled is False and hard.steps == 30, "unsettled at its cap, and the result says so"
     plain = solve(scene, p, checks.WEST, SolverConfig(steps=15, tol=1e-6))
     assert plain.settled is None and plain.steps == 15, "without settle_tol, exactly `steps` as before"
+
+
+def test_the_fast_numerics_deliver_the_same_settled_field_and_pass_the_divergence_gate():
+    """`SolverConfig.fast`: float32 momentum, a float32 V-cycle under float64 conjugate gradients, warm projections.
+    The settled field matches the all-float64 one to well under the product's 1 % and the delivered divergence is
+    the float64 projection's."""
+    g = checks.grid(1.0, 64, 32, 24)
+    scene, p = domain.cube(g, 8.0, centre=(32.0, 16.0)), checks.profile()
+    kw = dict(steps=20, cfl=8.0, tol=1e-6, tol_final=1e-9, settle_tol=0.01, settle_every=10, max_steps=400)
+    ref = solve(scene, p, checks.WEST, SolverConfig(**kw))
+    fast = solve(scene, p, checks.WEST, SolverConfig(**kw).fast())
+    fluid = ~scene.solid
+    rel = np.abs(fast.speed - ref.speed)[fluid].max() / ref.speed[fluid].max()
+    assert fast.settled and rel < 1e-3, rel
+    assert fast.divergence_max_1_s <= 1e-6 and fast.flux_balance <= 1e-6
+    assert fast.velocity.dtype == ref.velocity.dtype
