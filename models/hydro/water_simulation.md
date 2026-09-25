@@ -113,16 +113,29 @@ first [basin-scalar], [basin-nlcd], [basin-hourly].
     Manning n by NLCD class (Chow 1959)       151.1 m³/s at 34.5 h     0.344         -4.86      -1.03
     each cell its own AORC hours              204.1 m³/s at 33.5 h     0.348         -8.74      -1.66
 
+The same basin with Manning n by land cover at 25 m and 5 m, on one GPU with the soil on its own step; the 25 m run
+repeats the CPU run above (peak 151.09 against 151.06 m³/s) [basin-25], [basin-5]:
+
+                                              peak                     runoff        Nash-      Kling-
+                                                                       coefficient   Sutcliffe  Gupta
+    25 m (556 x 560), 132 s on one L4         151.1 m³/s at 34.5 h     0.344         -4.87      -1.03
+    5 m (1,392 x 1,401), 1,363 s              171.9 m³/s at 34.5 h     0.399         -7.71      -1.60
+
 ## Known errors
 
 Gee Creek's discharge is not validated. Over the whole basin, with the starting soil from a continuous balance and
 the depressions kept, the volume matches the gauge: a runoff coefficient of 0.344 to 0.350 against 0.333 to 0.362.
 The peak does not. It is 4.7 to 6.3 times the gauge's and 3 to 4 hours early, so the water reaches the outlet too
-fast. Land-cover roughness slows it by an hour and lowers it by 22 %; each cell's own rain timing does not help.
-Nothing was tuned to close the gap.
+fast. Land-cover roughness slows it by an hour and lowers it by 22 %; each cell's own rain timing does not help; a 5 m
+grid, which resolves the channels, makes the peak 14 % higher and no later. Nothing was tuned to close the gap.
 
-The solver has one soil layer per cell, no baseflow and no channel storage, so recessions are too fast. Culverts
-are not routed.
+What the basin has that the solver lacks, in the order the basin suggests (lakes, wetlands and a water table near the
+surface):
+- **storage routing** through the lakes and wetland depressions, each with its outlet: kept depressions hold water, but
+  nothing releases it through a control, so a full depression spills at once;
+- **baseflow and a shallow water table**: one soil layer per cell and no groundwater, so recessions are too fast and
+  water the soil takes never returns to the stream;
+- **culverts**: flow under roads is not routed; a public inventory would supply them.
 
 [solver-face]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/solver.py#L255
 [solver-step]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/solver.py#L270
@@ -148,5 +161,7 @@ are not routed.
 [basin-scalar]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc.json
 [basin-nlcd]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn.json
 [basin-hourly]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/docs/validation_ian_25m_gar_basin_depressions_antecedent_aorch.json
+[basin-25]: https://github.com/legel/deepearth/blob/simulator/models/hydro/docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn_gpu_soildt.json
+[basin-5]: https://github.com/legel/deepearth/blob/simulator/models/hydro/docs/validation_ian_5m_gar_basin_depressions_antecedent_aorc_nlcdn_gpu_soildt.json
 [validation-horton]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/docs/validation_site3_ian_25m.json
 [validation-gar]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/docs/validation_site3_ian_25m_gar.json

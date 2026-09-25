@@ -1,0 +1,33 @@
+{
+ "site": "site3_basin",
+ "storm": "ian",
+ "hydrograph": "hydrograph_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn.csv",
+ "cell_size_m": 25.0,
+ "grid": [
+  556,
+  560
+ ],
+ "total_rain_mm": 339.5392693318423,
+ "mass_residual_pct": -0.0007065024141269038,
+ "gauge": "02234400",
+ "baseflow_cfs": 45.2,
+ "score": {
+  "peak_sim_cms": 151.0859674722422,
+  "peak_obs_cms": 32.41712598768,
+  "peak_time_sim_h": 34.516666666666666,
+  "peak_time_obs_h": 37.516666666666666,
+  "nse": -4.869595852774564,
+  "kge": -1.0318506196032016,
+  "kge_r": 0.6437074836834811,
+  "kge_alpha": 2.85726178990454,
+  "kge_beta": 1.7430014986252336,
+  "n_samples": 175,
+  "window_h": [
+   0.0,
+   71.75
+  ],
+  "peak_ratio": 4.660683600688778,
+  "peak_lag_h": -3.0,
+  "gauge_dt_h": 0.25
+ }
+}

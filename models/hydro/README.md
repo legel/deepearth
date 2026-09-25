@@ -71,6 +71,18 @@ reaches the outlet too fast. Receipts: [`docs/validation_ian_25m_gar_basin_depre
 [`docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn.json`](docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn.json),
 [`docs/validation_ian_25m_gar_basin_depressions_antecedent_aorch.json`](docs/validation_ian_25m_gar_basin_depressions_antecedent_aorch.json).
 
+The same basin with Manning n by land cover at 25 m and 5 m, on one GPU with the soil on its own step (the 25 m run
+repeats the CPU run above: peak 151.09 against 151.06 m³/s, Nash-Sutcliffe −4.870 against −4.864):
+
+| grid | peak | runoff coefficient | Nash-Sutcliffe | Kling-Gupta | wall, one L4 |
+|---|---|---|---|---|---|
+| 25 m, 556 x 560 | 151.1 m³/s at 34.5 h | 0.344 | −4.87 | −1.03 | 132 s |
+| 5 m, 1,392 x 1,401 | 171.9 m³/s at 34.5 h | 0.399 | −7.71 | −1.60 | 1,363 s |
+
+Resolving the channels makes the flood faster and larger, not slower, so the grid is not what holds the peak back.
+Receipts: [`docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn_gpu_soildt.json`](docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn_gpu_soildt.json),
+[`docs/validation_ian_5m_gar_basin_depressions_antecedent_aorc_nlcdn_gpu_soildt.json`](docs/validation_ian_5m_gar_basin_depressions_antecedent_aorc_nlcdn_gpu_soildt.json).
+
 ## Run it
 
 ```bash
