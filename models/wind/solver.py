@@ -17,7 +17,7 @@ import copy
 import math
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -75,6 +75,16 @@ class SolverConfig:
         limiter: The finite volumes' face reconstruction (`LIMITERS`).
         relax_nu: Under-relaxation of the eddy viscosity between steps; 1 takes each step's own. Below 1 it damps
             the odd-even oscillation the mixing-length feedback drives at large steps, and leaves the fixed point alone.
+        settle_rule: "tail" ends a settling run once the change still to come, estimated from the geometric decay of
+            the last three window-to-window changes (`tail_bound`), is at most `settle_tol` for the median and p95 of
+            every published level (`LEVELS_M`); "window" once the last window's own change is under it, two windows
+            running. The eddy viscosity relaxes per step, so the field converges per step, not per unit of pseudo-time,
+            and a per-window change understates what is left when the decay is slow.
+        inflow: "canopy" prescribes on the sides the steady column over the site's mean canopy
+            (`Model.equilibrium_column`), so the fetch the domain holds does not change the field; "log" the upwind
+            log law, which the canopy keeps slowing downwind. A unit's boundary overrides both.
+        anderson: Depth of Anderson acceleration of the finite volumes' outer fixed point (faces, multiplier and relaxed
+            eddy viscosity); 0 is none. It changes how fast the steps arrive, not where.
     """
 
     steps: int = 200
@@ -97,6 +107,11 @@ class SolverConfig:
     scheme: str = "fv"
     limiter: str = "vanleer"
     relax_nu: float = 0.5
+    settle_rule: str = "window"
+    inflow: str = "log"
+    anderson: int = 0
+    anderson_store: Optional[str] = None
+    inflow_ring_m: float = 0.0
 
     def fast(self) -> "SolverConfig":
         """The production numerics: advection, mixing and the implicit momentum solve in float32, the projection's
@@ -182,6 +197,97 @@ def json_row(row: dict) -> str:
     return " ".join(f"{k} {v:.4g}" if isinstance(v, float) else f"{k} {v}" for k, v in row.items())
 
 
+def tail_bound(h: List[float]) -> float:
+    """The change still to come of a converging sequence, relative to its last value, from its last four values.
+
+    Successive changes d1, d2, d3 decaying by a ratio r sum to d3 r / (1 - r) beyond the last (Aitken). r is the
+    larger of the two measured ratios; a ratio of 1 or more is no decay yet (infinite); changes that alternate in sign
+    bound the limit within the last change.
+    """
+    if len(h) < 4:
+        return float("inf")
+    d1, d2, d3 = h[-3] - h[-4], h[-2] - h[-3], h[-1] - h[-2]
+    if d3 == 0.0:
+        return 0.0
+    ratio = [b / a if a != 0.0 else float("inf") for a, b in ((d1, d2), (d2, d3))]
+    r = max(ratio)
+    if r >= 1.0:
+        return float("inf")
+    rest = abs(d3) if r <= 0.0 else abs(d3) * r / (1.0 - r)
+    return rest / max(abs(h[-1]), 1e-12)
+
+
+class _Anderson:
+    """Anderson acceleration (type II) of a fixed-point map x -> G(x) over tuples of tensors.
+
+    The next state is G(x_k) - dG gamma, gamma minimizing |f_k - dF gamma| over the last `depth` changes of the
+    residual f = G(x) - x (its first `residual_parts` tensors: the faces). Every column of dG is a difference of two
+    states, so a mix keeps the prescribed boundary values, and of divergence-free states is divergence-free. The
+    history is kept in float32 on `store` (the host, when the GPU has no room for it), its Gram matrix updated a column
+    at a time; it restarts when the residual grows tenfold over its smallest.
+    """
+
+    def __init__(self, depth: int, store: Optional[str] = None):
+        self.depth, self.store = depth, store
+        self.dF, self.dG, self.gram, self.f, self.g, self.best = [], [], [], None, None, float("inf")
+
+    @staticmethod
+    def _dot(a, b) -> float:
+        return float(sum((x * y).sum(dtype=torch.float64) for x, y in zip(a, b)))
+
+    def _keep(self, t: Tensor) -> Tensor:
+        t = t.to(torch.float32)
+        return t.to(self.store) if self.store else t
+
+    def step(self, x, g, residual_parts: int):
+        f = tuple(self._keep(b - a) for a, b in zip(x[:residual_parts], g[:residual_parts]))
+        norm = self._dot(f, f) ** 0.5
+        if norm > 10.0 * self.best:
+            self.dF, self.dG, self.gram = [], [], []
+        self.best = min(self.best, norm)
+        if self.f is not None:
+            col = tuple(a - b for a, b in zip(f, self.f))
+            self.dF.append(col)
+            self.dG.append(tuple(self._keep(a) - b for a, b in zip(g, self.g)))
+            row = [self._dot(c, col) for c in self.dF]
+            for r, v in zip(self.gram, row[:-1]):
+                r.append(v)
+            self.gram.append(row)
+            if len(self.dF) > self.depth:
+                self.dF.pop(0), self.dG.pop(0)
+                self.gram = [r[1:] for r in self.gram[1:]]
+        self.f, self.g = f, tuple(self._keep(a) for a in g)
+        if not self.dF:
+            return g
+        k = len(self.dF)
+        a = np.array(self.gram)
+        b = np.array([self._dot(self.dF[i], f) for i in range(k)])
+        gamma = np.linalg.solve(a + 1e-10 * np.trace(a) * np.eye(k) + 1e-300 * np.eye(k), b)
+        out = []
+        for i, gi in enumerate(g):
+            mix = gi.clone()
+            for j in range(k):
+                mix -= float(gamma[j]) * self.dG[j][i].to(device=gi.device, dtype=gi.dtype)
+            out.append(mix)
+        return tuple(out)
+
+
+def _tridiagonal(lower: np.ndarray, diag: np.ndarray, upper: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+    """Solve a tridiagonal system (Thomas); `lower` and `upper` are the off-diagonals, one shorter than `diag`."""
+    n = diag.size
+    c, d = np.zeros(n), np.zeros(n)
+    c[0], d[0] = (upper[0] / diag[0] if n > 1 else 0.0), rhs[0] / diag[0]
+    for i in range(1, n):
+        m = diag[i] - lower[i - 1] * c[i - 1]
+        c[i] = upper[i] / m if i < n - 1 else 0.0
+        d[i] = (rhs[i] - lower[i - 1] * d[i - 1]) / m
+    x = np.zeros(n)
+    x[-1] = d[-1]
+    for i in range(n - 2, -1, -1):
+        x[i] = d[i] - c[i] * x[i + 1]
+    return x
+
+
 def _logmean(a: Tensor, b: Tensor) -> Tensor:
     """Logarithmic mean of two positive tensors."""
     return torch.where(a == b, a, (b - a) / torch.log(b / a))
@@ -264,6 +370,9 @@ class Model:
                                          torch.zeros_like(self.sink)), dim=0).values
         self.height = torch.clamp(self.zc[:, None, None] - below, min=1e-3 * self.dx)
         self.wall = self._wall_coefficient(z0)
+        self.column = None
+        if cfg.inflow == "canopy" and boundary is None:
+            self._equilibrium_inflow(z0, ex, ey)
         self.poisson = Poisson(self._projection_operator(), precond_dtype=cfg.precond_dtype)
         self._lam: Optional[Tensor] = None
         self._momentum_factors = None
@@ -279,6 +388,91 @@ class Model:
             w.bc = {k: v.to(dtype) for k, v in self.bc.items()}
         w.poisson, w._work = None, w
         return w
+
+    # ── Inflow in equilibrium with the canopy ────────────────────────────────────────────
+
+    COLUMN_TOL = 1e-10
+    """Relative change of the precursor column's speed at which its iteration stops."""
+
+    def equilibrium_column(self, z0: Tensor, iterations: int = 5000, where: Optional[Tensor] = None) -> Dict[str, np.ndarray]:
+        """The steady, horizontally uniform wind over this site's mean canopy: the precursor of the inflow.
+
+        The model's own vertical balance on its own levels, with nothing varying across: mixing-length diffusion
+        d/dh(nu dU/dh) = (s + w) U^2, where s is the canopy drag density averaged over the fluid cells at each height
+        above their ground, w the ground's log-law stress in the first cell (the domain's mean z0), and the top held at
+        the profile's speed as the 3D model holds it. A log-law inflow is not a steady state of that canopy, so the
+        canopy slows it for hundreds of meters downwind; this column is, so the fetch inside the domain does not
+        change the field.
+
+        Returns:
+            {"h": cell-center heights above ground [m], "u": speed there [m/s], "h_top", "u_top"}.
+        """
+        zf = self.zf.double().cpu().numpy()
+        h = self.zc.double().cpu().numpy() - zf[0]
+        dz = np.diff(zf)
+        dzc = np.diff(h)
+        n = h.size
+        fluid = ~self.solid if where is None else (~self.solid) & where[None]
+        cell = torch.bucketize(self.height, self.zf[1:] - self.zf[0]).clamp(max=n - 1)
+        num = torch.zeros(n, dtype=torch.float64, device=self.sink.device)
+        cnt = torch.zeros(n, dtype=torch.float64, device=self.sink.device)
+        num.index_add_(0, cell[fluid], self.sink[fluid].double())
+        cnt.index_add_(0, cell[fluid], torch.ones_like(self.sink[fluid], dtype=torch.float64))
+        s = (num / cnt.clamp(min=1)).cpu().numpy()
+        z0m = float(z0[0][fluid[0]].double().mean()) if bool(fluid[0].any()) else float(z0.double().mean())
+        wall0 = float(_wall(torch.tensor(dz[0] / 2), torch.tensor(z0m), torch.tensor(dz[0])))
+        drag = s.copy()
+        drag[0] += wall0
+        h_top, u_top = h[-1] + self.d_top, self.u_top
+        lm = lambda a, b: np.where(np.isclose(a, b), a, (b - a) / np.log(b / a))  # noqa: E731
+        l_int = (KAPPA * lm(h[:-1], h[1:])) ** 2
+        l_top = (KAPPA * lm(h[-1:], np.array([h_top]))) ** 2
+        u = np.maximum(u_top * np.log(np.maximum(h / z0m, 1.0 + 1e-9)) / np.log(h_top / z0m), 1e-3 * u_top)
+        nu_int = l_int * np.abs(np.diff(u)) / dzc + NU_AIR
+        nu_top = l_top * abs(u_top - u[-1]) / self.d_top + NU_AIR
+        for it in range(iterations):
+            nu_int = 0.5 * nu_int + 0.5 * (l_int * np.abs(np.diff(u)) / dzc + NU_AIR)
+            nu_top = 0.5 * nu_top + 0.5 * (l_top * abs(u_top - u[-1]) / self.d_top + NU_AIR)
+            c_lo = np.concatenate([[0.0], nu_int / dzc])          # conductance to the cell below
+            c_hi = np.concatenate([nu_int / dzc, nu_top / self.d_top])
+            diag = c_lo + c_hi + dz * drag * np.abs(u)
+            rhs = np.zeros(n)
+            rhs[-1] = c_hi[-1] * u_top
+            new = _tridiagonal(-c_lo[1:], diag, -c_hi[:-1], rhs)
+            done = np.max(np.abs(new - u)) <= self.COLUMN_TOL * u_top
+            u = new
+            if done:
+                break
+        return {"h": h, "u": u, "h_top": h_top, "u_top": u_top, "iterations": it + 1, "drag": s, "z0": z0m}
+
+    def _equilibrium_inflow(self, z0: Tensor, ex: float, ey: float) -> None:
+        """Prescribe the equilibrium column on every side and start from it, at each cell's height above its ground."""
+        kw = dict(device=self.sink.device, dtype=self.sink.dtype)
+        height = self.height.double().cpu().numpy()
+        vec = torch.tensor([ex, ey, 0.0], **kw)[:, None, None, None]
+
+        def field(col):
+            hh = np.concatenate([[0.0], col["h"], [col["h_top"]]])
+            uu = np.concatenate([[0.0], col["u"], [col["u_top"]]])
+            u = torch.as_tensor(np.interp(height, hh, uu), **kw)[None] * vec
+            u[:, self.solid] = 0.0
+            return u
+        self.column = self.equilibrium_column(z0)
+        u = field(self.column)
+        self.initial = u
+        sides = {"west": u[..., 0].clone(), "east": u[..., -1].clone(), "south": u[:, :, 0, :].clone(),
+                 "north": u[:, :, -1, :].clone()}
+        ring = int(round(self.cfg.inflow_ring_m / self.dx))
+        if ring > 0:            # each side from the canopy of its own strip: the canopy the wind crosses to arrive
+            strips = {"west": (slice(None), slice(0, ring)), "east": (slice(None), slice(-ring, None)),
+                      "south": (slice(0, ring), slice(None)), "north": (slice(-ring, None), slice(None))}
+            take = {"west": lambda a: a[..., 0], "east": lambda a: a[..., -1], "south": lambda a: a[:, :, 0, :],
+                    "north": lambda a: a[:, :, -1, :]}
+            for side, (sy, sx) in strips.items():
+                where = torch.zeros(self.ny, self.nx, dtype=torch.bool, device=self.sink.device)
+                where[sy, sx] = True
+                sides[side] = take[side](field(self.equilibrium_column(z0, where=where))).clone()
+        self.bc = dict(sides, top=self.u0_top[:, None, None].expand(3, self.ny, self.nx).clone())
 
     # ── Geometry ─────────────────────────────────────────────────────────────────────────
 
@@ -631,6 +825,24 @@ class Model:
             self._near = (~self.solid) & (self.height >= lo) & (self.height <= hi)
         return u[:2, self._near].norm(dim=0)
 
+    LEVELS_M = (4.0, 5.0, 10.0, 25.0)
+    """The published levels, each watched on its own band of cells within half a cell of that height."""
+
+    def level_stats(self, u: Tensor) -> dict:
+        """Median and p95 of the horizontal speed on each LEVELS_M band, {"4": [median, p95], ...}."""
+        if not hasattr(self, "_bands"):
+            half = max(0.5 * self.dx, 0.5)
+            self._bands = {f"{h:g}": (~self.solid) & ((self.height - h).abs() <= half) for h in self.LEVELS_M}
+        out = {}
+        for k, m in self._bands.items():
+            s = u[:2, m].norm(dim=0)
+            if s.numel() == 0:
+                continue
+            s = s[::max(1, -(-s.numel() // (1 << 24)))]
+            q = torch.quantile(s, torch.tensor([0.5, 0.95], dtype=s.dtype, device=s.device))
+            out[k] = [float(q[0]), float(q[1])]
+        return out
+
     @staticmethod
     def settle_change(a: Tensor, b: Tensor) -> dict:
         """How far the near-ground speed moved from `a` to `b`: its median and p95, relative, and the RMS change
@@ -651,6 +863,8 @@ class Model:
         state = initial if isinstance(initial, dict) else None
         u = self.background() if initial is None or state is not None else torch.as_tensor(
             initial, device=cfg.device, dtype=cfg.dtype)
+        if self.column is not None:
+            self.initial = None                     # the canopy inflow's start, used: a whole field freed
         faces = self.faces(u) if state is None else tuple(torch.as_tensor(f, device=cfg.device, dtype=cfg.dtype)
                                                             for f in state["faces"])
         div0 = float(self.divergence(faces).norm())
@@ -659,15 +873,17 @@ class Model:
         iterations, change = [it], []
         settling = cfg.settle_tol is not None
         last = cfg.max_steps if settling and cfg.max_steps else cfg.steps
-        settle, calm, settled, step = [], 0, None, -1
+        settle, calm, settled, step, hist = [], 0, None, -1, {}
         ref, acc = None, None
         fv = cfg.scheme == "fv"
         pi = torch.zeros_like(u[0])                 # the accumulated multiplier: -dt times the pressure
         if isinstance(initial, dict):               # a finite-volume state: its faces and pressure carry on
             pi = -torch.as_tensor(initial["pressure"], device=cfg.device, dtype=cfg.dtype) * self.dt
+        aa = _Anderson(cfg.anderson, cfg.anderson_store) if fv and cfg.anderson else None
         for step in range(last):
             prev = u
             w, wd = self._work, self._work.sink.dtype
+            x0 = (*faces, pi, *w._nu) if aa is not None and getattr(w, "_nu", None) is not None else None
             if fv:
                 pressure = self.cells(self.face_gradient(pi))
                 du, _ = w.fv_increment(tuple(f.to(wd) for f in faces), u.to(wd), pressure.to(wd))
@@ -681,6 +897,9 @@ class Model:
             faces, it, rel = self.project(faces)
             if fv:
                 pi = pi + self._lam[0]
+            if x0 is not None:              # the step's map mixed with the last ones' (faces, multiplier, viscosity)
+                mixed = aa.step(x0, (*faces, pi, *w._nu), residual_parts=3)
+                faces, pi, w._nu = tuple(mixed[:3]), mixed[3], tuple(mixed[4:])
             u = self.cells(faces)
             iterations.append(it)
             change.append(float((u - prev).abs().max()) / self.u_top)
@@ -694,14 +913,23 @@ class Model:
             if settling and (step + 1) % cfg.settle_every == 0:
                 mean_faces = tuple(a / cfg.settle_every for a in acc)
                 mean = self.cells(mean_faces)
-                acc, now = None, self.near_ground(mean)
+                acc, now, levels = None, self.near_ground(mean), self.level_stats(mean)
+                for k, v in levels.items():
+                    for j, name in enumerate(("median", "p95")):
+                        hist.setdefault(f"{k}m {name}", []).append(v[j])
                 if ref is not None:
-                    row = dict(self.settle_change(ref, now), step=step + 1, pseudo_s=round((step + 1) * self.dt, 1))
+                    row = dict(self.settle_change(ref, now), step=step + 1, pseudo_s=round((step + 1) * self.dt, 1),
+                               levels=levels)
                     if fv:
                         row["residual"] = float(res_norm / res0)
+                    tail = max(tail_bound(h) for h in hist.values()) if hist else float("inf")
+                    row["tail"] = tail if math.isfinite(tail) else None          # None: no decay measured yet
                     settle.append(row)
-                    calm = calm + 1 if (row["d_median"] < cfg.settle_tol and row["d_p95"] < cfg.settle_tol
-                                        and row["rms_rel"] < self.SETTLE_RMS * cfg.settle_tol) else 0
+                    if cfg.settle_rule == "tail":
+                        calm = 2 if tail <= cfg.settle_tol else 0
+                    else:
+                        calm = calm + 1 if (row["d_median"] < cfg.settle_tol and row["d_p95"] < cfg.settle_tol
+                                            and row["rms_rel"] < self.SETTLE_RMS * cfg.settle_tol) else 0
                     if cfg.verbose:
                         print(f"  settle {json_row(row)}", flush=True)
                     if calm >= 2 and step + 1 >= cfg.steps:

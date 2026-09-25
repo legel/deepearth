@@ -64,7 +64,8 @@ def _config(args: argparse.Namespace) -> SolverConfig:
                        dtype=torch.float32 if args.float32 else torch.float64,
                        lateral=args.lateral, verbose=True, settle_tol=getattr(args, "settle_tol", None),
                        settle_every=getattr(args, "settle_every", 20), max_steps=getattr(args, "max_steps", None),
-                       scheme=getattr(args, "scheme", "fv"), tol_momentum=getattr(args, "tol_momentum", 1e-5))
+                       scheme=getattr(args, "scheme", "fv"), tol_momentum=getattr(args, "tol_momentum", 1e-5),
+                       settle_rule=getattr(args, "settle_rule", "window"), inflow=getattr(args, "inflow", "log"))
     return cfg.fast() if getattr(args, "fast", False) else cfg
 
 
@@ -335,6 +336,10 @@ def main(argv: Optional[List[str]] = None) -> None:
             p.add_argument("--settle-tol", type=float,
                            help="step until the near-ground speed settles to this fraction (--steps the fewest)")
             p.add_argument("--settle-every", type=int, default=20, help="steps between settle checks")
+            p.add_argument("--settle-rule", default="window", choices=("tail", "window"),
+                           help="tail: stop when the estimated change still to come is under --settle-tol")
+            p.add_argument("--inflow", default="log", choices=("canopy", "log"),
+                           help="canopy: the sides carry the steady column over the site's mean canopy")
             p.add_argument("--max-steps", type=int, help="the most steps a settling run takes; then it says so")
             p.add_argument("--cfl", type=float, default=2.0)
             p.add_argument("--tol", type=float, default=1e-6)

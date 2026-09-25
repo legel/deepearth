@@ -200,9 +200,18 @@ def bundled(site: SiteConfig, bundle: Path, buffer_m: Optional[float] = None) ->
 
 def box_of(site: SiteConfig, bundle: Path) -> Optional[Dict[str, Tuple[float, float, float, float]]]:
     """The bundle's boxes when the site follows its ordered polygon: {"fetch": ..., "display": ...}, each
-    (x0, y0, x1, y1) scene metres; None for a disc site, which then runs exactly as before."""
-    b = aoi_document(site, bundle)["aoi"].get("box_scene_m")
-    return {k: tuple(float(v) for v in b[k]) for k in ("fetch", "display")} if b else None
+    (x0, y0, x1, y1) scene metres; None for a disc site, which then runs exactly as before. A site whose buffer
+    is wider than the bundle's has its fetch box grown by the difference on every side, as a disc's radius is."""
+    doc = aoi_document(site, bundle)["aoi"]
+    b = doc.get("box_scene_m")
+    if not b:
+        return None
+    out = {k: tuple(float(v) for v in b[k]) for k in ("fetch", "display")}
+    grow = max(0.0, float(site.buffer_m) - float(doc["buffer_m"]))
+    if grow > 0:
+        x0, y0, x1, y1 = out["fetch"]
+        out["fetch"] = (x0 - grow, y0 - grow, x1 + grow, y1 + grow)
+    return out
 
 
 def box_cells(box: Tuple[float, float, float, float], dx: float, multiple: int = 128) -> Tuple[int, int]:

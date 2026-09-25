@@ -180,3 +180,59 @@ def test_the_fast_numerics_deliver_the_same_settled_field_and_pass_the_divergenc
     assert fast.settled and rel < 1e-3, rel
     assert fast.divergence_max_1_s <= 1e-6 and fast.flux_balance <= 1e-6
     assert fast.velocity.dtype == ref.velocity.dtype
+
+
+def test_the_tail_bound_is_what_a_geometric_decay_has_left():
+    from solver import tail_bound
+    limit, r = 0.75, 0.8
+    h = [limit + 0.02 * r ** k for k in range(6)]
+    assert tail_bound(h) == pytest.approx((h[-1] - limit) / h[-1], rel=1e-9)
+    assert tail_bound(h[:3]) == float("inf"), "three windows measure only two changes"
+    assert tail_bound([1.0, 1.1, 1.2, 1.3]) == float("inf"), "no decay yet"
+    alt = [0.75 + 0.01 * (-0.5) ** k for k in range(4)]
+    assert tail_bound(alt) == pytest.approx(abs(alt[-1] - alt[-2]) / alt[-1])
+
+
+def test_the_tail_rule_stops_within_its_bound_of_the_converged_levels():
+    """settle_rule="tail" stops once the estimated change still to come of every level's median and p95 is under
+    settle_tol; what a much longer run then adds stays within that bound."""
+    g = checks.grid(1.0, 64, 32, 24)
+    scene, p = domain.cube(g, 8.0, centre=(32.0, 16.0)), checks.profile()
+    kw = dict(steps=20, cfl=8.0, tol=1e-6, settle_every=10, settle_rule="tail")
+    res = solve(scene, p, checks.WEST, SolverConfig(settle_tol=0.01, max_steps=400, **kw))
+    assert res.settled is True and len(res.settle) >= 3, "three changes before a decay is measured"
+    assert res.settle[-1]["tail"] <= 0.01 and res.settle[0]["tail"] is None
+    ref = solve(scene, p, checks.WEST, SolverConfig(settle_tol=1e-5, max_steps=600, **kw))
+    for k, (med, p95) in ref.settle[-1]["levels"].items():
+        got = res.settle[-1]["levels"][k]
+        assert abs(got[0] - med) <= 0.01 * med and abs(got[1] - p95) <= 0.01 * p95, (k, got, med, p95)
+
+
+def test_the_precursor_column_over_open_ground_is_the_log_law():
+    """Without a canopy the equilibrium column is the discrete log profile the 3D model keeps unchanged."""
+    from solver import Model
+    g, p = checks.grid(1.0, 16, 16, 24), checks.profile()
+    m = Model(domain.flat(g, checks.Z0), p, checks.WEST, SolverConfig(steps=1, inflow="canopy"))
+    col = m.column
+    assert col is not None and col["iterations"] < 5000
+    want = p.speed(g.zc)
+    assert np.abs(col["u"] - want).max() <= 1e-3 * want.max(), np.abs(col["u"] - want).max()
+
+
+def test_a_canopy_inflow_holds_over_a_uniform_canopy_whatever_the_fetch():
+    """Over a canopy that fills the domain, the equilibrium inflow is the field everywhere, so the fetch the domain
+    holds changes nothing; the log-law inflow is slowed downwind instead."""
+    g = checks.grid(1.0, 64, 16, 24)
+
+    def canopy():
+        s = domain.flat(g, checks.Z0)
+        s.sink[g.zc < 8.0] = 0.2 * 3.0 / 8.0
+        return s
+    p, k = checks.profile(), [i for i, z in enumerate(g.zc) if z < 8.0]
+    cfg = dict(steps=60, cfl=8.0, tol=1e-6)
+    eq = solve(canopy(), p, checks.WEST, SolverConfig(inflow="canopy", **cfg))
+    log = solve(canopy(), p, checks.WEST, SolverConfig(inflow="log", **cfg))
+    near, far = eq.velocity[0, k, 8, 4], eq.velocity[0, k, 8, 56]
+    assert np.abs(far - near).max() <= 0.01 * near.max(), (near, far)
+    near, far = log.velocity[0, k, 8, 4], log.velocity[0, k, 8, 56]
+    assert np.abs(far - near).max() > 0.05 * near.max(), "the log law is not a steady state of the canopy"

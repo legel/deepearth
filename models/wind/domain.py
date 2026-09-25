@@ -352,7 +352,8 @@ def from_bundle(site: SiteConfig, dx: float, bundle: Path, data_radius: Optional
     import params
 
     doc = sites.aoi_document(site, bundle)
-    box = (doc["aoi"].get("box_scene_m") or {}).get("fetch") if data_radius is None else None
+    boxes = sites.box_of(site, bundle) if data_radius is None else None
+    box = boxes["fetch"] if boxes else None
     if box:
         # A site that follows its ordered polygon: nx x ny over its fetch box, centred on it. A tuple `cells` is a
         # coarse solve over the fine grid's own extent (`cli.coarse_cells`); an int (--width-cells) is a disc square.
