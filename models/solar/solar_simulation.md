@@ -32,7 +32,16 @@ part into the beam with the anisotropy index A = DNI / E0 [hay-davies]. A point 
 
 where L is the share of the sun's direction s that reaches the point, V its sky-view factor, and the last term
 the light reflected from ground of albedo 0.2 [point]. On open level ground (L = 1, V = 1, n_z = 1) E is exactly
-the tower's GHI.
+the tower's GHI. A surface's normal faces the sensor: an airborne return was seen from above, so a fitted normal that
+points down is turned over.
+
+A return from a crown is a cloud of leaves, not a plane. Per unit one-sided leaf area, both faces counted, with
+leaves at spherically distributed angles, it receives
+
+    E_leaf = G DNI L + DHI V + 0.2 GHI,    G = 0.5
+
+where G is the mean projection of a leaf on the sun, the same G as in the canopy's optical depth below, L the share
+of the sun that reaches the leaf, and V its view of the upper sky.
 
 L and V come from the terrain and buildings. From each point, rays leave in 64 azimuth wedges of three rays each;
 each ray samples the height field at distances growing 3.5 % per step out to 280 m, and a wedge's horizon is the
