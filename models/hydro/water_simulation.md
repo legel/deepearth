@@ -18,8 +18,10 @@ infiltrates [solver-step]. The time step follows the wave speed of the deepest w
 storage on the grid, outflow, and the small volume the positivity clamp creates), so each run reports how well
 volume closed [solver-mass].
 
-Roughness is a Manning n per cell. Nodata cells are an open edge: water that reaches one leaves the domain and is
-counted as outflow.
+Roughness is a Manning n per cell: one value, 0.040, or by land cover, each NLCD class taking the normal value of Chow's
+(1959) table for flood plains (woody wetlands 0.150, emergent wetlands, forest and shrub 0.100, grass and pasture
+0.035, open water 0.030; developed land keeps 0.040, which the table has no class for) [roughness]. Nothing is
+fitted to a gauge. Nodata cells are an open edge: water that reaches one leaves the domain and is counted as outflow.
 
 ## Infiltration and the soil state
 
@@ -43,6 +45,13 @@ for a shallow front that a later storm starts on top of it, and whether the last
 this state, and the next run can start from it, so the soil's wetness before a storm is simulated, not assumed.
 The total a cell can take is capped by the room above its water table.
 
+The soil is coupled to the surface on a step of its own, dt_s = dx / (0.4 m/s), the time sheet flow at 0.4 m/s takes to
+cross one cell: 0.5 s at 0.2 m, about ten flow sub-steps [soil-step], [soil-dt]. Each soil update takes infiltration and
+then surface storage over the time since the last one. Green-Ampt's ponded increment is exact over any step and the
+redistribution is implicit, so this is a first-order split in dt_s; setting dt_s to 0 updates the soil every flow
+sub-step. It matters for cost: on every sub-step the soil, in float64, was 91 % of an NVIDIA L4's sub-step and 94 % of
+an RTX PRO 6000's at 7.76 M cells, and on its own step the L4's sub-step is 7.2 times faster [soil-bench].
+
 Soil parameters on the gauge site come from the USDA soil survey (SSURGO): saturated conductivity, saturated and
 field-capacity water content from each map unit's dominant surface horizon. The pore-size index, residual water and
 wetting-front suction come from the Rawls, Brakensiek and Miller (1983) texture table [texture], [gar-soil]. Roads
@@ -55,6 +64,14 @@ The flux tower's precipitation P drives the rain on every cell, hour by hour. In
 water balance on the same classes and soils supplies each storm's starting soil water and the room left in the root
 zone, so the storm solver and the balance share one soil state.
 
+For the gauge test the rain can instead come from the AORC record's 1 km grid (NOAA's Analysis of Record for
+Calibration). Each cell then takes its own 1 km cell's storm total on the domain mean's hourly timing, or its own
+cell's hours; either way each hour's shares average 1 over the grid, so the volume budget counts the grid's own rain
+[aorc], [hourly]. The storm's starting soil can come from such a continuous balance run on the same grid: each
+cell's water content and the room left above its water table at the storm's first hour [antecedent]. The domain can
+be the gauge's whole drainage basin from the USGS Network-Linked Data Index [basin], with the depressions kept
+(the terrain before its depressions are breached) so wetlands and ponds hold what they catch [depressions].
+
 ## Experiments
 
 Checks against exact solutions [tests]:
@@ -65,6 +82,11 @@ Checks against exact solutions [tests]:
     same storm on a drained soil and on a wet one                                     drained soil takes over 5 % more
     Manning normal depth under a prescribed inflow                                    9.6e-5 relative
     volume budget with rain, inflow, infiltration and surface storage                 closes to 1e-6 (float64)
+    soil on its own 0.5 s step against every sub-step, worst case: 7.76 M cells at    infiltration -0.86 %,
+      0.2 m all ponded (1 cm standing, 40 % sealed at random, loam, 72 mm/h, 60 s)     outflow +0.29 %,
+                                                                                      mass residual 3e-8
+    the same on 0.2 m planes of sandy loam and clay loam, dt_s 0.5 to 16 s            converges; under 0.5 %
+                                                                                      of the water at 1 s
 
 Gauge test: Hurricane Ian (September 2022) at Gee Creek near Longwood, Florida, USGS gauge 02234400, 391.7 mm of rain
 over 72 hours, 25 m grid, scored over the gauge's 175 samples. Terrain, rain and roughness are identical in both
@@ -79,15 +101,26 @@ runs; only the infiltration differs [validation-horton], [validation-gar].
 
 Cost of that run on an 8-core CPU in float64: 530 s with Horton, 2,677 s with GAR.
 
+The same storm over the gauge's whole drainage basin (USGS NLDI), with the depressions kept, the starting soil from a
+90-day continuous balance on the same grid, and each cell's rain from AORC's 1 km grid (339.5 mm over the basin; the
+gauge's runoff coefficient on that rain is 0.333 to 0.362). Nothing is fitted; each run changes one input from the
+first [basin-scalar], [basin-nlcd], [basin-hourly].
+
+                                              peak (gauge 32.4 m³/s    runoff        Nash-      Kling-
+                                              at 37.5 h)               coefficient   Sutcliffe  Gupta
+    Manning n 0.040, AORC totals on the       194.2 m³/s at 33.5 h     0.350         -8.92      -1.69
+      domain mean's hours
+    Manning n by NLCD class (Chow 1959)       151.1 m³/s at 34.5 h     0.344         -4.86      -1.03
+    each cell its own AORC hours              204.1 m³/s at 33.5 h     0.348         -8.74      -1.66
+
 ## Known errors
 
-The Gee Creek peak is 8 times the gauge's and the runoff coefficient twice the observed; this is not a validated
-discharge. Three causes are measured. First, the grid box covers only the eastern half of the gauge's drainage basin
-(the NLDI basin spans 11.3 km east to west, the box 6 km), and the score compares the whole box's outflow with the
-gauge. Second, the survey puts the seasonal-high water table at the surface under a third of the catchment, so those
-cells take nothing; that is the wettest condition of the year, not necessarily Ian's. Third, the depression
-storage of Florida's wetlands and ponds is not represented. Refining the grid 5 times changes the runoff
-coefficient by 0.4 %, so the grid is not the cause. A run over the whole basin is under way.
+Gee Creek's discharge is not validated. Over the whole basin, with the starting soil from a continuous balance and
+the depressions kept, the volume matches the gauge: a runoff coefficient of 0.344 to 0.350 against 0.333 to 0.362.
+The peak does not. It is 4.7 to 6.3 times the gauge's and 3 to 4 hours early, so the water reaches the outlet too
+fast. Land-cover roughness slows it by an hour and lowers it by 22 %; each cell's own rain timing does not help.
+Nothing was tuned to close the gap. The earlier grid box, which covered only the eastern half of the basin, had a
+peak 8 times the gauge's and twice its runoff; refining that grid 5 times changed its runoff coefficient by 0.4 %.
 
 The solver has one soil layer per cell, no baseflow and no channel storage, so recessions are too fast. Culverts
 are not routed.
@@ -104,5 +137,17 @@ are not routed.
 [texture]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/infiltration.py#L67
 [gar-soil]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/domain.py#L230
 [tests]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/tests/test_infiltration.py
+[soil-step]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/solver.py#L370
+[soil-dt]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/solver.py#L76
+[soil-bench]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/docs/soil_step_l4.json
+[roughness]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/domain.py#L127
+[aorc]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/forcing.py#L86
+[hourly]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/solver.py#L601
+[antecedent]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/domain.py#L347
+[basin]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/domain.py#L302
+[depressions]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/domain.py#L59
+[basin-scalar]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc.json
+[basin-nlcd]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn.json
+[basin-hourly]: https://github.com/legel/deepearth/blob/018bd44/models/hydro/docs/validation_ian_25m_gar_basin_depressions_antecedent_aorch.json
 [validation-horton]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/docs/validation_site3_ian_25m.json
 [validation-gar]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/docs/validation_site3_ian_25m_gar.json
