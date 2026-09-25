@@ -1,4 +1,4 @@
-"""Physical constants shared by the solver, the surface parameterisation and the viewer export.
+"""Physical constants shared by the solver and the surface parameterisation.
 
 Import-time side-effect free: no file reads, no network, no dependency on site data. Anything
 needing site data belongs in `sites.SiteConfig`.

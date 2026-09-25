@@ -5,8 +5,6 @@
     python3 cli.py simulate --site site3 --storm ian --cell-size 25
     python3 cli.py ensemble --site site3 --cell-size 25
     python3 cli.py validate --site site3 --storm ian
-    python3 cli.py export   --site site3 --storm ian --cell-size 25
-    python3 cli.py viewer   --site site3
 
 Run it from this directory. The modules are flat and import each other by name, so there is no
 package to install and no path manipulation anywhere.
@@ -186,23 +184,6 @@ def cmd_validate(args: argparse.Namespace) -> None:
     print(f"wrote {out}")
 
 
-def cmd_export(args: argparse.Namespace) -> None:
-    """Rebuild the committed viewer payload from this site's outputs."""
-    from viewer.export import export_all
-
-    site = sites.get_site(args.site)
-    summary = export_all(site, storm_name=args.storm, cell_size_m=args.cell_size,
-                         stride=args.stride)
-    print(json.dumps(summary, indent=1))
-
-
-def cmd_viewer(args: argparse.Namespace) -> None:
-    """Serve the 3D viewer."""
-    from viewer.server import serve
-
-    serve(sites.get_site(args.site), port=args.port)
-
-
 def _sidecar(site: sites.SiteConfig, t0: str, provenance: Dict[str, object]) -> Dict[str, object]:
     """The frame sidecar for one run."""
     return frames.sidecar(
@@ -258,15 +239,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--surface", action="store_true",
                    help="score the segmentation-derived arm rather than the scalar baseline")
     p.add_argument("--infiltration", choices=("horton", "gar"), default="horton")
-
-    p = add("export", cmd_export, "rebuild the committed viewer payload")
-    p.add_argument("--storm", default="ian", choices=sorted(sites.STORMS))
-    p.add_argument("--cell-size", type=float, default=25.0)
-    p.add_argument("--stride", type=int, default=2,
-                   help="keep every nth frame; 2 halves the payload and still reads as continuous")
-
-    p = add("viewer", cmd_viewer, "serve the 3D viewer")
-    p.add_argument("--port", type=int, default=5051)
 
     args = parser.parse_args(argv)
     import solver

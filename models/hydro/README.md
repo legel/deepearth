@@ -4,8 +4,6 @@ Storm water over a site, in PyTorch: rain lands on the terrain, infiltrates into
 carries from one storm to the next, and the excess flows under gravity and bed friction in two dimensions. The
 full account, with every experiment and known error, is [water_simulation.md](water_simulation.md).
 
-[![Flood depth and discharge in the viewer](docs/viewer_ian_peak.jpg)](docs/viewer_ian_peak.jpg)
-
 ## Equations
 
 | process | equation | code |

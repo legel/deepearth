@@ -26,7 +26,6 @@ pysheds               # D8 routing, accumulation, HAND
 richdem               # depression breaching. PYTHON 3.9 ONLY.
 
 requests
-flask                 # viewer
 pytest                # tests
 
 # Segmentation only, and only under Python 3.11:

@@ -17,7 +17,6 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import frames as frames_io  # noqa: E402
 import sites  # noqa: E402
 import validate  # noqa: E402
 from validate import CFS_TO_CMS  # noqa: E402
@@ -88,83 +87,6 @@ def fig_hydrograph(site, storm, cell_size_m) -> Path:
     return out
 
 
-def fig_flood_peak(site, storm, cell_size_m) -> Path:
-    """Peak simulated depth over shaded terrain."""
-    import rasterio
-    from matplotlib.colors import LightSource
-    from scipy.ndimage import gaussian_filter
-
-    frames_path = site.out_path(f"frames_{storm.name}_{cell_size_m:g}m.bin")
-    assert frames_path.exists(), f"{frames_path} missing; run the simulate stage"
-    _, frames = frames_io.read(frames_path)
-    peak = frames.max(axis=0)
-
-    with rasterio.open(site.dem_conditioned) as src:
-        dem = src.read(1, out_shape=peak.shape).astype(float)
-        nodata = src.nodata
-    if nodata is not None:
-        dem[dem == nodata] = np.nan
-    gaps = ~np.isfinite(dem)
-    # Smooth before shading. A raw gradient on a downsampled DEM over 25 m of relief is mostly
-    # resampling speckle, which reads as noise rather than terrain.
-    filled = np.where(gaps, np.nanmedian(dem), dem)
-    shade = LightSource(azdeg=315, altdeg=45).hillshade(
-        gaussian_filter(filled, 1.2), vert_exag=30, dx=cell_size_m, dy=cell_size_m)
-    shade = np.ma.masked_where(gaps, shade)
-
-    # Size the canvas to the raster so the axes box fills it exactly; imshow preserves aspect
-    # and any mismatch shows up as dead space around the map.
-    rows, cols = peak.shape
-    fig_w, ax_frac_w, ax_frac_h = 6.4, 0.80, 0.88
-    fig = _figure(fig_w, (fig_w * ax_frac_w * rows / cols) / ax_frac_h)
-    ax = fig.add_axes([0.02, 0.03, ax_frac_w, ax_frac_h])
-    ax.imshow(shade, cmap="Greys_r", vmin=0.15, vmax=1.05, interpolation="bilinear")
-    im = ax.imshow(np.ma.masked_less(peak, 0.05), cmap="YlGnBu", vmin=0.05, vmax=1.5,
-                   interpolation="nearest", alpha=0.92)
-    ax.set_xticks([]); ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_color(GRID)
-    ax.set_title(f"Peak flood depth, Hurricane Ian  -  {cell_size_m:g} m grid",
-                 color=INK, fontsize=10, loc="left", pad=8)
-
-    cax = fig.add_axes([0.855, 0.23, 0.028, 0.48])
-    cb = fig.colorbar(im, cax=cax)
-    cb.set_label("depth [m]", color=INK, fontsize=9)
-    cb.ax.tick_params(colors=INK, labelsize=8)
-    cb.outline.set_edgecolor(GRID)
-
-    out = DOCS / "flood_peak_ian.png"
-    fig.savefig(out, facecolor=fig.get_facecolor())
-    plt.close(fig)
-    return out
-
-
-def fig_flood_animation(site, storm, cell_size_m, stride: int = 2) -> Path:
-    """The storm as an animated GIF: the network fills, then drains."""
-    from matplotlib.animation import FuncAnimation, PillowWriter
-
-    times, frames = frames_io.read(site.out_path(f"frames_{storm.name}_{cell_size_m:g}m.bin"))
-    keep = np.arange(0, len(times), stride)
-
-    fig = _figure(5.4, 5.6)
-    ax = fig.add_axes([0.03, 0.05, 0.94, 0.88])
-    ax.set_xticks([]); ax.set_yticks([])
-    im = ax.imshow(frames[0], cmap="YlGnBu", vmin=0.02, vmax=1.5, interpolation="nearest")
-    label = ax.set_title("", color=INK, fontsize=10, loc="left", pad=8)
-
-    def update(i):
-        k = keep[i]
-        im.set_data(np.ma.masked_less(frames[k], 0.02))
-        label.set_text(f"Hurricane Ian   t = {times[k] / 60:5.1f} h")
-        return im, label
-
-    anim = FuncAnimation(fig, update, frames=len(keep), blit=False)
-    out = DOCS / "flood_ian.gif"
-    anim.save(out, writer=PillowWriter(fps=6), savefig_kwargs={"facecolor": "#0b0f14"})
-    plt.close(fig)
-    return out
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--site", default="site3", choices=sorted(sites.SITES))
@@ -173,7 +95,7 @@ def main() -> None:
     args = ap.parse_args()
 
     site, storm = sites.get_site(args.site), sites.get_storm(args.storm)
-    for fn in (fig_hydrograph, fig_flood_peak, fig_flood_animation):
+    for fn in (fig_hydrograph,):
         path = fn(site, storm, args.cell_size)
         print(f"  {path.name:24s} {path.stat().st_size / 1e6:6.2f} MB")
 

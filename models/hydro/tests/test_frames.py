@@ -29,32 +29,6 @@ def test_header_matches_the_documented_layout(tmp_path):
     assert len(raw) == 16 + 4 * 3 + 4 * 3 * 4 * 5
 
 
-def test_byte_offsets_match_the_javascript_reader(tmp_path):
-    """`flood.js` cannot import `frames.py`, so its constants are pinned from this side."""
-    n, rows, cols = 4, 6, 5
-    data = np.arange(n * rows * cols, dtype=np.float32).reshape(n, rows, cols)
-    times = [0.0, 15.0, 30.0, 45.0]
-    raw = frames.write(tmp_path / "f.bin", data, times).read_bytes()
-
-    assert struct.unpack("<I", raw[4:8])[0] == n
-    assert struct.unpack("<I", raw[8:12])[0] == rows
-    assert struct.unpack("<I", raw[12:16])[0] == cols
-    assert np.array_equal(np.frombuffer(raw, "<f4", count=n, offset=16), np.float32(times))
-    depths = np.frombuffer(raw, "<f4", count=n * rows * cols, offset=16 + 4 * n)
-    assert np.array_equal(depths.reshape(n, rows, cols), data)
-    assert np.array_equal(depths[2 * rows * cols:3 * rows * cols], data[2].ravel())
-
-
-def test_the_javascript_reader_declares_the_same_layout():
-    """The layout comment in flood.js is the contract; drift there is silent."""
-    js = (Path(__file__).resolve().parents[1] / "viewer/static/js/flood.js").read_text()
-    assert "getUint32(4, true)" in js and "getUint32(8, true)" in js
-    assert "getUint32(12, true)" in js
-    assert "new Float32Array(buf, 16, n)" in js
-    assert "new Float32Array(buf, 16 + 4 * n, n * rows * cols)" in js
-    assert "'SIML'" in js
-
-
 def test_rejects_a_file_that_is_not_ours(tmp_path):
     bad = tmp_path / "bad.bin"
     bad.write_bytes(b"NOPE" + b"\0" * 32)

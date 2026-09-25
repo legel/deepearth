@@ -2,7 +2,7 @@
 
 Two layouts, both little-endian. `SIMF` is the contract every solver writes to, laid out below.
 
-Depth only, read by `viewer/static/js/flood.js`, whose layout comment must match::
+Depth only::
 
     [0:4]                       b'SIML'
     [4:16]                      uint32 n_frames, rows, cols
