@@ -6,31 +6,49 @@ acres is 10 million cells.
 
 ## What is solved
 
-The model finds the steady flow of air over a site. At the domain's sides it carries the steady wind of a
-horizontally uniform column over the site's mean canopy: the same momentum balance with nothing varying across,
-solved first, with the canopy drag averaged over the fluid cells at each height above their ground [column]. Each
-side cell takes the column's speed at its own height above its ground [sides], and the top holds the speed of the
-upwind logarithmic profile at the domain's top [inflow]. The column is a steady state of the model over a uniform
-canopy, so the canopy does not keep slowing the inflow downwind. A logarithmic profile at the sides is not one, and
-the canopy slowed it for hundreds of meters (see Experiments). The solved square reaches at least 128 m beyond the
-site. Two conditions hold at every cell when the solve is done.
+The model finds the steady flow of air over a site, driven as the air over a forest is: by a mean horizontal
+pressure gradient, with no stress through the top of the domain [drive]. At the domain's sides it carries the steady
+wind of a horizontally uniform column over the site's mean canopy: the same balance with nothing varying across,
+solved first, with the canopy drag averaged over the fluid cells at each height above their ground and the driving
+force equal to the drag the column's canopy and ground exert on it [column]. Each side cell takes the column's speed
+at its own height above its ground [sides], scaled so its top holds the speed of the upwind logarithmic profile there
+[inflow]. The column is a steady state of the model over a uniform canopy, so the canopy does not keep slowing the
+inflow downwind. The solved square reaches at least 128 m beyond the site. Two conditions hold at every cell when the
+solve is done.
 
 Mass is conserved. The face velocities are corrected by the gradient of one scalar field, found from a Poisson
 equation, so that no cell gains or loses air [project]. Solid cells (buildings, trunks, the ground) have closed
 faces.
 
-Momentum balances. Four terms are in the balance [residual]: the transport of momentum by the flow itself, turbulent
-mixing, the drag of leaves, and the stress of the wind on solid surfaces.
+Momentum balances. Five terms are in the balance [residual]: the transport of momentum by the flow itself, turbulent
+mixing, the drag of leaves, the stress of the wind on solid surfaces, and the driving pressure gradient.
 
 - Transport uses the volume flux through each face and a face value reconstructed from the two cells upwind of
   it, limited so that it never overshoots its neighbors (MUSCL with the van Leer limiter) [convection].
-- Mixing is an eddy viscosity from Prandtl's mixing length: (0.4 h)² times the strain rate, where h is the height
-  above the nearest surface below [viscosity].
+- Mixing is an eddy viscosity from the turbulent kinetic energy k and a length l (Katul et al. 2004) [viscosity]:
+
+      nu_t = C_mu^(1/4) l sqrt(k),     eps = C_mu^(3/4) k^(3/2) / l
+
+  l is kappa (h_c - d) inside a canopy of height h_c, kappa (h - d) above it (d = 2 h_c / 3), and never more than
+  kappa h near the ground, h the height above the nearest surface below [length]. k is carried by the flow and
+  diffused, made by shear and by the leaves' wakes, and lost to dissipation and to the cascade the leaves
+  short-circuit [k]:
+
+      Dk/Dt = div(nu_t / sigma_k grad k) + nu_t |S|^2 - eps + c_d a (beta_p |u|^3 - beta_d |u| k)
+
+  A cell against a solid surface holds k = u*^2 / sqrt(C_mu), u* from the logarithmic law there (Richards and
+  Hoxey 1993). Every constant is from the literature; none is fitted:
+
+      C_mu = 0.09, sigma_k = 1.0        Launder and Spalding (1974)
+      beta_p = 1.0, beta_d = 5.1        Katul et al. (2004), after Sanz (2003)
+      d = 2 h_c / 3                     Raupach (1994)
+      kappa = 0.4
+
 - Leaf drag is c_d a |u| u, with a the leaf area per volume from each class's leaf area index spread over its
-  height [drag].
+  height [drag]; on an order it is the survey's own plant area with height, from the LiDAR's gap fraction and the
+  season's leaves (the solar model's canopy optical depth).
 - Wall stress uses the logarithmic law at half a cell from each solid face, with that surface class's roughness
   length [wall].
-
 ## How it is solved
 
 The steady state is reached by stepping in pseudo-time. Each step solves a linear system for the change in velocity
@@ -45,8 +63,9 @@ projection holds the delivered field's divergence below 1e-9 of the flow. The st
 into single GPU kernels with `torch.compile`.
 
 The eddy viscosity is under-relaxed, half the new value and half the previous, between steps. Without this the
-mixing length and the strain feed back on each other and the iteration oscillates between two states on
-alternate steps; the relaxation removes the oscillation and does not move the steady state.
+viscosity and the strain feed back on each other and the iteration oscillates between two states on alternate
+steps; the relaxation removes the oscillation and does not move the steady state. k takes one implicit step of its own
+after each projection, with the new face fluxes and the step's viscosity [k].
 
 A heading is done when the median, the 95th percentile and the RMS of the horizontal speed 2 to 30 m above the
 surface each move less than 0.2 %, 0.2 % and 1 % between two successive 40-step means, twice running [settle]. How
@@ -70,6 +89,10 @@ short grass through a 60 m blending height (the Wieringa transfer), with the rou
 sector from the tower's own near-neutral hours. Neither path is yet checked against an independent tower.
 
 ## Experiments
+
+The verification, stopping, fetch and cost measurements below were made with the mixing length ((0.4 h)² times the
+strain rate) and a column held at the top's speed. The k-l model driven by the pressure gradient takes the same time
+a heading: 172 to 200 steps at Harvard against 245 to 268, each step a third longer.
 
 Physics checks, 64-bit, 1 m cells, 100 steps [verification]:
 
@@ -135,21 +158,31 @@ Cost of one heading at 1 m (one GPU, list prices):
 
 ## Known errors
 
-The canopy's drag is spread evenly from the ground to the crown's top (c_d LAI / h), so the model has no open trunk
-space. Against the measured profile of NEON's Harvard Forest tower (2D sonics at five heights, DP1.00001), each level's
-speed over the 28.91 m level at the tower's column, weighted over the measured 30° sectors:
+The leaf-on crown is too fast. Against the measured profile of NEON's Harvard Forest tower (2D sonics at five heights,
+DP1.00001, 2019 to 2025), each level's speed over the 28.91 m level at the tower's column, over near-neutral half-hours
+(|z/L| < 0.1 at the top sonic, L the Obukhov length from US-xHA's H, USTAR and TA, z - d = 12.9 m), weighted over their
+30° sectors, the model at each month's own leaves with the survey's plant area by height, error against the measure:
 
-                 measured   log-law inflow   column inflow
-    0.18 m       0.102      0.099            0.050
-    5.26 m       0.248      0.239            0.163
-    17.11 m      0.340      0.555            0.537
-    25.42 m      0.724      0.873            0.868
+    July (n)            measured   mixing length    k-l, stress-driven   k-l, pressure-driven (this model)
+    0.18 m (3,127)      0.077      0.060  -22 %     0.083   +8 %         0.101  +31 %
+    5.26 m (3,129)      0.189      0.163  -14 %     0.138  -27 %         0.213  +13 %
+    17.11 m (1,871)     0.183      0.531 +190 %     0.276  +51 %         0.346  +89 %
+    25.42 m (1,866)     0.659      0.863  +31 %     0.777  +18 %         0.804  +22 %
 
-Within the crown the model is 1.2 to 1.7 times too fast under either inflow. Near the ground the column inflow, the
-model's own equilibrium, is 0.5 to 0.7 times the measured wind; the log-law inflow matched there only because it had
-not yet slowed to that equilibrium. Drag that follows the survey's leaf area with height is the correction in progress.
-The fetch beyond the survey is open ground in the model, and the column is the site's mean canopy. With the column, the
-fetch changes the field by at most 2.6 % from 512 to 768 m.
+    January (n)
+    0.18 m (193)        0.123      0.058  -53 %     0.062  -50 %         0.093  -24 %
+    5.26 m (4,245)      0.257      0.273   +6 %     0.183  -29 %         0.249   -3 %
+    17.11 m (2,448)     0.413      0.627  +52 %     0.409   -1 %         0.445   +8 %
+    25.42 m (2,448)     0.800      0.895  +12 %     0.816   +2 %         0.829   +4 %
+
+The pressure-driven k-l is the first closure with the 5 m level within 20 % in both seasons: the sparse trunk space
+runs faster than the crown's base when a pressure gradient drives it, as measured in July (0.189 at 5.26 m against
+0.183 at 17.11 m), and a stress-driven column, whose stress is down-gradient everywhere, cannot. The price is the
+leaf-on crown: July's 17 m level is 89 % too fast, and 25 m 22 %. Every closure reads the July crown too fast, which
+points at the leaf-on crown's drag (the season's plant area from MODIS LAI and the clumping of 0.8, or c_d) rather than
+at the turbulence; the survey's summer plant area against Harvard's published 5 to 6 is not yet compared. Stable
+nights are excluded: in July they read 0.54 at 25 m against 0.66 on neutral hours. The fetch beyond the survey is
+open ground in the model, and the column is the site's mean canopy.
 
 At UC Berkeley the stop leaves the 10 and 25 m medians 0.7 to 2.1 % high and the 4 and 5 m medians at most 0.6 %
 high (Stopping error).
@@ -161,17 +194,20 @@ field is the mean over the last 40 steps.
 The tower comparison of the simulated wind at a second, independent sonic has not been made.
 
 [inflow]: https://github.com/legel/deepearth/blob/33490a5/models/wind/forcing.py#L24
-[column]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L397
-[sides]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L448
-[project]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L574
-[residual]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L751
-[convection]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L730
-[viscosity]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L674
+[drive]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L913
+[length]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L332
+[k]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L952
+[column]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L440
+[sides]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L573
+[project]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L714
+[residual]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L900
+[convection]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L878
+[viscosity]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L814
 [drag]: https://github.com/legel/deepearth/blob/33490a5/models/wind/physics.py#L97
-[wall]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L311
-[step]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L883
+[wall]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L326
+[step]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L1088
 [convective]: https://github.com/legel/deepearth/blob/33490a5/models/wind/poisson.py#L154
 [cg]: https://github.com/legel/deepearth/blob/33490a5/models/wind/poisson.py#L263
-[settle]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L847
-[tail]: https://github.com/legel/deepearth/blob/33490a5/models/wind/solver.py#L200
+[settle]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L1050
+[tail]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L215
 [verification]: https://github.com/legel/deepearth/blob/33490a5/models/wind/docs/verification_cpu.json
