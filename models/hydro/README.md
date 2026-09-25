@@ -43,8 +43,10 @@ Against exact solutions ([`tests/`](tests/)):
 | ponded Green-Ampt with the soil on a 60 s step | time error < 1e-6 of the run | < 1e-6 |
 
 Against a stream gauge: Hurricane Ian at USGS 02234400 (Gee Creek near Longwood, Florida), 391.7 mm of rain,
-25 m grid, 175 gauge samples over 72 h. Same terrain, rain and roughness; only the infiltration differs
-([hydrograph](docs/hydrograph_ian.png)).
+25 m grid over a box east of the gauge, 175 gauge samples over 72 h. Same terrain, rain and roughness; only the
+infiltration differs ([hydrograph](docs/hydrograph_ian.png); receipts [`docs/validation_site3_ian_25m.json`](docs/validation_site3_ian_25m.json),
+[`docs/validation_site3_ian_25m_gar.json`](docs/validation_site3_ian_25m_gar.json)); refining that grid 5 times moved the runoff
+coefficient 0.4 % ([`docs/resolution_site3_ian.json`](docs/resolution_site3_ian.json)).
 
 | | Horton | Green-Ampt with redistribution | observed |
 |---|---|---|---|
@@ -68,11 +70,6 @@ The volume now matches the gauge; the peak arrives 3 to 4 h early and 4.7 to 6.3
 reaches the outlet too fast. Receipts: [`docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc.json`](docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc.json),
 [`docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn.json`](docs/validation_ian_25m_gar_basin_depressions_antecedent_aorc_nlcdn.json),
 [`docs/validation_ian_25m_gar_basin_depressions_antecedent_aorch.json`](docs/validation_ian_25m_gar_basin_depressions_antecedent_aorch.json).
-
-The peak is 8 times the gauge's. Refining the grid 5 times moves the runoff coefficient by 0.4 %, so the grid is
-not the cause; the grid box covers about half the gauge's basin, and the soil survey puts the seasonal-high water
-table at the surface under a third of it. Receipts: [`docs/validation_site3_ian_25m.json`](docs/validation_site3_ian_25m.json),
-[`docs/validation_site3_ian_25m_gar.json`](docs/validation_site3_ian_25m_gar.json).
 
 ## Run it
 

@@ -119,8 +119,7 @@ Gee Creek's discharge is not validated. Over the whole basin, with the starting 
 the depressions kept, the volume matches the gauge: a runoff coefficient of 0.344 to 0.350 against 0.333 to 0.362.
 The peak does not. It is 4.7 to 6.3 times the gauge's and 3 to 4 hours early, so the water reaches the outlet too
 fast. Land-cover roughness slows it by an hour and lowers it by 22 %; each cell's own rain timing does not help.
-Nothing was tuned to close the gap. The earlier grid box, which covered only the eastern half of the basin, had a
-peak 8 times the gauge's and twice its runoff; refining that grid 5 times changed its runoff coefficient by 0.4 %.
+Nothing was tuned to close the gap.
 
 The solver has one soil layer per cell, no baseflow and no channel storage, so recessions are too fast. Culverts
 are not routed.
