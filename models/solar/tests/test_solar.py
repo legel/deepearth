@@ -149,3 +149,21 @@ def test_the_first_return_gap_and_the_season_s_leaves():
     green = np.r_[np.full(20, 5.0), np.full(20, 1.0)]
     on = canopy.leaves_on_trees(green, lag=10)
     assert on[25] == 5.0 and on[31] == 1.0, "a turned leaf stays ten days"
+
+
+def test_a_floor_point_under_the_canopy_reads_a_tenth_of_open_sky_and_an_open_point_the_tower():
+    """Under Harvard's summer canopy (tau about 1.75) the beam passes as exp(-tau / cos z) and the sky as 2 E3(tau), with
+    the sky view from solid occluders only: the floor reads about 0.1 of open sky; with no canopy, the tower's GHI."""
+    dni, dhi, z = np.array([700.0]), np.array([150.0]), np.array([40.0])
+    cz = np.cos(np.radians(z))
+    ghi = dni * cz + dhi
+    hd = transposition.hay_davies(dni, dhi, z, np.full_like(z, 1361.0))
+    tau = np.array([1.75])
+    floor = transposition.irradiance(hd["beam"], hd["diffuse"], ghi, cz, canopy.beam_transmittance(tau, cz), 1.0, 1.0,
+                                     tau_above=tau)
+    open_ = transposition.irradiance(hd["beam"], hd["diffuse"], ghi, cz, 1.0, 1.0, 1.0, tau_above=np.array([0.0]))
+    assert open_[0] == pytest.approx(ghi[0], rel=1e-9)
+    assert 0.07 < floor[0] / ghi[0] < 0.13, floor[0] / ghi[0]
+    no_canopy_sky = transposition.irradiance(hd["beam"], hd["diffuse"], ghi, cz, canopy.beam_transmittance(tau, cz),
+                                             1.0, 1.0)
+    assert no_canopy_sky[0] > 1.5 * floor[0], "without 2 E3(tau) on the sky the floor reads far too bright"

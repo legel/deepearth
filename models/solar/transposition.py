@@ -1,20 +1,24 @@
 """Irradiance on a surface point from the hour's sky: Hay-Davies transposition and the point's own geometry.
 
-For a point with unit normal n, sky-view factor V, lit fraction L of the sun's direction s (1 in the open, 0 in
-shadow, the canopy's transmittance through a crown), and albedo rho of the ground around it:
+For a point with unit normal n, sky-view factor V (from solid occluders only: terrain and buildings), lit fraction L of
+the sun's direction s (1 in the open, 0 in a solid's shadow, the canopy's beam transmittance through a crown), optical
+depth tau of the canopy above it, and albedo rho of the ground around it:
 
-    E = B L max(n.s, 0) + D V + rho GHI (1 - n_z) / 2
+    E = B L max(n.s, 0) + D V 2 E3(tau) + rho GHI (1 - n_z) / 2
 
 where B and D are the Hay and Davies (1980) anisotropic sky folded into a beam and an isotropic part:
 
     A = DNI / E0,   B = DNI + A DHI / cos z,   D = (1 - A) DHI
 
-On open level ground (V = 1, n_z = 1, L = 1) E reduces to DNI cos z + DHI, the tower's GHI (`sky.split`).
+and 2 E3(tau) is isotropic sky light through the canopy above (`canopy.diffuse_transmittance`). On open level ground
+(V = 1, n_z = 1, L = 1, tau = 0) E reduces to DNI cos z + DHI, the tower's GHI (`sky.split`).
 """
 
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
+
+import canopy
 
 ALBEDO = 0.2
 MIN_COSZ = 0.0175                     # the sun one degree up: below it the circumsolar beam is 0
@@ -29,8 +33,12 @@ def hay_davies(dni: np.ndarray, dhi: np.ndarray, zenith_deg: np.ndarray, e0: np.
 
 
 def irradiance(beam: np.ndarray, diffuse: np.ndarray, ghi: np.ndarray, cos_incidence: np.ndarray,
-               lit: np.ndarray, svf: np.ndarray, normal_z: np.ndarray, albedo: float = ALBEDO) -> np.ndarray:
-    """E [W m-2] on a point: `cos_incidence` n.s, `lit` the share of the sun's beam reaching it, `svf` its
-    sky-view factor, `normal_z` its normal's vertical component."""
-    return (beam * lit * np.maximum(cos_incidence, 0.0) + diffuse * svf
-            + albedo * ghi * (1.0 - normal_z) / 2.0)
+               lit: np.ndarray, svf: np.ndarray, normal_z: np.ndarray, albedo: float = ALBEDO,
+               tau_above: Optional[np.ndarray] = None) -> np.ndarray:
+    """E [W m-2] on a point: `cos_incidence` n.s, `lit` the share of the sun's beam reaching it, `svf` its sky-view
+    factor from solid occluders, `normal_z` its normal's vertical component, `tau_above` the optical depth of the canopy
+    above it (None: none)."""
+    sky = diffuse * svf
+    if tau_above is not None:
+        sky = sky * canopy.diffuse_transmittance(tau_above)
+    return beam * lit * np.maximum(cos_incidence, 0.0) + sky + albedo * ghi * (1.0 - normal_z) / 2.0
