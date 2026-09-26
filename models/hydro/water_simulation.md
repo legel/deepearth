@@ -72,6 +72,28 @@ cell's water content and the room left above its water table at the storm's firs
 be the gauge's whole drainage basin from the USGS Network-Linked Data Index [basin], with the depressions kept
 (the terrain before its depressions are breached) so wetlands and ponds hold what they catch [depressions].
 
+## In the viewer
+
+Two tiers draw the water at any time of the tower's record. Tier 1 is the year balance's hourly state: every cell's soil
+water and standing water after each hour, stored for every year. Tier 2 is this solver's local-inertial scheme run in the
+browser in WebGL2, with the soil on its own step, for minutes and seconds. A seek into a wet period starts it from the
+storm's first wet hour, where tier 1's surface is near dry, and runs it forward to the sought time; while the page plays,
+it carries its own state from hour to hour. A precomputed storm's stored frames are used where they exist.
+
+The browser kernel is pinned against this solver on the same inputs: Harvard Forest at 0.5 m (660 x 660), the storm of
+9 May 2025 (27 h) and Irene (34 h), the browser's depth against the solver's every 30 min, on an NVIDIA L4 in Chrome:
+
+                                            9 May 2025               Irene
+    volume budget residual                  -4.7e-7                  -1.3e-7
+    at hour 10, from the storm's start      volume +1.9 %,           volume +0.2 %,
+                                            RMSE 0.69 mm, IoU 0.98   RMSE 0.05 mm, IoU 0.99
+    worst RMSE, frames with 300+ wet cells  2.9 mm                   0.3 mm
+    time                                    73 s (2.7 s an hour)     94 s (2.8 s an hour)
+
+The solver's own residual on these storms is 1.2e-5 in float32. Frames with a few hundred wet cells or fewer (under 0.3 m³
+of standing water) differ by more in relative terms; on 9 May the shallow sheet at 14.5 h (1,106 wet cells, 3.4 m³) differs
+by 7 % in volume at an RMSE of 2.9 mm.
+
 ## Experiments
 
 Checks against exact solutions [tests]:
