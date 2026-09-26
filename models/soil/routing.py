@@ -253,7 +253,25 @@ class Lateral(NamedTuple):
     dx_m: float
 
 
-def lateral(z: np.ndarray, valid: np.ndarray, dx: float) -> Lateral:
-    """Once per site: the unfilled terrain's multiple-flow-direction graph for subsurface flow."""
-    src, dst, w, tanb = _downslope(np.nan_to_num(z, nan=0.0), valid.astype(np.bool_), float(dx))
+LATERAL_SMOOTH_M = 2.0
+"""The subsurface gradient's scale: a Gaussian of this sigma over the terrain before its slopes are taken. A water table
+follows the landform, not a 0.5 m survey's micro-relief, whose few centimeters between neighbors read as slopes of 10 to
+20 % and turn the root zone into cell-scale speckle."""
+
+
+def smoothed(z: np.ndarray, valid: np.ndarray, dx: float, sigma_m: float = LATERAL_SMOOTH_M) -> np.ndarray:
+    """z under a Gaussian of `sigma_m`, normalized over valid cells only."""
+    from scipy import ndimage
+    if sigma_m <= 0:
+        return z
+    s = sigma_m / float(dx)
+    num = ndimage.gaussian_filter(np.where(valid, np.nan_to_num(z, nan=0.0), 0.0), s, mode="nearest")
+    den = ndimage.gaussian_filter(valid.astype(np.float64), s, mode="nearest")
+    return np.where(valid & (den > 1e-6), num / np.maximum(den, 1e-6), z)
+
+
+def lateral(z: np.ndarray, valid: np.ndarray, dx: float, sigma_m: float = LATERAL_SMOOTH_M) -> Lateral:
+    """Once per site: the multiple-flow-direction graph for subsurface flow over the unfilled, smoothed terrain."""
+    zs = smoothed(np.nan_to_num(z, nan=0.0), valid.astype(bool), dx, sigma_m)
+    src, dst, w, tanb = _downslope(zs, valid.astype(np.bool_), float(dx))
     return Lateral(src, dst, w.astype(np.float32), tanb.astype(np.float32), float(dx))

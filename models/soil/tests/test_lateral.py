@@ -35,7 +35,7 @@ def test_water_above_field_capacity_moves_into_the_valley_and_mass_is_kept():
     z = valley()
     ny, nx = z.shape
     n = ny * nx
-    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5), n)
+    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5, sigma_m=0.0), n)
     k = cells(n)
     s = state(n, np.full(n, 0.35))                                  # a wet spring: every cell above fc
     before = total(s, k)
@@ -50,16 +50,16 @@ def test_water_above_field_capacity_moves_into_the_valley_and_mass_is_kept():
 def test_a_dry_slope_passes_nothing_and_a_flat_has_no_gradient():
     z = valley()
     n = z.size
-    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5), n)
+    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5, sigma_m=0.0), n)
     out = B.lateral_step(state(n, np.full(n, 0.20)), cells(n), g)
     assert float(out["lateral_out"].abs().max()) == 0.0
-    flat = routing.lateral(np.full((10, 10), 5.0), np.ones((10, 10), bool), 0.5)
+    flat = routing.lateral(np.full((10, 10), 5.0), np.ones((10, 10), bool), 0.5, sigma_m=0.0)
     assert len(flat.src) == 0 and float(np.abs(flat.tanb).max()) == 0.0
 
 
 def test_a_full_receiver_returns_the_rest_to_the_surface():
     z = np.array([[2.0, 1.0]])
-    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5), 2)
+    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5, sigma_m=0.0), 2)
     k = cells(2, ksat=5000.0)
     s = state(2, np.array([0.45, 0.45]))
     before = total(s, k)
@@ -71,7 +71,7 @@ def test_a_full_receiver_returns_the_rest_to_the_surface():
 def test_the_flux_is_the_layer_s_own_conductivity_times_the_gradient():
     """K(theta2) tan(beta) through the layer, consistent with its vertical drainage."""
     z = np.array([[1.0, 0.95]])                                     # a 10 % slope over 0.5 m
-    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5), 2)
+    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5, sigma_m=0.0), 2)
     out = B.lateral_step(state(2, np.array([0.35, 0.25])), cells(2), g)
     se = (0.35 - 0.05) / 0.40
     want = 39.0 * se ** (3 + 2 / 0.3) * 0.1 * 1000 * 0.5 / 500.0
@@ -81,7 +81,7 @@ def test_the_flux_is_the_layer_s_own_conductivity_times_the_gradient():
 def test_one_dimensional_state_steps_the_same_as_one_lane():
     z = valley(8, 8)
     n = z.size
-    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5), n)
+    g = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5, sigma_m=0.0), n)
     k = cells(n)
     th = np.linspace(0.26, 0.40, n)
     a, b = state(n, th), state(n, th)
@@ -89,3 +89,13 @@ def test_one_dimensional_state_steps_the_same_as_one_lane():
     B.lateral_step(a, k, g)
     B.lateral_step(one, k, g)
     assert torch.allclose(a.theta2[0], one.theta2) and torch.allclose(a.w[0], one.w)
+
+
+def test_micro_relief_does_not_steer_the_subsurface_but_the_landform_does():
+    rng = np.random.default_rng(1)
+    z = valley(40, 40) + rng.normal(0.0, 0.05, (40, 40))
+    raw = routing.lateral(z, np.ones_like(z, bool), 0.5, sigma_m=0.0)
+    lat = routing.lateral(z, np.ones_like(z, bool), 0.5)
+    side = np.s_[8:32, 4:16]
+    assert np.std(raw.tanb.reshape(40, 40)[side]) > 3 * np.std(lat.tanb.reshape(40, 40)[side])
+    assert 0.05 < float(np.median(lat.tanb.reshape(40, 40)[side])) < 0.13, "the 10 % side slope survives"

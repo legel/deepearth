@@ -73,7 +73,7 @@ def test_the_books_close_every_hour_through_rain_and_drying():
     z[2:4, 3:5] -= 0.1                                                                  # a depression
     n = z.size
     net = routing.network(z, np.ones_like(z, bool), 0.5)
-    lat = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5), n)
+    lat = B.LateralGraph(routing.lateral(z, np.ones_like(z, bool), 0.5, sigma_m=0.0), n)
     sealed = np.zeros(n, bool)
     sealed[:8] = True                                                                   # a paved strip uphill
     k = cells(n, no_soil=sealed, perv=(~sealed).astype(float))
