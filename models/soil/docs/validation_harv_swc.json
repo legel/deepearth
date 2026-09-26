@@ -1,0 +1,421 @@
+{
+ "what": "Model soil layers against NEON soil water content (DP1.00094.001) at Harvard Forest (HARV), hourly and UTC-aligned, 2019 to 2025",
+ "sets": {
+  "a": "NEON half-hours whose final flag is 0",
+  "b": "set A plus half-hours whose only failed tests are Null or Gap (sensitivity)"
+ },
+ "event": "hourly anomalies: each value less its own year 31-day centered running mean; storms: rain events of 5 mm or more split by 6 dry hours; rise: the storm peak less the value before it, m3 m-3; efold_h: hours for the rise to fall to 1/e",
+ "model": "the published Harvard Forest run with lateral flow (balance.lateral_step), 0.5 m cells, SSURGO soils, the layer holding the sensor depth (theta1 0 to 0.1 m, theta2 0.1 m to the root depth)",
+ "sensors": {
+  "HARV:001.501": {
+   "depth_m": 0.06,
+   "lat": 42.536932,
+   "lon": -72.173174,
+   "layer": "theta1",
+   "cover": "tall_vegetation",
+   "soil": "SSURGO",
+   "flagged_share": 0.632,
+   "a": {
+    "hourly": {
+     "n": 20092,
+     "bias": -0.0915,
+     "rmse": 0.1046,
+     "r": 0.31,
+     "mean_model": 0.1938,
+     "mean_measured": 0.2853
+    },
+    "daily": {
+     "n": 524,
+     "bias": -0.0933,
+     "rmse": 0.1031,
+     "r": 0.32,
+     "mean_model": 0.1947,
+     "mean_measured": 0.2881
+    },
+    "anomaly": {
+     "n": 18020,
+     "bias": 0.0006,
+     "rmse": 0.0198,
+     "r": 0.538,
+     "mean_model": 0.0006,
+     "mean_measured": 0.0
+    },
+    "lag": {
+     "lag_h": -1,
+     "r_at_lag": 0.541,
+     "r_at_0": 0.538
+    },
+    "storms": {
+     "storms": 103,
+     "arrival_h": {
+      "n": 96,
+      "model_median": 0.0,
+      "sensor_median": 1.0
+     },
+     "rise": {
+      "n": 103,
+      "model_median": 0.0808,
+      "sensor_median": 0.036
+     },
+     "efold_h": {
+      "n": 94,
+      "model_median": 19.5,
+      "sensor_median": 12.0
+     },
+     "rise_vs_rain_r_model": 0.461,
+     "rise_vs_rain_r_sensor": 0.501
+    }
+   },
+   "b": {
+    "hourly": {
+     "n": 21516,
+     "bias": -0.1051,
+     "rmse": 0.1383,
+     "r": 0.172,
+     "mean_model": 0.1937,
+     "mean_measured": 0.2988
+    },
+    "daily": null,
+    "anomaly": {
+     "n": 18745,
+     "bias": 0.0008,
+     "rmse": 0.0356,
+     "r": 0.245,
+     "mean_model": 0.0005,
+     "mean_measured": -0.0003
+    },
+    "lag": null,
+    "storms": {
+     "storms": 105,
+     "arrival_h": {
+      "n": 98,
+      "model_median": 0.0,
+      "sensor_median": 1.0
+     },
+     "rise": {
+      "n": 105,
+      "model_median": 0.0808,
+      "sensor_median": 0.0369
+     },
+     "efold_h": {
+      "n": 96,
+      "model_median": 20.0,
+      "sensor_median": 11.0
+     },
+     "rise_vs_rain_r_model": 0.464,
+     "rise_vs_rain_r_sensor": 0.243
+    }
+   }
+  },
+  "HARV:002.501": {
+   "depth_m": 0.06,
+   "lat": 42.537339,
+   "lon": -72.173398,
+   "layer": "theta1",
+   "cover": "tall_vegetation",
+   "soil": "SSURGO",
+   "flagged_share": 0.831,
+   "a": {
+    "hourly": {
+     "n": 8274,
+     "bias": 0.1186,
+     "rmse": 0.1226,
+     "r": 0.54,
+     "mean_model": 0.1947,
+     "mean_measured": 0.076
+    },
+    "daily": {
+     "n": 136,
+     "bias": 0.1221,
+     "rmse": 0.1248,
+     "r": 0.663,
+     "mean_model": 0.199,
+     "mean_measured": 0.0769
+    },
+    "anomaly": {
+     "n": 4497,
+     "bias": 0.0019,
+     "rmse": 0.0181,
+     "r": 0.642,
+     "mean_model": 0.0021,
+     "mean_measured": 0.0002
+    },
+    "lag": {
+     "lag_h": -1,
+     "r_at_lag": 0.673,
+     "r_at_0": 0.642
+    },
+    "storms": {
+     "storms": 30,
+     "arrival_h": {
+      "n": 30,
+      "model_median": 0.0,
+      "sensor_median": 1.0
+     },
+     "rise": {
+      "n": 30,
+      "model_median": 0.0842,
+      "sensor_median": 0.0484
+     },
+     "efold_h": {
+      "n": 24,
+      "model_median": 9.0,
+      "sensor_median": 22.0
+     },
+     "rise_vs_rain_r_model": 0.097,
+     "rise_vs_rain_r_sensor": 0.313
+    }
+   },
+   "b": {
+    "hourly": {
+     "n": 8928,
+     "bias": 0.1119,
+     "rmse": 0.1285,
+     "r": 0.264,
+     "mean_model": 0.1943,
+     "mean_measured": 0.0824
+    },
+    "daily": null,
+    "anomaly": {
+     "n": 5141,
+     "bias": 0.0014,
+     "rmse": 0.0429,
+     "r": 0.245,
+     "mean_model": 0.0016,
+     "mean_measured": 0.0002
+    },
+    "lag": null,
+    "storms": {
+     "storms": 33,
+     "arrival_h": {
+      "n": 32,
+      "model_median": 0.0,
+      "sensor_median": 1.0
+     },
+     "rise": {
+      "n": 33,
+      "model_median": 0.0831,
+      "sensor_median": 0.0476
+     },
+     "efold_h": {
+      "n": 25,
+      "model_median": 10.0,
+      "sensor_median": 19.0
+     },
+     "rise_vs_rain_r_model": 0.121,
+     "rise_vs_rain_r_sensor": 0.333
+    }
+   }
+  },
+  "HARV:003.501": {
+   "depth_m": 0.07,
+   "lat": 42.537592,
+   "lon": -72.173824,
+   "layer": "theta1",
+   "cover": "tall_vegetation",
+   "soil": "SSURGO",
+   "flagged_share": 0.921,
+   "a": {
+    "hourly": {
+     "n": 2237,
+     "bias": -0.0191,
+     "rmse": 0.0701,
+     "r": 0.369,
+     "mean_model": 0.1874,
+     "mean_measured": 0.2065
+    },
+    "daily": {
+     "n": 19,
+     "bias": -0.0112,
+     "rmse": 0.0261,
+     "r": 0.814,
+     "mean_model": 0.1929,
+     "mean_measured": 0.2041
+    },
+    "anomaly": {
+     "n": 907,
+     "bias": 0.0022,
+     "rmse": 0.022,
+     "r": 0.569,
+     "mean_model": 0.0006,
+     "mean_measured": -0.0015
+    },
+    "lag": {
+     "lag_h": -4,
+     "r_at_lag": 0.625,
+     "r_at_0": 0.569
+    },
+    "storms": {
+     "storms": 6,
+     "arrival_h": {
+      "n": 6,
+      "model_median": 0.0,
+      "sensor_median": 2.0
+     },
+     "rise": {
+      "n": 6,
+      "model_median": 0.0806,
+      "sensor_median": 0.1607
+     },
+     "efold_h": {
+      "n": 6,
+      "model_median": 9.5,
+      "sensor_median": 12.5
+     },
+     "rise_vs_rain_r_model": "n too small",
+     "rise_vs_rain_r_sensor": "n too small"
+    }
+   },
+   "b": {
+    "hourly": {
+     "n": 4156,
+     "bias": -0.1187,
+     "rmse": 0.2108,
+     "r": 0.25,
+     "mean_model": 0.19,
+     "mean_measured": 0.3088
+    },
+    "daily": null,
+    "anomaly": {
+     "n": 1016,
+     "bias": 0.0041,
+     "rmse": 0.0384,
+     "r": 0.442,
+     "mean_model": 0.0003,
+     "mean_measured": -0.0038
+    },
+    "lag": null,
+    "storms": {
+     "storms": 6,
+     "arrival_h": {
+      "n": 6,
+      "model_median": 0.0,
+      "sensor_median": 2.0
+     },
+     "rise": {
+      "n": 6,
+      "model_median": 0.0806,
+      "sensor_median": 0.1607
+     },
+     "efold_h": {
+      "n": 6,
+      "model_median": 9.5,
+      "sensor_median": 11.5
+     },
+     "rise_vs_rain_r_model": "n too small",
+     "rise_vs_rain_r_sensor": "n too small"
+    }
+   }
+  },
+  "HARV:003.502": {
+   "depth_m": 0.17,
+   "lat": 42.537594,
+   "lon": -72.173828,
+   "layer": "theta2",
+   "cover": "tall_vegetation",
+   "soil": "SSURGO",
+   "flagged_share": 0.929,
+   "a": {
+    "hourly": {
+     "n": 514,
+     "bias": 0.0994,
+     "rmse": 0.1401,
+     "r": 0.817,
+     "mean_model": 0.2124,
+     "mean_measured": 0.113
+    },
+    "daily": {
+     "n": 14,
+     "bias": 0.106,
+     "rmse": 0.1265,
+     "r": 0.864,
+     "mean_model": 0.2094,
+     "mean_measured": 0.1033
+    },
+    "anomaly": null,
+    "lag": {},
+    "storms": {
+     "storms": 1,
+     "arrival_h": {
+      "n": 0,
+      "model_median": null,
+      "sensor_median": null
+     },
+     "rise": {
+      "n": 1,
+      "model_median": 0.0036,
+      "sensor_median": 0.1616
+     },
+     "efold_h": {
+      "n": 0,
+      "model_median": null,
+      "sensor_median": null
+     },
+     "rise_vs_rain_r_model": "n too small",
+     "rise_vs_rain_r_sensor": "n too small"
+    }
+   },
+   "b": {
+    "hourly": {
+     "n": 2938,
+     "bias": -0.0106,
+     "rmse": 0.2115,
+     "r": 0.314,
+     "mean_model": 0.2056,
+     "mean_measured": 0.2161
+    },
+    "daily": null,
+    "anomaly": {
+     "n": 853,
+     "bias": -0.0054,
+     "rmse": 0.0744,
+     "r": 0.744,
+     "mean_model": -0.0036,
+     "mean_measured": 0.0018
+    },
+    "lag": null,
+    "storms": {
+     "storms": 3,
+     "arrival_h": {
+      "n": 0,
+      "model_median": null,
+      "sensor_median": null
+     },
+     "rise": {
+      "n": 3,
+      "model_median": 0.0036,
+      "sensor_median": 0.0062
+     },
+     "efold_h": {
+      "n": 0,
+      "model_median": null,
+      "sensor_median": null
+     },
+     "rise_vs_rain_r_model": "n too small",
+     "rise_vs_rain_r_sensor": "n too small"
+    }
+   }
+  },
+  "HARV:004.501": {
+   "depth_m": 0.065,
+   "lat": 42.538029,
+   "lon": -72.174048,
+   "scored": false,
+   "note": "outside the modeled area: not scored"
+  },
+  "HARV:004.502": {
+   "depth_m": 0.165,
+   "lat": 42.538031,
+   "lon": -72.174051,
+   "scored": false,
+   "note": "outside the modeled area: not scored"
+  },
+  "HARV:005.502": {
+   "depth_m": 0.15,
+   "lat": 42.538109,
+   "lon": -72.174663,
+   "scored": false,
+   "note": "outside the modeled area: not scored"
+  }
+ }
+}

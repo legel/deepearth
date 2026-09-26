@@ -9,6 +9,7 @@ GPU, with its own tests, validation receipts and a full account of its method, e
 | solar | the tower's SW_IN split against a REST2 clear sky (Engerer2 refit on 51 US towers), Hay-Davies transposition, horizons and sky-view factor by ray march, Beer-Lambert light through the canopy | [README](solar/README.md), [solar_simulation.md](solar/solar_simulation.md) |
 | wind | mass-consistent projection and a steady finite-volume momentum balance (MUSCL convection, mixing-length turbulence, canopy drag, log-law walls), independent of the pseudo-time step | [README](wind/README.md), [wind_simulation.md](wind/wind_simulation.md) |
 | water | 2D local-inertial shallow water (Bates et al. 2010), Green-Ampt with redistribution and a per-cell soil state carried between storms (Ogden and Saghafian 1997) | [README](hydro/README.md), [water_simulation.md](hydro/water_simulation.md) |
+| soil | the hourly water balance of every ground cell, the soil water and standing water shown at any hour: interception, Green-Ampt capacity, run-on over the terrain, ASCE hourly reference ET with the FAO-56 dual crop coefficient, exact Brooks-Corey drainage in two layers, lateral flow down the terrain; against NEON's soil water sensors | [README](soil/README.md) |
 | flux | how the tower's measurements become the forcing: the measured-only rule, the P rule over several gauges, the clear-sky index, the sonic carried to the reference height, station calms, NEON months past a release | [README](flux/README.md) |
 
 ## How a flux tower enters
