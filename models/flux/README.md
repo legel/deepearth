@@ -5,6 +5,25 @@ quantities: incoming shortwave (SW_IN), wind speed (WS) and precipitation (P). E
 drives each hour. Every hour carries a code naming its source, so a filled hour is never shown as measured. The solar,
 wind and hydro models read what these rules produce.
 
+## Which tower
+
+Every site is driven by the nearest flux tower's measurements, however far away that tower is.
+
+- **Per driver.** SW_IN, WS and P each take the nearest tower whose published record measured that variable,
+  searched across FLUXNET (AmeriFlux FLUXNET-1F) and NEON. Air temperature and humidity do the same among towers
+  within 100 m of the site's elevation.
+- **Per year.** The five nearest towers for each driver are the candidates. Each year takes the first of them that
+  measured at least 90 % of its hours. The nearest tower's years set the record's span.
+- **Gaps only.** NSRDB (sky), AORC (rain) and ASOS stations (wind) fill the hours the tower did not measure, under
+  the rules below, and every filled hour carries its own code. They are never the source.
+- **Caution.** The page names the tower and its distance, and past 25 km says that the tower's weather can differ
+  from the site's. Past 100 km it says to read the values as regional.
+- **Registered without data.** A tower registered with AmeriFlux but holding no published record we can read is
+  named on the page and never used. Its data may exist only as AmeriFlux BASE, which is served to a registered
+  account.
+- **UC Berkeley.** US-DBk (Berkeley Way West, 1 km) has BASE for 2022 to 2024 and no FLUXNET product. So US-CGG, at
+  26 km, drives the site, with the caution.
+
 ## Rules
 
 | rule | condition or equation | code |
