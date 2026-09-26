@@ -80,19 +80,24 @@ browser in WebGL2, with the soil on its own step, for minutes and seconds. A see
 storm's first wet hour, where tier 1's surface is near dry, and runs it forward to the sought time; while the page plays,
 it carries its own state from hour to hour. A precomputed storm's stored frames are used where they exist.
 
-The browser kernel is pinned against this solver on the same inputs: Harvard Forest at 0.5 m (660 x 660), the storm of
-9 May 2025 (27 h) and Irene (34 h), the browser's depth against the solver's every 30 min, on an NVIDIA L4 in Chrome:
+The browser kernel runs this solver's scheme with the same soil (Green-Ampt with redistribution, two fronts per cell) and
+is pinned against it on the same inputs: Harvard Forest at 0.5 m (660 x 660), the storm of 9 May 2025 (27 h) and Irene
+(34 h), the browser's depth against the solver's every 30 min, on an NVIDIA L4 in Chrome:
 
                                             9 May 2025               Irene
-    volume budget residual                  -4.7e-7                  -1.3e-7
-    at hour 10, from the storm's start      volume +1.9 %,           volume +0.2 %,
-                                            RMSE 0.69 mm, IoU 0.98   RMSE 0.05 mm, IoU 0.99
-    worst RMSE, frames with 300+ wet cells  2.9 mm                   0.3 mm
-    time                                    73 s (2.7 s an hour)     94 s (2.8 s an hour)
+    volume budget residual                  -4.7e-7                  -2.0e-7
+    at hour 10, from the storm's start      volume +2.0 %,           volume +0.2 %,
+                                            RMSE 0.70 mm, IoU 0.98   RMSE 0.05 mm, IoU 0.99
+    largest frame                           -0.2 %, IoU 0.994        -0.08 %, IoU 0.999 (25 m³)
+    worst RMSE after the first hour         1.7 mm                   1.2 mm
+    time                                    75 s (2.8 s an hour)     96 s (2.8 s an hour)
 
-The solver's own residual on these storms is 1.2e-5 in float32. Frames with a few hundred wet cells or fewer (under 0.3 m³
-of standing water) differ by more in relative terms; on 9 May the shallow sheet at 14.5 h (1,106 wet cells, 3.4 m³) differs
-by 7 % in volume at an RMSE of 2.9 mm.
+The solver's own residual is 1.2e-5 in float32. A frame passes when its volume is within 2 %, or within 0.1 mm (the depth
+below which neither solver moves water) over every cell either holds above 0.1 mm; when the wet area above 1 mm overlaps
+by 0.95, leaving out cells within 0.1 mm of that line; and when the RMSE is under 5 mm. Seven frames of 54 and five of
+68 fail, all under 1 m³ of standing water: the first hour of each storm (5 to 82 wet cells), and on 9 May the four frames
+after the rain stops, where the browser holds 0.016 to 0.030 m³ more on cells whose root zone is full (the known error
+below).
 
 ## Experiments
 
@@ -158,6 +163,12 @@ surface):
 - **baseflow and a shallow water table**: one soil layer per cell and no groundwater, so recessions are too fast and
   water the soil takes never returns to the stream;
 - **culverts**: flow under roads is not routed; a public inventory would supply them.
+
+During a storm the soil has no drainage below its root zone and no evaporation. A cell whose root zone fills (the
+infiltrated water reaching the room above its water table) takes nothing more, so after the rain the solver holds water
+on it for as long as the storm runs: Irene at Harvard holds 1.9 to 2.2 m³ for 10 h, 2,018 of the 2,028 cells wet above
+1 mm being infiltrating cells, where the year balance drains that water in about 2 h. Percolation out of the root zone
+and evaporation during storms are to be added.
 
 [solver-face]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/solver.py#L255
 [solver-step]: https://github.com/legel/deepearth/blob/87fb913/models/hydro/solver.py#L270
