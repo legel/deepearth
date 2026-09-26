@@ -40,6 +40,19 @@ from rain to AET, drainage and water leaving the grid ([`tests/test_balance.py`]
 Stored hourly frames, as the page draws them: $\theta_{root}$ in steps of 0.0025 m³/m³ (`.rw`), and standing water as
 float32 mm per wet cell (`.pw`).
 
+## Over a period: the integral and the time in each band
+
+For every day, month and year, each cell carries the area under its curve and the hours it spent in each band of the
+site's fixed color scale. Drought and waterlogging are read off the bands; no separate metric is defined for them.
+
+| quantity | integral over the period | band hours |
+|---|---|---|
+| soil water | plant-available water, $\sum_h (\theta_{root} - \theta_{wp})^+ z_r \cdot 1000 / 24$, mm·days | hours with $\theta_{root}$ in each band |
+| standing water | water received, $\sum_h (f + f_p)$, mm: rain and run-on less what ran off | hours dry, then in each band of $w$ |
+
+$f$ is the rain hour's infiltration and $f_p$ is standing water soaking in. The bands are the legend's own: below
+the domain, between consecutive round edges, and at or above the top. Each cell's bands sum to the period's hours.
+
 ## Validation: Harvard Forest, NEON soil water
 
 Every NEON soil water sensor (DP1.00094.001) at HARV is compared with the model layer that holds its depth at the

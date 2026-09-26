@@ -26,6 +26,19 @@ Where $\delta\mathbf{u} = 0$ the steady equations hold whatever $\Delta t$, so t
 iteration arrives. $M$ is solved by BiCGSTAB and the projection by conjugate gradients, both preconditioned by one
 multigrid kernel; momentum runs in float32 and every projection in float64.
 
+## Over a period: wind run and the time in each band
+
+The speed at a point is the reference speed times the point's unit-speed basis for the hour's heading,
+$U(p, h) = u_{ref}(h)\, s_{k(h)}(p)$. Over a period $P$ (a day, a month or a year):
+
+| quantity | equation |
+|---|---|
+| wind run, km | $3.6 \sum_k s_k(p) \sum_{h \in P,\ k(h) = k} u_{ref}(h)$ |
+| hours at or above a band edge $e$ | $\sum_k \#\{h \in P,\ k(h) = k : u_{ref}(h) \ge e / s_k(p)\}$ |
+
+Both are exact from the 16 headings' basis and the tower-driven hourly $u_{ref}$: sort each heading's hours once
+per period, then binary-search per point. Windthrow risk is read as time in the top band.
+
 ## Validation
 
 Physics checks, float64, 1 m cells ([`docs/verification_cpu.json`](docs/verification_cpu.json)):
