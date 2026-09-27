@@ -1,0 +1,15 @@
+# wind — mass-consistent wind over a parcel. Python 3.10+.
+#
+#   python3 -m pip install --user -r requirements.txt
+#
+# The CPU build of torch is enough for the tests and the checks:
+#   python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+torch>=2.4
+numpy>=1.26
+scipy                 # nearest-neighbour fill of raster gaps
+pandas                # the ASOS record
+requests              # IEM
+pytest                # tests
+
+rasterio              # bundle rasters only; synthetic scenes need none of it

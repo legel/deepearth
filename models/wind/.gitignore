@@ -1,0 +1,7 @@
+# Fetched and derived data — reproducible by `python3 cli.py fetch` and the solver stages.
+data/
+outputs/
+.pytest_cache/
+__pycache__/
+*.tif
+*.bin

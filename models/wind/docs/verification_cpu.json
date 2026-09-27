@@ -1,0 +1,110 @@
+{
+ "config": {
+  "steps": 100,
+  "cfl": 16.0,
+  "tol": 1e-06,
+  "device": "cpu",
+  "dtype": "torch.float64"
+ },
+ "vorticity": {
+  "omega_z_over_2omega": 1.0,
+  "omega_z_spread": 2.7755575615628914e-16,
+  "omega_xy_max": 5.551115123125783e-17
+ },
+ "flat": {
+  "max_profile_error_rel": 6.3371967339426485e-06,
+  "max_crossflow_rel": 3.0133746939978745e-06,
+  "max_change_rel": 3.5748895528034934e-06,
+  "divergence_rel": 9.62862171023606e-07,
+  "divergence_max": 5.78648512789205e-14,
+  "divergence_max_1_s": 2.6707188473325147e-13,
+  "flux_balance": 3.429669738896622e-15,
+  "flux_in_m3_s": 9016.267516833243,
+  "poisson_iterations_max": 24,
+  "wall_s": 100.63301587104797,
+  "check_wall_s": 100.64520859718323
+ },
+ "cube": {
+  "wake_min_u_over_u_h": -0.36609615070498397,
+  "wake_reversed_fraction": 0.12723214285714285,
+  "roof_max_speedup": 1.076623191237105,
+  "side_max_speedup": 1.8687292680542889,
+  "roof_max_speedup_projection_only": 1.326742610038691,
+  "solid_max_speed": 0.0,
+  "vorticity_max_1_s": 3.6421396250725433,
+  "u_h_m_s": 4.807937632378587,
+  "divergence_rel": 9.679221240374106e-07,
+  "divergence_max": 7.562496872393756e-08,
+  "divergence_max_1_s": 3.4115752673414706e-07,
+  "flux_balance": 2.2546730695214254e-09,
+  "flux_in_m3_s": 9035.072735864333,
+  "poisson_iterations_max": 22,
+  "wall_s": 83.53719925880432,
+  "check_wall_s": 83.93479013442993
+ },
+ "canopy": {
+  "lai": [
+   0.5,
+   2.0,
+   8.0
+  ],
+  "exit_speed_ratio": [
+   0.9383870680295698,
+   0.7973414213556995,
+   0.5325338308371572
+  ],
+  "monotonic": true,
+  "mean_speed_in_canopy_m_s": [
+   3.8104287174926825,
+   3.4939412107399406,
+   2.7672659292972344
+  ],
+  "mean_speed_same_cells_no_canopy_m_s": 3.9423995565609933,
+  "canopy_over_open": [
+   0.9665252501237012,
+   0.886247362960783,
+   0.7019242696220158
+  ],
+  "check_wall_s": 595.3043184280396
+ },
+ "rotation": {
+  "max_speed_difference_rel": 1.0918923883081117e-05,
+  "check_wall_s": 88.6711642742157
+ },
+ "orientation": {
+  "wake_speed_ratio_axis": 0.6217787603161713,
+  "wake_speed_ratio_diagonal": 0.6155332085838603,
+  "difference_rel": 0.01004465274615552,
+  "check_wall_s": 1281.750144958496
+ },
+ "ridge": {
+  "crest_speedup": 1.7173496142353448,
+  "height_above_crest_m": 3.145652779351682,
+  "divergence_rel": 8.344493926579558e-07,
+  "divergence_max": 3.8768973773037535e-08,
+  "divergence_max_1_s": 1.8538727453884706e-07,
+  "flux_balance": 1.00382002580401e-09,
+  "flux_in_m3_s": 4528.809099191634,
+  "poisson_iterations_max": 24,
+  "wall_s": 86.12096309661865,
+  "check_wall_s": 86.12878608703613
+ },
+ "linearity": {
+  "speeds_m_s": [
+   2.0,
+   5.0,
+   10.0
+  ],
+  "deviation_from_linear_rel": {
+   "2": 1.3576231043355245e-05,
+   "5": 0.0,
+   "10": 4.525929703078937e-06
+  },
+  "max_deviation_from_linear_rel": 1.3576231043355245e-05,
+  "midway_heading_interpolation_error_rel": {
+   "22.5": 0.1360208571212483,
+   "10": 0.03380135771283285
+  },
+  "check_wall_s": 584.2984523773193
+ }
+}

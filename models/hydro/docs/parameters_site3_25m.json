@@ -1,0 +1,35 @@
+{
+ "cell_size_m": 25.0,
+ "grid": [
+  272,
+  274
+ ],
+ "box_km2": 36.035625,
+ "delineated_km2": 15.218125,
+ "registry_delineated_km2": 3.72,
+ "gauge_documented_km2": 33.15,
+ "amc3_factor": 0.07,
+ "drainable_porosity": 0.25,
+ "ssurgo_A_horizon_ksat_mm_hr": {
+  "min": 0.0,
+  "median": 331.2,
+  "max": 806.4,
+  "n_map_units": 27
+ },
+ "used_over_catchment": {
+  "fc_mm_hr": 14.623991592088714,
+  "f0_mm_hr": 36.55997570604086,
+  "k_per_hr": 1.7609142232686281,
+  "soil_store_mm": 177.37002670764923,
+  "smax_mm": 0.0,
+  "zero_fc_fraction": 0.2222267854942708
+ },
+ "used_over_box": {
+  "fc_mm_hr": 13.888581088394858,
+  "soil_store_mm": 208.13608169555664,
+  "zero_fc_fraction": 0.291256915899197
+ },
+ "implied_ksat_before_amc3_mm_hr": 208.9141656012673,
+ "storm_mm": 391.7,
+ "store_as_fraction_of_storm": 0.45282110469147113
+}

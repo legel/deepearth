@@ -1,0 +1,47 @@
+{
+ "site": "site3_basin",
+ "storm": "ian",
+ "cell_size_m": 25.0,
+ "dt_s": 20.0,
+ "soil_dt_s": 62.5,
+ "infiltration": "gar",
+ "basin": true,
+ "keep_depressions": true,
+ "manning": "nlcd",
+ "rain": "aorc",
+ "total_rain_mm": 339.5392693318423,
+ "rain_source": "aorc",
+ "aorc": {
+  "domain_mean_total_mm": 339.5,
+  "centroid_total_mm": 346.2,
+  "cell_total_mm_p5_p95": [
+   298.8,
+   369.8
+  ],
+  "aorc_cells": 98
+ },
+ "peak_flooded_ha": 1417.8125,
+ "peak_outflow_cfs": 5336.427990242115,
+ "grid": [
+  556,
+  560
+ ],
+ "device": "cuda",
+ "peak_depth_m": 3.148829221725464,
+ "n_substeps": 287887,
+ "substep_cap_hits": 0,
+ "wall_s": 131.9753053188324,
+ "substeps_per_s": 2181.370213954107,
+ "mass_m3": {
+  "rain": 15835262.673463797,
+  "initial": 0.0,
+  "inflow": 0.0,
+  "created": 0.0,
+  "infiltrated": 5369963.689088683,
+  "abstracted": 0.0,
+  "stored": 5013499.476927265,
+  "outflow": 5451911.383960921
+ },
+ "mass_residual": -7.0650241412690375e-06,
+ "mass_residual_pct": -0.0007065024141269038
+}

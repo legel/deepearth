@@ -1,0 +1,206 @@
+{
+ "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+ "torch": "2.14.0+cu130",
+ "dx_m": 0.2,
+ "runs": [
+  {
+   "side": 1000,
+   "cells": 1000000,
+   "valid": 785343,
+   "gar": false,
+   "n_substeps": 3934,
+   "wall_s": 0.48,
+   "ms_per_substep": 0.122,
+   "s_per_cell_substep": 1.221495833442971e-10,
+   "mass_residual": 2.0576753645254326e-07,
+   "peak_mem_gib": 0.23
+  },
+  {
+   "side": 1000,
+   "cells": 1000000,
+   "valid": 785343,
+   "gar": true,
+   "n_substeps": 3945,
+   "wall_s": 11.17,
+   "ms_per_substep": 2.831,
+   "s_per_cell_substep": 2.8314607376079294e-09,
+   "mass_residual": -4.2195660269172084e-07,
+   "peak_mem_gib": 0.36
+  },
+  {
+   "side": 2000,
+   "cells": 4000000,
+   "valid": 3141543,
+   "gar": false,
+   "n_substeps": 3792,
+   "wall_s": 1.98,
+   "ms_per_substep": 0.521,
+   "s_per_cell_substep": 1.3033879079899205e-10,
+   "mass_residual": -3.517250641851234e-07,
+   "peak_mem_gib": 0.54
+  },
+  {
+   "side": 2000,
+   "cells": 4000000,
+   "valid": 3141543,
+   "gar": true,
+   "n_substeps": 3802,
+   "wall_s": 39.14,
+   "ms_per_substep": 10.294,
+   "s_per_cell_substep": 2.573594474466395e-09,
+   "mass_residual": 3.080586739950941e-07,
+   "peak_mem_gib": 1.0
+  },
+  {
+   "side": 2786,
+   "cells": 7761796,
+   "valid": 6095907,
+   "gar": false,
+   "n_substeps": 1811,
+   "wall_s": 2.22,
+   "ms_per_substep": 1.228,
+   "s_per_cell_substep": 1.5821446576074847e-10,
+   "mass_residual": 3.7308429293161565e-07,
+   "peak_mem_gib": 1.0
+  },
+  {
+   "side": 2786,
+   "cells": 7761796,
+   "valid": 6095907,
+   "gar": true,
+   "n_substeps": 1807,
+   "wall_s": 35.85,
+   "ms_per_substep": 19.839,
+   "s_per_cell_substep": 2.55602686649182e-09,
+   "mass_residual": -2.5877007416206613e-07,
+   "peak_mem_gib": 1.81
+  }
+ ],
+ "profile_gar": [
+  {
+   "name": "Torch-Compiled Region: 0/5",
+   "calls": 576,
+   "cuda_ms": 11030.28
+  },
+  {
+   "name": "## Call CompiledFxGraph fh6tvaekoxmdiuun6bztm2edlwboz5h4bktw7vts2pl4niig3y5i ##",
+   "calls": 576,
+   "cuda_ms": 11030.28
+  },
+  {
+   "name": "triton_poi_fused__to_copy_add_bitwise_and_bitwise_or_clamp_copy__div_full_like_ge_gt_le_log1p_lt_maximum_minimum_mul_neg",
+   "calls": 576,
+   "cuda_ms": 10373.37
+  },
+  {
+   "name": "triton_poi_fused__to_copy_add_bitwise_and_bitwise_or_clamp_copy__div_full_like_ge_gt_le_log1p_lt_maximum_minimum_mul_neg",
+   "calls": 576,
+   "cuda_ms": 10373.37
+  },
+  {
+   "name": "triton_poi_fused_copy__stack_25",
+   "calls": 576,
+   "cuda_ms": 231.85
+  },
+  {
+   "name": "triton_poi_fused_copy__stack_25",
+   "calls": 576,
+   "cuda_ms": 231.85
+  },
+  {
+   "name": "aten::copy_",
+   "calls": 43,
+   "cuda_ms": 162.71
+  },
+  {
+   "name": "aten::to",
+   "calls": 60,
+   "cuda_ms": 160.58
+  },
+  {
+   "name": "aten::_to_copy",
+   "calls": 41,
+   "cuda_ms": 160.58
+  },
+  {
+   "name": "Memcpy DtoH (Device -> Pageable)",
+   "calls": 14,
+   "cuda_ms": 127.74
+  },
+  {
+   "name": "triton_poi_fused_abs_add_clamp_div_gt_mul_neg_pow_scalar_tensor_slice_sqrt_sub_where_6",
+   "calls": 576,
+   "cuda_ms": 78.78
+  },
+  {
+   "name": "triton_poi_fused_abs_add_clamp_div_gt_mul_neg_pow_scalar_tensor_slice_sqrt_sub_where_6",
+   "calls": 576,
+   "cuda_ms": 78.78
+  },
+  {
+   "name": "triton_poi_fused_abs_add_clamp_div_gt_mul_neg_pow_scalar_tensor_slice_sqrt_sub_where_9",
+   "calls": 576,
+   "cuda_ms": 71.9
+  },
+  {
+   "name": "triton_poi_fused_abs_add_clamp_div_gt_mul_neg_pow_scalar_tensor_slice_sqrt_sub_where_9",
+   "calls": 576,
+   "cuda_ms": 71.9
+  },
+  {
+   "name": "triton_poi_fused_add_clamp_maximum_slice_sub_0",
+   "calls": 576,
+   "cuda_ms": 53.77
+  },
+  {
+   "name": "triton_poi_fused_add_clamp_maximum_slice_sub_0",
+   "calls": 576,
+   "cuda_ms": 53.77
+  },
+  {
+   "name": "triton_poi_fused_add_clamp_maximum_slice_sub_3",
+   "calls": 576,
+   "cuda_ms": 46.54
+  },
+  {
+   "name": "triton_poi_fused_add_clamp_maximum_slice_sub_3",
+   "calls": 576,
+   "cuda_ms": 46.54
+  },
+  {
+   "name": "triton_red_fused__to_copy_sum_20",
+   "calls": 576,
+   "cuda_ms": 33.44
+  },
+  {
+   "name": "triton_red_fused__to_copy_sum_20",
+   "calls": 576,
+   "cuda_ms": 33.44
+  },
+  {
+   "name": "triton_red_fused_clamp_scalar_tensor_sub_sum_where_17",
+   "calls": 576,
+   "cuda_ms": 33.27
+  },
+  {
+   "name": "triton_red_fused_clamp_scalar_tensor_sub_sum_where_17",
+   "calls": 576,
+   "cuda_ms": 33.27
+  },
+  {
+   "name": "Memcpy HtoD (Pageable -> Device)",
+   "calls": 21,
+   "cuda_ms": 32.68
+  },
+  {
+   "name": "triton_red_fused_sum_19",
+   "calls": 576,
+   "cuda_ms": 21.7
+  },
+  {
+   "name": "triton_red_fused_sum_19",
+   "calls": 576,
+   "cuda_ms": 21.7
+  }
+ ]
+}

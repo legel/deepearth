@@ -1,0 +1,26 @@
+{
+ "float64": {
+  "manning_normal_depth_m": 0.04643984379003459,
+  "solver_depth_mean_m": 0.046439726827144465,
+  "solver_depth_max_m": 0.046440033893189486,
+  "max_abs_rel_error": 9.631270378818169e-05,
+  "prescribed_inflow_m3": 2880.0,
+  "measured_inflow_m3": 2880.0000000001337,
+  "steady_outflow_cms": 0.8000000000002425,
+  "expected_outflow_cms": 0.8,
+  "mass_closure": 8.526512829120806e-15,
+  "created_m3": 0.0
+ },
+ "float32": {
+  "manning_normal_depth_m": 0.04643984379003459,
+  "solver_depth_mean_m": 0.04643940553069115,
+  "solver_depth_max_m": 0.04644094035029411,
+  "max_abs_rel_error": 0.00010526180267333984,
+  "prescribed_inflow_m3": 2880.0,
+  "measured_inflow_m3": 2879.999935626954,
+  "steady_outflow_cms": 0.7999997096559658,
+  "expected_outflow_cms": 0.8,
+  "mass_closure": 4.144254392955108e-07,
+  "created_m3": 0.0
+ }
+}

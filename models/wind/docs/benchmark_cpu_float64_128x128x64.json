@@ -1,0 +1,88 @@
+{
+ "device": "cpu",
+ "dtype": "torch.float64",
+ "lateral": "profile",
+ "grid": [
+  64,
+  128,
+  128
+ ],
+ "cells": 1048576,
+ "torch": "2.9.1+cu129",
+ "gpu": null,
+ "projection_s": 2.73352313041687,
+ "projection_iterations": 24,
+ "projection_cells_per_s": 383598.7295414212,
+ "step_s": 5.640431880950928,
+ "step_cells_per_s": 185903.4950038647,
+ "steps": 3,
+ "poisson_iterations": [
+  24,
+  27,
+  21,
+  26
+ ],
+ "divergence_rel": 7.077906029990324e-07,
+ "profile_top10_by_tottime": [
+  {
+   "function": "poisson.py:64 apply",
+   "ncalls": 7712,
+   "tottime_s": 10.7068,
+   "cumtime_s": 10.7068
+  },
+  {
+   "function": "poisson.py:184 _smooth",
+   "ncalls": 1150,
+   "tottime_s": 2.7586,
+   "cumtime_s": 11.8976
+  },
+  {
+   "function": "~:0 <built-in method torch._C._linalg.linalg_vector_norm>",
+   "ncalls": 14,
+   "tottime_s": 0.9272,
+   "cumtime_s": 0.9272
+  },
+  {
+   "function": "~:0 <built-in method torch.where>",
+   "ncalls": 11984,
+   "tottime_s": 0.7625,
+   "cumtime_s": 0.7625
+  },
+  {
+   "function": "poisson.py:112 cg",
+   "ncalls": 122,
+   "tottime_s": 0.7127,
+   "cumtime_s": 16.9842
+  },
+  {
+   "function": "~:0 <built-in method torch.grid_sampler>",
+   "ncalls": 12,
+   "tottime_s": 0.7096,
+   "cumtime_s": 0.7096
+  },
+  {
+   "function": "~:0 <built-in method torch._C._nn.avg_pool3d>",
+   "ncalls": 635,
+   "tottime_s": 0.623,
+   "cumtime_s": 0.623
+  },
+  {
+   "function": "~:0 <built-in method torch._C._nn.upsample_trilinear3d>",
+   "ncalls": 575,
+   "tottime_s": 0.6183,
+   "cumtime_s": 0.6183
+  },
+  {
+   "function": "~:0 <built-in method torch.max_pool3d>",
+   "ncalls": 6,
+   "tottime_s": 0.348,
+   "cumtime_s": 0.348
+  },
+  {
+   "function": "poisson.py:104 _dot",
+   "ncalls": 7604,
+   "tottime_s": 0.259,
+   "cumtime_s": 0.4098
+  }
+ ]
+}
