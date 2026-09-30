@@ -9,7 +9,8 @@ shows at any hour of its record. Each cell has:
 
 The layers gain water from rain, run-on and lateral flow. They lose it to evaporation, transpiration and drainage.
 Storms at full resolution in two dimensions are the [hydro](../hydro/README.md) solver's job. This model is the
-state between and through them, every hour of every year.
+state between and through them, every hour of every year. A site shows three samples of it:
+[SOIL MOISTURE, DROUGHT and FLOOD](#water-as-three-samples-of-the-record).
 
 ## Equations
 
@@ -29,6 +30,9 @@ state between and through them, every hour of every year.
 | soil water shown | $\theta_{root} = \dfrac{\theta_1 Z_e + \theta_2 (z_r - Z_e)}{z_r}$, $Z_e = 0.1$ m | [`root_zone`](balance.py#L78), [`ZE`](balance.py#L26) |
 | standing water shown | $w$, mm: the surface store after the hour's run-on, soak-in, evaporation and return flow, drawn where $w > 0$ | [`local_step`](balance.py#L117), [`lateral_step`](balance.py#L235) |
 | soil hydraulics | a survey's measured values where it has them (SSURGO 1/3 and 15 bar, $K_s$, $\theta_s$; POLARIS's Brooks-Corey fit), else the texture's Rawls, Brakensiek and Miller (1983) row; $\theta_{fc}$, $\theta_{wp}$ on Brooks-Corey at 33 and 1500 kPa | [`soils.py` `hydraulics`](soils.py#L65), [`RAWLS`](soils.py#L14) |
+| POLARIS between pixels | $x = \sum_{i=1}^{4} w_i x_i / \sum_i w_i$ over the four 1 arc-second pixel centers about the cell, $w_i$ bilinear, renormalized over pixels with a value; $K_s$, $h_b$, $\psi_f$ in logs | [`polaris_bilinear`](soils.py#L138) |
+| the cell's sunlight and wind | $R_s$ and $u_2$ read at one return per cell: canopy, the highest return within 2 m (the crown surface); open ground, its highest up-facing return within 1 m of the bare earth, else its nearest open neighbor's; any other cell, its highest up-facing return | [`representative.py` `representative`](representative.py#L28), [`GROUND_MAX_M`](representative.py#L24), [`CROWN_M`](representative.py#L25) |
+| crown smoothing, hourly | on canopy cells, $x_i \leftarrow \dfrac{\sum_{j \in W_i} c_j x_j}{\sum_{j \in W_i} c_j}$, $W_i$ the 2 m window, $c_j = 1$ on canopy cells, for $x = R_s, u_2$ | [`crown_smoother`](representative.py#L84) |
 | cover | $K_{cb}$, $K_{c,\max}$, root depth, albedo and $f_{ew}$ per cover (FAO-56 Tables 17 and 22) | [`SURFACES`](balance.py#L31) |
 
 The depressions come from Priority-Flood with epsilon (Barnes, Lehman and Mulla 2014), [`fill`](routing.py#L57). The
@@ -52,6 +56,29 @@ site's fixed color scale. Drought and waterlogging are read off the bands; no se
 
 $f$ is the rain hour's infiltration and $f_p$ is standing water soaking in. The bands are the legend's own: below
 the domain, between consecutive round edges, and at or above the top. Each cell's bands sum to the period's hours.
+
+## Water as three samples of the record
+
+Each map samples the nearest tower's record over its last five complete years, and the balance runs only the years
+the samples fall in, each spun up on the year before it ([`sampled_lanes`](water_modes.py#L174)).
+
+| sample | rule | code |
+|---|---|---|
+| typical year | the year whose rain is the median of the five | [`median_year`](water_modes.py#L165) |
+| drought window | the 91 local days maximizing $\sum_d (ET_{0,d} - P_d)$ (SPEI's climatic water balance; three months, the WMO's soil-moisture drought scale); $ET_0$ ASCE hourly over grass (albedo 0.23, $u_2 = 0.748\,u_{10}$); a day counts with 20 hours of $ET_0$, its sum their mean times 24 | [`drought_window`](water_modes.py#L137), [`site_pet`](water_modes.py#L72), [`DAY_MIN_HOURS`](water_modes.py#L20) |
+| 5-year storm | the deepest event (wet hours split by 6 dry hours, at least 5 mm) that an independent gauge corroborates, or that none covers: a gauge holding 80 % of its hours corroborates it when its peak hour and its total both reach half the forcing gauge's | [`storm_events`](water_modes.py#L84), [`corroborate`](water_modes.py#L100), [`five_year_storm`](water_modes.py#L119) |
+
+| map | equation | code |
+|---|---|---|
+| SOIL MOISTURE, m³/m³ | $\bar\theta = \dfrac{\sum_m \theta_m h_m}{\sum_m h_m}$ over the typical year's months, $\theta_m$ the month's mean $\theta_{root}$, $h_m$ its hours | [`typical_theta`](water_modes.py#L187) |
+| DROUGHT, mm | $\mathrm{CWD} = \sum_h \max(0,\ ET_{0,h} - AET_h)$ over the window (Stephenson 1990), the balance from the state at its first local midnight | [`drought_cwd`](water_modes.py#L194) |
+| FLOOD | the storm solved in two dimensions from the balance's soil water at its first hour, through 24 h of recession (72 h at most) | [`../hydro/flood_curves.py`](../hydro/flood_curves.py), [`recession_h`](water_modes.py#L132) |
+| plantable | soil whose surface takes water in, not a roof; paving and a crown over paving read 251, a building 252 | [`plantable`](water_modes.py#L202), [`CODE_SEALED`](water_modes.py#L33) |
+| scale | SOIL MOISTURE: plantable cells' p10 to p90, never narrower than 0.25 of the site's $\theta_{wp}$ to $\theta_s$; DROUGHT: 0 to p98; codes 0 to 250 | [`soil_moisture_map`](water_modes.py#L232), [`drought_map`](water_modes.py#L247) |
+
+Against a tower. Harvard Forest, 2025 drought window: evapotranspiration 1.90 mm/day over the site, against US-Ha1's
+measured growing-season mean of 2.22. With each cell's light and wind from its own highest up-facing return instead
+of the crown, 0.27.
 
 ## Validation: Harvard Forest, NEON soil water
 
@@ -101,6 +128,9 @@ topographic wetness index is $\ln(a / \tan\beta)$. The columns are Spearman corr
 - **Arrival within the hour.** Rain enters layer 1 in the hour it falls (model arrival 0 h). The shallow sensors
   respond a median 1 to 2 h later.
 - **No water table.** Drainage leaves the root zone for good, and nothing rises from below.
+- **No irrigation.** Rain alone: a watered lawn reads as dry as it would unwatered.
+- **Canopy edges are sharp.** A canopy cell and the open cell beside it take different returns' light and wind and
+  transpire through separate roots; no root water is shared across the edge, where real roots reach meters under a gap.
 
 ## Run the tests
 
@@ -108,4 +138,4 @@ topographic wetness index is $\ln(a / \tan\beta)$. The columns are Spearman corr
 cd models/soil && python -m pytest -q
 ```
 
-Requires `torch`, `numpy` and `numba`.
+Requires `torch`, `numpy`, `numba` and `scipy`.

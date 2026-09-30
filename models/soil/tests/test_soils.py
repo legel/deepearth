@@ -39,3 +39,30 @@ def test_polaris_units_and_canopy_storage():
     assert h["ksat"] == 12.0 and abs(h["h_b"] - 101.97) < 1e-9
     assert abs(float(S.s_max(np.array([3.0]))[0]) - (0.935 + 1.494 - 0.05175)) < 1e-9
     assert abs(float(S.lai_from_gap(np.array([np.exp(-1.5)]))[0]) - 3.0) < 1e-9
+
+
+def test_polaris_is_continuous_across_its_pixel_edges():
+    """Taken whole per pixel, POLARIS drew straight 30 m divides in the soil water; between pixel centers it blends."""
+    step = S.POLARIS_STEP_DEG
+
+    def pixel(clon, clat):
+        v = np.round(clon / step - 0.5) * 0.01 + 0.2                  # a property rising 0.01 per pixel eastward
+        return {k: v.copy() for k in S.KEYS}
+
+    lon = (np.array([10.0, 10.49, 10.51, 11.0]) + 0.5) * step          # 10 and 11 are pixel centers
+    lat = np.full(4, 40.5 * step)
+    out = S.polaris_bilinear(lon, lat, pixel)
+    assert np.allclose(out["fc"][[0, 3]], [0.3, 0.31], atol=1e-9), "a pixel center keeps its pixel's value"
+    assert abs(out["fc"][2] - out["fc"][1]) < 1e-3, "no step at the pixel edge"
+    assert np.allclose(out["ksat"][[0, 3]], [0.3, 0.31], atol=1e-9), "logs at the centers return the value"
+
+
+def test_polaris_renormalizes_over_pixels_with_a_value():
+    step = S.POLARIS_STEP_DEG
+
+    def pixel(clon, clat):
+        v = np.where(np.round(clon / step - 0.5) >= 11, np.nan, 0.25)
+        return {k: v.copy() for k in S.KEYS}
+
+    out = S.polaris_bilinear(np.array([10.7 * step]), np.array([40.5 * step]), pixel)
+    assert np.allclose(out["fc"], 0.25)

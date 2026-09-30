@@ -6,7 +6,7 @@ and bubbling pressure, and the Green-Ampt wetting-front suction. A survey's own 
 Texture parameters: Rawls, Brakensiek and Miller (1983), Table 1 (geometric means).
 """
 
-from typing import Dict, Optional, Sequence
+from typing import Callable, Dict, Optional, Sequence
 
 import numpy as np
 
@@ -124,3 +124,48 @@ def s_max(lai: np.ndarray) -> np.ndarray:
 def lai_from_gap(p_gap: np.ndarray, g: float = 0.5) -> np.ndarray:
     """Effective LAI from a LiDAR column's gap fraction (ground returns over all returns), Beer-Lambert."""
     return -np.log(np.clip(p_gap, 1e-3, 1.0)) / g
+
+
+# ---------------------------------------------------------------- POLARIS between its pixel centers
+
+KEYS = ("theta_sat", "theta_r", "fc", "wp", "ksat", "lam", "h_b", "psi_f")
+POLARIS_STEP_DEG = 1.0 / 3600.0
+"""POLARIS's grid: 1 arc-second, about 30 m."""
+POLARIS_LOG = ("ksat", "h_b", "psi_f")
+"""Interpolated in logs: they span orders of magnitude."""
+
+
+def polaris_bilinear(lon: np.ndarray, lat: np.ndarray, pixel: Callable) -> Dict[str, np.ndarray]:
+    """Each cell's hydraulics blended bilinearly between the four POLARIS pixel centers about it.
+
+    POLARIS is a continuous field sampled at 1 arc-second. Taken whole per pixel, a 0.2 m site's soil steps along a
+    30.8 m by 24.3 m lon/lat grid, and the soil water map shows that grid as straight divides.
+
+    Args:
+        lon, lat: cell centers, degrees.
+        pixel: pixel(clon, clat) -> {key: array} over KEYS at pixel centers, NaN where POLARIS has no value
+            (`from_polaris` of the depth-averaged layers).
+    Returns:
+        {key: array} over KEYS per cell, weights renormalized over the corners with a value; NaN where none has.
+    """
+    s = POLARIS_STEP_DEG
+    fx, fy = np.asarray(lon, np.float64) / s - 0.5, np.asarray(lat, np.float64) / s - 0.5
+    i0, j0 = np.floor(fx), np.floor(fy)
+    tx, ty = fx - i0, fy - j0
+    corners = [(di, dj, (tx if di else 1 - tx) * (ty if dj else 1 - ty)) for di in (0, 1) for dj in (0, 1)]
+    acc = {k: np.zeros(len(fx)) for k in KEYS}
+    wsum = np.zeros(len(fx))
+    for di, dj, w in corners:
+        h = pixel((i0 + di + 0.5) * s, (j0 + dj + 0.5) * s)
+        got = np.isfinite(np.asarray(h[KEYS[0]], np.float64))
+        for k in KEYS:
+            v = np.asarray(h[k], np.float64)
+            v = np.log(np.maximum(v, 1e-12)) if k in POLARIS_LOG else v
+            acc[k] += np.where(got, np.nan_to_num(v) * w, 0.0)
+        wsum += np.where(got, w, 0.0)
+    has = wsum > 0
+    out = {}
+    for k in KEYS:
+        v = np.where(has, acc[k] / np.where(has, wsum, 1.0), np.nan)
+        out[k] = np.exp(v) if k in POLARIS_LOG else v
+    return out
