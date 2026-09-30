@@ -17,7 +17,9 @@ depend on the pseudo-time step. The full account, with every experiment and know
 | mass consistency | $\nabla^2 \lambda = \nabla \cdot \mathbf{u}^*$, $\mathbf{u} = \mathbf{u}^* - \nabla \lambda$ | [`solver.py` `project`](solver.py#L714) |
 | steady residual | $R(\mathbf{u}) = -\sum_f F_f \mathbf{u}_f + \nabla\cdot(\nu_t \nabla \mathbf{u}) - (c_w + c_d a)\lvert\mathbf{u}\rvert\mathbf{u}$ | [`solver.py` `fv_increment`](solver.py#L900) |
 | convection | face value $\mathbf{u}_f$ by MUSCL, van Leer limited, on the divergence-free face fluxes $F_f$ | [`solver.py` `convection`](solver.py#L878), [`_muscl`](solver.py#L319) |
-| turbulent mixing | $\nu_t = (\kappa\, \bar h)^2 \lvert S \rvert + \nu$, under-relaxed 0.5 between steps | [`solver.py` `viscosity`](solver.py#L814) |
+| turbulent mixing, as run (k-l) | $\nu_t = C_\mu^{1/4}\,\ell\sqrt{k}$; $\partial_t k + \nabla\cdot(\mathbf{u}k) = \nabla\cdot\left(\dfrac{\nu_t}{\sigma_k}\nabla k\right) + \nu_t\lvert S\rvert^2 - \dfrac{C_\mu^{3/4} k^{3/2}}{\ell} + c_d a\left(\beta_p\lvert\mathbf{u}\rvert^3 - \beta_d\lvert\mathbf{u}\rvert k\right)$; $C_\mu$ 0.09, $\sigma_k$ 1, $\beta_p$ 1, $\beta_d$ 5.1 (Katul et al. 2004); $\ell = \kappa(h_c - d)$ in the canopy, $\kappa(h - d)$ above, $d = 2h_c/3$ | [`solver.py` `k_step`](solver.py#L952), [`KL_C_MU`](solver.py#L39), [`_kl_length`](solver.py#L332) |
+| drive, as run | a mean pressure gradient along the wind, $\Pi = u_*^2 / h_{top}$ (the column's stress over its depth), no stress through the top | [`solver.py` `_kl_column`](solver.py#L495) |
+| turbulent mixing, mixing length (option) | $\nu_t = (\kappa\, \bar h)^2 \lvert S \rvert + \nu$, under-relaxed 0.5 between steps | [`solver.py` `viscosity`](solver.py#L814) |
 | canopy drag | $c_d\, a\, \lvert \mathbf{u} \rvert \mathbf{u}$, $a = \mathrm{LAI}/h$ | [`physics.py` `drag_density`](physics.py#L97) |
 | wall stress | $\left(\kappa / \ln(\delta / z_0)\right)^2 \lvert \mathbf{u} \rvert \mathbf{u}$ at half a cell | [`solver.py` `_wall`](solver.py#L326) |
 | pseudo-time step | $M\,\delta\mathbf{u} = \Delta t\, R(\mathbf{u}) + V \nabla \Pi$, $M = V(1 + \Delta t\, c\lvert\mathbf{u}\rvert) + \Delta t\,(D + A_\mathrm{upwind})$; then project, $\Pi \mathrel{+}= \lambda$ | [`solver.py` `run`](solver.py#L1063), [`poisson.py` `Convective`](poisson.py#L154) |
@@ -26,18 +28,32 @@ Where $\delta\mathbf{u} = 0$ the steady equations hold whatever $\Delta t$, so t
 iteration arrives. $M$ is solved by BiCGSTAB and the projection by conjugate gradients, both preconditioned by one
 multigrid kernel; momentum runs in float32 and every projection in float64.
 
-## Over a period: wind run and the time in each band
+## At every return: the Year's wind run
 
-The speed at a point is the reference speed times the point's unit-speed basis for the hour's heading,
-$U(p, h) = u_{ref}(h)\, s_{k(h)}(p)$. Over a period $P$ (a day, a month or a year):
+The solver is linear in the reference speed. An hour's field is the two solved headings about its direction $\theta$
+blended and scaled to the reference speed $u_{ref}$, set by the tower ([wind_simulation.md](wind_simulation.md#how-the-tower-sets-the-value)):
 
-| quantity | equation |
-|---|---|
-| wind run, km | $3.6 \sum_k s_k(p) \sum_{h \in P,\ k(h) = k} u_{ref}(h)$ |
-| hours at or above a band edge $e$ | $\sum_k \#\{h \in P,\ k(h) = k : u_{ref}(h) \ge e / s_k(p)\}$ |
+| quantity | equation | code |
+|---|---|---|
+| speed at a return | $U(p, h) = u_{ref}(h)\,\lvert (1 - a)\,\mathbf{S}_k(p) + a\,\mathbf{S}_{k+1}(p) \rvert$, $\theta(h)$ between headings $k$ and $k + 1$, $a$ its fraction in steps of 1/16 | [`unit_field`](year_run.py#L42), [`groups`](year_run.py#L31) |
+| wind run, km | $R(p) = 3.6 \sum_g \lvert \mathbf{S}_g(p) \rvert \sum_{h \in g} u_{ref}(h)$ over the year's hours grouped by heading pair and fraction | [`run_km`](year_run.py#L49) |
+| stored | one byte a return, $\lfloor 254\, R / R_{\max} \rceil$, $R_{\max}$ the record's p98 over every year and return rounded up to 1, 2 or 5 times a power of ten | [`quantize`](year_run.py#L72), [`nice_ceil`](year_run.py#L61) |
+| flow drawn over it | the year's typical hour, its most frequent 22.5° sector (calm under 0.5 m/s aside) at the sector's median speed, on the lowest level | [`typical_hour`](year_run.py#L153), [`ribbon_field`](year_run.py#L166) |
 
-Both are exact from the 16 headings' basis and the tower-driven hourly $u_{ref}$: sort each heading's hours once
-per period, then binary-search per point. Windthrow risk is read as time in the top band.
+Grouping moves the run under 0.2 % (median) and 1 % (max) from summing every hour alone, over 8,760 random hours ([`tests/test_year_run.py`](tests/test_year_run.py)).
+
+### The unit field at a return
+
+> **Being replaced.** The rule below is to give way to the solver's 3D field sampled at each return (trilinear over
+> fluid cells, a fixed clearance off solid faces, one rule for every class). Neighboring returns under different
+> rules here differ by 30 to 90 %, at crowns, walls and roofs.
+
+| rule | equation | code |
+|---|---|---|
+| where it is read | a canopy return at its own height $z$; a ground or roof return 2 m above its surface | [`point_basis`](year_run.py#L103), [`PLANT_HEIGHT_M`](year_run.py#L24) |
+| between levels | bilinear on each level; linear in $\ln z$ between the usable levels about $z$ | [`bilinear`](year_run.py#L84) |
+| below the lowest, above the top | $\mathbf{S}(z) = \mathbf{S}(z_l)\,\dfrac{\ln(z / z_0)}{\ln(z_l / z_0)}$, $z_0$ by the surface's class | [`point_basis`](year_run.py#L103) |
+| a return the solve does not reach | the nearest reached return in $(x, y, z)$, carried to $z$ by the same log law, clipped to a factor of 3 | [`fill_solids`](year_run.py#L132), [`FILL_MAX`](year_run.py#L25) |
 
 ## Validation
 
@@ -80,10 +96,11 @@ python3 cli.py benchmark --site campanile --nx 128 --ny 128 --nz 64 --steps 5
 
 `--bundle <dir>` solves a real site from a directory holding `semantics/class_top_<res>.tif` (a class per column)
 with `parameters.json` (z0, cd, LAI and closure per class), and `surface/` DTM and DSM rasters; without one, the
-46-class table in [`physics.py` `CLASSES`](physics.py#L46) applies. `--fast` runs momentum in float32.
+46-class table in [`physics.py` `CLASSES`](physics.py#L46) applies. `--fast` runs momentum in float32. A site is
+solved with `--scheme fv --fast --inflow canopy --closure k-l --drive pressure`.
 
 ```bash
-python3 -m pytest         # 102 tests, no network and no site data
+python3 -m pytest         # 108 tests, no network and no site data
 ```
 
 ## License

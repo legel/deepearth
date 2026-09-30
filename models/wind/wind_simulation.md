@@ -197,6 +197,14 @@ field is the mean over the last 40 steps.
 
 The tower comparison of the simulated wind at a second, independent sonic has not been made.
 
+A return's wind is read from the published levels by rules that differ by class and position
+([README](README.md#the-unit-field-at-a-return)): crowns at their own height, ground and roofs 2 m above through a
+log law, a return the solve does not reach from its neighbor. Neighboring returns under different rules differ by 30 to
+90 %, which draws sharp edges at crowns, walls and roofs. Of neighbor pairs within 1 m, the Year run differs by more
+than 30 % across 22 to 87 % of the pairs that cross a class boundary, against 0.2 to 0.5 % of the pairs within a class
+(UC Berkeley, Harvard Forest and a third site). Sampling the solver's 3D field at each return, with one rule for every
+class, is to replace them.
+
 [inflow]: https://github.com/legel/deepearth/blob/33490a5/models/wind/forcing.py#L24
 [drive]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L913
 [length]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L332
