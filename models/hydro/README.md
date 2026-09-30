@@ -26,6 +26,23 @@ Melone 1993) with Brooks-Corey hydraulics and the Rawls, Brakensiek and Miller (
 single-layer case of the LGAR scheme in NOAA's Next Generation Water Resources Modeling Framework. `created` is
 the water the positivity clamp invents, reported rather than absorbed.
 
+## FLOOD: the 5-year storm, per cell
+
+The storm ([`../soil/water_modes.py`](../soil/water_modes.py)) is solved once from the soil balance's water at its
+first hour, through 24 h of recession (72 h at most), and stored per cell ever deeper than 3 mm:
+
+| quantity | equation | code |
+|---|---|---|
+| depth over time | $h(t)$ linear through 8 of the cell's own frames $(t_j, h_j)$, flat outside; each knot added where the curve so far errs most in depth, starting from the frame before the cell first wets and the last | [`fit_knots`](flood_curves.py#L20), [`depth_at`](flood_curves.py#L57), [`KNOTS`](flood_curves.py#L14) |
+| peak water surface | $\eta_{\max} = z_g + \max_t h(t)$ | [`peak_surface`](flood_curves.py#L85) |
+| a return flooded | $z_p < \eta_{\max}$ of its cell; depth over it $\eta_{\max} - z_p$ | [`flooded`](flood_curves.py#L90) |
+| stored | uint16 knots, 10 s and 0.1 mm steps | [`quantize`](flood_curves.py#L74) |
+| error | RMS depth over cell-frames wet on either side; wet footprint IoU pooled over frames | [`error`](flood_curves.py#L98) |
+
+Measured on UC Berkeley's storm (2022-12-30, 169 mm over 55 h), against the solver's 865 frames: depth RMS 2.7 mm;
+wet footprint IoU 0.90 at 1 cm and 0.89 at 3 cm; stored volume at the fullest frame within 0.5 %. The 3 to 10 mm
+sheet on paving that comes and goes with each burst is smoothed.
+
 ## Validation
 
 Against exact solutions ([`tests/`](tests/)):
@@ -105,7 +122,7 @@ res = simulate(Surface(z=z, soil=soil, soil_state=res.soil_state), next_storm, c
 ```
 
 ```bash
-python3 -m pytest         # 184 tests, no network and no site data
+python3 -m pytest         # 187 tests, no network and no site data
 ```
 
 ## License

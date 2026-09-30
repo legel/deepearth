@@ -74,7 +74,8 @@ be the gauge's whole drainage basin from the USGS Network-Linked Data Index [bas
 
 ## In the viewer
 
-Two tiers draw the water at any time of the tower's record. Tier 1 is the year balance's hourly state: every cell's soil
+Where a site carries FLOOD, the page shows the 5-year storm at its most water, from each cell's stored depth curve and
+peak surface ([README](README.md#flood-the-5-year-storm-per-cell)). Elsewhere, two tiers draw the water at any time of the tower's record. Tier 1 is the year balance's hourly state: every cell's soil
 water and standing water after each hour, stored for every year. Tier 2 is this solver's local-inertial scheme run in the
 browser in WebGL2, with the soil on its own step, for minutes and seconds. A seek into a wet period starts it from the
 storm's first wet hour, where tier 1's surface is near dry, and runs it forward to the sought time; while the page plays,
