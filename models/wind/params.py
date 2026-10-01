@@ -270,10 +270,15 @@ def roof_edge(building: np.ndarray, hag: np.ndarray) -> np.ndarray:
 
 
 def canopy_over_surfaces(columns: CellParams, dtm: np.ndarray, dsm: np.ndarray,
-                         where: np.ndarray) -> Tuple[CellParams, np.ndarray]:
+                         where: np.ndarray, vegetation: Optional[np.ndarray] = None) -> Tuple[CellParams, np.ndarray]:
     """The columns with each surface-class column in `where` whose DSM stands more than OVERHANG_M above its terrain
     turned to canopy, and that mask. Solid to its DSM, such a column made a tree over a lawn a tower. A roof's edge
-    (`roof_edge`) stays solid: made porous, it let wind through the building's rim."""
+    (`roof_edge`) stays solid: made porous, it let wind through the building's rim.
+
+    With `vegetation` (columns where the survey's own returns hold a canopy, `vegetation_mask`), only those turn: a raised
+    surface the survey finds no plants on is a structure whose top the class raster reads as paving, a deck or a
+    stand, and it stays solid to its DSM. Without it, a third site's upper stands, 25 m decks classed
+    concrete, were solved as a porous crown the wind blew through (2,788 columns there, 12,588 at UC)."""
     names = columns.table.names
     if "tree_canopy" not in names:
         return columns, np.zeros(columns.row.shape, bool)
@@ -283,7 +288,29 @@ def canopy_over_surfaces(columns: CellParams, dtm: np.ndarray, dsm: np.ndarray,
     roof = np.asarray(columns.building, bool) & ~is_surface
     with np.errstate(invalid="ignore"):
         over = is_surface & (hag > OVERHANG_M) & where & ~roof_edge(roof, hag)
+    if vegetation is not None:
+        over &= np.asarray(vegetation, bool)
     row = np.where(over, names.index("tree_canopy"), columns.row).astype(columns.row.dtype)
+    return CellParams(row=row, table=columns.table, unobserved=columns.unobserved, nodata=columns.nodata,
+                      source=columns.source), over
+
+
+def structures_classed_as_crowns(columns: CellParams, dtm: np.ndarray, dsm: np.ndarray, where: np.ndarray,
+                                 structure: Optional[np.ndarray]) -> Tuple[CellParams, np.ndarray]:
+    """The columns with each crown-class column in `where` that stands more than OVERHANG_M over its terrain and whose
+    survey returns say structure (`structure`, canopy.evidence == STRUCTURE: one echo per pulse, or the photo's paint
+    or concrete) turned to a solid building class, and that mask. The class raster had called a third site's west
+    press box a crown, and the solve let the wind through it."""
+    names = columns.table.names
+    solid_b = [i for i in range(len(names)) if columns.table.solid[i] and columns.table.building[i]]
+    none = np.zeros(columns.row.shape, bool)
+    if structure is None or not solid_b:
+        return columns, none
+    to = names.index("roof_sealed") if "roof_sealed" in names else solid_b[0]
+    crown = ~columns.table.solid[columns.row] & (columns.table.lai[columns.row] > 0)
+    hag = np.nan_to_num(dsm - dtm, nan=0.0)
+    over = crown & (hag > OVERHANG_M) & np.asarray(where, bool) & np.asarray(structure, bool)
+    row = np.where(over, to, columns.row).astype(columns.row.dtype)
     return CellParams(row=row, table=columns.table, unobserved=columns.unobserved, nodata=columns.nodata,
                       source=columns.source), over
 

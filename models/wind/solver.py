@@ -392,7 +392,30 @@ class Model:
 
         below = torch.cummax(torch.where(self.solid, self.zf[1:, None, None].expand_as(self.sink),
                                          torch.zeros_like(self.sink)), dim=0).values
+        if getattr(scene, "partial", False) and scene.top is not None:   # the cut ground's true surface, not its cube's floor
+            below = torch.maximum(below, t(scene.top)[None].expand_as(below))
         self.height = torch.clamp(self.zc[:, None, None] - below, min=1e-3 * self.dx)
+        partial = getattr(scene, "partial", False) and getattr(scene, "cut_open", None) is not None
+        self._cut_open = t(scene.cut_open) if partial else None
+        if partial:
+            # a cut cell's velocity sits at its open part's mid height d over the true surface, where its wall stress
+            # reads it (`_wall_coefficient`); its closure length is taken at the same d. From its centre (under the
+            # surface when more than half the cell is ground) the length fell to the 1 mm floor, the eddy viscosity
+            # with it, and the surface stress could not reach the flow above: u* 31 to 70 % low on a plane
+            # (2026-10-01)
+            d = torch.clamp(self._cut_open * self.dz[:, None, None] / 2, min=1e-3)
+            self.height = torch.where(self._cut_open < 1, d, self.height)
+        self._roof = (torch.as_tensor(np.asarray(scene.roof, bool), device=cfg.device) if partial and scene.roof is not None
+                      else torch.zeros(self.ny, self.nx, dtype=torch.bool, device=cfg.device))
+        self._surface_area = torch.ones(self.ny, self.nx, dtype=self.sink.dtype, device=cfg.device)
+        if partial and scene.terrain is not None:      # the bare earth's area per unit plan area; a roof is flat
+            gy, gx = np.gradient(np.asarray(scene.terrain, float), self.dx)
+            area = np.where(self._roof.cpu().numpy(), 1.0, np.sqrt(1.0 + gx ** 2 + gy ** 2))
+            self._surface_area = t(area)
+        self.favor = partial
+        if partial:
+            assert cfg.scheme == "fv", "the cut ground's volume and face fractions are carried by the finite volumes"
+            self._fractions(scene, t)
         self.wall = self._wall_coefficient(z0)
         self.column = None
         self.k, self.k_bc = None, None
@@ -418,6 +441,43 @@ class Model:
         self._lam: Optional[Tensor] = None
         self._momentum_factors = None
         self._work = self if (cfg.work_dtype or cfg.dtype) == cfg.dtype else self._copy(cfg.work_dtype)
+
+    APERTURE_MIN = 0.05
+    """The least open share of a face between two fluid cells: domain.PARTIAL_PHI_MAX's, so no conductance vanishes."""
+
+    def _fractions(self, scene: Scene, t) -> None:
+        """The cut ground's volume and face fractions (FAVOR, Hirt and Sicilian 1985): each cut cell's open volume
+        `theta_v` (domain's `cut_open`), each side face's open share above the bare earth where it crosses the face
+        (the mean of the two columns' tops, or the ground column's own beside a building), and each z-face's distance
+        between the centres of the open volumes it joins (a cut cell's at its open part's mid height). The momentum,
+        continuity and k carry them: the open volume holds the momentum, the open faces pass the flux, and the cut
+        cell's velocity is the open part's, where its wall stress reads it."""
+        nz, ny, nx = self.nz, self.ny, self.nx
+        fluid = ~self.solid
+        self.theta_v = torch.where(fluid, self._cut_open, torch.zeros_like(self._cut_open))
+        top = t(scene.top)
+        ground = ~self._roof
+        zf1, dz = self.zf[1:, None, None], self.dz[:, None, None]
+        far = torch.full_like(top, -1e30)
+        gtop = torch.where(ground, top, far)
+
+        def aperture(a: Tensor, b: Tensor, ga: Tensor, gb: Tensor) -> Tensor:
+            both = ga & gb
+            face = torch.where(both, 0.5 * (a + b), torch.where(ga, a, torch.where(gb, b, torch.full_like(a, -1e30))))
+            return torch.clamp((zf1 - face[None]) / dz, self.APERTURE_MIN, 1.0)
+
+        tx = torch.ones(nz, ny, nx + 1, dtype=self.sink.dtype, device=self.sink.device)
+        tx[..., 1:-1] = aperture(gtop[:, :-1], gtop[:, 1:], ground[:, :-1], ground[:, 1:])
+        tx[..., 0], tx[..., -1] = self.theta_v[..., 0], self.theta_v[..., -1]
+        ty = torch.ones(nz, ny + 1, nx, dtype=self.sink.dtype, device=self.sink.device)
+        ty[:, 1:-1, :] = aperture(gtop[:-1, :], gtop[1:, :], ground[:-1, :], ground[1:, :])
+        ty[:, 0, :], ty[:, -1, :] = self.theta_v[:, 0, :], self.theta_v[:, -1, :]
+        self.ax_open = self.area_x * tx
+        self.ay_open = self.area_x * ty
+        self.vol_open = self.vol * self.theta_v
+        cut = fluid & (self._cut_open < 1)
+        centre = torch.where(cut, 0.5 * (top[None] + zf1), self.zc[:, None, None].expand(nz, ny, nx))
+        self.dzf = torch.clamp(centre[1:] - centre[:-1], min=1e-3)
 
     def _copy(self, dtype: torch.dtype) -> "Model":
         """This model with every floating tensor (and a unit's boundary) in `dtype`, for the momentum phase."""
@@ -560,13 +620,20 @@ class Model:
         dzh = (dz / 2).expand_as(self.sink)
         coef = lambda delta, z: (KAPPA / torch.log(delta / torch.minimum(z, delta * math.exp(-1.0)))) ** 2  # noqa: E731
         fr = torch.zeros_like(self.sink)
-        fr[..., :-1] = torch.maximum(fr[..., :-1], s[..., 1:] * coef(half[..., 1:], z0[..., 1:]))
-        fr[..., 1:] = torch.maximum(fr[..., 1:], s[..., :-1] * coef(half[..., :-1], z0[..., :-1]))
-        fr[:, :-1, :] = torch.maximum(fr[:, :-1, :], s[:, 1:, :] * coef(half[:, 1:, :], z0[:, 1:, :]))
-        fr[:, 1:, :] = torch.maximum(fr[:, 1:, :], s[:, :-1, :] * coef(half[:, :-1, :], z0[:, :-1, :]))
+        lat = s & self._roof[None] if self._cut_open is not None else s    # as `_wall_coefficient`
+        fr[..., :-1] = torch.maximum(fr[..., :-1], lat[..., 1:] * coef(half[..., 1:], z0[..., 1:]))
+        fr[..., 1:] = torch.maximum(fr[..., 1:], lat[..., :-1] * coef(half[..., :-1], z0[..., :-1]))
+        fr[:, :-1, :] = torch.maximum(fr[:, :-1, :], lat[:, 1:, :] * coef(half[:, 1:, :], z0[:, 1:, :]))
+        fr[:, 1:, :] = torch.maximum(fr[:, 1:, :], lat[:, :-1, :] * coef(half[:, :-1, :], z0[:, :-1, :]))
         fr[:-1] = torch.maximum(fr[:-1], s[1:] * coef(dzh[:-1], z0[1:]))
-        fr[1:] = torch.maximum(fr[1:], s[:-1] * coef(dzh[1:], z0[:-1]))
-        fr[0] = torch.maximum(fr[0], coef(dzh[0], z0[0]))
+        if self._cut_open is None:
+            fr[1:] = torch.maximum(fr[1:], s[:-1] * coef(dzh[1:], z0[:-1]))
+            fr[0] = torch.maximum(fr[0], coef(dzh[0], z0[0]))
+        else:                                 # the floor's log-law k where `_wall_coefficient` reads its stress
+            d = torch.clamp(self._cut_open * dzh, min=1e-3)
+            under = torch.cat([torch.ones_like(s[:1]), s[:-1]])
+            fr = torch.maximum(fr, under * ~self._thin * coef(d, z0))
+            fr[1:] = torch.maximum(fr[1:], self._thin[:-1] * coef(self.height[1:], z0[1:]))
         self.wall_friction = torch.where(s, torch.zeros_like(fr), fr)
         self.wall_mask = (self.wall_friction > 0).to(self.sink.dtype)
 
@@ -623,13 +690,34 @@ class Model:
         size = torch.full_like(self.sink, dx)
         dz = self.dz[:, None, None].expand_as(self.sink)
         w = torch.zeros_like(self.sink)
-        w[..., :-1] += s[..., 1:] * _wall(half[..., 1:], z0[..., 1:], size[..., 1:])
-        w[..., 1:] += s[..., :-1] * _wall(half[..., :-1], z0[..., :-1], size[..., :-1])
-        w[:, :-1, :] += s[:, 1:, :] * _wall(half[:, 1:, :], z0[:, 1:, :], size[:, 1:, :])
-        w[:, 1:, :] += s[:, :-1, :] * _wall(half[:, :-1, :], z0[:, :-1, :], size[:, :-1, :])
+        lat = s
+        if self._cut_open is not None:
+            lat = s & self._roof[None]       # a cut ground's steps' sides are no walls (only a building's are)
+        w[..., :-1] += lat[..., 1:] * _wall(half[..., 1:], z0[..., 1:], size[..., 1:])
+        w[..., 1:] += lat[..., :-1] * _wall(half[..., :-1], z0[..., :-1], size[..., :-1])
+        w[:, :-1, :] += lat[:, 1:, :] * _wall(half[:, 1:, :], z0[:, 1:, :], size[:, 1:, :])
+        w[:, 1:, :] += lat[:, :-1, :] * _wall(half[:, :-1, :], z0[:, :-1, :], size[:, :-1, :])
         w[:-1] += s[1:] * _wall(dz[:-1] / 2, z0[1:], dz[:-1])
-        w[1:] += s[:-1] * _wall(dz[1:] / 2, z0[:-1], dz[1:])
-        w[0] += _wall(dz[0] / 2, z0[0], dz[0])
+        if self._cut_open is None:
+            w[1:] += s[:-1] * _wall(dz[1:] / 2, z0[:-1], dz[1:])
+            w[0] += _wall(dz[0] / 2, z0[0], dz[0])
+            return torch.where(s, torch.zeros_like(w), w)
+        # The cut ground. The true surface under a cut cell carries the flat floor's own stress, the rough-wall log law
+        # at the open part's mid height d above it (where the FAVOR fractions put the cell's velocity),
+        #     tau_w / rho = (kappa / ln(d / z0))^2 |u| u,   d = (1 - phi) dz / 2,
+        # over the surface's area A = dx^2 sqrt(1 + |grad z_t|^2), per cell volume dx^2 dz. A cut cell thinner than the
+        # roughness sublayer (d < e z0, where the log law's own clamp begins) has no log layer to read: its surface's
+        # stress is read by the cell above, at that cell's centre's true distance, as wall models take their input in
+        # the log layer and not from the first cell (Kawai and Larsson 2012, Phys Fluids 24: 015105). Read inside the
+        # sublayer at the clamp's kappa^2, the plane's u* came out 14 to 42 % over the log law's (2026-10-01).
+        # The log law: Stull 1988 section 9.7.3; the stress over the cut face's own area: Ye, Mittal, Udaykumar and
+        # Shyy 1999 (J Comput Phys 156: 209).
+        d = torch.clamp(self._cut_open * dz / 2, min=1e-3)
+        floor = dz / self._surface_area[None]
+        under = torch.cat([torch.ones_like(s[:1]), s[:-1]])            # ground under: a solid, or the domain floor
+        self._thin = under & ~s & (self._cut_open < 1) & (d < math.e * z0)
+        w += under * ~self._thin * _wall(d, z0, floor)
+        w[1:] += self._thin[:-1] * _wall(self.height[1:], z0[1:], floor[1:])
         return torch.where(s, torch.zeros_like(w), w)
 
     def _operator(self, nu_x: Tensor, nu_y: Tensor, nu_z: Tensor, ident: Tensor,
@@ -644,13 +732,23 @@ class Model:
         ax = torch.zeros(self.nz, self.ny, self.nx + 1, dtype=self.sink.dtype, device=self.sink.device)
         ay = torch.zeros(self.nz, self.ny + 1, self.nx, dtype=self.sink.dtype, device=self.sink.device)
         az = torch.zeros(self.nz + 1, self.ny, self.nx, dtype=self.sink.dtype, device=self.sink.device)
-        ax[..., 1:-1] = self.open_x * nu_x[..., 1:-1] * self.area_x / self.dx
-        ay[:, 1:-1, :] = self.open_y * nu_y[:, 1:-1, :] * self.area_x / self.dx
-        az[1:-1] = self.open_z * nu_z[1:-1] * self.area_z / self.dzc[:, None, None]
-        ax[..., 0] = west * side(0) * nu_x[..., 0] * self.area_x[:, :, 0] / (self.dx / 2)
-        ax[..., -1] = east * side(1) * nu_x[..., -1] * self.area_x[:, :, 0] / (self.dx / 2)
-        ay[:, 0, :] = south * side(2) * nu_y[:, 0, :] * self.area_x[:, :, 0] / (self.dx / 2)
-        ay[:, -1, :] = north * side(3) * nu_y[:, -1, :] * self.area_x[:, :, 0] / (self.dx / 2)
+        if self.favor:                  # the cut ground's open faces and the distances between its open centres
+            axo, ayo = self.ax_open, self.ay_open
+            ax[..., 1:-1] = self.open_x * nu_x[..., 1:-1] * axo[..., 1:-1] / self.dx
+            ay[:, 1:-1, :] = self.open_y * nu_y[:, 1:-1, :] * ayo[:, 1:-1, :] / self.dx
+            az[1:-1] = self.open_z * nu_z[1:-1] * self.area_z / self.dzf
+            ax[..., 0] = west * side(0) * nu_x[..., 0] * axo[..., 0] / (self.dx / 2)
+            ax[..., -1] = east * side(1) * nu_x[..., -1] * axo[..., -1] / (self.dx / 2)
+            ay[:, 0, :] = south * side(2) * nu_y[:, 0, :] * ayo[:, 0, :] / (self.dx / 2)
+            ay[:, -1, :] = north * side(3) * nu_y[:, -1, :] * ayo[:, -1, :] / (self.dx / 2)
+        else:
+            ax[..., 1:-1] = self.open_x * nu_x[..., 1:-1] * self.area_x / self.dx
+            ay[:, 1:-1, :] = self.open_y * nu_y[:, 1:-1, :] * self.area_x / self.dx
+            az[1:-1] = self.open_z * nu_z[1:-1] * self.area_z / self.dzc[:, None, None]
+            ax[..., 0] = west * side(0) * nu_x[..., 0] * self.area_x[:, :, 0] / (self.dx / 2)
+            ax[..., -1] = east * side(1) * nu_x[..., -1] * self.area_x[:, :, 0] / (self.dx / 2)
+            ay[:, 0, :] = south * side(2) * nu_y[:, 0, :] * self.area_x[:, :, 0] / (self.dx / 2)
+            ay[:, -1, :] = north * side(3) * nu_y[:, -1, :] * self.area_x[:, :, 0] / (self.dx / 2)
         az[-1] = top * nu_z[-1] * self.area_z / self.d_top
         return Operator(ident, ax, ay, az)
 
@@ -707,6 +805,10 @@ class Model:
     def divergence(self, faces: Faces) -> Tensor:
         """Net outward volume flux of every cell [m^3/s]."""
         ux, uy, uz = faces
+        if self.favor:
+            fx, fy = self.ax_open * ux, self.ay_open * uy
+            return ((fx[..., 1:] - fx[..., :-1]) + (fy[:, 1:, :] - fy[:, :-1, :])
+                    + self.area_z * (uz[1:] - uz[:-1]))
         return (self.area_x * (ux[..., 1:] - ux[..., :-1])
                 + self.area_x * (uy[:, 1:, :] - uy[:, :-1, :])
                 + self.area_z * (uz[1:] - uz[:-1]))
@@ -734,7 +836,7 @@ class Model:
         gz = torch.zeros(self.nz + 1, self.ny, self.nx, dtype=lam.dtype, device=lam.device)
         gx[..., 1:-1] = self.open_x * (lam[..., 1:] - lam[..., :-1]) / self.dx
         gy[:, 1:-1, :] = self.open_y * (lam[:, 1:, :] - lam[:, :-1, :]) / self.dx
-        gz[1:-1] = self.open_z * (lam[1:] - lam[:-1]) / self.dzc[:, None, None]
+        gz[1:-1] = self.open_z * (lam[1:] - lam[:-1]) / (self.dzf if self.favor else self.dzc[:, None, None])
         gx[..., 0] = (op.ax[..., 0] > 0) * lam[..., 0] / (self.dx / 2)
         gx[..., -1] = -((op.ax[..., -1] > 0) * lam[..., -1]) / (self.dx / 2)
         gy[:, 0, :] = (op.ay[:, 0, :] > 0) * lam[:, 0, :] / (self.dx / 2)
@@ -746,9 +848,12 @@ class Model:
         """(entering, leaving) volume flux through the domain boundary [m^3/s]."""
         ux, uy, uz = faces
         area = self.area_x[:, :, 0]
+        aw = ae = a_s = an = area
+        if self.favor:
+            aw, ae, a_s, an = self.ax_open[..., 0], self.ax_open[..., -1], self.ay_open[:, 0, :], self.ay_open[:, -1, :]
         entering = torch.cat([
-            (area * ux[..., 0]).ravel(), (-area * ux[..., -1]).ravel(),
-            (area * uy[:, 0, :]).ravel(), (-area * uy[:, -1, :]).ravel(),
+            (aw * ux[..., 0]).ravel(), (-ae * ux[..., -1]).ravel(),
+            (a_s * uy[:, 0, :]).ravel(), (-an * uy[:, -1, :]).ravel(),
             (-self.area_z * uz[-1]).ravel(), (self.area_z * uz[0]).ravel()])
         return float(entering.clamp(min=0).sum()), float((-entering).clamp(min=0).sum())
 
@@ -820,7 +925,7 @@ class Model:
         """
         h = self.height
         rest = self.strain_rest(u)
-        shear = (u[:2, 1:] - u[:2, :-1]).norm(dim=0) / self.dzc[:, None, None]
+        shear = (u[:2, 1:] - u[:2, :-1]).norm(dim=0) / (self.dzf if self.favor else self.dzc[:, None, None])
         s_int = torch.clamp(shear ** 2 + 0.5 * (rest[:-1] + rest[1:]), min=0).sqrt()
         h_ghost = h[-1] + self.d_top
         above = self.bc["top"][:2] if self.bc is not None else self.u0_top[:2, None, None]
@@ -904,7 +1009,10 @@ class Model:
         V G(Pi) the accumulated projection gradient (`pressure`, cell-centered). M only sets how fast the iteration
         moves: where du = 0 the steady equations hold whatever dt, so the delivered field does not depend on it."""
         ux, uy, uz = faces
-        fx, fy, fz = ux * self.area_x, uy * self.area_x, uz * self.area_z
+        if self.favor:
+            fx, fy, fz = ux * self.ax_open, uy * self.ay_open, uz * self.area_z
+        else:
+            fx, fy, fz = ux * self.area_x, uy * self.area_x, uz * self.area_z
         nu_x, nu_y, nu_z = self.viscosity(u)
         a = self.cfg.relax_nu
         if a < 1.0 and getattr(self, "_nu", None) is not None:     # the eddy viscosity under-relaxed (Picard)
@@ -915,18 +1023,21 @@ class Model:
             nu_z[-1] = 0.0
         diff_op = self._operator(nu_x, nu_y, nu_z, torch.zeros_like(self.sink), True)
         speed = u.norm(dim=0)
-        drag = self.wall + self.sink
+        # the open volume holds the momentum, the canopy's drag and the drive; the wall stress acts over the true
+        # surface (`wall` is per whole cell volume) whatever share of the cell is open
+        vol = self.vol_open if self.favor else self.vol
+        drag_vol = self.vol * self.wall + vol * self.sink
         residual = (self._boundary_terms(diff_op) - diff_op.apply(u) - self.convection(u, fx, fy, fz)
-                    - self.vol * drag * speed * u)
+                    - drag_vol * speed * u)
         if self.body_vec is not None:
-            residual = residual + self.vol * self.body_vec[:, None, None, None] * (~self.solid)
+            residual = residual + vol * self.body_vec[:, None, None, None] * (~self.solid)
         dt = self.dt
-        m = Convective(ident=self.vol * (1.0 + dt * drag * speed), ax=dt * diff_op.ax, ay=dt * diff_op.ay,
+        m = Convective(ident=vol + dt * drag_vol * speed, ax=dt * diff_op.ax, ay=dt * diff_op.ay,
                        az=dt * diff_op.az, fx=dt * fx, fy=dt * fy, fz=dt * fz)
         mg = Poisson(m, factors=self._momentum_factors)
         del m
         self._momentum_factors = mg.factor_list
-        rhs = dt * residual + self.vol * pressure
+        rhs = dt * residual + vol * pressure
         del residual, diff_op
         du, its = torch.empty_like(rhs), []
         for c in range(rhs.shape[0]):               # one component at a time: a third of the Krylov vectors
@@ -955,9 +1066,13 @@ class Model:
             eps = C_mu^(3/4) k^(3/2) / l          (Katul et al. 2004),
         a wall cell held at the log law's k = u*^2 / sqrt(C_mu), the inflow's k on the sides, and no flux of k through
         the top. Takes this step's divergence-free faces and the eddy viscosity the momentum step used."""
-        k, dt, vol = self.k, self.dt, self.vol
+        k, dt = self.k, self.dt
+        vol = self.vol_open if self.favor else self.vol
         ux, uy, uz = faces
-        fx, fy, fz = ux * self.area_x, uy * self.area_x, uz * self.area_z
+        if self.favor:
+            fx, fy, fz = ux * self.ax_open, uy * self.ay_open, uz * self.area_z
+        else:
+            fx, fy, fz = ux * self.area_x, uy * self.area_x, uz * self.area_z
         nu_x, nu_y, nu_z = self._nu
         nu_zk = nu_z.clone()
         nu_zk[-1] = 0.0
@@ -1164,7 +1279,7 @@ class Model:
             faces=tuple(f.cpu().numpy() for f in faces),
             divergence_rel=float(div.norm()) / div0 if div0 > 0 else 0.0,
             divergence_max=float(div.abs().max()) / (self.u_top * self.dx * self.dx),
-            divergence_max_1_s=float((div / self.vol).abs().max()),
+            divergence_max_1_s=float((div / (self.vol_open.clamp(min=1e-12) if self.favor else self.vol)).abs().max()),
             flux_in_m3_s=flux_in, flux_out_m3_s=flux_out,
             poisson_iterations=iterations, change=change,
             wall_s=time.time() - t0, cells=self.nz * self.ny * self.nx,

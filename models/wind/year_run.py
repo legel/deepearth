@@ -6,8 +6,8 @@ fraction (1/16 of 22.5 degrees), so each group's unit speed is computed once per
 
     R(p) = 3.6 sum_g |(1 - a_g) S_k(g)(p) + a_g S_k(g)+1(p)| sum_{t in g} U_ref(t)     (km)
 
-S: the unit (u, v) per heading at each return (`point_basis`); a return the solve does not reach takes the flow
-beside it (`fill_solids`). PyTorch, any device.
+S: the unit (u, v, w) per heading at each return, read from the solver's 3D field (`read_points_basis`); a return the
+solve does not reach takes the flow beside it (`fill_solids`). The speed is the norm of every component S carries. PyTorch, any device.
 """
 
 import math
@@ -21,7 +21,7 @@ STEP = 360.0 / HEADINGS
 LEVELS = 16                    # blend fractions per heading pair
 KM_PER_MS_H = 3.6              # 1 m/s for an hour
 TOP, NONE = 254, 255           # codes 0..254 over [0, hi]; 255 no value
-PLANT_HEIGHT_M = 2.0           # a ground or roof return is read this far above its surface
+PLANT_HEIGHT_M = 2.0           # a return under this over the bare earth is filled as if this high (fill_solids' log law)
 FILL_MAX = 3.0                 # the log-law ratio a filled return may take from its neighbor, either way
 CALM_MS = 0.5                  # at or under this an hour is calm
 
@@ -47,14 +47,14 @@ def unit_field(S: torch.Tensor, g: int) -> torch.Tensor:
 
 
 def run_km(S: torch.Tensor, uref: np.ndarray, theta: np.ndarray) -> torch.Tensor:
-    """A year's wind run per return, km. S: [16, N, 2] unit (u, v), NaN where the solve does not reach; uref: hourly
+    """A year's wind run per return, km. S: [16, N, 3] unit (u, v, w) (or [16, N, 2]), NaN where the solve does not reach; uref: hourly
     reference speed, m/s; theta: hourly direction the wind blows from, degrees. A NaN hour counts for nothing."""
     ok = ~np.isnan(uref) & ~np.isnan(theta)
     g_of = groups(np.where(ok, theta, np.nan))
     total = torch.zeros(S.shape[1], device=S.device)
     for g in np.unique(g_of[g_of >= 0]):
         f = unit_field(S, int(g))
-        total += torch.linalg.vector_norm(f[:, :2], dim=1) * float(np.nansum(uref[g_of == g]))
+        total += torch.linalg.vector_norm(f, dim=1) * float(np.nansum(uref[g_of == g]))
     return total * KM_PER_MS_H
 
 
@@ -78,55 +78,29 @@ def quantize(run: np.ndarray, hi: float) -> np.ndarray:
 
 
 # ------------------------------------------------------------------------------------------------ S at each return
-# The per-return sampling of the solved field. [3D-points operator: this section is to be replaced by sampling the
-# solver's 3D field directly (trilinear over fluid cells, a fixed clearance off solid faces, one rule for every class).]
+# Every return is read from the solver's 3D field in the same `levels` run that makes the published levels
+# (`cli.py levels --points`, points.py): at its own z, CLEARANCE_M off every solid face it stands on or beside,
+# trilinear over the fluid cell centres, one rule for every class. Its (u, v, w) per unit heading is
+# points_basis_f16.bin, [16, N, 3] float16, with points_basis.json beside it.
 
-def bilinear(grid: np.ndarray, cell: float, origin: Tuple[float, float], x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """grid [..., ny, nx] (rows south from origin y) at scene points; weights renormalized over finite corners."""
-    ox, oy = origin
-    ny, nx = grid.shape[-2:]
-    fc, fr = (x - ox) / cell - 0.5, (oy - y) / cell - 0.5
-    c0, r0 = np.floor(fc).astype(int), np.floor(fr).astype(int)
-    tc, tr = fc - c0, fr - r0
-    num = np.zeros(grid.shape[:-2] + x.shape)
-    den = np.zeros_like(num)
-    for dr, wr in ((0, 1 - tr), (1, tr)):
-        for dc, wc in ((0, 1 - tc), (1, tc)):
-            v = grid[..., np.clip(r0 + dr, 0, ny - 1), np.clip(c0 + dc, 0, nx - 1)]
-            w = np.where(np.isfinite(v), wr * wc, 0.0)
-            num += np.nan_to_num(v) * w
-            den += w
-    inside = (fc >= -0.5) & (fc <= nx - 0.5) & (fr >= -0.5) & (fr <= ny - 0.5)
-    return np.where(inside & (den > 1e-9), num / np.maximum(den, 1e-12), np.nan)
+POINTS_BASIS, POINTS_META = "points_basis_f16.bin", "points_basis.json"
 
 
-def point_basis(levels: np.ndarray, cell: float, origin: Tuple[float, float], heights_m: np.ndarray, x: np.ndarray,
-                y: np.ndarray, h_point: np.ndarray, surface_return: np.ndarray, z0: np.ndarray) -> np.ndarray:
-    """[16, N, 2] unit (u, v) per return from the solver's levels [16, 2, nz, ny, nx] at `heights_m` above the bare
-    earth (NaN where solid). A canopy return is read at its own height, a ground or roof return PLANT_HEIGHT_M above
-    itself. A level is usable where every heading is finite and it stands above the return's surface; between usable
-    levels, linear in ln(height); under the lowest, the log law down over the surface's z0; above the top, up."""
-    H = np.asarray(heights_m, np.float64)
-    at = bilinear(levels, cell, origin, x, y).astype(np.float32)                 # [16, 2, nz, N]
-    nz, n = at.shape[2], at.shape[3]
-    h_eval = np.where(surface_return, h_point + PLANT_HEIGHT_M, np.maximum(h_point, 0.0))
-    base = np.where(surface_return, h_point, 0.0)
-    valid = np.isfinite(at).all(axis=(0, 1)) & (H[:, None] > base[None, :])
-    le, ge = valid & (H[:, None] <= h_eval[None, :]), valid & (H[:, None] >= h_eval[None, :])
-    a = np.where(le.any(0), nz - 1 - np.argmax(le[::-1], 0), -1)
-    b = np.where(ge.any(0), np.argmax(ge, 0), -1)
-    j = np.arange(n)
-    va, vb = at[:, :, np.maximum(a, 0), j], at[:, :, np.maximum(b, 0), j]
-    Ha, Hb = H[np.maximum(a, 0)], H[np.maximum(b, 0)]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t = (np.log(np.maximum(h_eval, 1e-6)) - np.log(Ha)) / (np.log(Hb) - np.log(Ha))
-        between = (a >= 0) & (b >= 0) & (Hb > Ha)
-        down = (b >= 0) & ~between
-        up = (a >= 0) & (b < 0)
-        f_down = np.log(np.maximum(h_eval - base, 2 * z0) / z0) / np.log(np.maximum(Hb - base, 2 * z0) / z0)
-        f_up = np.log(np.maximum(h_eval, 2 * z0) / z0) / np.log(Ha / z0)
-        val = np.where(between, (1 - t) * va + t * vb, np.where(down, vb * f_down, np.where(up, va * f_up, np.nan)))
-    return np.moveaxis(val, 1, 2).astype(np.float32)
+def read_points_basis(path, n: int):
+    """(S [16, N, 3] float16 unit (u, v, w) per heading at each return, sidecar) from `cli.py levels --points`, or
+    (None, why) when the file is absent, holds another point set, or is not the 16 unit headings the run blends."""
+    import json
+    from pathlib import Path
+    path = Path(path)
+    if not path.is_file() or not (path.parent / POINTS_META).is_file():
+        return None, "no points basis"
+    meta = json.loads((path.parent / POINTS_META).read_text())
+    k, m, c = meta["shape"]
+    if m != n:
+        return None, f"the points basis holds {m:,} points, the set {n:,}"
+    if [float(h) for h in meta["headings_deg"]] != [i * STEP for i in range(HEADINGS)] or c != 3:
+        return None, f"the points basis is not {HEADINGS} headings of (u, v, w): {meta['headings_deg']}, {c}"
+    return np.fromfile(path, "<f2").reshape(k, m, c), meta
 
 
 def fill_solids(S: np.ndarray, xy: np.ndarray, h: np.ndarray, z0: np.ndarray) -> Tuple[np.ndarray, int]:
@@ -177,3 +151,13 @@ def ribbon_field(levels: np.ndarray, uref: float, wind_from: float) -> Tuple[np.
 def year(S: torch.Tensor, uref: np.ndarray, theta: np.ndarray) -> Dict[str, np.ndarray]:
     """One year: the run per return (km) and the typical hour."""
     return {"run_km": run_km(S, uref, theta).cpu().numpy(), "typical_hour": typical_hour(uref, theta)}
+
+
+def ribbon_over_top(over_top: np.ndarray, height: np.ndarray, uref: float,
+                    wind_from: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The flow drawn over the Year where the levels run read it over each column's measured top (`cli.py levels
+    --over-top-out`, view.over_top): over_top [16, 2, ny, nx] unit (u, v) per heading, height [ny, nx] over the bare
+    earth. Returns (U, V) m/s and the height each is drawn at: the flow over crowns and roofs, so a depth test hides a
+    ribbon only behind something taller than its own column."""
+    U, V = ribbon_field(np.asarray(over_top, np.float32)[:, :, None], uref, wind_from)
+    return U, V, np.asarray(height, np.float32)

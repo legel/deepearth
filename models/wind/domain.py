@@ -120,6 +120,10 @@ class Scene:
     top: Optional[np.ndarray] = None
     roof: Optional[np.ndarray] = None
     closed_cells: int = 0
+    partial: bool = False     # the ground's cut cells open with their blocked fraction as drag (voxelize partial)
+    cut_open: Optional[np.ndarray] = None   # (nz, ny, nx) each cut cell's open fraction, 1 elsewhere
+    plants: Optional[np.ndarray] = None   # (ny, nx) where the survey says plants stand: canopy drag only there
+    canopy_top: Optional[np.ndarray] = None   # (ny, nx) each column's measured top (its DSM) over the floor (voxelize)
 
     def summary(self) -> Dict[str, float]:
         return {
@@ -203,6 +207,36 @@ def ridge(grid: Grid, height: float, half_width: float, z0: float = 0.03) -> Sce
     return scene
 
 
+PARTIAL_GROUND = True
+"""The ground's cut cells (`voxelize partial`): open, the true surface under each carrying the rough-wall log-law stress
+over its own area (solver `_wall_coefficient`), and the solver carrying each cut cell's open volume and its faces' open
+shares in the momentum, continuity and k (FAVOR, Hirt and Sicilian 1985; solver `_fractions`). On 1 m cubes a 6 % slope
+stood as 1 m risers every 17 m, and the solved wind waved at that period (UC's southwest lawns, 2026-09-30). Carried
+as whole cells, cut cells took that ripple under 1.2 % but read the surface stress 27 to 54 % over the log law's on a
+plane (whole cubes 7 to 20 %, flat ground under 1 %), and merging cells more than half ground did not cure it
+(tests/test_slope_ripple.py, 2026-10-01)."""
+PARTIAL_PHI_MAX = 0.95
+
+SMOOTH_FILL_M = 8.0
+"""The scale ground beyond the data is smoothed over. The nearest measured ground carried out along each ray made
+radial wedges whose edges stepped up to 19 m at a third site (5,040 steps over 1 m in its unmeasured
+ring), ridges and gaps that fed the flow radial jets."""
+
+
+def smooth_fill(a: np.ndarray, sigma_cells: float) -> np.ndarray:
+    """`a` with its NaN filled: the nearest finite value next to the data, blended with distance into that fill smoothed
+    by a Gaussian of `sigma_cells`, fully smoothed from two sigmas out. Continuous at the data's edge, and no step
+    between two rays' nearest values further out."""
+    from scipy.ndimage import distance_transform_edt, gaussian_filter
+    miss = np.isnan(a)
+    if not miss.any():
+        return a
+    near = _fill_nodata(a)
+    smooth = gaussian_filter(near, sigma_cells, mode="nearest")
+    wgt = np.clip(distance_transform_edt(miss) / (2.0 * sigma_cells), 0.0, 1.0)
+    return np.where(miss, (1.0 - wgt) * near + wgt * smooth, a)
+
+
 def _fill_nodata(a: np.ndarray) -> np.ndarray:
     """Replace NaN with the nearest finite value."""
     from scipy.ndimage import distance_transform_edt
@@ -253,7 +287,7 @@ def close_pockets(scene: Scene) -> int:
 
 
 def voxelize(columns: "CellParams", dtm: np.ndarray, dsm: np.ndarray, grid: Grid,
-             label: str, floor: Optional[float] = None) -> Scene:
+             label: str, floor: Optional[float] = None, partial: bool = None) -> Scene:
     """Solids, drag and roughness from per-column parameters and south-up height rasters.
 
     Args:
@@ -284,14 +318,32 @@ def voxelize(columns: "CellParams", dtm: np.ndarray, dsm: np.ndarray, grid: Grid
     density = np.where(columns.lai > 0, columns.lai / np.maximum(heights, 1e-9),
                        columns.blockage / grid.dx)
     sink_col = np.where((heights > 0) & ~columns.solid, columns.cd * density, 0.0)
+    partial = PARTIAL_GROUND if partial is None else partial
     scene.z0[:] = np.where(columns.solid, columns.z0, CLASSES[GROUND_CLASS].z0_m)
     scene.solid[:] = (zc < zt[None]) | (columns.solid[None] & (zc < zo[None]))
+    if partial:
+        # the ground's cut cell: open, its resistance only the log-law stress of the true surface under it (solver
+        # _wall_coefficient), so a slope in 1 m cubes is a ramp to the flow and not 1 m risers (a building keeps its cells)
+        top = np.where(columns.solid, zo, zt)
+        import params
+        surface = np.isin(np.asarray(columns.table.names)[columns.row], sorted(params.SURFACE_CLASSES))
+        ground = ~np.asarray(columns.building, bool) | surface   # a legend table marks every solid class a building
+        zf0, zf1 = grid.zf[:-1][:, None, None], grid.zf[1:][:, None, None]
+        full = zf1 <= top[None] + 1e-9
+        scene.solid[:] = np.where(ground[None], full, scene.solid)
+        cut = ground[None] & ~full & (zf0 < top[None])
+        phi = np.clip((top[None] - zf0) / (zf1 - zf0), 0.0, PARTIAL_PHI_MAX)
+        scene.partial = True
+        scene.cut_open = np.where(cut, 1.0 - phi, 1.0).astype(np.float32)
     in_column = (zc >= zt[None]) & (zc < zo[None]) & ~scene.solid
     scene.sink[:] = np.where(in_column, sink_col[None], 0.0)
     scene.origin = (scene.origin[0], scene.origin[1], floor)
     scene.terrain = zt
     scene.top = np.where(columns.solid, zo, zt)
+    scene.canopy_top = zo
     scene.roof = np.asarray(columns.building, bool)
+    if partial:     # a surface class is ground, never a roof: its steps are no walls and its area follows the slope
+        scene.roof = scene.roof & ~surface
     scene.closed_cells = close_pockets(scene)
     return scene
 
@@ -326,7 +378,8 @@ def flat_declared(flat_ok: Optional[bool] = None) -> bool:
 def from_bundle(site: SiteConfig, dx: float, bundle: Path, data_radius: Optional[float] = None,
                 band: Optional[Tuple[float, float]] = None, cells: Optional[int] = None,
                 flat_ok: Optional[bool] = None,
-                ground_band: Optional[Tuple[float, float, float]] = None) -> Tuple[Scene, Dict[str, object]]:
+                ground_band: Optional[Tuple[float, float, float]] = None,
+                canopy_profile=None) -> Tuple[Scene, Dict[str, object]]:
     """The parcel scene from a bundle directory at `dx`, and the parameter receipt.
 
     The grid covers `site.fetch_radius_m`. Columns come from `bundle/semantics` and heights
@@ -373,10 +426,26 @@ def from_bundle(site: SiteConfig, dx: float, bundle: Path, data_radius: Optional
         raise params.TerrainMissing(f"{bundle}: no surface/ and no DTM or DSM, and flat terrain was not declared "
                                     f"(--flat-terrain)")
     over = np.zeros(outside.shape, bool)
+    solidified = np.zeros(outside.shape, bool)
+    ev = None
     if heights is not None:
-        columns, over = params.canopy_over_surfaces(columns, heights[0], heights[1], ~outside)
+        veg = struct = None
+        if canopy_profile is not None:            # where plants stand, from the survey's own echoes (canopy.evidence)
+            import canopy
+            ev = canopy.evidence(canopy_profile, grid, origin)
+            if canopy_profile.echo is not None:
+                veg, struct = ev == canopy.PLANTS, ev == canopy.STRUCTURE
+            else:                                 # a profile from before the echo grid: its plant area, as 9452b58
+                veg = canopy.vegetation_mask(canopy_profile, grid, origin)
+        columns, over = params.canopy_over_surfaces(columns, heights[0], heights[1], ~outside, veg)
+        columns, solidified = params.structures_classed_as_crowns(columns, heights[0], heights[1], ~outside, struct)
     receipt = columns.receipt(dx)
     receipt["surface_columns_to_canopy"] = int(over.sum())
+    receipt["crown_columns_to_structure"] = int(solidified.sum())
+    receipt["surface_canopy_evidence"] = (("the survey's echoes" + (" and photo" if canopy_profile.green is not None else "")
+                                           + " (canopy.evidence)") if canopy_profile is not None and canopy_profile.echo is not None
+                                          else "the survey's plant area (canopy.vegetation_mask)" if canopy_profile is not None
+                                          else "the class rule alone: no canopy profile given")
     if box:
         receipt["box_scene_m"] = doc["aoi"]["box_scene_m"]
     receipt.update(display_radius_m=site.display_radius_m, fetch_radius_m=site.fetch_radius_m,
@@ -391,12 +460,17 @@ def from_bundle(site: SiteConfig, dx: float, bundle: Path, data_radius: Optional
         floor = params.terrain_floor(bundle, dx, reach, box)
         pits = heights[0] < floor
         bare = ~columns.building & columns.solid & ~outside & ~pits
-        ground = _fill_nodata(np.where(bare, heights[0], np.nan))
-        dsm = np.where(outside, ground, np.where(pits, np.nan, heights[1]))
+        ground = smooth_fill(np.where(bare, heights[0], np.nan), SMOOTH_FILL_M / dx)
+        # nothing stands where nothing was measured: a column the survey left empty (the ring between its data and the
+        # fetch radius) is its ground, not its nearest measured column's surface carried out along the ray
+        unmeasured = ~outside & ~np.isfinite(heights[1])
+        dsm = np.where(outside | unmeasured, ground, np.where(pits, np.nan, heights[1]))
+        receipt["columns_without_survey_as_ground"] = int(unmeasured.sum())
         receipt.update(surface=str(params.nearest_raster(bundle, "dtm", dx)), terrain_floor_scene_m=floor,
                        below_floor_columns_filled=int(pits.sum()),
                        terrain_filled_from_ground_columns=int((~bare & ~outside).sum()),
-                       beyond_data="open ground at the height of the nearest ground column inside")
+                       beyond_data="open ground, its height the nearest ground column's blended into a smoothed "
+                                   "surface with distance from the data (smooth_fill): no radial ridges or steps")
         dtm = ground
         if ground_band is not None:
             dz, above, cap = ground_band
@@ -405,5 +479,9 @@ def from_bundle(site: SiteConfig, dx: float, bundle: Path, data_radius: Optional
             receipt["ground_band_dz_height_m"] = [float(dz), height]
         scene = voxelize(columns, dtm, dsm, grid, f"{site.name} {dx:g} m", floor)
         receipt["enclosed_pocket_cells_closed"] = scene.closed_cells
+        if ev is not None and canopy_profile.echo is not None:   # canopy drag only where plants stand
+            crown = ~np.asarray(columns.solid, bool) & (np.asarray(columns.lai) > 0)
+            scene.plants = (ev == canopy.PLANTS) | ((ev == canopy.NONE) & crown)
+            receipt["drag_columns_with_plants"] = int(scene.plants.sum())
     scene.origin = (origin[0], origin[1], scene.origin[2])
     return scene, receipt

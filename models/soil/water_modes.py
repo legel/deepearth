@@ -205,6 +205,23 @@ def plantable(no_soil: np.ndarray, roof: np.ndarray, perv: np.ndarray) -> np.nda
     return ~np.asarray(no_soil, bool) & ~np.asarray(roof, bool) & (np.asarray(perv) > 0)
 
 
+WALL_NZ = 0.5
+WALL_M = 0.5
+"""A return on a surface steeper than 60 degrees (its normal's vertical component under WALL_NZ) and more than WALL_M
+over the bare earth is on a wall, whatever the classifier called it. No soil holds on a face that steep (the angle of
+repose of soils is 30 to 45 degrees, Al-Hashemi and Al-Amoudi 2018), so a ground class there is a misclassified facade.
+On UC Berkeley's campus 2.4 % of the pervious-ground returns stood on walls, up to over 10 m, and SOIL MOISTURE painted
+them soil; at Harvard Forest 0.02 %. Within WALL_M of the ground a steep return stays ground: a wall's foot, a curb."""
+
+
+def ground_on_walls(ground: np.ndarray, nz: np.ndarray, height: np.ndarray) -> np.ndarray:
+    """The ground returns (`ground`: classed sealed or pervious ground) that stand on a wall: their normal's vertical
+    component `nz` under WALL_NZ (negative under an overhang) and `height` over the bare earth over WALL_M. These are no
+    ground, and a map of the ground never paints them."""
+    return (np.asarray(ground, bool) & (np.nan_to_num(np.asarray(nz, float), nan=1.0) < WALL_NZ)
+            & (np.nan_to_num(np.asarray(height, float), nan=0.0) > WALL_M))
+
+
 def nice_bounds(v: np.ndarray, lo_pct: float, hi_pct: float, step: Optional[float] = None) -> Tuple[float, float]:
     """A fixed scale's ends: the values' percentiles, snapped outward to a round step."""
     v = v[np.isfinite(v)]

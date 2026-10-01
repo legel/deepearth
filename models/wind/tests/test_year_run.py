@@ -35,15 +35,26 @@ def test_codes_on_the_fixed_scale_and_none():
     assert [Y.nice_ceil(v) for v in (73.0, 120.0, 0.3, 100.0, 51_234.0)] == [100.0, 200.0, 0.5, 100.0, 100_000.0]
 
 
-def test_levels_are_read_in_log_height_and_the_log_law_below():
-    lv = np.zeros((16, 2, 2, 1, 1), np.float32)
-    lv[:, 0, 0] = 1.0                                     # u 1 at 4 m
-    lv[:, 0, 1] = 2.0                                     # u 2 at 16 m
-    x, y = np.array([0.5, 0.5]), np.array([-0.5, -0.5])
-    S = Y.point_basis(lv, 1.0, (0.0, 0.0), [4.0, 16.0], x, y, np.array([8.0, 0.0]), np.array([False, True]),
-                      np.array([1.0, 0.03]))
-    assert np.isclose(S[0, 0, 0], 1.5), "a crown at 8 m: halfway in ln(height) between 4 and 16 m"
-    assert np.isclose(S[0, 1, 0], np.log(2 / 0.03) / np.log(4 / 0.03), rtol=1e-5), "ground: 2 m up, log law from 4 m"
+def test_every_return_is_read_from_the_3d_points_basis_with_w_in_its_speed(tmp_path):
+    import json
+    S = np.zeros((16, 3, 3), np.float16)
+    S[:, :, 0], S[:, :, 2] = 3.0, 4.0                     # (u, v, w) = (3, 0, 4): a unit speed of 5 with w
+    S.tofile(tmp_path / Y.POINTS_BASIS)
+    (tmp_path / Y.POINTS_META).write_text(json.dumps({"shape": [16, 3, 3], "headings_deg": [k * 22.5 for k in range(16)]}))
+    got, meta = Y.read_points_basis(tmp_path / Y.POINTS_BASIS, 3)
+    assert got.shape == (16, 3, 3) and meta["shape"] == [16, 3, 3]
+    run = Y.run_km(torch.as_tensor(got), np.array([2.0]), np.array([90.0])).numpy()
+    assert np.allclose(run, 5.0 * 2.0 * Y.KM_PER_MS_H), "the speed is the norm of (u, v, w)"
+    assert Y.read_points_basis(tmp_path / Y.POINTS_BASIS, 4)[0] is None, "another point set's basis is not read"
+    assert Y.read_points_basis(tmp_path / "none.bin", 3)[0] is None
+
+
+def test_the_ribbons_fly_over_the_measured_top():
+    top = np.zeros((16, 2, 2, 2), np.float32)
+    top[4, 0] = 3.0                                       # heading 4 (90 deg): u 3 over the top
+    height = np.array([[2.0, 27.0], [2.0, 14.0]], np.float32)
+    U, V, h = Y.ribbon_over_top(top, height, 2.0, 90.0)
+    assert np.allclose(U, 6.0) and np.allclose(V, 0.0) and h[0, 1] == 27.0
 
 
 def test_a_return_the_solve_does_not_reach_takes_the_flow_beside_it():

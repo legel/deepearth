@@ -74,7 +74,8 @@ the samples fall in, each spun up on the year before it ([`sampled_lanes`](water
 | DROUGHT, mm | $\mathrm{CWD} = \sum_h \max(0,\ ET_{0,h} - AET_h)$ over the window (Stephenson 1990), the balance from the state at its first local midnight | [`drought_cwd`](water_modes.py#L194) |
 | FLOOD | the storm solved in two dimensions from the balance's soil water at its first hour, through 24 h of recession (72 h at most) | [`../hydro/flood_curves.py`](../hydro/flood_curves.py), [`recession_h`](water_modes.py#L132) |
 | plantable | soil whose surface takes water in, not a roof; paving and a crown over paving read 251, a building 252 | [`plantable`](water_modes.py#L202), [`CODE_SEALED`](water_modes.py#L33) |
-| scale | SOIL MOISTURE: plantable cells' p10 to p90, never narrower than 0.25 of the site's $\theta_{wp}$ to $\theta_s$; DROUGHT: 0 to p98; codes 0 to 250 | [`soil_moisture_map`](water_modes.py#L232), [`drought_map`](water_modes.py#L247) |
+| a return on a wall | a return classed ground on a face steeper than 60° ($n_z < 0.5$) more than 0.5 m over the bare earth is a wall, never ground: no soil holds that steep (the angle of repose of soils is 30 to 45°); on UC Berkeley's campus 2.4 % of the pervious-ground returns, at Harvard Forest 0.02 % | [`ground_on_walls`](water_modes.py#L217), [`WALL_NZ`](water_modes.py#L208) |
+| scale | SOIL MOISTURE: plantable cells' p10 to p90, never narrower than 0.25 of the site's $\theta_{wp}$ to $\theta_s$; DROUGHT: 0 to p98; codes 0 to 250 | [`soil_moisture_map`](water_modes.py#L249), [`drought_map`](water_modes.py#L264) |
 
 Against a tower. Harvard Forest, 2025 drought window: evapotranspiration 1.90 mm/day over the site, against US-Ha1's
 measured growing-season mean of 2.22. With each cell's light and wind from its own highest up-facing return instead

@@ -152,3 +152,12 @@ def test_a_near_uniform_site_reads_near_uniform():
     codes, (lo, hi) = WM.soil_moisture_map(theta, z, z, one, ~z, wp=0.051, theta_s=0.387)
     assert hi - lo >= WM.MIN_SPAN * (0.387 - 0.051) - 1e-9 and 0.051 <= lo < 0.208 < hi <= 0.387
     assert np.ptp(codes) < 45
+
+
+def test_a_ground_return_on_a_wall_is_no_ground():
+    """Returns on walls classed pervious ground were painted soil in SOIL MOISTURE, flecks up the facades. A ground
+    return on a face steeper than 60 degrees and over 0.5 m above the bare earth is a wall."""
+    ground = np.array([True, True, True, True, True, False, True])
+    nz = np.array([0.1, 0.1, 0.95, -0.2, 0.6, 0.0, np.nan])
+    h = np.array([3.0, 0.3, 3.0, 6.0, 4.0, 8.0, 5.0])
+    assert WM.ground_on_walls(ground, nz, h).tolist() == [True, False, False, True, False, False, False]
