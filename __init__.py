@@ -1,12 +1,3 @@
-"""DeepEarth: a self-supervised multimodal model of spatio-temporally covarying ecological variables.
+"""DeepEarth: a fibered, Earth4D-addressed planetary world model."""
 
-Two learnable encoders -- an Earth4D space-time GNN (:mod:`deepearth.encoders.spacetime`) and a phylogenomic
-species GNN (:mod:`deepearth.encoders.biological`) -- are fused by a masked multimodal autoencoder
-(:mod:`deepearth.core.fusion`), which learns to reconstruct any hidden variable from the others.
-
-    from deepearth.core.fusion import DeepEarth
-
-See ``autoresearch/science.md`` for the scientific framing, ``autoresearch/README.md`` to prepare data and run,
-and ``autoresearch/autoresearch.md`` for the autonomous-experimentation loop.
-"""
 __version__ = "1.0.0"

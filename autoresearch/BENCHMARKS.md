@@ -1,109 +1,87 @@
-# DeepCal compact hierarchical-family record scorecard
+# DeepEarth sparse ecological Earth4D scorecard
 
-Protocol: `public-main-4d6cb44-fixed-2291-steps`. Config: `autoresearch/champion.yaml`. Data: 621,558 observations,
-29,668-row spatial holdout, complete 64-dimensional AlphaEarth coverage. Values are the unrounded mean of two
-checkpoint replays through the unchanged public evaluator.
+Protocol: `public-main-bbbe6be6-fixed-8000-steps`. Data: 621,558 observations and a 29,668-row spatial holdout.
+Values are unrounded means of two independent checkpoints through Lance's unchanged public evaluator.
 
-| Model | Seed | Steps | Harmonic | Arithmetic | Training VRAM |
+| Model | Seed | Steps | Harmonic | Arithmetic | Parameters |
 |---|---:|---:|---:|---:|---:|
-| Registered 797.1M reference | 1337 | 5,126 | 0.318693 | 0.570700 | 37,003.6 MB |
-| Fixed-step 24.9M control | 1337 | 2,291 | 0.367661 | 0.578883 | 17,971.6 MB |
-| Fixed-step 24.9M control | 1338 | 2,291 | 0.365992 | 0.581475 | 17,971.6 MB |
-| Prior 25.4M niche fusion | 2 seeds | 2,291 | 0.373924 | 0.583204 | 19,100 MB observed |
-| Prior masked-pollinator record | 2 seeds | 2,291 | 0.376617 | 0.586926 | 19,100 MB observed |
-| **Hierarchical family MAP** | **1337** | **2,291** | **0.377589** | **0.586005** | **17,436 MB replay** |
-| **Hierarchical family MAP** | **1338** | **2,291** | **0.379225** | **0.588743** | **17,436 MB replay** |
-| **Candidate mean** | **2 seeds** | **2,291** | **0.378407** | **0.587374** | **17,436 MB replay** |
-| **Delta vs prior PR record** |  |  | **+0.001790 (+0.48%)** | **+0.000448** | **no training change** |
-| **Delta vs fixed-step control** |  |  | **+0.011581 (+3.16%)** | **+0.007195** | **+1,128 MB** |
-| **Difference vs historical 797.1M reference** |  |  | **+0.059714 (+18.74%)** | **+0.016674** | **-48.4% training VRAM** |
-
-## Record criterion
-
-A replacement record uses the unchanged public evaluator, data, and holdout; completes exactly 2,291 optimizer steps;
-reports every active benchmark; runs seeds 1337 and 1338; and requires each candidate seed to exceed its seed-matched
-control on both harmonic and arithmetic mean. Wall time is reported as a resource diagnostic, never converted into
-extra training steps. Both candidate seeds pass. The replay cache also contains distribution labels for B29/B39/B40;
-those remain inactive here so the record uses the same 58/63 suite as the registered PR scorecard.
-
-The final decoder is isolated by replaying the same checkpoints with the option disabled: harmonic
-0.376196977 -> 0.377588822 and arithmetic 0.585728514 -> 0.586005331 on seed 1337; harmonic
-0.377434174 -> 0.379225169 and arithmetic 0.588344374 -> 0.588742965 on seed 1338.
-
-Only the 2,291-step control-to-candidate comparison is a matched promotion claim. The registered 797.1M row is an
-older 5,126-step receipt: it is retained as historical replacement context, not treated as an equal-budget ablation.
+| Prior family-preserving record | two-seed mean | 8,300 | 0.385644 | 0.575712 | 27.6M |
+| Sparse ecological Earth4D | 1337 | 8,000 | 0.388024 | 0.577688 | 52.7M |
+| Sparse ecological Earth4D | 1338 | 8,000 | 0.388125 | 0.577697 | 52.7M |
+| **Sparse ecological mean** | **two seeds** | **8,000** | **0.388075** | **0.577692** | **52.7M** |
+| **Record delta** |  |  | **+0.002430** | **+0.001980** | **+25.1M** |
 
 ## Capability scorecard
 
-Capabilities are ordered weakest-first. Deltas isolate hierarchical family MAP by replaying the same PR checkpoints with the option disabled.
+Rows are ordered weakest-first by the candidate mean. Delta is relative to the prior family-preserving record.
 
-| Benchmark | Prior PR checkpoint | Candidate | Delta | Seed 1337 | Seed 1338 |
-|---|---:|---:|---:|---:|---:|
-| `B55_pollinator_phylo_transfer_recall` | 0.038160 | 0.038147 | -0.000013 | 0.038115 | 0.038178 |
-| `B8_family_from_spacetime` | 0.161352 | 0.170268 | +0.008915 | 0.171464 | 0.169071 |
-| `B6_family_from_env` | 0.159364 | 0.172357 | +0.012994 | 0.169037 | 0.175677 |
-| `B23_species_calibration_mrr` | 0.191363 | 0.186731 | -0.004633 | 0.186955 | 0.186506 |
-| `B50_pollinator_from_spacetime_recall` | 0.188892 | 0.188731 | -0.000161 | 0.189055 | 0.188408 |
-| `B51_pollinator_from_env_recall` | 0.190865 | 0.190693 | -0.000173 | 0.190476 | 0.190909 |
-| `B22_companions_recall` | 0.202491 | 0.202491 | +0.000000 | 0.201561 | 0.203421 |
-| `B21_community_from_species_recall` | 0.204930 | 0.204930 | +0.000000 | 0.204440 | 0.205421 |
-| `B42_mycorrhiza_from_env` | 0.209131 | 0.209131 | +0.000000 | 0.206051 | 0.212210 |
-| `B20_community_from_env_recall` | 0.222702 | 0.222702 | +0.000000 | 0.219552 | 0.225852 |
-| `B15_vision_from_aerial_cos` | 0.254809 | 0.254809 | +0.000000 | 0.255129 | 0.254488 |
-| `B28_flowering_peak_month_mrr` | 0.366676 | 0.366676 | +0.000000 | 0.366593 | 0.366759 |
-| `B34_lfmc_from_env` | 0.375803 | 0.375803 | +0.000000 | 0.378235 | 0.373370 |
-| `B47_infer_naip_ir_cos` | 0.392021 | 0.392021 | +0.000000 | 0.393639 | 0.390402 |
-| `B5_species_from_spacetime_top10` | 0.400971 | 0.400988 | +0.000017 | 0.401342 | 0.400634 |
-| `B1_species_from_env_top10` | 0.402218 | 0.402252 | +0.000034 | 0.402589 | 0.401915 |
-| `B18_infer_climate_cos` | 0.457286 | 0.457286 | +0.000000 | 0.463462 | 0.451111 |
-| `B41_pollinator_from_species_recall` | 0.460153 | 0.460037 | -0.000116 | 0.461319 | 0.458756 |
-| `B19_infer_aerial_cos` | 0.492016 | 0.492016 | +0.000000 | 0.492993 | 0.491039 |
-| `B17_infer_soil_cos` | 0.503309 | 0.503309 | +0.000000 | 0.496461 | 0.510157 |
-| `B37_imagine_vision_bio_cos` | 0.505227 | 0.505227 | +0.000000 | 0.506467 | 0.503987 |
-| `B48_pollinator_from_photo_only_recall` | 0.508364 | 0.508384 | +0.000020 | 0.507540 | 0.509228 |
-| `B52_pollinator_from_photo_recall` | 0.508384 | 0.508385 | +0.000001 | 0.507567 | 0.509204 |
-| `B45_vision_bio_leave_one_out_cos` | 0.524388 | 0.524388 | +0.000000 | 0.524146 | 0.524630 |
-| `B54_pollinator_dist_kl` | 0.531038 | 0.531038 | +0.000000 | 0.529911 | 0.532164 |
-| `B13_imagine_vision_cos` | 0.604508 | 0.604508 | +0.000000 | 0.604189 | 0.604827 |
-| `B44_infer_topo_cos` | 0.623789 | 0.623789 | +0.000000 | 0.624860 | 0.622719 |
-| `B43_infer_hydro_cos` | 0.657898 | 0.657898 | +0.000000 | 0.666535 | 0.649262 |
-| `B14_vision_leave_one_out_cos` | 0.666100 | 0.666100 | +0.000000 | 0.664242 | 0.667959 |
-| `B16_infer_clay_cos` | 0.668894 | 0.668894 | +0.000000 | 0.684383 | 0.653405 |
-| `B53_pollinator_calibration_mrr` | 0.684013 | 0.684013 | +0.000000 | 0.671509 | 0.696516 |
-| `B27_flowering_fidelity` | 0.734281 | 0.734281 | +0.000000 | 0.729921 | 0.738641 |
-| `B26_flowering_auc` | 0.750456 | 0.750456 | +0.000000 | 0.757572 | 0.743341 |
-| `B9_phylo_from_photo_cos` | 0.826584 | 0.826584 | +0.000000 | 0.819853 | 0.833316 |
-| `B2_species_from_photo_top1` | 0.828586 | 0.828586 | +0.000000 | 0.823244 | 0.833929 |
-| `B4_species_from_photo_only_top1` | 0.829429 | 0.829429 | +0.000000 | 0.823615 | 0.835243 |
-| `B46_infer_chm_cos` | 0.865668 | 0.865668 | +0.000000 | 0.869409 | 0.861927 |
-| `B49_form_trait_f1` | 0.872081 | 0.872081 | +0.000000 | 0.847727 | 0.896435 |
-| `B38_water_soil_regime_f1` | 0.908194 | 0.908194 | +0.000000 | 0.907955 | 0.908433 |
-| `B33_growth_rate_trait_f1` | 0.909192 | 0.909192 | +0.000000 | 0.906403 | 0.911981 |
-| `B35_sun_trait_f1` | 0.912032 | 0.912032 | +0.000000 | 0.902254 | 0.921810 |
-| `B11_traits_from_photo_f1` | 0.915436 | 0.915436 | +0.000000 | 0.906218 | 0.924654 |
-| `B10_traits_from_photo_env_f1` | 0.918399 | 0.918399 | +0.000000 | 0.912487 | 0.924312 |
-| `B30_seasonality_trait_f1` | 0.940832 | 0.940832 | +0.000000 | 0.938562 | 0.943102 |
-| `B32_plant_type_trait_f1` | 0.941102 | 0.941102 | +0.000000 | 0.936822 | 0.945381 |
-| `B7_family_from_phylo` | 0.952676 | 0.952676 | +0.000000 | 0.955137 | 0.950216 |
-| `B3_species_from_photo_top5` | 0.953485 | 0.953485 | +0.000000 | 0.949676 | 0.957294 |
-| `B36_ease_of_care_trait_f1` | 0.955567 | 0.955567 | +0.000000 | 0.952217 | 0.958917 |
-| `B63_myco_from_species_f1` | 0.987818 | 0.987818 | +0.000000 | 0.988121 | 0.987516 |
-| `B12_traits_leave_one_out_f1` | 0.992887 | 0.992887 | +0.000000 | 0.993258 | 0.992516 |
+| Benchmark | Mean | Seed 1337 | Seed 1338 | Delta |
+|---|---:|---:|---:|---:|
+| `B55_pollinator_phylo_transfer_recall` | 0.038644 | 0.038601 | 0.038686 | +0.000259 |
+| `B50_pollinator_from_spacetime_recall` | 0.174236 | 0.176513 | 0.171958 | -0.001130 |
+| `B51_pollinator_from_env_recall` | 0.180842 | 0.180559 | 0.181124 | +0.003120 |
+| `B8_family_from_spacetime` | 0.180919 | 0.180632 | 0.181205 | -0.000860 |
+| `B6_family_from_env` | 0.197924 | 0.197890 | 0.197957 | +0.007584 |
+| `B23_species_calibration_mrr` | 0.202651 | 0.202628 | 0.202674 | +0.022162 |
+| `B15_vision_from_aerial_cos` | 0.259334 | 0.259347 | 0.259321 | -0.002729 |
+| `B22_companions_recall` | 0.277953 | 0.276007 | 0.279899 | -0.003498 |
+| `B21_community_from_species_recall` | 0.286956 | 0.285073 | 0.288838 | +0.001541 |
+| `B20_community_from_env_recall` | 0.298385 | 0.298351 | 0.298419 | -0.003812 |
+| `B28_flowering_peak_month_mrr` | 0.298976 | 0.299014 | 0.298938 | -0.041627 |
+| `B42_mycorrhiza_from_env` | 0.301170 | 0.301409 | 0.300931 | +0.010770 |
+| `B18_infer_climate_cos` | 0.330662 | 0.330461 | 0.330862 | +0.004716 |
+| `B5_species_from_spacetime_top10` | 0.348220 | 0.348355 | 0.348085 | +0.019229 |
+| `B34_lfmc_from_env` | 0.412978 | 0.413005 | 0.412952 | +0.027153 |
+| `B47_infer_naip_ir_cos` | 0.419256 | 0.419028 | 0.419483 | -0.009889 |
+| `B44_infer_topo_cos` | 0.433676 | 0.432919 | 0.434433 | -0.023457 |
+| `B1_species_from_env_top10` | 0.441402 | 0.441317 | 0.441486 | +0.049633 |
+| `B43_infer_hydro_cos` | 0.456338 | 0.455486 | 0.457191 | +0.017958 |
+| `B48_pollinator_from_photo_only_recall` | 0.496441 | 0.498159 | 0.494722 | +0.017505 |
+| `B52_pollinator_from_photo_recall` | 0.498378 | 0.500542 | 0.496214 | +0.018484 |
+| `B19_infer_aerial_cos` | 0.525534 | 0.525538 | 0.525530 | -0.005658 |
+| `B17_infer_soil_cos` | 0.528748 | 0.527345 | 0.530150 | +0.006101 |
+| `B37_imagine_vision_bio_cos` | 0.536100 | 0.536105 | 0.536096 | -0.002286 |
+| `B41_pollinator_from_species_recall` | 0.546267 | 0.547322 | 0.545211 | +0.018157 |
+| `B45_vision_bio_leave_one_out_cos` | 0.546671 | 0.546675 | 0.546666 | -0.003835 |
+| `B13_imagine_vision_cos` | 0.628427 | 0.628430 | 0.628423 | +0.004900 |
+| `B14_vision_leave_one_out_cos` | 0.654979 | 0.654983 | 0.654976 | +0.002928 |
+| `B27_flowering_fidelity` | 0.667776 | 0.667696 | 0.667856 | -0.011478 |
+| `B16_infer_clay_cos` | 0.672570 | 0.671627 | 0.673514 | +0.019532 |
+| `B26_flowering_auc` | 0.737997 | 0.737985 | 0.738010 | -0.003213 |
+| `B54_pollinator_dist_kl` | 0.750413 | 0.747618 | 0.753209 | +0.031930 |
+| `B46_infer_chm_cos` | 0.753725 | 0.753400 | 0.754049 | -0.016043 |
+| `B49_form_trait_f1` | 0.764243 | 0.764260 | 0.764227 | -0.026432 |
+| `B4_species_from_photo_only_top1` | 0.778364 | 0.778381 | 0.778347 | +0.030251 |
+| `B2_species_from_photo_top1` | 0.781532 | 0.781414 | 0.781650 | +0.024572 |
+| `B9_phylo_from_photo_cos` | 0.781604 | 0.781604 | 0.781604 | -0.011584 |
+| `B38_water_soil_regime_f1` | 0.793535 | 0.793550 | 0.793520 | -0.038979 |
+| `B53_pollinator_calibration_mrr` | 0.803315 | 0.807638 | 0.798992 | +0.006078 |
+| `B11_traits_from_photo_f1` | 0.855996 | 0.856015 | 0.855977 | -0.011588 |
+| `B10_traits_from_photo_env_f1` | 0.856209 | 0.856216 | 0.856202 | -0.015417 |
+| `B35_sun_trait_f1` | 0.865155 | 0.865155 | 0.865155 | -0.009533 |
+| `B33_growth_rate_trait_f1` | 0.870096 | 0.870096 | 0.870096 | -0.003423 |
+| `B30_seasonality_trait_f1` | 0.906597 | 0.906597 | 0.906597 | -0.009075 |
+| `B32_plant_type_trait_f1` | 0.917629 | 0.917642 | 0.917616 | +0.006893 |
+| `B3_species_from_photo_top5` | 0.937963 | 0.937913 | 0.938014 | +0.020392 |
+| `B36_ease_of_care_trait_f1` | 0.938881 | 0.938881 | 0.938881 | -0.003806 |
+| `B7_family_from_phylo` | 0.951126 | 0.951159 | 0.951092 | -0.014763 |
+| `B12_traits_leave_one_out_f1` | 0.997831 | 0.997831 | 0.997831 | +0.001266 |
+| `B63_myco_from_species_f1` | 1.000000 | 1.000000 | 1.000000 | +0.000000 |
 
 ## Mechanism diagnostics
 
-Derived `*_gain` values remain diagnostics. The unchanged evaluator applies its existing affine map only when computing the harmonic score; arithmetic excludes them.
+These remain visible but are not human-capability claims.
 
-| Benchmark | Prior PR checkpoint | Candidate | Delta | Seed 1337 | Seed 1338 |
-|---|---:|---:|---:|---:|---:|
-| `B58_lfmc_phylo_graph_gain` | 0.000000 | 0.000000 | +0.000000 | 0.000000 | 0.000000 |
-| `B57_flowering_phylo_graph_gain` | 0.001267 | 0.001267 | +0.000000 | 0.000000 | 0.002533 |
-| `B59_pollinator_phylo_graph_gain` | 0.002132 | 0.002130 | -0.000003 | 0.001908 | 0.002351 |
-| `B62_mycorrhiza_phylo_graph_gain` | 0.002913 | 0.002913 | +0.000000 | 0.005827 | 0.000000 |
-| `B61_trait_phylo_graph_gain` | 0.035370 | 0.035370 | +0.000000 | 0.029383 | 0.041357 |
-| `B60_community_phylo_graph_gain` | 0.058334 | 0.058334 | +0.000000 | 0.060157 | 0.056510 |
-| `B56_family_phylo_graph_gain` | 0.229507 | 0.229507 | +0.000000 | 0.196339 | 0.262674 |
-| `B24_geo_information_gain` | 0.426368 | 0.426335 | -0.000034 | 0.420655 | 0.432014 |
+| Benchmark | Mean | Seed 1337 | Seed 1338 | Delta |
+|---|---:|---:|---:|---:|
+| `B57_flowering_phylo_graph_gain` | 0.000000 | 0.000000 | 0.000000 | -0.001880 |
+| `B61_trait_phylo_graph_gain` | 0.000000 | 0.000000 | 0.000000 | -0.001876 |
+| `B58_lfmc_phylo_graph_gain` | 0.001441 | 0.001436 | 0.001445 | +0.000135 |
+| `B56_family_phylo_graph_gain` | 0.009202 | 0.009202 | 0.009202 | -0.063553 |
+| `B59_pollinator_phylo_graph_gain` | 0.011603 | 0.009684 | 0.013523 | -0.031634 |
+| `B62_mycorrhiza_phylo_graph_gain` | 0.025469 | 0.024490 | 0.026448 | -0.023550 |
+| `B60_community_phylo_graph_gain` | 0.086133 | 0.086683 | 0.085582 | -0.206296 |
+| `B24_geo_information_gain` | 0.340131 | 0.340097 | 0.340164 | -0.025061 |
 
 ## Inactive
 
