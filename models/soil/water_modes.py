@@ -192,11 +192,14 @@ def typical_theta(theta_months: np.ndarray, hours: Sequence[int]) -> np.ndarray:
 
 
 def drought_cwd(s: balance.State, k: balance.Cells, net, rain, rs_of, u2_of, air, hours: int,
-                lateral: Optional[balance.LateralGraph] = None) -> np.ndarray:
+                lateral: Optional[balance.LateralGraph] = None, roots: Optional[balance.RootShare] = None,
+                kcb_of: Optional[Callable] = None) -> np.ndarray:
     """DROUGHT per cell, mm: the balance over the window's hours from the state at its first local midnight,
-    CWD = sum_h max(0, ET0_h - AET_h) (Stephenson 1990), ET0 on the cell's own sunlight and 2 m wind. NaN without
-    soil. Arguments as `balance.run`."""
-    return balance.run(s, k, net, hours, rain, rs_of, u2_of, air, lateral).metrics(k)["cwd_mm"].cpu().numpy()
+    CWD = sum_h max(0, ET0_h - AET_h) (Stephenson 1990), ET0 on the cell's own sunlight and 2 m wind; with `roots`, a
+    crown's deficit charged to the soil its roots reach (`balance.Year.add`). NaN without soil. Arguments as
+    `balance.run`."""
+    return balance.run(s, k, net, hours, rain, rs_of, u2_of, air, lateral, roots=roots,
+                       kcb_of=kcb_of).metrics(k)["cwd_mm"].cpu().numpy()
 
 
 def plantable(no_soil: np.ndarray, roof: np.ndarray, perv: np.ndarray) -> np.ndarray:
