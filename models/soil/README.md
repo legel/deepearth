@@ -130,8 +130,16 @@ topographic wetness index is $\ln(a / \tan\beta)$. The columns are Spearman corr
   respond a median 1 to 2 h later.
 - **No water table.** Drainage leaves the root zone for good, and nothing rises from below.
 - **No irrigation.** Rain alone: a watered lawn reads as dry as it would unwatered.
-- **Canopy edges are sharp.** A canopy cell and the open cell beside it take different returns' light and wind and
-  transpire through separate roots; no root water is shared across the edge, where real roots reach meters under a gap.
+- **Canopy edges follow the roots, not the leaves.** A crown draws its transpiration from every soil cell within 10 m
+  and its unmet demand is charged to that soil, so the deficit ramps across a drip line instead of stepping. Where trees
+  stand in grassland the dry season's dead grass still leaves a deficit near the air's whole demand beside the trees,
+  and DROUGHT is two-toned there: the landscape's own contrast.
+- **Spring evapotranspiration in a dry year, at a savanna.** At Tonzi Ranch (blue oak savanna, US-Ton) in 2021, March
+  to May evapotranspiration over the tower's footprint is 98 mm against 164 measured (0.60); summer is 42 against 51
+  and fall 42 against 39. The grass's root zone, 0.5 m holding 0.13 m³/m³ of available water on the soil survey
+  (65 mm), empties by mid-April while the tower still measures 70 and 53 mm in April and May. Not tuned. **Next
+  step:** the grass's rooting depth from a published per-pixel product (Fan et al. 2017), and the soil evaporation
+  after spring rain sized against FAO-56's dual coefficient.
 
 ## Run the tests
 
