@@ -1,4 +1,4 @@
-"""Geographic units of the wind solve: a unit whose boundary is the profile is the single solve
+"""Geographic units of the wind solve (WS18 M4): a unit whose boundary is the profile is the single solve
 itself; the split covers the grid once; and units forced across their seams by a coarser solve of the
 whole domain, joined and projected once, follow the single solve and are divergence-free. No network,
 no site data."""

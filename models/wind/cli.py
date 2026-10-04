@@ -103,7 +103,7 @@ def _provenance(site: sites.SiteConfig, scene: Scene, receipt: Dict[str, object]
             "scene": scene.summary(), "parameters": receipt,
             "solver": {"steps": cfg.steps, "cfl": cfg.cfl, "tol": cfg.tol, "tol_final": cfg.tol_final,
                        "tol_momentum": cfg.tol_momentum, "lateral": cfg.lateral,
-                       "dtype": str(cfg.dtype), "device": cfg.device}, **extra}
+                       "dtype": str(cfg.dtype), "march_dtype": str(cfg.march_dtype), "device": cfg.device}, **extra}
 
 
 def _field_domains(frames_seen: List[np.ndarray]) -> Dict[str, Dict[str, object]]:
@@ -450,20 +450,122 @@ def _unit_field(scene: Scene, site: sites.SiteConfig, receipt: Dict[str, object]
     """(3, nz, ny, nx) u, v, vort_z of the unit-speed solve at `heading`, solved once into `cache`."""
     path = cache / f"unit_{heading:g}.npz"
     if not path.exists():
+        gpu = torch.cuda.is_available()
+        if gpu:
+            torch.cuda.reset_peak_memory_stats()
         res = solve(scene, forcing.inflow(site, 1.0), _grid_bearing(heading, receipt), cfg)
-        tmp = cache / f"unit_{heading:g}.partial.npz"
-        np.savez(tmp, velocity=res.velocity, vort_z=res.vorticity[2], zf=scene.grid.zf,
-                 stats=json.dumps(_stats(res)))
-        tmp.replace(path)
+        st = _stats(res)
+        if gpu:
+            # Measured, never estimated: what a heading of this grid holds at its peak on this card, kept in the
+            # sidecar's provenance. A 21 M-cell grid with buildings ran out of a 22 GiB L4 while a 23 M-cell forest
+            # fitted (2026-10-03), so the bytes a cell are the site's, and the planner needs them from runs.
+            dev = torch.cuda.current_device()
+            st.update(cuda_peak_gib=round(torch.cuda.max_memory_allocated(dev) / 2 ** 30, 3),
+                      cuda_total_gib=round(torch.cuda.get_device_properties(dev).total_memory / 2 ** 30, 3))
+            print(f"  heading {heading:g}: CUDA peak {st['cuda_peak_gib']:.2f} of {st['cuda_total_gib']:.2f} GiB, "
+                  f"{st['cuda_peak_gib'] * 2 ** 30 / max(st['cells'], 1):.0f} bytes a cell", flush=True)
+        write_unit(path, res.velocity, res.vorticity[2], scene.grid.zf, st)
     saved = np.load(path)
     assert saved["velocity"].shape[1:] == scene.grid.shape, f"{path} was solved on another grid"
-    return np.concatenate([saved["velocity"][:2], saved["vort_z"][None]]), json.loads(str(saved["stats"]))
+    vel = saved["velocity"][:2].astype(np.float32)
+    return np.concatenate([vel, saved["vort_z"][None].astype(np.float32)]), json.loads(str(saved["stats"]))
+
+
+UNIT_DTYPE = np.float16
+"""A unit file's velocity and vort_z: float16, compressed. Measured on Harvard 270 against float32: 99.7 against
+352 MiB, the published levels' speed within 0.10 % of its median and the survey points' within 0.07 % (largest),
+vort_z within 0.13 % of its p99 (2026-10-04)."""
+
+
+def write_unit(path: Path, velocity: np.ndarray, vort_z: np.ndarray, zf: np.ndarray, stats: Dict) -> None:
+    """One heading's unit solve into the cache, through a partial file renamed once whole."""
+    tmp = path.with_name(path.name.replace(".npz", ".partial.npz"))
+    np.savez_compressed(tmp, velocity=velocity.astype(UNIT_DTYPE), vort_z=vort_z.astype(UNIT_DTYPE), zf=zf,
+                        stats=json.dumps(stats, default=float))
+    tmp.replace(path)
+
+
+def octree_layout(scene: Scene, site: sites.SiteConfig, args: argparse.Namespace):
+    """(layout, its record) of the adaptive cells for this scene under the --octree-* criterion: the leaves, the
+    grid's cells, the CUDA peak a heading is expected to hold on them and on the dense grid (amr_model.octree_bytes,
+    DENSE_CELL_BYTES), and which solver a heading will run on. Numpy alone: no GPU, no solve."""
+    import amr
+    import amr_model
+
+    t0 = time.time()
+    core_h = None if str(args.octree_core_h) == "auto" else float(args.octree_core_h)
+    crit = amr.Criterion(shell=args.octree_shell, shell_out=args.octree_shell_out, band=args.octree_band,
+                         margin=args.octree_margin, core_m=args.octree_core_m, core_h=core_h, disc=site.display_radius_m)
+    leaf = amr.balance(amr.required(scene, crit, scene.measured), crit.lmax)
+    lay = amr.layout(leaf, scene.solid, crit.lmax)
+    cells = int(scene.grid.cells)
+    need, dense = amr_model.octree_bytes(cells, int(lay.n)), amr_model.DENSE_CELL_BYTES * cells
+    return lay, {"criterion": crit.label() + f" core {args.octree_core_m:g} m to {args.octree_core_h}",
+                 "leaves": int(lay.n), "per_level": np.bincount(lay.level, minlength=crit.lmax + 1).tolist(),
+                 "cells": cells, "octree_gib": round(need / 2 ** 30, 2), "dense_gib": round(dense / 2 ** 30, 2),
+                 "solver": "dense" if need > dense else "octree", "build_s": round(time.time() - t0, 1)}
+
+
+def _octree_units(scene: Scene, site: sites.SiteConfig, receipt: Dict[str, object], cfg: SolverConfig,
+                  headings: List[float], cache: Path, args: argparse.Namespace) -> None:
+    """Every heading not yet in `cache` solved on adaptive cells (amr, amr_model), `--octree-batch` headings marched
+    together on the one layout, each heading's field put back on the grid's cells and written as the dense solve's
+    unit file is: everything that reads the cache (levels, points, over-top) reads it unchanged."""
+    import amr_model
+
+    todo = [h for h in headings if not (cache / f"unit_{h:g}.npz").exists()]
+    if not todo:
+        return
+    lay, layout = octree_layout(scene, site, args)
+    print("OCTREE " + json.dumps(layout), flush=True)
+    if layout["solver"] == "dense":     # few cells saved: the dense solve holds less, and the plan sized the card for it
+        print(f"OCTREE dense: {layout['octree_gib']} GiB on {lay.n} leaves against the dense grid's "
+              f"{layout['dense_gib']}", flush=True)
+        return
+    profile, done, total = forcing.inflow(site, 1.0), len(headings) - len(todo), len(headings)
+    for g in range(0, len(todo), max(1, args.octree_batch)):
+        hs = todo[g:g + max(1, args.octree_batch)]
+        gpu = torch.cuda.is_available()
+        if gpu:
+            torch.cuda.reset_peak_memory_stats()
+            held = torch.cuda.memory_allocated() / 2 ** 30
+            if held > 0.05:                       # what the card already held is in every peak below
+                print(f"  OCTREE held before the model: {held:.2f} GiB", flush=True)
+        am = amr_model.AmrModel(scene, profile, [_grid_bearing(h, receipt) for h in hs], cfg, lay)
+        out = am.run()
+        if am.prof:                               # AMR_PROFILE=1: each section's CUDA peak
+            print("  OCTREE sections " + json.dumps({k: round(v, 3) for k, v in am.prof.items() if k.startswith("peak")}),
+                  flush=True)
+        for j, h in enumerate(hs):
+            many = len(hs) > 1
+            u = out["u"][j] if many else out["u"]
+            vel, vort = am.dense_velocity(u)
+            peak = torch.cuda.max_memory_allocated() / 2 ** 30 if gpu else None   # the output's grids included
+            pick = lambda v: v[j] if many else v  # noqa: E731
+            st = {"divergence_max_1_s": out["divergence_max_1_s"], "flux_in_m3_s": pick(out["flux_in"]),
+                  "flux_out_m3_s": pick(out["flux_out"]),
+                  "flux_balance": abs(pick(out["flux_in"]) - pick(out["flux_out"])) / max(pick(out["flux_in"]), 1e-30),
+                  "poisson_iterations": out["projection_iterations"], "wall_s": out["wall_s"] / len(hs),
+                  "batch_wall_s": out["wall_s"], "batch_headings": hs, "cells": int(scene.grid.cells),
+                  "leaves": int(lay.n), "max_speed_m_s": float(np.linalg.norm(vel, axis=0).max()),
+                  "max_vorticity_1_s": float(np.abs(vort).max()), "steps": pick(out["steps"]),
+                  "batch_steps": out["batch_steps"], "settled": pick(out["settled"]), "solver": "octree",
+                  "layout": layout, **({"cuda_peak_gib": round(peak, 3)} if peak is not None else {})}
+            write_unit(cache / f"unit_{h:g}.npz", vel, vort[2], scene.grid.zf, st)
+            print(f"  heading {h:g}: octree {lay.n} leaves, {st['steps']} steps, settled {st['settled']}, "
+                  f"divergence {st['divergence_max_1_s']:.2e} 1/s, {st['wall_s']:.1f} s, CUDA peak {st.get('cuda_peak_gib')} GiB",
+                  flush=True)
+        done += len(hs)
+        print(f"PROGRESS wind {done * cfg.steps}/{total * cfg.steps}", flush=True)
+        del am, out, u, vel, vort                    # nothing of this batch stays on the card into the next
+        if gpu:
+            torch.cuda.empty_cache()
 
 
 def _split(scene: Scene, a: int, b: int, overlap_m: float) -> List[Dict[str, Tuple[int, int, int, int]]]:
     """The a x b geographic units of a scene's grid, row-major from the south-west: each unit's core
     (r0, r1, c0, c1), the grid cut evenly, and its window, the core grown by `overlap_m` a side within
-    the grid."""
+    the grid (WS18 M4)."""
     ny, nx = scene.grid.ny, scene.grid.nx
     ov = int(np.ceil(overlap_m / scene.grid.dx - 1e-9))
     rs = [round(i * ny / a) for i in range(a + 1)]
@@ -530,7 +632,7 @@ def _unit_tile(scene: Scene, coarse: Scene, coarse_cache: Path, site: sites.Site
     path = cache / f"unit_{heading:g}.{name}.npz"
     if not path.exists():
         with np.load(coarse_cache / f"unit_{heading:g}.npz") as c:
-            velocity = c["velocity"]
+            velocity = c["velocity"].astype(np.float32)
         core, res = _unit_solve(scene, coarse, velocity, spec, forcing.inflow(site, 1.0),
                                 _grid_bearing(heading, receipt), cfg)
         tmp = cache / f"unit_{heading:g}.{name}.partial.npz"
@@ -697,7 +799,7 @@ def _coarse_band(args: argparse.Namespace) -> Optional[Tuple[float, float, float
 
 def _pct(a: np.ndarray, q: float) -> Optional[float]:
     """The q-th percentile of the finite values, or None (JSON null) when there are none: a level no
-    fluid cell resolves anywhere in the disc (a site's 4 m level, 2026-09-13, crashed here) is recorded, and
+    fluid cell resolves anywhere in the disc (W1 at 4 m, 2026-09-13, crashed here) is recorded, and
     the pipeline's gate refuses it; it never stops the blend."""
     f = a[np.isfinite(a)]
     return float(np.percentile(f, q)) if f.size else None
@@ -718,8 +820,8 @@ OVER_TOP_FILE, OVER_TOP_META = "over_top_f16.bin", "over_top.json"
 
 
 def _write_over_top(out: Path, ot: Dict[float, Tuple[np.ndarray, np.ndarray]], hs: List[float], vcfg, clearance: float,
-                    skip: Optional[str]) -> Dict[str, object]:
-    """`levels --over-top-out`: each heading's unit (u, v) at `clearance` over each column's measured top, float16
+                    skip: Optional[str], envelope: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    """`levels --over-top-out`: each heading's unit (u, v) at `clearance` over the canopy envelope (view.envelope), float16
     [heading][u, v][ny][nx] in `over_top_f16.bin` with that point's height over the bare earth after it ([ny][nx]),
     on the levels' own grid and rows, NaN beyond the display disc; `over_top.json` says so. Nothing where a run keeps
     no whole field (blocks): the json says why."""
@@ -727,9 +829,11 @@ def _write_over_top(out: Path, ot: Dict[float, Tuple[np.ndarray, np.ndarray]], h
     doc = {"v": 1, "clearance_m": float(clearance), "headings": [float(h) for h in hs],
            "grid": {"nx": int(vcfg.nx), "ny": int(vcfg.ny), "cell_m": float(vcfg.cell_m),
                     "origin": [float(v) for v in vcfg.origin]},
-           "rule": "each heading's unit (u, v) at clearance_m over each column's measured top (its roof, or its highest "
-                   "canopy cell where that stands higher; models/wind view.over_top), trilinear over the solve's fluid "
-                   "centres, read from the same solves as the levels"}
+           "rule": "each heading's unit (u, v) at clearance_m over the envelope of the measured tops (roofs and crowns, gaps "
+                   "narrower than the canopy height closed, then smoothed; models/wind view.envelope, view.over_top), "
+                   "trilinear over the solve's fluid centres, from the same solves as the levels; NaN inside a "
+                   "structure taller than the envelope",
+           **({"envelope": envelope} if envelope else {})}
     if skip or len(ot) != len(hs):
         doc["skipped"] = skip or f"{len(hs) - len(ot)} of {len(hs)} headings not read"
         (out / OVER_TOP_META).write_text(json.dumps(doc, indent=1))
@@ -741,7 +845,8 @@ def _write_over_top(out: Path, ot: Dict[float, Tuple[np.ndarray, np.ndarray]], h
     (out / OVER_TOP_FILE).write_bytes(uv.tobytes() + height.tobytes())
     doc.update(file=OVER_TOP_FILE, dtype="float16", layout="[heading][u, v][ny][nx] then height [ny][nx]",
                rows="running south from the grid's origin y, as the levels' frames (frames.py)", height="above the bare earth [m]",
-               height_p50_p90_m=[round(float(np.percentile(height[fin], q)), 2) for q in (50, 90)] if fin.any() else None)
+               height_p50_p90_m=[round(float(np.percentile(height[fin].astype(np.float32), q)), 2) for q in (50, 90)]
+               if fin.any() else None)
     (out / OVER_TOP_META).write_text(json.dumps(doc, indent=1))
     return {k: doc[k] for k in ("clearance_m", "height_p50_p90_m", "finite_share")} | {"headings": len(hs)}
 
@@ -763,6 +868,9 @@ def cmd_levels(args: argparse.Namespace) -> None:
         cells = (int(round(fx * args.extent_dx / args.dx)), int(round(fy * args.extent_dx / args.dx)))
     scene, receipt = _canopy(*domain.from_bundle(site, args.dx, bundle, band=_band(args), cells=cells,
                                         ground_band=_ground_band(args), canopy_profile=_profile(args)), args)
+    if args.octree_count:               # the layout's leaves and expected peak, for planning: no forcing, no solve
+        print("OCTREE " + json.dumps(octree_layout(scene, site, args)[1]), flush=True)
+        return
     record = json.loads(Path(args.forcing).read_text())
     day, r = record["forcing"], site.display_radius_m
     resolution = view.resolution(scene, vcfg, r, sorted(set(args.candidates) | set(args.heights)))
@@ -772,14 +880,14 @@ def cmd_levels(args: argparse.Namespace) -> None:
     cache.mkdir(parents=True, exist_ok=True)
     specs = None
     if args.units:
-        # Geographic units: each unit solves every heading over its window, forced by the coarse
+        # Geographic units (WS18 M4): each unit solves every heading over its window, forced by the coarse
         # solve of the whole domain (`levels --dx <coarse> --part 0/1` into --coarse-cache); the run without
         # --unit joins their cores and projects the whole once per heading, then blends as always.
         a, b = (int(v) for v in args.units.lower().split("x"))
         specs = _split(scene, a, b, args.overlap_m)
         if args.unit is not None:
             # The coarse solve's square is the fine grid's own (`coarse_cells`): its sides see the profile
-            # where the single solve's do. Rounded up to 128 on its own, one site's coarse square was 1,024 m
+            # where the single solve's do. Rounded up to 128 on its own, Houston's coarse square was 1,024 m
             # against the fine 256 m, and its seams carried another domain's flow (2026-09-13).
             coarse, _ = _canopy(*domain.from_bundle(site, args.coarse_dx, bundle, band=_band(args),
                                            cells=coarse_cells(scene, args.coarse_dx), ground_band=_coarse_band(args),
@@ -812,6 +920,8 @@ def cmd_levels(args: argparse.Namespace) -> None:
         # One share of the unit solves into the shared cache, and nothing else: k of these on k GPUs,
         # then one `levels` without --part, which finds every heading solved and only blends.
         mine = view.share(view.headings(day["from_deg"], vcfg.spacing_deg), args.part)
+        if args.octree and specs is None:
+            _octree_units(scene, site, receipt, cfg, mine, cache, args)
         for j, h in enumerate(mine):
             _progress(j, len(mine), cfg)
             _, s = _unit_field(scene, site, receipt, cfg, h, cache)
@@ -821,8 +931,15 @@ def cmd_levels(args: argparse.Namespace) -> None:
         return
     basis, solves = {}, {}
     hs = view.headings(day["from_deg"], vcfg.spacing_deg)
+    if args.octree and specs is None:               # every heading on adaptive cells, batched, into the same cache
+        _octree_units(scene, site, receipt, cfg, hs, cache, args)
     ot = {} if args.over_top_out else None          # each heading's unit (u, v) over the measured top, and its height
     ot_m, ot_skip = (args.over_top_m if args.over_top_m is not None else view.OVER_TOP_M), None
+    if ot is not None:                    # the canopy envelope the ribbons ride, measured over the shown site
+        gx, gy = np.meshgrid(scene.origin[0] + scene.grid.xc, scene.origin[1] + scene.grid.yc)
+        ot_env, ot_info = view.envelope(scene, vcfg.shown(gx, gy, r))
+    else:
+        ot_env, ot_info = None, None
     pw = None
     if args.points:
         # Every survey point read from the 3D solve (points.py), in the same run and from the same cache as the levels.
@@ -835,7 +952,7 @@ def cmd_levels(args: argparse.Namespace) -> None:
         no_points = []
     for j, h in enumerate(hs):
         if specs is not None and args.blocks:
-            # Blocks (without the join): each core's levels as its own window solved them; no whole-site field.
+            # Blocks (WS18 M4 without the join): each core's levels as its own window solved them; no whole-site field.
             basis[h], solid, filled, solves[f"{h:g}"] = _blocks(scene, vcfg, h, cache, args.units, specs)
             if pw is not None:           # each block's own points, sampled in its window before its field was dropped
                 for i in range(len(specs)):
@@ -857,11 +974,11 @@ def cmd_levels(args: argparse.Namespace) -> None:
         _progress(j, len(hs), cfg, done=True)
         basis[h], solid, filled = view.levels(field, scene, vcfg, r)
         if ot is not None:
-            ot[h] = view.over_top(field[:2], scene, vcfg, r, ot_m)
+            ot[h] = view.over_top(field[:2], scene, vcfg, r, ot_m, ot_env)
         if pw is not None:
             del field
             with np.load(cache / f"unit_{h:g}.npz") as z:
-                pw.put(h, P.sample(z["velocity"], placed))
+                pw.put(h, P.sample(z["velocity"].astype(np.float32), placed))
         print(f"  heading {h:g}: divergence {solves[f'{h:g}']['divergence_max_1_s']:.2e} 1/s", flush=True)
     if pw is not None:
         pmeta = pw.close(P.receipt(placed, pz, ph, scene, scene.grid.dx), placed.search_u8(),
@@ -873,7 +990,8 @@ def cmd_levels(args: argparse.Namespace) -> None:
                                                             "pushed_share", "dtm_difference_m", "headings_done")},
                                      default=float), flush=True)
     if ot is not None:
-        print("OVER_TOP " + json.dumps(_write_over_top(Path(args.over_top_out), ot, hs, vcfg, ot_m, ot_skip)), flush=True)
+        print("OVER_TOP " + json.dumps(_write_over_top(Path(args.over_top_out), ot, hs, vcfg, ot_m, ot_skip, ot_info)),
+              flush=True)
     records = []
     for s, d in zip(day["speed10_m_s"], day["from_deg"]):
         u, v, vort = s * view.blend(basis, d, vcfg.spacing_deg)
@@ -994,7 +1112,7 @@ def cmd_refine(args: argparse.Namespace) -> None:
                                       "final_change_rel": stats["final_change_rel"],
                                       "filled_in_disc": [int(u.sum()) for u in filled]}
         if args.continue_steps:
-            full = np.load(Path(cache) / f"unit_{args.heading:g}.npz")["velocity"]
+            full = np.load(Path(cache) / f"unit_{args.heading:g}.npz")["velocity"].astype(np.float64)
             more = solve(scene, forcing.inflow(site, 1.0), _grid_bearing(args.heading, receipt),
                          replace(cfg, steps=args.continue_steps), initial=full)
             later = view.levels(more.velocity[:2], scene, vcfg, site.display_radius_m)[0]
@@ -1170,7 +1288,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--ground-band", type=float, nargs=3, metavar=("DZ", "ABOVE", "CAP"),
                    help="cells of DZ [m] from the floor to the highest terrain plus ABOVE, at most CAP above the floor")
     p.add_argument("--part", help="i/k: solve only every k-th heading from the i-th into --cache, then stop")
-    p.add_argument("--units", help="AxB: the grid in A x B geographic units, each forced by a coarse solve")
+    p.add_argument("--units", help="AxB: the grid in A x B geographic units, each forced by a coarse solve (WS18 M4)")
     p.add_argument("--unit", type=int, help="solve only unit i of --units, every heading, into --cache, then stop")
     p.add_argument("--overlap-m", type=float, default=200.0, help="each unit's window beyond its core [m]")
     p.add_argument("--coarse-dx", type=float, default=4.0, help="the coarse solve's cell [m]")
@@ -1197,6 +1315,22 @@ def main(argv: Optional[List[str]] = None) -> None:
                                           "--over-top-m over each column's measured top (crown or roof, view.over_top), "
                                           "read from the same solves as the levels, and that height over the bare earth")
     p.add_argument("--over-top-m", type=float, help="the clearance over the measured top [m]; default view.OVER_TOP_M")
+    p.add_argument("--octree", action="store_true",
+                   help="solve each heading on adaptive cells (amr, amr_model): the grid's own cells within --octree-shell "
+                        "of every surface and over the display disc's lower air, doubling outward; the field put back on "
+                        "the grid's cells for every product, headings marched --octree-batch at a time")
+    p.add_argument("--octree-shell", type=float, default=3.0, help="single cells within this distance of a surface [cells]")
+    p.add_argument("--octree-shell-out", type=float, default=1.0, help="the same beyond the survey [cells]")
+    p.add_argument("--octree-band", type=float, default=2.0, help="cells of each size before the next doubling")
+    p.add_argument("--octree-margin", type=float, default=8.0, help="cells around the survey's columns counted inside it")
+    p.add_argument("--octree-core-m", type=float, default=10.0,
+                   help="single cells over the display disc grown by this [m], up to --octree-core-h")
+    p.add_argument("--octree-core-h", default="auto",
+                   help="the core's height over the bare earth [m]; auto: each column's tallest read (amr.Criterion)")
+    p.add_argument("--octree-batch", type=int, default=4, help="headings marched together on one GPU")
+    p.add_argument("--octree-count", action="store_true",
+                   help="print the adaptive layout (leaves, cells, expected CUDA peak, the solver a heading runs on) and stop: "
+                        "numpy alone, no GPU and no solve, for planning")
 
     p = add("refine", cmd_refine, "one heading on finer vertical grids, compared at the levels", solver=True)
     scene_args(p)

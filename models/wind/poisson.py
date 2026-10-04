@@ -105,13 +105,29 @@ class Operator:
     diag: Tensor = field(init=False)
 
     def __post_init__(self):
+        self._shape = tuple(self.ident.shape)
         self.diag = (self.ident + self.ax[:, :, 1:] + self.ax[:, :, :-1]
                      + self.ay[:, 1:, :] + self.ay[:, :-1, :] + self.az[1:] + self.az[:-1])
         self.inner = (self.ax[:, :, 1:-1].contiguous(), self.ay[:, 1:-1, :].contiguous(), self.az[1:-1].contiguous())
+        self.bounds = None
 
     @property
     def shape(self) -> Tuple[int, int, int]:
-        return tuple(self.ident.shape)
+        return self._shape
+
+    def boundary_faces(self) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+        """The coefficients on the domain's west, east, south, north and top boundary faces."""
+        if self.bounds is not None:
+            return self.bounds
+        return self.ax[..., 0], self.ax[..., -1], self.ay[:, 0, :], self.ay[:, -1, :], self.az[-1]
+
+    def release(self) -> None:
+        """Free what only building a hierarchy reads (the identity term and the whole face arrays, `inner` holding the
+        interior faces apart): applying and smoothing read `diag` and `inner`, and the boundary planes are kept. A
+        released operator applies, smooths and reports its shape; it no longer coarsens or converts."""
+        if self.bounds is None:
+            self.bounds = tuple(b.clone() for b in self.boundary_faces())
+        self.ident = self.ax = self.ay = self.az = None
 
     def to(self, dtype: torch.dtype) -> "Operator":
         return self if dtype == self.ident.dtype else Operator(self.ident.to(dtype), self.ax.to(dtype),
@@ -165,6 +181,7 @@ class Convective(Operator):
     def __post_init__(self):
         pos, neg = (lambda f: f.clamp(min=0.0)), (lambda f: (-f).clamp(min=0.0))  # noqa: E731
         fx, fy, fz = self.fx, self.fy, self.fz
+        self._shape, self.bounds = tuple(self.ident.shape), None
         self.diag = (self.ident + self.ax[:, :, 1:] + self.ax[:, :, :-1] + self.ay[:, 1:, :] + self.ay[:, :-1, :]
                      + self.az[1:] + self.az[:-1]
                      + pos(fx[:, :, 1:]) + neg(fx[:, :, :-1]) + pos(fy[:, 1:, :]) + neg(fy[:, :-1, :])
@@ -178,7 +195,8 @@ class Convective(Operator):
                        (self.az[1:] + neg(fz[1:])).contiguous())
 
     def release(self) -> None:
-        self.ax = self.ay = self.az = self.fx = self.fy = self.fz = None
+        """As `Operator.release`, the fluxes too: `diag` and the six `coeffs` are all applying and smoothing read."""
+        self.ident = self.ax = self.ay = self.az = self.fx = self.fy = self.fz = None
 
     def to(self, dtype: torch.dtype) -> "Convective":
         if dtype == self.ident.dtype:
@@ -221,22 +239,30 @@ def bicgstab(op: Operator, b: Tensor, x: Tensor, tol: float, max_iter: int,
     safe = lambda n, d: torch.where(d != 0, n / torch.where(d != 0, d, one), torch.zeros_like(n))  # noqa: E731
     it = 0
     for it in range(1, max_iter + 1):
+        # each vector is freed at its last read, so the preconditioner runs beside four or five of them, not nine; the
+        # arithmetic is unchanged (x + alpha ph + omega sh is summed in that order either way)
         rho_new = _dot(r0, r)
         beta = safe(rho_new, rho) * safe(alpha, omega)
         p = r + beta.view(view) * (p - omega.view(view) * v)
+        del v
         ph = M(p)
         v = op.apply(ph)
         alpha = safe(rho_new, _dot(r0, v))
         s = r - alpha.view(view) * v
+        del r
         rel = torch.where(bnorm > 0, _norm(s) / bnorm, torch.zeros_like(bnorm))
         if bool((rel <= tol).all()):
             x = x + alpha.view(view) * ph
             break
+        x = x + alpha.view(view) * ph
+        del ph
         sh = M(s)
         t = op.apply(sh)
         omega = safe(_dot(t, s), _dot(t, t))
-        x = x + alpha.view(view) * ph + omega.view(view) * sh
+        x = x + omega.view(view) * sh
+        del sh
         r = s - omega.view(view) * t
+        del s, t
         rho = rho_new
         rel = torch.where(bnorm > 0, _norm(r) / bnorm, torch.zeros_like(bnorm))
         if bool((rel <= tol).all()):
@@ -338,7 +364,17 @@ class Solver:
                 break
             level = level.coarsen(k)
         for lvl in self.levels:                      # the stencils are built; the face arrays are not needed again
-            getattr(lvl.op, "release", lambda: None)()
+            lvl.op.release()
+        op.release()                                 # the Krylov operator, when the V-cycle runs a converted copy
+
+    def in_precond_dtype(self) -> "Solver":
+        """This hierarchy under conjugate gradients in its V-cycle's own precision, its finest level the operator: the
+        levels are shared, not copied, so the two solvers cost one hierarchy."""
+        s = Solver.__new__(Solver)
+        s.__dict__.update(self.__dict__)
+        s.op = self.levels[0].op
+        s.dtype = s.precond_dtype = self.precond_dtype
+        return s
 
     @property
     def factor_list(self) -> List[Optional[Factors]]:
@@ -350,8 +386,10 @@ class Solver:
 
     @staticmethod
     def _parity(op: Operator) -> Tensor:
-        z, y, x = [torch.arange(n, device=op.ident.device) for n in op.shape]
-        return (z[:, None, None] + y[None, :, None] + x[None, None, :]) % 2 == 0
+        """The red cells, (z + y + x) even: the three axes' parities combined as booleans, so no integer grid is made
+        (two int64 grids, 16 bytes a cell, at every hierarchy built)."""
+        z, y, x = [(torch.arange(n, device=op.diag.device) % 2).bool() for n in op.shape]
+        return ~(z[:, None, None] ^ y[None, :, None] ^ x[None, None, :])
 
     def _smooth(self, lvl: Level, b: Tensor, x: Tensor, reverse: bool) -> Tensor:
         """Red-black Gauss-Seidel; `reverse` orders black then red so a V-cycle is symmetric."""

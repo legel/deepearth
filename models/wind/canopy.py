@@ -75,7 +75,7 @@ def _evidence_files(root: Path, meta: Dict, ny: int, nx: int) -> Dict:
 
 
 ECHO_PLANTS = 0.2
-"""The echo share at and above which raised returns are plants: at a third site crowns 3 to 15 m tall
+"""The echo share at and above which raised returns are plants: at California Memorial Stadium crowns 3 to 15 m tall
 read 0.58 (p50; 91 % over 0.2) and roofs 0.07 (4 % over 0.2)."""
 ECHO_STRUCTURE = 0.05
 PLANAR = 0.01
@@ -83,7 +83,7 @@ PLANAR = 0.01
 few centimetres over a 3 m window gives about 0.002; a crown gives a tenth and more."""
 NOT_GREEN = 0.03
 """NAIP greenness under which a planar or single-echo top is a structure (crowns read 0.085, lawn 0.10 and roofs 0.0 at
-the third site, p50)."""
+the stadium, p50)."""
 """An echo share under which raised returns are a structure (with a photo that does not say green)."""
 ECHO_SURE = 0.5
 """An echo share this high is plants whatever the photo says (eucalyptus reads grey-green)."""

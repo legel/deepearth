@@ -6,10 +6,16 @@ solver's terrain instead). It is kept `CLEARANCE_M` off every solid face it stan
 wall) and read trilinearly over the fluid cell centres around it. Canopy is porous in the solve, so a crown return
 higher than the clearance is read where it is.
 
-Each of the four columns around a point is read at the same height above its own solid top when that top is within
-a cell and a half of the point's column's top (a terrain step or a pitched roof), so the solver's staircase of 1 m
+Each of the four columns around a point is read at the same height above its own surface when that surface is within
+a cell and a half of the point's column's (a terrain step or a pitched roof), so the solver's staircase of 1 m
 cubes draws no contour lines. A column that rises past that (a wall) is read at the point's own height, and not at
 all where it is solid there.
+
+A column's surface is its solid top, or the true ground where the ground's cell is cut (`domain.PARTIAL_GROUND`): a
+cut cell stays open, so the solid top under it is the step below the ground, and clearance and follow measured from
+that step read a ground return anywhere from 1 to 2 m over the true ground, with the ground's height modulo the cell.
+Every sloped forest site showed it as bands along the contours, about 3 to 5 % of the year's wind at a 1 m period of
+elevation, absent from the solve's own levels (2026-10-03).
 
 A return inside a solid column (a facade inside a footprint rounded to the cell, a roof under its rounded top) moves
 to the nearer of its column's top and the nearest column open at its height, up to `SEARCH_CELLS` away. How far that
@@ -146,7 +152,7 @@ def _nearest(scene, T, x, y, z, reach: int, want_open: bool, above=None):
 NORMAL_SIGMA_M = 1.0
 """The scale the solids' outward normal is smoothed over: an edge's normal turns from one face's to the other's over
 about twice this, so a read 2 m off a roof and one 2 m off its wall meet round the edge. The survey's own per-point
-normals are noisier: offset along them, the third site's within-class jumps rose from 0.56 to 2.1 % of edges."""
+normals are noisier: offset along them, the stadium's within-class jumps rose from 0.56 to 2.1 % of edges."""
 
 
 class GeometricNormals:
@@ -183,14 +189,16 @@ class GeometricNormals:
         return -out
 
 
-def _clearance(scene, T, x, y, z, reach: int, kf=None) -> np.ndarray:
-    """How far a position stands off the solids: its height over its column's solid top, or the horizontal distance to
-    the nearest wall at its height if that is less; negative inside a solid, -inf off the grid. A wall is a column
-    whose top stands more than FOLLOW_CELLS over this column's: a step of a slope in 1 m cubes is the same surface."""
+def _clearance(scene, T, x, y, z, reach: int, kf=None, S=None) -> np.ndarray:
+    """How far a position stands off the solids: its height over its column's surface (`S`, the true ground over a cut
+    cell, else the solid top `T`), or the horizontal distance to the nearest wall at its height if that is less;
+    negative inside a solid, -inf off the grid. A wall is a column whose top stands more than FOLLOW_CELLS over this
+    column's surface: a step of a slope in 1 m cubes is the same surface."""
     g = scene.grid
+    S = T if S is None else S
     j, i = _col(scene, x, y)
-    s = z - T[j, i]
-    above = None if kf is None else T[j, i] + FOLLOW_CELLS * g.dz[np.minimum(kf[j, i], g.nz - 1)]
+    s = z - S[j, i]
+    above = None if kf is None else S[j, i] + FOLLOW_CELLS * g.dz[np.minimum(kf[j, i], g.nz - 1)]
     d = _nearest(scene, T, x, y, z, reach, want_open=False, above=above)[0]
     return np.where(_in_grid(scene, x, y), np.where(s < 0, s, np.minimum(s, d)), -np.inf)
 
@@ -228,11 +236,15 @@ def _place_chunk(scene, kf, T, G, x, y, h, clearance, search_cells, z_floor=None
     n = len(x)
     inside = _in_grid(scene, x, y)
     ground = bilinear(G, scene, x, y)
+    cut = (G >= T - 1e-9) if getattr(scene, "partial", False) else np.zeros(T.shape, bool)   # its top is cut ground
+    S = np.where(cut, G, T)                               # the surface: the true ground over a cut cell
     z = ground + h if z_floor is None else np.nan_to_num(np.asarray(z_floor, np.float64), nan=0.0)
     search = np.zeros(n)
-    # 1. a return inside a solid column: its column's top, or the nearest column open at its height
+    # 1. a return inside a solid column: its column's top, or the nearest column open at its height. Over cut ground a
+    #    return at or over the true ground under it is not inside, though the slope across the column puts it a few
+    #    centimetres under the column's solid top
     j, i = _col(scene, x, y)
-    ins = np.nonzero(inside & (z < T[j, i] - 1e-6))[0]
+    ins = np.nonzero(inside & (z < T[j, i] - 1e-6) & ~(cut[j, i] & (z >= ground - 1e-6)))[0]
     if len(ins):
         up = T[j[ins], i[ins]] - z[ins]
         side, qx, qy, cx, cy = _nearest(scene, T, x[ins], y[ins], z[ins], search_cells, want_open=True)
@@ -254,15 +266,15 @@ def _place_chunk(scene, kf, T, G, x, y, h, clearance, search_cells, z_floor=None
         ok = inside & np.isfinite(ln) & (ln > (1e-4 if callable(normals) else 0.5))   # a field: its direction
         nrm = np.where(ok[:, None], nrm / np.maximum(ln, 1e-12)[:, None], 0.0)
         reach = int(math.ceil(clearance / g.dx)) + 1
-        c0 = _clearance(scene, T, x, y, z, reach, kf)
+        c0 = _clearance(scene, T, x, y, z, reach, kf, S)
         ok &= c0 < clearance - 1e-9
         if ok.any():
             sel = np.nonzero(ok)[0]
             px, py, pz, pn = x[sel], y[sel], z[sel], nrm[sel]
             cp = _clearance(scene, T, px + clearance * pn[:, 0], py + clearance * pn[:, 1], pz + clearance * pn[:, 2],
-                            reach)
+                            reach, S=S)
             cm = _clearance(scene, T, px - clearance * pn[:, 0], py - clearance * pn[:, 1], pz - clearance * pn[:, 2],
-                            reach)
+                            reach, S=S)
             sgn = np.where(cp >= cm, 1.0, -1.0)[:, None]          # the side facing the air: the fit's sign is arbitrary
             d = (clearance - np.clip(c0[sel], 0.0, None))[:, None]
             q = np.stack([px, py, pz], 1) + sgn * d * pn
@@ -270,15 +282,22 @@ def _place_chunk(scene, kf, T, G, x, y, h, clearance, search_cells, z_floor=None
             land = _in_grid(scene, q[:, 0], q[:, 1]) & (q[:, 2] >= T[jq, iq] - 1e-6)   # into a solid: the rules below
             sel = sel[land]
             jo, io = _col(scene, x[sel], y[sel])
-            anchor[sel] = T[jo, io]                        # the column of the surface it leaves
+            anchor[sel] = S[jo, io]                        # the column of the surface it leaves
             x[sel], y[sel], z[sel] = q[land, 0], q[land, 1], q[land, 2]
             offset[sel] = d[land, 0]
     off = offset > 0
-    # 2. the vertical clearance: at least `clearance` above the column's solid top
-    j, i = _col(scene, x, y)
-    s = z - T[j, i]
+
+    def surface_at(px, py):
+        """The surface a point stands on: over a cut cell the true ground under the point itself, else its column's
+        top (a column's single height would leave the slope across it, 7.5 cm on a 15 % slope, as a 1 m grid)."""
+        jj, ii = _col(scene, px, py)
+        return np.where(cut[jj, ii], bilinear(G, scene, px, py), S[jj, ii])
+
+    # 2. the vertical clearance: at least `clearance` above the surface
+    own = surface_at(x, y)
+    s = z - own
     raised = inside & ~off & (s < clearance)
-    z_e = np.where(off, z, T[j, i] + np.maximum(s, clearance))   # an offset read is already clear along its normal
+    z_e = np.where(off, z, own + np.maximum(s, clearance))   # an offset read is already clear along its normal
     # 3. the horizontal clearance: `clearance` out from any column solid at that height, twice for corners
     pushed = np.zeros(n)
     reach = int(math.ceil(clearance / g.dx)) + 1
@@ -303,7 +322,7 @@ def _place_chunk(scene, kf, T, G, x, y, h, clearance, search_cells, z_floor=None
     # 4. the four columns around the point, each read at the point's height above its own top where it is the same
     #    surface stepped, else at the point's own height; vertically between that column's fluid centres
     j, i = _col(scene, x, y)
-    t_own = np.where(off, anchor, T[j, i])            # an offset read keeps the surface it left as its datum
+    t_own = np.where(off, anchor, surface_at(x, y))   # an offset read keeps the surface it left as its datum
     s_e = z_e - t_own
     tol = FOLLOW_CELLS * g.dz[np.minimum(kf[j, i], g.nz - 1)]
     fx, fy = (x - scene.origin[0]) / g.dx - 0.5, (y - scene.origin[1]) / g.dx - 0.5
@@ -317,7 +336,7 @@ def _place_chunk(scene, kf, T, G, x, y, h, clearance, search_cells, z_floor=None
     for c, (dj, di) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1))):
         jj, ii = np.minimum(j0 + dj, g.ny - 1), np.minimum(i0 + di, g.nx - 1)
         wh = (ty if dj else 1 - ty) * (tx if di else 1 - tx)
-        tc = T[jj, ii]
+        tc = S[jj, ii]
         zq = np.where(np.abs(tc - t_own) <= tol, tc + s_e, z_e)
         open_ = zq >= tc - 1e-6
         kfrac = np.interp(zq, zc, np.arange(g.nz, dtype=float))
@@ -393,7 +412,7 @@ def _pct(a: np.ndarray, qs: Sequence[float]) -> Optional[List[float]]:
 
 
 def receipt(placed: Placed, z_scene: np.ndarray, h: np.ndarray, scene, cell_m: float) -> Dict[str, object]:
-    """What the placement did, for the product's sidecar and receipt: how many points needed the fluid search
+    """What the placement did, for the product's sidecar and exposure.json: how many points needed the fluid search
     and how far it went, how many the clearance raised or moved, and the two bare earths' difference (the survey's,
     z - h, against the solver's over the same point: its median is the datums' offset, its spread the DTMs')."""
     n = max(len(placed.w), 1)

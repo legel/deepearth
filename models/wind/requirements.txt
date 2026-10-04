@@ -13,3 +13,4 @@ requests              # IEM
 pytest                # tests
 
 rasterio              # bundle rasters only; synthetic scenes need none of it
+# triton              # optional: the adaptive cells' fused GPU kernels (ships with CUDA builds of torch)

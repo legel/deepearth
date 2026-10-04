@@ -124,6 +124,7 @@ class Scene:
     cut_open: Optional[np.ndarray] = None   # (nz, ny, nx) each cut cell's open fraction, 1 elsewhere
     plants: Optional[np.ndarray] = None   # (ny, nx) where the survey says plants stand: canopy drag only there
     canopy_top: Optional[np.ndarray] = None   # (ny, nx) each column's measured top (its DSM) over the floor (voxelize)
+    measured: Optional[np.ndarray] = None   # (ny, nx) the columns the survey measured (from_bundle); None is every column
 
     def summary(self) -> Dict[str, float]:
         return {
@@ -219,7 +220,7 @@ PARTIAL_PHI_MAX = 0.95
 
 SMOOTH_FILL_M = 8.0
 """The scale ground beyond the data is smoothed over. The nearest measured ground carried out along each ray made
-radial wedges whose edges stepped up to 19 m at a third site (5,040 steps over 1 m in its unmeasured
+radial wedges whose edges stepped up to 19 m at California Memorial Stadium (5,040 steps over 1 m in its unmeasured
 ring), ridges and gaps that fed the flow radial jets."""
 
 
@@ -483,5 +484,6 @@ def from_bundle(site: SiteConfig, dx: float, bundle: Path, data_radius: Optional
             crown = ~np.asarray(columns.solid, bool) & (np.asarray(columns.lai) > 0)
             scene.plants = (ev == canopy.PLANTS) | ((ev == canopy.NONE) & crown)
             receipt["drag_columns_with_plants"] = int(scene.plants.sum())
+    scene.measured = ~outside & (np.isfinite(heights[1]) if heights is not None else True)
     scene.origin = (origin[0], origin[1], scene.origin[2])
     return scene, receipt

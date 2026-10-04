@@ -13,7 +13,7 @@ from domain import Grid
 
 
 def _jump_share(xyz: np.ndarray, v: np.ndarray, k: int = 8, radius: float = 1.0, rel: float = 0.3) -> float:
-    """The continuity measure (the Year product's continuity check): neighbour pairs within `radius` whose values differ by
+    """The continuity measure (simulation exposure.continuity): neighbour pairs within `radius` whose values differ by
     more than `rel` of their mean."""
     t = cKDTree(xyz)
     d, j = t.query(xyz, k=k + 1, distance_upper_bound=radius)
@@ -113,6 +113,27 @@ def test_a_stepped_slope_draws_no_contour_lines():
     assert _jump_share(xyz, np.hypot(out[0], out[1]), rel=0.02) == 0.0
     naive, _ = view.trilinear_fluid(vel[:1], scene, px, py, scene.origin[2] + ground + P.CLEARANCE_M)
     assert _jump_share(xyz, np.abs(naive[0]), rel=0.02) > 0.001, "absolute heights on the staircase do jump"
+
+
+def test_a_cut_slope_reads_every_ground_return_at_the_clearance_over_the_true_ground():
+    """The ground's cut cells stay open (domain.PARTIAL_GROUND), so the solid top under a cut cell is the step below the
+    ground. Clearance measured from that step read ground returns 1 to 2 m over the true ground with its height modulo
+    the cell: bands along the contours of every sloped forest site (2026-10-03). Measured from the true ground, every
+    return is read at the clearance over the ground under it."""
+    g = Grid.uniform(1.0, 60, 30, 30)
+    scene = domain.flat(g)
+    X = scene.origin[0] + g.xc
+    zt = np.broadcast_to(0.15 * (X - X.min()) + 0.37, (g.ny, g.nx)).copy()
+    scene.solid[:] = g.zf[1:, None, None] <= zt[None]          # whole cells under the ground; its cut cells open
+    scene.terrain, scene.top, scene.partial = zt, zt, True
+    rng = np.random.default_rng(5)
+    px, py = rng.uniform(-27, 27, 5000), rng.uniform(-12, 12, 5000)
+    ground = P.bilinear(zt, scene, px, py)
+    over = P.place(scene, px, py, np.zeros(5000)).z_eval - ground
+    np.testing.assert_allclose(over, P.CLEARANCE_M, atol=1e-6)
+    scene.partial = False                                      # the stepped tops as the surface: the test has teeth
+    stepped = P.place(scene, px, py, np.zeros(5000)).z_eval - ground
+    assert np.ptp(stepped) > 0.8 and stepped.min() < P.CLEARANCE_M - 0.5
 
 
 def test_no_jumps_across_a_crowns_edge():

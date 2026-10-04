@@ -154,7 +154,7 @@ def test_a_level_beside_a_taller_column_is_flagged_as_beside_a_wall():
 
 
 def test_a_level_no_fluid_cell_resolves_is_recorded_as_null_not_a_crash():
-    """A site's 4 m level (2026-09-13): the blend's per-level percentile of an all-NaN level raised IndexError."""
+    """W1 at 4 m (2026-09-13): the blend's per-level percentile of an all-NaN level raised IndexError."""
     import json
 
     import cli
@@ -228,24 +228,37 @@ def test_a_unit_run_rebuilds_the_coarse_grid_its_coarse_solve_was_made_on():
     assert cli._coarse_band(ns(ground_band=None, coarse_band_dz=2.0)) is None
 
 
-def test_the_ribbons_fly_over_the_crowns_and_roofs():
-    """The ribbons' field (view.over_top): OVER_TOP_M over each column's measured top, so a depth test hides a ribbon
-    only behind something taller than its own column. On the lowest level over the bare earth, Harvard's ribbons ran
-    inside the crowns and the page hid almost all of them (2026-10-01)."""
-    scene, dtm, dsm, building = _site()
-    cfg = view.ViewConfig(heights_m=(4.0,), cell_m=2.0, half_m=40.0)
-    v, h = view.over_top(np.ones((2,) + scene.grid.shape), scene, cfg, display_radius=40.0)
-    x, y = cfg.centres()
-    disc = cfg.shown(x, y, 40.0)
-    assert np.isfinite(v[:, disc]).all() and np.isnan(v[:, ~disc]).all() and np.isnan(h[~disc]).all()
-    np.testing.assert_allclose(v[:, disc], 1.0)
-    raised = view.under(scene, cfg, dsm - dtm)
-    roof, tree = view.under(scene, cfg, building) & disc, view.under(scene, cfg, (dsm - dtm > 0) & ~building) & disc
-    bare = disc & (raised == 0)
-    assert roof.any() and tree.any() and bare.any()
-    np.testing.assert_allclose(h[roof], raised[roof] + view.OVER_TOP_M, atol=1e-6)   # the hall's 14 m, the tower's 42
-    np.testing.assert_allclose(h[bare], view.OVER_TOP_M, atol=1e-6)
-    np.testing.assert_allclose(h[tree], raised[tree] + view.OVER_TOP_M, atol=1e-6)    # the crown's own top, 9 m
+def test_the_ribbons_ride_the_canopy_envelope_over_narrow_gaps_and_not_over_a_clearing():
+    """The ribbons fly 2 m over the envelope of the measured tops (view.envelope): at each crown's own top, a trail over
+    a broken canopy stepped at every gap and the page cut it into short strokes (Harvard, 2026-10-01). A gap narrower
+    than the canopy height is closed, a clearing wider is not, the surface is smooth over the canopy, and a tower taller
+    than the envelope rises through it: no ribbon inside it."""
+    n, dx = 96, 2.0
+    g = Grid.stretched(dx, n, n, 40, dx, 1.06)
+    dtm = np.full((n, n), 100.0)
+    dsm = dtm + 20.0                                       # a closed 20 m canopy
+    classes = np.full((n, n), 1)
+    dsm[:, 40:42] = 100.0                                  # a 4 m gap across it
+    classes[:, 40:42] = 2
+    dsm[30:50, 60:80] = 100.0                              # a 40 m clearing
+    classes[30:50, 60:80] = 2
+    dsm[70:74, 20:24] = 140.0                              # a 40 m tower
+    classes[70:74, 20:24] = 3
+    scene = domain.from_rasters(dtm, dsm, classes, {1: "tree_canopy", 2: "turf_grass", 3: "facade_masonry"}, g)
+    scene.origin = (-n * dx / 2, -n * dx / 2, scene.origin[2])
+    env, info = view.envelope(scene)
+    assert info["canopy_height_m"] == 20.0 and info["closing_radius_m"] == 10.0 and info["sigma_m"] == 5.0
+    assert env[10:20, 40:42].min() > 15.0, "a 4 m gap under a 20 m canopy is skimmed"
+    assert env[38:42, 68:72].max() < 6.0, "a 40 m clearing is not"
+    canopy = env[5:25, 5:90]                               # canopy and gap, away from the clearing and the tower
+    assert max(np.abs(np.diff(canopy, axis=0)).max(), np.abs(np.diff(canopy, axis=1)).max()) < 1.5, \
+        "no step a trail breaks at over the canopy"
+    cfg = view.ViewConfig(heights_m=(4.0,), cell_m=2.0, half_m=90.0)
+    v, h = view.over_top(np.ones((2,) + g.shape), scene, cfg, display_radius=1e9)
+    tower = view.under(scene, cfg, classes == 3)
+    assert np.isnan(h[tower]).all() and np.isnan(v[:, tower]).all(), "the tower rises through the ribbons"
+    assert np.isfinite(h[~tower]).all()
+    np.testing.assert_allclose(h[~tower], view.under(scene, cfg, env)[~tower] + view.OVER_TOP_M, atol=1e-6)
 
 
 def test_the_over_top_file_holds_every_heading_then_the_height(tmp_path):

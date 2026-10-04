@@ -81,6 +81,13 @@ surface each move less than 0.2 %, 0.2 % and 1 % between two successive 40-step 
 far that stop is from the fixed point is measured under Experiments. A stop on the estimated change still to come
 is also available [tail].
 
+Production solves every heading on adaptive cells ([README](README.md#equations), `amr.py`, `amr_model.py`): the 1 m
+grid's cells stay single within 3 cells of every surface and over the site shown, and merge outward to 8 m in open air,
+2:1 balanced. On a single-cell layout every operator and three full steps match the dense solver to round-off. On a
+forest site of 21 M grid cells the octree holds 3.9 M leaves (5.4x fewer) and steps 5.5x faster (0.28 s against 1.55 s
+on one L4); at an equal step count it agrees with the dense solve to 0.47 % cell p99. A layout that saves under about
+5x its cells is solved dense.
+
 ## One field per heading, then any wind
 
 Every steady term scales with the square of the velocity, so a field solved at 1 m/s scales to any speed: at 2, 5
@@ -199,6 +206,13 @@ column is the site's mean canopy.
 
 At UC Berkeley the stop leaves the 10 and 25 m medians 0.7 to 2.1 % high and the 4 and 5 m medians at most 0.6 %
 high (Stopping error).
+
+The stop leaves the field short of convergence (2026-10-04). Against a long reference, the mean of steps 761 to 960 of
+a 960-step dense march, the production stop (240 to 280 steps) is 1.4 % median and 10.7 % cell p99 off in speed at
+Harvard Forest's Fisher Museum, and 2.3 % median and 18 % cell p99 on the UC Berkeley campus. The march's momentum
+residual still falls slowly at 960 steps, so the field may be weakly unsteady and its time mean the product. A smaller
+pseudo-time step halves the error at the same cost on the forest site; a stop on the mean's own convergence is in
+progress.
 
 The canopy's wake cells keep moving by about 1 % of the median between successive means after the level
 statistics have settled; the steady residual falls to 3 to 10 % of its first value and holds there. The delivered

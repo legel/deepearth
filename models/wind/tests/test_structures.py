@@ -1,5 +1,5 @@
 """A raised surface the survey finds no plants on is a structure, solid to its DSM: the scene follows the measured
-surface whatever the class raster calls its top (a third site's decks, classed concrete, had been solved
+surface whatever the class raster calls its top (California Memorial Stadium's decks, classed concrete, had been solved
 as a porous crown). No network, no site data."""
 
 import numpy as np

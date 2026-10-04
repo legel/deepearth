@@ -277,7 +277,7 @@ def canopy_over_surfaces(columns: CellParams, dtm: np.ndarray, dsm: np.ndarray,
 
     With `vegetation` (columns where the survey's own returns hold a canopy, `vegetation_mask`), only those turn: a raised
     surface the survey finds no plants on is a structure whose top the class raster reads as paving, a deck or a
-    stand, and it stays solid to its DSM. Without it, a third site's upper stands, 25 m decks classed
+    stand, and it stays solid to its DSM. Without it, California Memorial Stadium's upper stands, 25 m decks classed
     concrete, were solved as a porous crown the wind blew through (2,788 columns there, 12,588 at UC)."""
     names = columns.table.names
     if "tree_canopy" not in names:
@@ -299,8 +299,8 @@ def structures_classed_as_crowns(columns: CellParams, dtm: np.ndarray, dsm: np.n
                                  structure: Optional[np.ndarray]) -> Tuple[CellParams, np.ndarray]:
     """The columns with each crown-class column in `where` that stands more than OVERHANG_M over its terrain and whose
     survey returns say structure (`structure`, canopy.evidence == STRUCTURE: one echo per pulse, or the photo's paint
-    or concrete) turned to a solid building class, and that mask. The class raster had called a third site's west
-    press box a crown, and the solve let the wind through it."""
+    or concrete) turned to a solid building class, and that mask. The class raster had called California Memorial
+    Stadium's west press box a crown, and the solve let the wind through it."""
     names = columns.table.names
     solid_b = [i for i in range(len(names)) if columns.table.solid[i] and columns.table.building[i]]
     none = np.zeros(columns.row.shape, bool)

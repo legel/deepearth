@@ -311,18 +311,71 @@ def crown_top(scene: Scene) -> np.ndarray:
     return np.maximum(walkable(scene), crown)
 
 
+RAISED_M = 2.0
+"""A column whose measured top stands this far over its bare earth is raised: a crown or a structure."""
+
+
+def envelope(scene: Scene, where: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict[str, float]]:
+    """(ny, nx) height [m] over the bare earth of the surface the wind passes over: the canopy's envelope, at or above
+    every measured top under it. Over a canopy the flow forms a shear layer at the crown envelope and skims gaps narrower
+    than about the canopy height h_c, separating at a crown and reattaching beyond, rather than entering every gap (the
+    mixing-layer analogy, Raupach, Finnigan and Brunet 1996, Boundary-Layer Meteorol. 78: 351; skimming flow where gap
+    width W < h_c roughly, Oke 1988, Energy and Buildings 11: 103).
+
+    h_c is the median top of the raised columns (RAISED_M and over), r = h_c / 2. A top more than r over its local
+    canopy (the median top within h_c) is emergent, a tower or a lone crown standing over its neighbours: it is capped
+    there and pierces the envelope, hiding the ribbons behind it. The capped tops are closed with a disc of radius r (a
+    gap narrower than h_c is filled, a clearing wider is not), dilated by r and smoothed with a Gaussian of sigma r / 2,
+    and the envelope is that or the capped top, whichever is higher: a Gaussian alone sat under the crowns' peaks and the
+    crowns hid the ribbons over most of Harvard's near half (2026-10-01). The radii, the gaps' widths (twice each gap
+    cell's distance to a raised column, gaps under r) and the emergent share are in the returned record. `where` ((ny,
+    nx), the shown site) is what h_c and the gaps are measured over: the buffer beyond the survey is ground."""
+    from scipy import ndimage
+    base = scene.origin[2] + (np.zeros(scene.z0.shape) if scene.terrain is None else np.asarray(scene.terrain, float))
+    top = np.maximum(crown_top(scene) - base, 0.0)
+    dx = float(scene.grid.dx)
+    site = np.ones(top.shape, bool) if where is None else np.asarray(where, bool)
+    raised = (top >= RAISED_M) & site
+    if not raised.any():
+        return top, {"canopy_height_m": 0.0, "closing_radius_m": 0.0, "sigma_m": 0.0}
+    hc = float(np.median(top[raised]))
+    r = max(1, int(round(0.5 * hc / dx)))
+    yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+    disc = (xx * xx + yy * yy) <= r * r
+    big = max(1, int(round(hc / dx)))
+    local = ndimage.median_filter(top, size=2 * big + 1, mode="nearest")
+    cap = local + r * dx
+    emergent = top > cap
+    capped = np.where(emergent, cap, top)
+    gap = top < 0.5 * hc
+    width = 2.0 * ndimage.distance_transform_edt(gap & site) * dx   # bounded by the site's edge
+    w = width[gap & site]
+    closed = ndimage.grey_closing(capped, footprint=disc, mode="nearest")
+    sigma = max(1.0, 0.5 * r)
+    smooth = ndimage.gaussian_filter(ndimage.grey_dilation(closed, footprint=disc, mode="nearest"), sigma, mode="nearest")
+    env = np.maximum(smooth, capped)
+    return env, {"canopy_height_m": round(hc, 2), "closing_radius_m": round(r * dx, 2), "sigma_m": round(sigma * dx, 2),
+                 "dilation_radius_m": round(r * dx, 2), "emergent_above_local_m": round(r * dx, 2),
+                 "emergent_share": round(float(emergent[site].mean()), 4),
+                 "gap_width_p50_p90_m": [round(float(np.percentile(w, q)), 1) for q in (50, 90)] if w.size else None,
+                 "gap_share": round(float(gap[site].mean()), 4)}
+
+
 def over_top(field: np.ndarray, scene: Scene, cfg: ViewConfig, display_radius: float,
-             clearance: float = OVER_TOP_M) -> Tuple[np.ndarray, np.ndarray]:
-    """`field` at `clearance` over each viewer cell's measured top (`crown_top`): ((c, n, n) values, trilinear over the
-    fluid centres, and (n, n) that point's height above the bare earth), rows as `levels` gives them, NaN beyond
-    `display_radius`."""
+             clearance: float = OVER_TOP_M, surface: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
+    """`field` at `clearance` over the surface the wind passes over (`envelope`, given as `surface` or made here):
+    ((c, n, n) values, trilinear over the fluid centres, and (n, n) that point's height above the bare earth), rows as
+    `levels` gives them, NaN beyond `display_radius` and where a structure taller than the envelope stands (the point
+    inside its solid): such a structure rises above the ribbons and hides them behind it."""
     x, y = cfg.centres()
-    z = under(scene, cfg, crown_top(scene)) + clearance
+    env = envelope(scene)[0] if surface is None else surface
+    z = ground(scene, cfg) + under(scene, cfg, env) + clearance
     v, _ = trilinear_fluid(field, scene, x.ravel(), y.ravel(), z.ravel())
     v = v.reshape((-1,) + x.shape)
     beyond = ~cfg.shown(x, y, display_radius)
-    v[:, beyond] = np.nan
-    return v, np.where(beyond, np.nan, z - ground(scene, cfg))
+    inside = under(scene, cfg, walkable(scene)) > z           # within a solid taller than the envelope
+    v[:, beyond | inside] = np.nan
+    return v, np.where(beyond | inside, np.nan, z - ground(scene, cfg))
 
 
 def under(scene: Scene, cfg: ViewConfig, a: np.ndarray) -> np.ndarray:
