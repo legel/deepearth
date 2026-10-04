@@ -6,6 +6,7 @@ edges. One sub-step is one function of tensors; the same code runs eagerly on CP
 on CUDA. Mass balance is computed every run.
 """
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -74,6 +75,12 @@ class SolverConfig:
     compile: Optional[bool] = None
     block: Optional[int] = None
     soil_dt_s: float = 0.0
+    graph_block: bool = True
+    """Capture a block of compiled sub-steps as one CUDA graph (`_graph_block`); False calls them one at a time."""
+    fused: Optional[bool] = None
+    """The sub-step as five hand-fused kernels (`fused.Step`) where it applies (`fused.usable`), the compiled sub-step to
+    the bit and a fifth to a third faster (Fisher 51.7 to 41.4 s, Berkeley Oxford and Hearst 176.7 to 126.0 s, L4); None
+    is on unless HYDRO_FUSED=0."""
 
 
 @dataclass
@@ -541,6 +548,30 @@ def _set_forcing(f: Forcing, rain: float, t_end: float, inflow: Optional[Inflow]
         f.source_dt.fill_(SOURCE_STEP_M / max(float(np.max(q["rim"])), 1e-30))
 
 
+def _graph_block(step: Callable, state: State, grid: Grid, forcing: Forcing, kern: Kernel,
+                 block: int) -> "torch.cuda.CUDAGraph":
+    """`block` compiled sub-steps captured as one CUDA graph, replayed once per block: the same kernels in the same
+    order on the same buffers as `block` calls, so every number is the same, without a Python dispatch and a graph
+    launch per sub-step (Fisher Museum's storm: 0.45 ms a sub-step of wall against 0.10 ms of kernels, L4, 2026-10-04).
+    The warm-up compiles on the real buffers, so the state is put back before the capture; a capture runs nothing."""
+    keep = {k: v.clone() for k, v in vars(state).items() if torch.is_tensor(v)}
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(3):
+            step(state, grid, forcing, kern)
+    torch.cuda.current_stream().wait_stream(side)
+    torch.cuda.synchronize()
+    for k, v in keep.items():
+        getattr(state, k).copy_(v)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        for _ in range(block):
+            step(state, grid, forcing, kern)
+    torch.cuda.synchronize()
+    return graph
+
+
 def simulate(
     surface: Surface,
     rain: Sequence[float],
@@ -573,11 +604,21 @@ def simulate(
     grid, state, forcing = _build(surface, cfg, probes, device, dtype)
     split = float(cfg.soil_dt_s) > 0.0
     kern = Kernel(dx=cfg.dx, dt_s=cfg.dt_s, alpha=cfg.cfl_alpha, cell_cfl=cfg.cfl_depth == "cell", split=split)
-    step = torch.compile(_substep, dynamic=False, mode=mode) if compiled else _substep
+    graphed = compiled and device.type == "cuda" and cfg.graph_block
+    fused_step = None
+    if compiled and (cfg.fused if cfg.fused is not None else os.environ.get("HYDRO_FUSED") != "0"):
+        import fused
+        why = fused.usable(grid, kern, dtype, device, block)
+        if why is None:
+            fused_step = fused.Step(state, grid, forcing, kern, kern.cell_cfl)
+        print(f"hydro: sub-step {'fused, 5 kernels' if why is None else 'compiled: ' + why}", flush=True)
+    step = fused_step or (torch.compile(_substep, dynamic=False, mode="default" if graphed else mode)
+                          if compiled else _substep)
     soil = (torch.compile(_soil, dynamic=False, mode=mode) if compiled else _soil) if split else None
     if split:
         state.t_soil = torch.zeros((), dtype=torch.float64, device=device)
         torch._dynamo.mark_static_address(state.t_soil)
+    run_block = _graph_block(step, state, grid, forcing, kern, block) if graphed else None
 
     dx, cell_ha = cfg.dx, cfg.dx * cfg.dx / 1e4
     frame_interval_s = cfg.frame_interval_min * 60.0
@@ -609,10 +650,15 @@ def simulate(
             hour_now = min(int(t_s // 3600.0), hourly[0].shape[0] - 1)
             grid.valid_f.copy_(torch.where(hourly[2], hourly[0][hour_now][hourly[1]], torch.zeros_like(grid.valid_f)))
         _set_forcing(forcing, float(P), t_target, inflow, t_s)
+        if fused_step is not None:
+            fused_step.forcing_changed(forcing)
         n_sub = 0
         while True:
-            for _ in range(block):
-                step(state, grid, forcing, kern)
+            if run_block is not None:
+                run_block.replay()
+            else:
+                for _ in range(block):
+                    step(state, grid, forcing, kern)
             n_sub += block
             t_s = float(state.t.item())
             if split and t_s - t_soil >= cfg.soil_dt_s:      # the host reads t every block anyway
