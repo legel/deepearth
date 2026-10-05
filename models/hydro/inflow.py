@@ -59,15 +59,15 @@ class Inflow:
 OFFSETS = np.array([(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)])
 
 
-def fill_and_route(z: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Priority-flood depression filling with D8 receivers.
+try:
+    import numba
+except ImportError:                    # the Python flood below, the same numbers, about 40 times slower
+    numba = None
+    print("hydro inflow: numba is not installed; the priority flood runs in Python", flush=True)
 
-    Args:
-        z: Elevation [m], finite everywhere.
 
-    Returns:
-        (filled elevation, flat receiver index per cell with -1 at outlets, flood order).
-    """
+def _flood_py(z: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The priority flood in Python (heapq on (level, cell)): filled, flood parent, flood order, all flat."""
     rows, cols = z.shape
     zf = z.ravel().astype(np.float64)
     filled = np.full(zf.shape, np.inf)
@@ -97,6 +97,103 @@ def fill_and_route(z: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
             filled[nb] = max(zf[nb], level)
             recv[nb] = c
             heapq.heappush(heap, (filled[nb], nb))
+    return filled, recv, order
+
+
+def _less(ka: float, ia: int, kb: float, ib: int) -> bool:
+    return ka < kb or (ka == kb and ia < ib)
+
+
+def _flood_jit(zf: np.ndarray, rows: int, cols: int, dr: np.ndarray, dc: np.ndarray):
+    """`_flood_py` compiled: a binary min-heap on (level, cell). Every entry's cell is unique, so any min-heap pops
+    the one order heapq does, and every output is the same."""
+    n_all = rows * cols
+    filled = np.full(n_all, np.inf)
+    recv = np.full(n_all, -1, np.int64)
+    order = np.full(n_all, -1, np.int64)
+    seen = np.zeros(n_all, np.bool_)
+    hk = np.empty(n_all, np.float64)
+    hi = np.empty(n_all, np.int64)
+    size = 0
+    for c in range(n_all):
+        r, q = c // cols, c % cols
+        if r == 0 or r == rows - 1 or q == 0 or q == cols - 1:
+            filled[c] = zf[c]
+            seen[c] = True
+            k, i, j = zf[c], c, size                     # push, sift up
+            size += 1
+            while j > 0:
+                p = (j - 1) >> 1
+                if _less(k, i, hk[p], hi[p]):
+                    hk[j], hi[j] = hk[p], hi[p]
+                    j = p
+                else:
+                    break
+            hk[j], hi[j] = k, i
+    n = 0
+    while size > 0:
+        level, c = hk[0], hi[0]                           # pop the least, sift the last down from the root
+        size -= 1
+        k, i, j = hk[size], hi[size], 0
+        while True:
+            a = 2 * j + 1
+            if a >= size:
+                break
+            if a + 1 < size and _less(hk[a + 1], hi[a + 1], hk[a], hi[a]):
+                a += 1
+            if _less(hk[a], hi[a], k, i):
+                hk[j], hi[j] = hk[a], hi[a]
+                j = a
+            else:
+                break
+        if size > 0:
+            hk[j], hi[j] = k, i
+        order[c] = n
+        n += 1
+        r0, c0 = c // cols, c % cols
+        for o in range(8):
+            r1, c1 = r0 + dr[o], c0 + dc[o]
+            if r1 < 0 or r1 >= rows or c1 < 0 or c1 >= cols:
+                continue
+            nb = r1 * cols + c1
+            if seen[nb]:
+                continue
+            seen[nb] = True
+            filled[nb] = zf[nb] if zf[nb] >= level else level
+            recv[nb] = c
+            k, i, j = filled[nb], nb, size                # push, sift up
+            size += 1
+            while j > 0:
+                p = (j - 1) >> 1
+                if _less(k, i, hk[p], hi[p]):
+                    hk[j], hi[j] = hk[p], hi[p]
+                    j = p
+                else:
+                    break
+            hk[j], hi[j] = k, i
+    return filled, recv, order
+
+
+if numba is not None:
+    _less = numba.njit(cache=True, inline="always")(_less)
+    _flood_jit = numba.njit(cache=True)(_flood_jit)
+
+
+def fill_and_route(z: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Priority-flood depression filling with D8 receivers (compiled where numba is installed: Fisher Museum's rim
+    inflow took 37 s in Python, L4 bench, 2026-10-04).
+
+    Args:
+        z: Elevation [m], finite everywhere.
+
+    Returns:
+        (filled elevation, flat receiver index per cell with -1 at outlets, flood order).
+    """
+    if numba is not None:
+        filled, recv, order = _flood_jit(np.ascontiguousarray(z, np.float64).ravel(), z.shape[0], z.shape[1],
+                                         OFFSETS[:, 0].astype(np.int64), OFFSETS[:, 1].astype(np.int64))
+    else:
+        filled, recv, order = _flood_py(z)
     filled = filled.reshape(z.shape)
     recv = _steepest(filled, recv.reshape(z.shape))
     return filled, recv, order.reshape(z.shape)
@@ -120,11 +217,20 @@ def _steepest(filled: np.ndarray, recv: np.ndarray) -> np.ndarray:
 def accumulate(filled: np.ndarray, recv: np.ndarray, order: np.ndarray, dx: float) -> np.ndarray:
     """Contributing area [m^2] per cell, its own cell included."""
     acc = np.full(filled.size, dx * dx)
-    rf = recv.ravel()
-    for c in np.lexsort((-order.ravel(), -filled.ravel())):
+    rf = np.ascontiguousarray(recv.ravel(), np.int64)
+    _pass_down(acc, rf, np.lexsort((-order.ravel(), -filled.ravel())))
+    return acc.reshape(filled.shape)
+
+
+def _pass_down(acc: np.ndarray, rf: np.ndarray, idx: np.ndarray) -> None:
+    """Each cell's area added to its receiver's, in `idx` order (the same additions in the same order compiled)."""
+    for c in idx:
         if rf[c] >= 0:
             acc[rf[c]] += acc[c]
-    return acc.reshape(filled.shape)
+
+
+if numba is not None:
+    _pass_down = numba.njit(cache=True)(_pass_down)
 
 
 def _fine_slices(n_coarse: int, n_fine: int) -> np.ndarray:

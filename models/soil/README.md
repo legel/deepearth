@@ -5,31 +5,46 @@ shows at any hour of its record. Each cell has:
 
 - a canopy store;
 - water standing on the surface;
-- two soil layers: the evaporation layer, 0 to 0.1 m, and the root zone below it, down to the cover's root depth.
+- three soil layers: the evaporation layer, 0 to 0.1 m; the surface root layer, 0.1 to 0.5 m (or to the cover's root
+  depth where that is shallower); and, where the roots reach deeper, the deep root layer down to the root depth.
 
 The layers gain water from rain, run-on and lateral flow. They lose it to evaporation, transpiration and drainage.
+Each cover keeps its own season (a savanna's grass and its oaks green up months apart), a tree's root zone holds the
+water storage its site is measured to sustain, a crown drinks from all the soil its lateral roots reach, and the grass
+of a savanna grows on under its crowns. Without the three-layer fields (`Cells.z_s`, `State.theta3`) the model is the
+two-layer one: the evaporation layer and one root layer below it.
 Storms at full resolution in two dimensions are the [hydro](../hydro/README.md) solver's job. This model is the
-state between and through them, every hour of every year.
+state between and through them, every hour of every year. A site shows three samples of it:
+[SOIL MOISTURE, DROUGHT and FLOOD](#water-as-three-samples-of-the-record).
 
 ## Equations
 
 | process | equation | code |
 |---|---|---|
-| interception | $c \leftarrow c + \min(P,\ S_{\max} - c)$, $S_{\max} = 0.935 + 0.498\,L - 0.00575\,L^2$, $L = -\ln P_{gap} / 0.5$ from the LiDAR column | [`balance.py` `rain_step`](balance.py#L189), [`soils.py` `s_max`](soils.py#L119), [`lai_from_gap`](soils.py#L124) |
-| infiltration capacity, rain hours | $F_1 = F_0 + K_s + \psi_f \Delta\theta \ln\dfrac{F_1 + \psi_f \Delta\theta}{F_0 + \psi_f \Delta\theta}$, $\Delta\theta = \theta_s - \theta_1$; $F$ resets after 6 dry hours | [`green_ampt_capacity`](balance.py#L176), [`F_RESET_H`](balance.py#L28) |
+| interception | $c \leftarrow c + \min(P,\ S_{\max} - c)$, $S_{\max} = 0.935 + 0.498\,L - 0.00575\,L^2$, $L = -\ln P_{gap} / 0.5$ from the LiDAR column | [`balance.py` `rain_step`](balance.py#L348), [`soils.py` `s_max`](soils.py#L119), [`lai_from_gap`](soils.py#L124) |
+| infiltration capacity, rain hours | $F_1 = F_0 + K_s + \psi_f \Delta\theta \ln\dfrac{F_1 + \psi_f \Delta\theta}{F_0 + \psi_f \Delta\theta}$, $\Delta\theta = \theta_s - \theta_1$; $F$ resets after 6 dry hours | [`green_ampt_capacity`](balance.py#L335), [`F_RESET_H`](balance.py#L32) |
 | run-on | each cell in descending filled elevation takes $\min(a\,p,\ \text{cap})$ of what reaches it ($a$: rain plus run-on, $p$: pervious share), fills its depression, and passes the rest to its lower neighbors by $w_j \propto \tan\beta_j\, \ell_j$ | [`routing.py` `cascade`](routing.py#L181), [`network`](routing.py#L138) |
-| standing water soaks in | $f_p = \min(w,\ K_s\,p,\ \text{room in both layers})$, layer 1 first | [`local_step`](balance.py#L117) |
-| net radiation | $R_n = (1 - \alpha) R_s + \varepsilon\,(L_{in} - \sigma T^4)$ | [`local_step`](balance.py#L117) |
-| reference ET | ASCE-EWRI (2005) hourly short reference, $C_d$ 0.24 by day and 0.96 at night, $G$ 0.1 and 0.5 of $R_n$ | [`et0_hourly`](balance.py#L90) |
-| losses, in order | the canopy store, then standing water, then $T = K_w K_{cb} E$ and $E_s = K_e E$ on what remains ($E = ET_0 - E_c - E_w$) | [`local_step`](balance.py#L117) |
-| water stress | $K_w = \dfrac{TAW - D_r}{(1 - p)\,TAW}$ clipped to [0, 1], $TAW = 1000 (\theta_{fc} - \theta_{wp}) z_r$, $p = 0.5$ (FAO-56 eq. 84) | [`P_STRESS`](balance.py#L27) |
-| soil evaporation | $K_e = \min(K_r (K_{c,\max} - K_{cb}),\ f_{ew} K_{c,\max})$, $K_r = \dfrac{TEW - D_e}{TEW - REW}$ (FAO-56 eqs. 71 to 74), from layer 1 down to $\theta_{wp}/2$ | [`local_step`](balance.py#L117) |
-| drainage, both layers | $\dfrac{d\theta}{dt} = -\dfrac{K_s S_e^{b}}{1000\,\Delta z}$, $b = 3 + 2/\lambda$, integrated exactly over the hour: $S_e(1\,\mathrm{h})^{1-b} = S_{e0}^{1-b} + \dfrac{(b-1) K_s}{1000\,\Delta z\,(\theta_s - \theta_r)}$, never below $\theta_{fc}$ | [`drain`](balance.py#L102) |
-| lateral flow, layer 2 | on the terrain under a 2 m Gaussian (a water table follows the landform, not the survey's micro-relief): $Q = \min\!\left(W,\ K(\theta_2) \tan\beta\, \dfrac{\Delta z_2}{\Delta x}\right)$, $K(\theta) = K_s S_e^{3 + 2/\lambda}$, $W = 1000 (\theta_2 - \theta_{fc})^+ \Delta z_2$; receivers fill layer 2, then layer 1, the rest returns to the surface | [`lateral_step`](balance.py#L235), [`routing.py` `lateral`](routing.py#L273), [`LATERAL_SMOOTH_M`](routing.py#L256) |
-| soil water shown | $\theta_{root} = \dfrac{\theta_1 Z_e + \theta_2 (z_r - Z_e)}{z_r}$, $Z_e = 0.1$ m | [`root_zone`](balance.py#L78), [`ZE`](balance.py#L26) |
-| standing water shown | $w$, mm: the surface store after the hour's run-on, soak-in, evaporation and return flow, drawn where $w > 0$ | [`local_step`](balance.py#L117), [`lateral_step`](balance.py#L235) |
+| standing water soaks in | $f_p = \min(w,\ K_s\,p,\ \text{room in both layers})$, layer 1 first | [`local_step`](balance.py#L181) |
+| net radiation | $R_n = (1 - \alpha) R_s + \varepsilon\,(L_{in} - \sigma T^4)$ | [`local_step`](balance.py#L181) |
+| reference ET | ASCE-EWRI (2005) hourly short reference, $C_d$ 0.24 by day and 0.96 at night, $G$ 0.1 and 0.5 of $R_n$ | [`et0_hourly`](balance.py#L154) |
+| losses, in order | the canopy store, then standing water, then $T = K_w K_{cb} E$ and $E_s = K_e E$ on what remains ($E = ET_0 - E_c - E_w$) | [`local_step`](balance.py#L181) |
+| water stress | $K_w = \dfrac{TAW - D_r}{(1 - p)\,TAW}$ clipped to [0, 1], $TAW = 1000 (\theta_{fc} - \theta_{wp}) z_r$, $p = 0.5$ (FAO-56 eq. 84) | [`P_STRESS`](balance.py#L31) |
+| three layers | layer 1 $0$ to $Z_e$, layer 2 $Z_e$ to $z_s = \min(z_r, Z_S)$, layer 3 $z_s$ to $z_r$, $Z_S = 0.5$ m; roots $Y(d) = 1 - \beta^{d}$ ($d$ in cm; $\beta$ 0.966 trees, 0.943 grass; Jackson et al. 1996), $r_i = \dfrac{Y(z_i^{bot}) - Y(z_i^{top})}{Y(z_r)}$, uniform with depth where $z_r \le Z_S$ | [`root_fractions`](balance.py#L102), [`Z_S`](balance.py#L91) |
+| uptake by layer | $T_i = T\,\dfrac{g_i}{\sum_j g_j}$, $g_i = r_i\,\dfrac{(\theta_i - \theta_{wp})^+}{\theta_{fc} - \theta_{wp}}$, $T = K_s K_{cb} E$ with $K_s$ over the whole root zone, at most the layer's water above $\theta_{wp}$ (Feddes, Kowalik and Zaradny 1978, with compensation) | [`_local_step3`](balance.py#L240) |
+| understory under a crown | $T_u = K_{s,u}\,K_{cb,u}\,E$ from layers 1 and 2, $K_{cb,u} = u \cdot K_{cb,grass}(\text{stage})$, $u = \dfrac{\text{nontree}}{100 - \text{tree}}$ (MOD44B) where grass dominates the site's pixel, else 0; $K_{s,u}$ over $z_s$; $K_{cb,u} \le K_{c,\max} - K_{cb}$ (Jackson et al. 1990: like herbaceous biomass under blue oak and in the open) | [`phenology.py` `understory_share`](phenology.py#L128), [`understory_kcb`](phenology.py#L144) |
+| crowns share the soil | a canopy cell's transpiration is drawn evenly from the soil cells within 10 m, $U_j = \sum_{i:\,|x_i - x_j| \le R} T_i / n_i$, $n_i$ the soil cells in $i$'s reach, from layers 1 and 2 by their water above $\theta_{wp}$; what dry soil cannot give comes off the crowns' AET (Perry 1982; Lyford and Wilson 1964) | [`RootShare`](balance.py#L404), [`root_share_step`](balance.py#L445), [`ROOT_RADIUS_M`](balance.py#L397) |
+| woody root depth | $z_r = \mathrm{clip}\!\left(\max\!\left(z_{class},\ \dfrac{S}{1000(\theta_{fc} - \theta_{wp})}\right),\ z_{class},\ 7\ \mathrm{m}\right)$, $S$ the site's S_CWDX80 (Stocker et al. 2023, 0.05°), 7 m the trees' mean maximum rooting depth (Canadell et al. 1996) | [`rootzone.py` `woody_depth`](rootzone.py#L36), [`WOODY_ROOT_MAX_M`](rootzone.py#L20) |
+| each cover its season | grass $K_{cb} = K_{c,\min} + (K_{cb,full} - K_{c,\min})\,g(d)$, $g$ FAO-56's stage curve on its own MCD12Q2 cycle; trees $K_{cb} = K_{c,\min} + (K_{cb,full} - K_{c,\min})(1 - e^{-0.7\,LAI})$ (Allen and Pereira 2009), their LAI where grass dominates the pixel the record's own over the grass's dormant days, shaped by the trees' MCD12Q2 cycle or else the Growing Season Index of the site's air (Jolly, Nemani and Running 2005) | [`phenology.py` `stage_daily`](phenology.py#L53), [`class_daily`](phenology.py#L99), [`gsi_daily`](phenology.py#L81) |
+| soil evaporation | $K_e = \min(K_r (K_{c,\max} - K_{cb}),\ f_{ew} K_{c,\max})$, $K_r = \dfrac{TEW - D_e}{TEW - REW}$ (FAO-56 eqs. 71 to 74), from layer 1 down to $\theta_{wp}/2$ | [`local_step`](balance.py#L181) |
+| drainage, layer by layer | $\dfrac{d\theta}{dt} = -\dfrac{K_s S_e^{b}}{1000\,\Delta z}$, $b = 3 + 2/\lambda$, integrated exactly over the hour: $S_e(1\,\mathrm{h})^{1-b} = S_{e0}^{1-b} + \dfrac{(b-1) K_s}{1000\,\Delta z\,(\theta_s - \theta_r)}$, never below $\theta_{fc}$; each layer drains into the next as much as it holds, the last out of the root zone | [`drain`](balance.py#L166) |
+| lateral flow, layer 2 (the surface root layer) | on the terrain under a 2 m Gaussian (a water table follows the landform, not the survey's micro-relief): $Q = \min\!\left(W,\ K(\theta_2) \tan\beta\, \dfrac{\Delta z_2}{\Delta x}\right)$, $K(\theta) = K_s S_e^{3 + 2/\lambda}$, $W = 1000 (\theta_2 - \theta_{fc})^+ \Delta z_2$; receivers fill layer 2, then layer 1, the rest returns to the surface | [`lateral_step`](balance.py#L488), [`routing.py` `lateral`](routing.py#L273), [`LATERAL_SMOOTH_M`](routing.py#L256) |
+| soil water shown | the top half-meter for every cover, $\theta_{root} = \dfrac{\theta_1 Z_e + \theta_2 (z_s - Z_e)}{z_s}$, $Z_e = 0.1$ m (two layers: over $z_r$) | [`root_zone`](balance.py#L133), [`ZE`](balance.py#L30) |
+| standing water shown | $w$, mm: the surface store after the hour's run-on, soak-in, evaporation and return flow, drawn where $w > 0$ | [`local_step`](balance.py#L181), [`lateral_step`](balance.py#L488) |
 | soil hydraulics | a survey's measured values where it has them (SSURGO 1/3 and 15 bar, $K_s$, $\theta_s$; POLARIS's Brooks-Corey fit), else the texture's Rawls, Brakensiek and Miller (1983) row; $\theta_{fc}$, $\theta_{wp}$ on Brooks-Corey at 33 and 1500 kPa | [`soils.py` `hydraulics`](soils.py#L65), [`RAWLS`](soils.py#L14) |
-| cover | $K_{cb}$, $K_{c,\max}$, root depth, albedo and $f_{ew}$ per cover (FAO-56 Tables 17 and 22) | [`SURFACES`](balance.py#L31) |
+| POLARIS between pixels | $x = \sum_{i=1}^{4} w_i x_i / \sum_i w_i$ over the four 1 arc-second pixel centers about the cell, $w_i$ bilinear, renormalized over pixels with a value; $K_s$, $h_b$, $\psi_f$ in logs | [`polaris_bilinear`](soils.py#L138) |
+| the cell's sunlight and wind | $R_s$ and $u_2$ read at one return per cell: canopy, the highest return within 2 m (the crown surface); open ground, its highest up-facing return within 1 m of the bare earth, else its nearest open neighbor's; any other cell, its highest up-facing return | [`representative.py` `representative`](representative.py#L28), [`GROUND_MAX_M`](representative.py#L24), [`CROWN_M`](representative.py#L25) |
+| crown smoothing, hourly | on canopy cells, $x_i \leftarrow \dfrac{\sum_{j \in W_i} c_j x_j}{\sum_{j \in W_i} c_j}$, $W_i$ the 2 m window, $c_j = 1$ on canopy cells, for $x = R_s, u_2$ | [`crown_smoother`](representative.py#L84) |
+| cover | $K_{cb}$, $K_{c,\max}$, root depth, albedo and $f_{ew}$ per cover (FAO-56 Tables 17 and 22) | [`SURFACES`](balance.py#L35) |
 
 The depressions come from Priority-Flood with epsilon (Barnes, Lehman and Mulla 2014), [`fill`](routing.py#L57). The
 flow weights are Quinn et al.'s (1991) multiple flow directions, with contour lengths 0.5 and 0.354 cell widths.
@@ -52,6 +67,30 @@ site's fixed color scale. Drought and waterlogging are read off the bands; no se
 
 $f$ is the rain hour's infiltration and $f_p$ is standing water soaking in. The bands are the legend's own: below
 the domain, between consecutive round edges, and at or above the top. Each cell's bands sum to the period's hours.
+
+## Water as three samples of the record
+
+Each map samples the nearest tower's record over its last five complete years, and the balance runs only the years
+the samples fall in, each spun up on the year before it ([`sampled_lanes`](water_modes.py#L174)).
+
+| sample | rule | code |
+|---|---|---|
+| typical year | the year whose rain is the median of the five | [`median_year`](water_modes.py#L165) |
+| drought window | the 91 local days maximizing $\sum_d (ET_{0,d} - P_d)$ (SPEI's climatic water balance; three months, the WMO's soil-moisture drought scale); $ET_0$ ASCE hourly over grass (albedo 0.23, $u_2 = 0.748\,u_{10}$); a day counts with 20 hours of $ET_0$, its sum their mean times 24 | [`drought_window`](water_modes.py#L137), [`site_pet`](water_modes.py#L72), [`DAY_MIN_HOURS`](water_modes.py#L20) |
+| 5-year storm | the deepest event (wet hours split by 6 dry hours, at least 5 mm) that an independent gauge corroborates, or that none covers: a gauge holding 80 % of its hours corroborates it when its peak hour and its total both reach half the forcing gauge's | [`storm_events`](water_modes.py#L84), [`corroborate`](water_modes.py#L100), [`five_year_storm`](water_modes.py#L119) |
+
+| map | equation | code |
+|---|---|---|
+| SOIL MOISTURE, m³/m³ | $\bar\theta = \dfrac{\sum_m \theta_m h_m}{\sum_m h_m}$ over the typical year's months, $\theta_m$ the month's mean $\theta_{root}$, $h_m$ its hours | [`typical_theta`](water_modes.py#L187) |
+| DROUGHT, mm | $\mathrm{CWD} = \sum_h \max(0,\ ET_{0,h} - AET_h)$ over the window (Stephenson 1990), the balance from the state at its first local midnight; a crown's deficit charged to the soil its roots reach, as its uptake is, $\mathrm{CWD}_j = \sum_h \sum_{i:\,|x_i - x_j| \le R} (ET_{0,h} - AET_h)_i^+ / n_i$ (the site's total unchanged; grass and shrubs keep their own cell) | [`drought_cwd`](water_modes.py#L194) |
+| FLOOD | the storm solved in two dimensions from the balance's soil water at its first hour, through 24 h of recession (72 h at most) | [`../hydro/flood_curves.py`](../hydro/flood_curves.py), [`recession_h`](water_modes.py#L132) |
+| plantable | soil whose surface takes water in, not a roof; paving and a crown over paving read 251, a building 252 | [`plantable`](water_modes.py#L205), [`CODE_SEALED`](water_modes.py#L33) |
+| a return on a wall | a return classed ground on a face steeper than 60° ($n_z < 0.5$) more than 0.5 m over the bare earth is a wall, never ground: no soil holds that steep (the angle of repose of soils is 30 to 45°); on UC Berkeley's campus 2.4 % of the pervious-ground returns, at Harvard Forest 0.02 % | [`ground_on_walls`](water_modes.py#L220), [`WALL_NZ`](water_modes.py#L211) |
+| scale | SOIL MOISTURE: plantable cells' p10 to p90, never narrower than 0.25 of the site's $\theta_{wp}$ to $\theta_s$; DROUGHT: 0 to p98; codes 0 to 250 | [`soil_moisture_map`](water_modes.py#L252), [`drought_map`](water_modes.py#L267) |
+
+Against a tower. Harvard Forest, 2025 drought window: evapotranspiration 1.99 mm/day over the site (three layers, shared roots, each cover its season), against US-Ha1's
+measured growing-season mean of 2.22. With each cell's light and wind from its own highest up-facing return instead
+of the crown, 0.27.
 
 ## Validation: Harvard Forest, NEON soil water
 
@@ -101,6 +140,24 @@ topographic wetness index is $\ln(a / \tan\beta)$. The columns are Spearman corr
 - **Arrival within the hour.** Rain enters layer 1 in the hour it falls (model arrival 0 h). The shallow sensors
   respond a median 1 to 2 h later.
 - **No water table.** Drainage leaves the root zone for good, and nothing rises from below.
+- **No irrigation.** Rain alone: a watered lawn reads as dry as it would unwatered.
+- **Canopy edges follow the roots, not the leaves.** A crown draws its transpiration from every soil cell within 10 m
+  and its unmet demand is charged to that soil, so the deficit ramps across a drip line instead of stepping. Where trees
+  stand in grassland the dry season's dead grass still leaves a deficit near the air's whole demand beside the trees,
+  and DROUGHT is two-toned there: the landscape's own contrast, which the model keeps on purpose. It is not a seam: the
+  oaks draw a 2.8 m store the grass cannot reach, so in the dry season their soil still meets most of the air's demand
+  while the dead grass beside them meets almost none.
+- **A residual step under a savanna's crowns, under one point.** At Tonzi Ranch the soil water a crown shows over the
+  top half-meter still differs from the open grass's beside it: 0.76 point (0.0076 m³/m³) across the drip line, down from
+  4.5 with one well-mixed root layer, and 14.3 % of neighboring crown-edge cell pairs differ by more than a quarter of
+  the legend's span (99 % with one root layer, 26 % with three layers and no grass under the crowns). The crowns' shade
+  and interception are real differences; the rest is the tree's uptake from layers 1 and 2 beside the grass's.
+- **Spring evapotranspiration in a dry year, at a savanna.** At Tonzi Ranch (blue oak savanna, US-Ton) in 2021, March
+  to May evapotranspiration over the tower's footprint is 111 mm against 164 measured (0.67); summer is 43 against 51
+  and fall 41 against 39. The grass's root zone, 0.5 m holding 0.13 m³/m³ of available water on the soil survey
+  (65 mm), empties by mid-April while the tower still measures 70 and 53 mm in April and May. Not tuned. The grass's
+  depth is not the cause: a rooting-depth database for annual grassland gives about 0.5 m, as used. **Next step:**
+  the soil evaporation after spring rain sized against FAO-56's dual coefficient.
 
 ## Run the tests
 
@@ -108,4 +165,4 @@ topographic wetness index is $\ln(a / \tan\beta)$. The columns are Spearman corr
 cd models/soil && python -m pytest -q
 ```
 
-Requires `torch`, `numpy` and `numba`.
+Requires `torch`, `numpy`, `numba` and `scipy`.

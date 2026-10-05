@@ -120,6 +120,26 @@ def test_open_sides_prescribe_the_profile_only_where_the_background_enters():
     assert Model(domain.flat(g), checks.profile(), 90.0, SolverConfig(steps=0)).inflow == [True] * 4
 
 
+def test_a_solve_leaves_no_model_alive_without_the_cyclic_collector(monkeypatch):
+    """Each heading's float32 working copy referred to itself, so a run held every finished heading's grids on the
+    card until the cyclic collector happened to run (2026-10-03). After solve() nothing of the model is left."""
+    import gc
+    import solver
+    g = checks.grid(1.0, 32, 16, 12)
+    scene = domain.cube(g, 6.0, centre=(12.0, 8.0))
+    gc.collect()
+    monkeypatch.setattr(solver.gc, "collect", lambda *a: 0)       # freed by reference counting alone
+    gc.disable()
+    try:
+        before = sum(type(o) is Model for o in gc.get_objects())      # isinstance would touch every proxy alive
+        res = solve(scene, checks.profile(), checks.WEST, SolverConfig(steps=5).fast())
+        after = sum(type(o) is Model for o in gc.get_objects())
+    finally:
+        gc.enable()
+    assert res.divergence_rel <= 1e-6
+    assert after == before, f"{after - before} model(s) left after the solve"
+
+
 def test_a_warm_start_continues_where_the_cold_run_stopped():
     g = checks.grid(1.0, 32, 16, 12)
     scene = domain.cube(g, 6.0, centre=(12.0, 8.0))

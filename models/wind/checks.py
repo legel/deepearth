@@ -28,6 +28,23 @@ def grid(dx: float = 1.0, nx: int = 64, ny: int = 32, nz: int = 24) -> Grid:
     return Grid.stretched(dx, nx, ny, nz, dx, 1.06)
 
 
+def site(g: Grid, slope: float = 0.06) -> Scene:
+    """A synthetic site as production builds one (`domain.voxelize`, cut-cell ground): grass on a slope rising east with
+    a gentle wave across it, so the ground's cut cells take every open fraction; a row of 10 m buildings and a row of
+    12 m crowns across the middle."""
+    import params
+    x, y = np.meshgrid(g.xc, g.yc)
+    dtm = 100.0 + slope * x + 1.5 * np.sin(2 * np.pi * y / max(g.ny * g.dx, 1.0))
+    dsm, cls = dtm.copy(), np.full((g.ny, g.nx), 3)
+    for cx in np.arange(0.3, 0.75, 0.15) * g.nx * g.dx:
+        box = (np.abs(x - cx) < 0.04 * g.nx * g.dx) & (np.abs(y - 0.35 * g.ny * g.dx) < 0.06 * g.ny * g.dx)
+        dsm[box], cls[box] = dtm[box] + 10.0, 1
+        crown = np.hypot(x - cx - 0.05 * g.nx * g.dx, y - 0.65 * g.ny * g.dx) < 0.05 * min(g.nx, g.ny) * g.dx
+        dsm[crown], cls[crown] = dtm[crown] + 12.0, 2
+    cols = params.from_legend(cls, {1: "roof_sealed", 2: "tree_canopy", 3: "turf_grass"}, g)
+    return domain.voxelize(cols, dtm, dsm, g, f"site {g.nx} x {g.ny}")
+
+
 def _conservation(res: Result) -> Dict[str, float]:
     return {"divergence_rel": res.divergence_rel, "divergence_max": res.divergence_max,
             "divergence_max_1_s": res.divergence_max_1_s,

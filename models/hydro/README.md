@@ -8,23 +8,40 @@ full account, with every experiment and known error, is [water_simulation.md](wa
 
 | process | equation | code |
 |---|---|---|
-| momentum, per face | $q^{n+1} = \dfrac{q^n - g h_f \Delta t\, \partial_x \eta}{1 + g \Delta t\, n^2 \lvert q^n \rvert / h_f^{7/3}}$, $\lvert q \rvert \le 0.9\, h_f \sqrt{g h_f}$ | [`solver.py` `_face_flux`](solver.py#L271) |
-| continuity | $h^{n+1} = h^n + \Delta t\,(P + \nabla \cdot q) - i$ | [`solver.py` `_substep`](solver.py#L286) |
-| time step | $\Delta t = \alpha\, \Delta x / \sqrt{g h_{\max}}$, $\alpha = 0.15$ | [`solver.py` `_cfl_dt`](solver.py#L264) |
+| momentum, per face | $q^{n+1} = \dfrac{q^n - g h_f \Delta t\, \partial_x \eta}{1 + g \Delta t\, n^2 \lvert q^n \rvert / h_f^{7/3}}$, $\lvert q \rvert \le 0.9\, h_f \sqrt{g h_f}$ | [`solver.py` `_face_flux`](solver.py#L278) |
+| continuity | $h^{n+1} = h^n + \Delta t\,(P + \nabla \cdot q) - i$ | [`solver.py` `_substep`](solver.py#L293) |
+| time step | $\Delta t = \alpha\, \Delta x / \sqrt{g h_{\max}}$, $\alpha = 0.15$ | [`solver.py` `_cfl_dt`](solver.py#L271) |
 | infiltration, ponded | $d - S \ln\!\left(1 + \dfrac{d}{F + S}\right) = K_s \Delta t$, $S = G(\theta_b, \theta_s)(\theta_s - \theta_b)$ | [`infiltration.py` `ponded_increment`](infiltration.py#L160) |
 | infiltration, actual | $i = \min(d,\ h,\ F_{\max} - F_1 - F_2)$ | [`infiltration.py` `step`](infiltration.py#L193) |
 | redistribution | $Z \dfrac{d\theta}{dt} = r - [K(\theta) - K(\theta_b)] - p\, K_s \dfrac{G(\theta_b, \theta)}{Z}$, $p = 1.7$ dry, $1.0$ wetting | [`infiltration.py` `_rate`](infiltration.py#L176) |
 | conductivity | $K(\theta) = K_s S_e^{3 + 2/\lambda}$, $S_e = \dfrac{\theta - \theta_r}{\theta_s - \theta_r}$ | [`infiltration.py` `conductivity`](infiltration.py#L135) |
 | capillary drive | $G(\theta_b, \theta) = \psi_f \dfrac{S_e^{c} - S_{e,b}^{c}}{1 - S_{e,b}^{c}}$, $c = 3 + 1/\lambda$ | [`infiltration.py` `capillary_drive`](infiltration.py#L140) |
-| soil coupling | infiltration and surface storage over $\Delta t_s = \Delta x / 0.4\ \mathrm{m\,s^{-1}}$ (0.5 s at 0.2 m, about ten flow sub-steps), each over the time since the last: $i = \min(d(\Delta t_s),\ h,\ \ldots)$; $\Delta t_s = 0$ updates the soil every flow sub-step | [`solver.py` `_soil`](solver.py#L370), [`solver.py` `soil_dt_s`](solver.py#L76) |
+| soil coupling | infiltration and surface storage over $\Delta t_s = \Delta x / 0.4\ \mathrm{m\,s^{-1}}$ (0.5 s at 0.2 m, about ten flow sub-steps), each over the time since the last: $i = \min(d(\Delta t_s),\ h,\ \ldots)$; $\Delta t_s = 0$ updates the soil every flow sub-step | [`solver.py` `_soil`](solver.py#L377), [`solver.py` `soil_dt_s`](solver.py#L77) |
 | soil state | per cell: a deep front $(F_1, \theta_1)$, a surface front $(F_2, \theta_2)$ and a hiatus flag, carried between storms | [`infiltration.py` `BANK`](infiltration.py#L47) |
-| mass balance | rain + initial + inflow + created = infiltrated + abstracted + stored + outflow | [`solver.py` `MassBalance`](solver.py#L138) |
+| mass balance | rain + initial + inflow + created = infiltrated + abstracted + stored + outflow | [`solver.py` `MassBalance`](solver.py#L145) |
 
 The surface is the local-inertial scheme of Bates, Horritt and Fewtrell (2010) with Manning friction treated
 semi-implicitly. Infiltration is Green-Ampt with redistribution (Ogden and Saghafian 1997; Smith, Corradini and
 Melone 1993) with Brooks-Corey hydraulics and the Rawls, Brakensiek and Miller (1983) texture table; it is the
 single-layer case of the LGAR scheme in NOAA's Next Generation Water Resources Modeling Framework. `created` is
 the water the positivity clamp invents, reported rather than absorbed.
+
+## FLOOD: the 5-year storm, per cell
+
+The storm ([`../soil/water_modes.py`](../soil/water_modes.py)) is solved once from the soil balance's water at its
+first hour, through 24 h of recession (72 h at most), and stored per cell ever deeper than 3 mm:
+
+| quantity | equation | code |
+|---|---|---|
+| depth over time | $h(t)$ linear through 8 of the cell's own frames $(t_j, h_j)$, flat outside; each knot added where the curve so far errs most in depth, starting from the frame before the cell first wets and the last | [`fit_knots`](flood_curves.py#L20), [`depth_at`](flood_curves.py#L57), [`KNOTS`](flood_curves.py#L14) |
+| peak water surface | $\eta_{\max} = z_g + \max_t h(t)$ | [`peak_surface`](flood_curves.py#L85) |
+| a return flooded | $z_p < \eta_{\max}$ of its cell; depth over it $\eta_{\max} - z_p$ | [`flooded`](flood_curves.py#L90) |
+| stored | uint16 knots, 10 s and 0.1 mm steps | [`quantize`](flood_curves.py#L74) |
+| error | RMS depth over cell-frames wet on either side; wet footprint IoU pooled over frames | [`error`](flood_curves.py#L98) |
+
+Measured on UC Berkeley's storm (2022-12-30, 169 mm over 55 h), against the solver's 865 frames: depth RMS 2.7 mm;
+wet footprint IoU 0.90 at 1 cm and 0.89 at 3 cm; stored volume at the fullest frame within 0.5 %. The 3 to 10 mm
+sheet on paving that comes and goes with each burst is smoothed.
 
 ## Validation
 
@@ -105,7 +122,7 @@ res = simulate(Surface(z=z, soil=soil, soil_state=res.soil_state), next_storm, c
 ```
 
 ```bash
-python3 -m pytest         # 184 tests, no network and no site data
+python3 -m pytest         # 226 tests, no network and no site data
 ```
 
 ## License

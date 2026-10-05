@@ -48,7 +48,16 @@ mixing, the drag of leaves, the stress of the wind on solid surfaces, and the dr
   height [drag]; on an order it is the survey's own plant area with height, from the LiDAR's gap fraction and the
   season's leaves (the solar model's canopy optical depth).
 - Wall stress uses the logarithmic law at half a cell from each solid face, with that surface class's roughness
-  length [wall].
+  length [wall]. The ground is not 1 m cubes: a cell the terrain crosses stays open, and the solver carries its open
+  volume and its faces' open shares in the momentum, continuity and k (FAVOR, Hirt and Sicilian 1985). Its surface
+  carries the same law at the open part's mid height, over the true surface's area (Ye, Mittal, Udaykumar and Shyy
+  1999); a cut cell thinner than the roughness sublayer (d < e z0) has its surface read by the cell above, at that
+  cell's true distance, as wall models take their input in the log layer (Kawai and Larsson 2012). On 1 m cubes a 6 %
+  slope stood as 1 m risers every 17 m, and the solved wind waved at that period.
+- Drag acts only where the survey says plants stand. A raised column is plants on multi-echo pulses; a crown-class
+  column is solid where its pulses return one echo or its top is a plane over 3 m (surface variation, Pauly, Gross and
+  Kobbelt 2002) and it is not green in the photo. Ground the survey did not measure is ground, smoothed away from the
+  data.
 ## How it is solved
 
 The steady state is reached by stepping in pseudo-time. Each step solves a linear system for the change in velocity
@@ -71,6 +80,13 @@ A heading is done when the median, the 95th percentile and the RMS of the horizo
 surface each move less than 0.2 %, 0.2 % and 1 % between two successive 40-step means, twice running [settle]. How
 far that stop is from the fixed point is measured under Experiments. A stop on the estimated change still to come
 is also available [tail].
+
+Production solves every heading on adaptive cells ([README](README.md#equations), `amr.py`, `amr_model.py`): the 1 m
+grid's cells stay single within 3 cells of every surface and over the site shown, and merge outward to 8 m in open air,
+2:1 balanced. On a single-cell layout every operator and three full steps match the dense solver to round-off. On a
+forest site of 21 M grid cells the octree holds 3.9 M leaves (5.4x fewer) and steps 5.5x faster (0.28 s against 1.55 s
+on one L4); at an equal step count it agrees with the dense solve to 0.47 % cell p99. A layout that saves under about
+5x its cells is solved dense.
 
 ## One field per heading, then any wind
 
@@ -191,11 +207,34 @@ column is the site's mean canopy.
 At UC Berkeley the stop leaves the 10 and 25 m medians 0.7 to 2.1 % high and the 4 and 5 m medians at most 0.6 %
 high (Stopping error).
 
+The stop leaves the field short of convergence (2026-10-04). Against a long reference, the mean of steps 761 to 960 of
+a 960-step dense march, the production stop (240 to 280 steps) is 1.4 % median and 10.7 % cell p99 off in speed at
+Harvard Forest's Fisher Museum, and 2.3 % median and 18 % cell p99 on the UC Berkeley campus. The march's momentum
+residual still falls slowly at 960 steps, so the field may be weakly unsteady and its time mean the product. A smaller
+pseudo-time step halves the error at the same cost on the forest site; a stop on the mean's own convergence is in
+progress.
+
 The canopy's wake cells keep moving by about 1 % of the median between successive means after the level
 statistics have settled; the steady residual falls to 3 to 10 % of its first value and holds there. The delivered
 field is the mean over the last 40 steps.
 
 The tower comparison of the simulated wind at a second, independent sonic has not been made.
+
+A return's wind had been read from the published levels by rules that differed by class and position: crowns at their
+own height, ground and roofs 2 m above through a log law. Neighboring returns under different rules differed by 30 to
+90 %, which drew sharp edges at crowns, walls and roofs: of neighbor pairs within 1 m, the Year run differed by more
+than 30 % across 22 to 87 % of the pairs that crossed a class boundary, against 0.2 to 0.5 % of the pairs within a class
+(UC Berkeley, Harvard Forest and a third site). Each return is now read from the solver's 3D field by one rule for
+every class ([README](README.md#the-unit-field-at-a-return)).
+
+A slope's surface stress against the 10 m log law. On planes of 6 and 15 % under level air (the box's inflow, sides
+and top) the surface u* stands +18 % and +43 % over the log law's from the same solve's 10 m speed, under k-l and the
+mixing length alike, steady along a 480 m plane, with no pressure gradient to explain it (the along-slope gradient
+over 10 m is under 1 % of the stress). Over terrain the log law with the local surface stress holds only within an
+inner layer of depth l, (l / L) ln(l / z0) = 2 kappa^2 (Jackson and Hunt 1975), about 9 m here. Turned onto the slope,
+its inflow, sides, top, start and drive carrying the flat column along the slope, the same model reads flat ground's
+u* within 2.2 % (6 %) and 4.2 % (15 %), and its speeds at 2 to 10 m within 0.75 %. The departure is the level air, not
+the ground. The tower comparison over a sloping site has not been made.
 
 [inflow]: https://github.com/legel/deepearth/blob/33490a5/models/wind/forcing.py#L24
 [drive]: https://github.com/legel/deepearth/blob/3e4250e/models/wind/solver.py#L913
