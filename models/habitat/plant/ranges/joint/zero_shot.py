@@ -15,6 +15,10 @@ from the ecoregions its records occupy, comes from WCVP instead: the RESOLVE eco
 WGSRPD level-3 regions (botanical countries/states) by at least 10% of the ecoregion's area. Its background and
 presence quantiles (store.py) are computed from its relatives' training points.
 
+Every other quantity under the same Brownian prior follows the same rule: a model with a place pathway gives m the
+place vector v_m = sum over the same branches of sqrt(l_e / l_mean) z_p,e, and a model with a learned calibration
+penalty gives it pi_m = softplus(sum over the same branches of sqrt(l_e / l_mean) z_c,e + c_0).
+
 Leave-one-out check (2026-10-05; 3,605 trained species with >= 20 VegBank presence plots, each treated as
 unrecorded): the path to the joining node x scores median AUC 0.9062, against 0.9003 for an earlier rule that took
 the branches shared by all of R_m (the path down to R_m's own common ancestor, which can lie below x and, for a
@@ -62,6 +66,8 @@ class ZeroShot:
     b: np.ndarray                    # [n] offsets
     calibration: list[str]           # space-separated ecoregion ids
     relatives: list[list[int]]       # model indices of each species' closest trained relatives
+    V: torch.Tensor | None = None    # [n, place_dim] place vectors (models with a place pathway)
+    penalty: torch.Tensor | None = None   # [n] outside-area penalties (models with a learned calibration)
 
 
 @torch.no_grad()
@@ -83,7 +89,7 @@ def infer_species(model: JointRangeModel, trained: list[str], tree: Tree, invent
     starts = np.searchsorted(rows, np.arange(A.shape[0] + 1))       # coalesced: sorted by row
     Z, bvec = model.z, model.b
     labels = inventory.wcvp_accepted_name.str.replace(" ", "_")
-    names, W, b, calib, relatives = [], [], [], [], []
+    names, W, b, calib, relatives, V, pen = [], [], [], [], [], [], []
     for label, native in zip(labels, inventory.native_l3):
         if label in index or label not in node:
             continue
@@ -109,9 +115,17 @@ def infer_species(model: JointRangeModel, trained: list[str], tree: Tree, invent
         a = torch.zeros(A.shape[1], device=Z.device)
         a[torch.from_numpy(cols[own][hit]).to(Z.device)] = vals[own][torch.from_numpy(hit).to(vals.device)].to(Z.device)
         W.append(a @ Z)
+        if model.place is not None:
+            V.append(a @ model.zp.float())
+        if model.has_penalty:
+            pen.append(torch.nn.functional.softplus(a @ model.zc.float() + model.c0))
         b.append(float(bvec[torch.tensor(rel, device=bvec.device)].mean()))
         names.append(label)
         calib.append(" ".join(map(str, eco)))
         relatives.append(rel)
-    return ZeroShot(names, torch.stack(W) if W else torch.zeros(0, model.width, device=Z.device),
-                    np.array(b, np.float32), calib, relatives)
+    dev = Z.device
+    return ZeroShot(names, torch.stack(W) if W else torch.zeros(0, model.width, device=dev),
+                    np.array(b, np.float32), calib, relatives,
+                    (torch.stack(V) if V else torch.zeros(0, model.place_dim, device=dev)) if model.place is not None
+                    else None,
+                    (torch.stack(pen) if pen else torch.zeros(0, device=dev)) if model.has_penalty else None)

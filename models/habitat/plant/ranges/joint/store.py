@@ -18,10 +18,16 @@ squared error of exactly |e|^2. So one uniform quantizer step ``delta`` (3.2 in 
 serves every channel and every species, and no channel is dropped: low-variance channels simply round to mostly
 zeros and cost almost nothing after compression.
 
+Every pathway of the model is linear in a species vector, so the same coding stores all of them: with a place
+pathway the stored features of a cell are [F(x) | P(x)] (F = h + G(C), the environment and landscape features; P the
+place features) and the species vectors [w_s | v_s] (d = 512 for the CONUS model); with a learned calibration
+penalty the species table also holds pi_s, which the reader subtracts outside the species' calibration area
+(reader.py) instead of setting the map to 0 there.
+
 Layout and reading: reader.py. Building (``build_store``) writes q(x) = round(y(x) / delta) per cell and, per
-species, its code delta * r_s, offset, background quantiles, P5 threshold and calibration ecoregions;
-``update_zero_shot`` replaces the species without records in place; ``recode_store`` rewrites the tiles in the
-current layout.
+species, its code delta * r_s, offset, background quantiles, P5 threshold, calibration ecoregions and (learned
+calibration) penalty; ``update_zero_shot`` replaces the species without records in place; ``recode_store`` rewrites
+the tiles in the current layout.
 """
 from __future__ import annotations
 
@@ -38,6 +44,7 @@ from pyproj import Transformer  # noqa: I001  (before rasterio: its bundled PROJ
 import torch
 import zstandard
 
+from .climate_fill import GridFill
 from .data import JointData, Standardizer
 from .model import JointRangeModel
 from .reader import TILE, Store
@@ -48,9 +55,11 @@ from .zero_shot import ZeroShot
 class GridInputs:
     """Predictors of the cells of a 240 m region grid, in the model's input order: WorldClim (and any other
     variable the region stack holds) from the stack, SoilGrids sampled at the cell centres from the ~230 m North
-    America layers, as at the training points."""
+    America layers, as at the training points. ``fill``: a shoreline climate fill (climate_fill.GridFill): a land
+    cell without climate takes every band of the stack at its source cell (the nearest cell with climate within
+    5 km), as the training's restored shoreline records and the plots do."""
 
-    def __init__(self, grid_dir: str | Path, soil_dir: str | Path, names: Sequence[str]):
+    def __init__(self, grid_dir: str | Path, soil_dir: str | Path, names: Sequence[str], fill: GridFill | None = None):
         from ..predictors import ConusStack
         from ..soil import VARS as SOIL_VARS, SoilPoints
         self.stack = ConusStack(grid_dir)
@@ -65,24 +74,42 @@ class GridInputs:
         self.t = self.stack.profile["transform"]
         self.to_lonlat = Transformer.from_crs(self.stack.crs, 4326, always_xy=True)
         self.shape = self.stack.shape
+        self.fill = fill
+        if fill is not None and tuple(fill.shape) != tuple(self.shape):
+            raise ValueError(f"the climate fill is for a {fill.shape} grid, not {self.shape}")
+
+    def lonlat(self, r0: int, r1: int, c0: int, c1: int) -> tuple[np.ndarray, np.ndarray]:
+        """Longitude and latitude (WGS84 degrees) of the window's cell centres, row-major."""
+        cc, rr = np.meshgrid(np.arange(c0, c1), np.arange(r0, r1))
+        x = self.t.c + (cc.ravel() + 0.5) * self.t.a
+        y = self.t.f + (rr.ravel() + 0.5) * self.t.e
+        lon, lat = self.to_lonlat.transform(x, y)
+        if not (np.isfinite(lon).all() and np.isfinite(lat).all()):
+            raise RuntimeError("non-finite coordinate transform (import pyproj before rasterio)")
+        return lon, lat
 
     def block(self, r0: int, r1: int, c0: int, c1: int) -> np.ndarray:
         """float32 [(r1 - r0) * (c1 - c0), n_variables], row-major cells."""
         n = (r1 - r0) * (c1 - c0)
         X = np.empty((n, len(self.names)), np.float32)
-        soil = None
-        if self.soil is not None:
-            cc, rr = np.meshgrid(np.arange(c0, c1), np.arange(r0, r1))
-            x = self.t.c + (cc.ravel() + 0.5) * self.t.a
-            y = self.t.f + (rr.ravel() + 0.5) * self.t.e
-            lon, lat = self.to_lonlat.transform(x, y)
-            if not (np.isfinite(lon).all() and np.isfinite(lat).all()):
-                raise RuntimeError("non-finite coordinate transform (import pyproj before rasterio)")
-            soil = self.soil.at(lon, lat).astype(np.float32)
+        soil = self.soil.at(*self.lonlat(r0, r1, c0, c1)).astype(np.float32) if self.soil is not None else None
         for j, (src, k) in enumerate(self.source):
             X[:, j] = (np.asarray(self.stack.data[k][r0:r1, c0:c1], np.float32).ravel() if src == "stack"
                        else soil[:, k])
+        if self.fill is not None:
+            pos, sr, sc = self.fill.window(r0, r1, c0, c1)
+            for j, (src, k) in enumerate(self.source):
+                if src == "stack" and len(pos):
+                    X[pos, j] = np.asarray(self.stack.data[k][sr, sc], np.float32)
         return X
+
+    def locations(self, r0: int, r1: int, c0: int, c1: int) -> tuple[np.ndarray, np.ndarray]:
+        """(latitude, longitude) [n, 2] float32 of the window's cell centres and their fractional (row, column)
+        [n, 2] float32 on this grid (cell centres at +0.5), row-major: the inputs of the place and field pathways."""
+        lon, lat = self.lonlat(r0, r1, c0, c1)
+        cc, rr = np.meshgrid(np.arange(c0, c1), np.arange(r0, r1))
+        return (np.stack([lat, lon], 1).astype(np.float32),
+                np.stack([rr.ravel() + 0.5, cc.ravel() + 0.5], 1).astype(np.float32))
 
 
 @torch.no_grad()
@@ -94,6 +121,47 @@ def features(model: JointRangeModel, Xs: np.ndarray, device, chunk: int = 262144
         with torch.autocast(dev.type, dtype=torch.bfloat16):
             out.append(model.features(torch.from_numpy(Xs[i:i + chunk]).to(dev)).float())
     return torch.cat(out) if out else torch.zeros(0, model.width, device=dev)
+
+
+@torch.no_grad()
+def shared_features(model: JointRangeModel, Xs: np.ndarray, latlon: np.ndarray | None, rc: np.ndarray | None,
+                    device, chunk: int = 262144) -> torch.Tensor:
+    """The stored features of locations, [F | P] (float32, on ``device``; F alone without a place pathway), from
+    standardized inputs, (latitude, longitude) and field positions, evaluated in bfloat16 as in training."""
+    dev = torch.device(device)
+    if model.place is None and model.field is None:
+        return features(model, Xs, dev, chunk)
+    out = []
+    for i in range(0, len(Xs), chunk):
+        with torch.autocast(dev.type, dtype=torch.bfloat16):
+            Fx, P = model.shared(torch.from_numpy(Xs[i:i + chunk]).to(dev),
+                                 None if latlon is None else torch.from_numpy(latlon[i:i + chunk]).to(dev),
+                                 None if rc is None else torch.from_numpy(rc[i:i + chunk]).to(dev))
+        out.append(Fx if P is None else torch.cat([Fx, P], 1))
+    d = model.width + model.place_dim
+    return torch.cat(out) if out else torch.zeros(0, d, device=dev)
+
+
+def species_matrix(model: JointRangeModel) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """The stored species vectors [w_s | v_s] (or w_s), offsets b_s and learned penalties pi_s (or None)."""
+    with torch.no_grad():
+        W = model.species_vectors().detach().float()
+        V = model.place_vectors()
+        if V is not None:
+            W = torch.cat([W, V.detach().float()], 1)
+        pen = model.outside_penalty()
+        return W, model.b.detach().float(), None if pen is None else pen.detach().float()
+
+
+def _grid_features(model: JointRangeModel, st: Standardizer, gi: GridInputs, r0: int, r1: int, c0: int, c1: int,
+                   cells: np.ndarray, device) -> torch.Tensor:
+    """Stored features of the given cells (indices into the row-major window) of a grid window."""
+    X = gi.block(r0, r1, c0, c1)[cells]
+    latlon = rc = None
+    if model.place is not None or model.field is not None:
+        latlon, rc = gi.locations(r0, r1, c0, c1)
+        latlon, rc = latlon[cells], rc[cells]
+    return shared_features(model, st.transform(X), latlon, rc, device)
 
 
 # ------------------------------------------------------------------------------------------------- transform
@@ -124,10 +192,11 @@ def sample_features(model: JointRangeModel, st: Standardizer, grids: dict[str, G
         for _ in range(blocks):
             r0 = int(rng.integers(0, max(1, H_ - block)))
             c0 = int(rng.integers(0, max(1, W_ - block)))
-            X = gi.block(r0, min(H_, r0 + block), c0, min(W_, c0 + block))
-            ok = np.isfinite(X[:, st.required_columns]).all(1)
-            if ok.sum():
-                out.append(features(model, st.transform(X[ok]), device)[torch.randperm(int(ok.sum()))[:cells]])
+            r1, c1 = min(H_, r0 + block), min(W_, c0 + block)
+            X = gi.block(r0, r1, c0, c1)
+            ok = np.flatnonzero(np.isfinite(X[:, st.required_columns]).all(1))
+            if len(ok):
+                out.append(_grid_features(model, st, gi, r0, r1, c0, c1, ok, device)[torch.randperm(len(ok))[:cells]])
     return torch.cat(out)
 
 
@@ -189,11 +258,14 @@ def write_field(model: JointRangeModel, st: Standardizer, gi: GridInputs, out: P
         X = gi.block(r0, r1, 0, W_)
         ok = np.isfinite(X[:, st.required_columns]).all(1)
         q = torch.zeros((len(X), d), dtype=torch.int16)
+        located = model.place is not None or model.field is not None
+        latlon, rc = gi.locations(r0, r1, 0, W_) if located and ok.any() else (None, None)
         if ok.any():
             for i in range(0, int(ok.sum()), 1 << 20):
-                sel = torch.from_numpy(np.flatnonzero(ok)[i:i + (1 << 20)])
-                z = encode(features(model, st.transform(X[sel.numpy()]), device))
-                q[sel] = torch.clamp(z, -writer.limit, writer.limit).to(torch.int16).cpu()
+                sel = np.flatnonzero(ok)[i:i + (1 << 20)]
+                h = shared_features(model, st.transform(X[sel]), None if latlon is None else latlon[sel],
+                                    None if rc is None else rc[sel], device)
+                q[torch.from_numpy(sel)] = torch.clamp(encode(h), -writer.limit, writer.limit).to(torch.int16).cpu()
         writer.put(r0, q.numpy().reshape(r1 - r0, W_, d))
         valid[r0:r1] = ok.reshape(r1 - r0, W_)
     writer.close()
@@ -204,10 +276,11 @@ def write_field(model: JointRangeModel, st: Standardizer, gi: GridInputs, out: P
 
 
 class _SpeciesPoints:
-    """Training rows of every species (grouped once), for the background quantiles and P5 of the species table."""
+    """Training rows of every species (grouped once), for the background quantiles and P5 of the species table.
+    ``positions``: the field positions of the rows (a model with a landscape field)."""
 
-    def __init__(self, data: JointData, n_species: int):
-        self.X = data.points()
+    def __init__(self, data: JointData, n_species: int, positions: np.ndarray | None = None):
+        self.X, self.data, self.positions = data.points(), data, positions
         sid = np.asarray(data["sid"])
         self.pres = np.asarray(data["pres"]).astype(bool)
         self.order = np.argsort(sid, kind="stable")
@@ -224,8 +297,16 @@ class _SpeciesPoints:
     @torch.no_grad()
     def scale(self, model: JointRangeModel, st: Standardizer, idx: np.ndarray, w: torch.Tensor, b: torch.Tensor,
               device) -> tuple[np.ndarray, float]:
-        """(254 quantiles of f over the background rows of ``idx``, 5th percentile over its presence rows)."""
-        fs = (features(model, st.transform(np.asarray(self.X[idx])), device) @ w + b).cpu().numpy()
+        """(254 quantiles of f over the background rows of ``idx``, 5th percentile over its presence rows); ``w`` is
+        the stored species vector ([w_s | v_s] with a place pathway)."""
+        latlon = rc = None
+        if model.place is not None:
+            latlon = np.stack([np.asarray(self.data["lat"][idx]), np.asarray(self.data["lon"][idx])], 1
+                              ).astype(np.float32)
+        if model.field is not None:
+            rc = np.asarray(self.positions[idx], np.float32)
+        H = shared_features(model, st.transform(np.asarray(self.X[idx])), latlon, rc, device)
+        fs = (H @ w + b).cpu().numpy()
         bg, pr = fs[~self.pres[idx]], fs[self.pres[idx]]
         return (np.quantile(bg, np.linspace(0, 1, 256)[1:-1]) if len(bg) else 0,
                 np.quantile(pr, 0.05) if len(pr) else np.inf)
@@ -234,13 +315,14 @@ class _SpeciesPoints:
 @torch.no_grad()
 def species_table(model: JointRangeModel, st: Standardizer, data: JointData, W: torch.Tensor, b: torch.Tensor,
                   relatives: Sequence[list[int] | None], device, inferred_points: int = 30000,
-                  seed: int = 1) -> tuple[np.ndarray, np.ndarray]:
+                  seed: int = 1, positions: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Per species: 254 quantiles of f_s over its background points and the 5th percentile of f_s over its
-    presences (float32 [S, 254], [S]). Rows of W beyond the model's species (zero-shot species) use a random
-    sample of up to ``inferred_points`` of their relatives' points (``relatives[s]``), drawn with the generator
-    seeded ``seed + s`` (s = the species' row in the table), so any row can be recomputed on its own."""
+    presences (float32 [S, 254], [S]; f_s without the calibration penalty: the background lies inside the area).
+    Rows of W beyond the model's species (zero-shot species) use a random sample of up to ``inferred_points`` of
+    their relatives' points (``relatives[s]``), drawn with the generator seeded ``seed + s`` (s = the species' row
+    in the table), so any row can be recomputed on its own. ``positions``: field positions of the training rows."""
     S0, S = model.n_species, W.shape[0]
-    pts = _SpeciesPoints(data, S0)
+    pts = _SpeciesPoints(data, S0, positions)
     quant = np.zeros((S, 254), np.float32)
     p5 = np.zeros(S, np.float32)
     for s in range(S):
@@ -253,17 +335,18 @@ def species_table(model: JointRangeModel, st: Standardizer, data: JointData, W: 
 @torch.no_grad()
 def update_zero_shot(path: str | Path, model: JointRangeModel, st: Standardizer, data: JointData, zs: ZeroShot,
                      device="cuda", inferred_points: int = 30000, seed: int = 1, recompute_all: bool = False,
-                     log=print) -> int:
+                     positions: np.ndarray | None = None, log=print) -> int:
     """Replace the species without records of an existing store by ``zs`` (e.g. after a change of the zero-shot
     rule) without rebuilding its fields. Returns the number of species changed.
 
-    A species' code and offset are linear in its vector: code_s = w_s M^-1/2 V delta, offset_s = <mu, w_s> + b_s.
-    The linear map w -> (code, offset - b) is recovered from the store's trained species by least squares (the
-    store must have been built from ``model``: relative code error < 1e-4, offset error < 1e-3 score units, else
-    nothing is written) and applied to the new vectors. Quantiles and P5 are recomputed for the species whose code
-    or offset changed (every species of ``zs`` with ``recompute_all``, e.g. to bring a table built with other random
-    draws to the per-row seeds), from the generator seeded ``seed + row`` as in ``species_table``. species.npz is
-    replaced atomically."""
+    A species' code and offset are linear in its stored vector (w_s, or [w_s | v_s] with a place pathway):
+    code_s = w_s M^-1/2 V delta, offset_s = <mu, w_s> + b_s. The linear map w -> (code, offset - b) is recovered
+    from the store's trained species by least squares (the store must have been built from ``model``: relative code
+    error < 1e-4, offset error < 1e-3 score units, else nothing is written) and applied to the new vectors. Quantiles
+    and P5 are recomputed for the species whose code or offset changed (every species of ``zs`` with
+    ``recompute_all``, e.g. to bring a table built with other random draws to the per-row seeds), from the generator
+    seeded ``seed + row`` as in ``species_table``; a learned penalty is replaced too. species.npz is replaced
+    atomically."""
     import os
     path = Path(path)
     meta = json.loads((path / "store.json").read_text())
@@ -274,8 +357,8 @@ def update_zero_shot(path: str | Path, model: JointRangeModel, st: Standardizer,
     labels = list(data.species().species)
     if list(T["species"][:S0]) != labels:
         raise ValueError(f"{path}: the store's species order differs from the model's")
-    W = model.species_vectors().detach().double().cpu().numpy()
-    b = model.b.detach().double().cpu().numpy()
+    Wt, bt, _ = species_matrix(model)
+    W, b = Wt.double().cpu().numpy(), bt.double().cpu().numpy()
     codes0 = T["codes"][:S0].astype(np.float64)
     L = np.linalg.lstsq(W, codes0, rcond=None)[0]
     m = np.linalg.lstsq(W, T["offsets"][:S0].astype(np.float64) - b, rcond=None)[0]
@@ -289,8 +372,11 @@ def update_zero_shot(path: str | Path, model: JointRangeModel, st: Standardizer,
     missing = [n for n in zs.names if n not in row]
     if missing:
         raise KeyError(f"{path}: {len(missing)} species are not in the store, e.g. {missing[:3]}")
-    Wz = zs.W.detach().double().cpu().numpy()
-    pts = _SpeciesPoints(data, S0)
+    Wz = zs.W.detach().float()
+    if zs.V is not None:
+        Wz = torch.cat([Wz, zs.V.detach().float()], 1)
+    Wz = Wz.double().cpu().numpy()
+    pts = _SpeciesPoints(data, S0, positions)
     changed = 0
     for j, name in enumerate(zs.names):
         i = row[name]
@@ -300,6 +386,8 @@ def update_zero_shot(path: str | Path, model: JointRangeModel, st: Standardizer,
                 and abs(o - T["offsets"][i]) < 1e-4):
             continue
         T["codes"][i], T["offsets"][i] = c, o
+        if zs.penalty is not None and "penalty" in T:
+            T["penalty"][i] = float(zs.penalty[j])
         idx = pts.relatives(zs.relatives[j], inferred_points, seed + i)
         T["quantiles"][i], T["p5"][i] = pts.scale(model, st, idx, torch.tensor(Wz[j], dtype=torch.float32,
                                                                                device=device),
@@ -315,24 +403,29 @@ def update_zero_shot(path: str | Path, model: JointRangeModel, st: Standardizer,
 def build_store(model: JointRangeModel, st: Standardizer, data: JointData, out: str | Path,
                 grids: dict[str, GridInputs], delta: float = 3.2, zero_shot: ZeroShot | None = None,
                 sample: dict | None = None, tile: int = TILE, device="cuda",
-                calibration: Callable[[list[str], list[str]], list[str]] | None = None, log=print) -> dict:
+                calibration: Callable[[list[str], list[str]], list[str]] | None = None,
+                positions: np.ndarray | None = None, log=print) -> dict:
     """Write a map store for every species of the model (and the zero-shot species, if given) over the region
     grids ``grids`` (region -> GridInputs). ``sample``: keyword arguments of ``sample_features``. ``calibration``:
     (labels, calibration areas) -> calibration areas as stored, e.g. ``scope.extend_calibration`` so that every
-    species native to the mapped region has a calibration area on its grid."""
+    species native to the mapped region has a calibration area on its grid. ``positions``: field positions of the
+    training rows (a model with a landscape field: its pyramid must be attached and on the grids' grid)."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     sp = data.species()
-    with torch.no_grad():
-        W = model.species_vectors().detach().float()
-        b = model.b.detach().float()
+    W, b, pen = species_matrix(model)
     labels = list(sp.species)
     calib = sp.calibration_ecoregions.fillna("").astype(str).tolist()
     inferred = [False] * len(labels)
     relatives: list[list[int] | None] = [None] * len(labels)
     if zero_shot is not None and zero_shot.names:
-        W = torch.cat([W, zero_shot.W.float().to(W.device)])
+        Wz = zero_shot.W.float().to(W.device)
+        if model.place is not None:
+            Wz = torch.cat([Wz, zero_shot.V.float().to(W.device)], 1)
+        W = torch.cat([W, Wz])
         b = torch.cat([b, torch.tensor(zero_shot.b, device=b.device)])
+        if pen is not None:
+            pen = torch.cat([pen, zero_shot.penalty.float().to(pen.device)])
         labels += zero_shot.names
         calib += zero_shot.calibration
         inferred += [True] * len(zero_shot.names)
@@ -355,10 +448,12 @@ def build_store(model: JointRangeModel, st: Standardizer, data: JointData, out: 
                                      int(T.shape[0]), device, tile, log)
     (out / "store.json").write_text(json.dumps(meta))
 
-    quant, p5 = species_table(model, st, data, W, b, relatives, device)
+    quant, p5 = species_table(model, st, data, W, b, relatives, device, positions=positions)
+    extra = {} if pen is None else {"penalty": pen.cpu().numpy().astype(np.float32)}
     np.savez(out / "species.npz", species=np.array(labels, dtype=str),
              codes=(R * delta).cpu().numpy().astype(np.float32), offsets=off.cpu().numpy().astype(np.float32),
-             quantiles=quant, p5=p5, calibration=np.array(calib, dtype=str), inferred=np.array(inferred, bool))
+             quantiles=quant, p5=p5, calibration=np.array(calib, dtype=str), inferred=np.array(inferred, bool),
+             **extra)
     log(f"species table: {len(labels)} species, {(out / 'species.npz').stat().st_size / 1e6:.1f} MB")
     return {"species": len(labels), "fields": fields}
 

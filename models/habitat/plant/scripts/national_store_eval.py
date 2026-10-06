@@ -10,8 +10,10 @@ usage:
   national_store_eval.py bench <store> [--n 20]       CPU decode time of 256² and 512² windows, bytes on disk
 All take --config (default configs/conus.json) for the data, run, grid and plot paths.
 
-In every AUC a plot outside the species' calibration ecoregions (or without climate) ranks lowest, as the map shows
-it; species with >= min_presence presence plots are scored.
+In every AUC a plot outside the species' calibration ecoregions (or without climate) ranks lowest, as the map of the
+environment model shows it; a store with a learned calibration penalty is also scored as it serves its maps
+(``auc_joint_served``: every plot with climate, outside the area lowered by the species' penalty). Species with
+>= min_presence presence plots are scored.
 """
 import argparse
 import json
@@ -29,10 +31,9 @@ from sklearn.metrics import roc_auc_score
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from ranges import codec, config, validate  # noqa: E402
-from ranges.joint.data import JointData, Standardizer  # noqa: E402
-from ranges.joint.model import JointRangeModel  # noqa: E402
+from ranges.joint.data import JointData  # noqa: E402
 from ranges.joint.reader import ECOREGION_RASTER, Store  # noqa: E402
-from ranges.joint.store import features  # noqa: E402
+from ranges.joint.store import shared_features, species_matrix  # noqa: E402
 from ranges.predictors import ConusStack  # noqa: E402
 
 
@@ -86,9 +87,12 @@ def cmd_plots(a, cfg):
         idx = np.array([i for i, _ in sel])
         F = G @ T["codes"][idx].T + T["offsets"][idx]                    # plots x species
         for j, (i, y) in enumerate(sel):
-            inside = np.isin(peco, calib[i]) & valid
+            in_area = np.isin(peco, calib[i])
             rec = {"source": src, "species": names[i], "presences": int(y.sum()), "inferred": bool(T["inferred"][i]),
-                   "auc_joint": auc(y, np.where(inside, F[:, j], -1e9))}
+                   "auc_joint": auc(y, np.where(in_area & valid, F[:, j], -1e9))}
+            if store.has_penalty:
+                g, served = store.served(F[:, j], i, in_area, valid & on)
+                rec["auc_joint_served"] = auc(y, np.where(served, g, -1e9))
             if names[i] in daru:
                 d = validate._sample(P(ev["daru_raw_rasters"]) / f"{names[i]}.tif", lon, lat)
                 rec["auc_daru"] = auc(y, np.nan_to_num(d))
@@ -109,6 +113,8 @@ def cmd_plots(a, cfg):
     summ = {}
     for src, g in df.groupby("source"):
         d = {"species": int(len(g)), "auc_joint": round(float(g.auc_joint.median()), 4)}
+        if "auc_joint_served" in g:
+            d["auc_joint_served"] = round(float(g.auc_joint_served.median()), 4)
         for other in ("daru", "maxent"):
             c = f"auc_{other}"
             if c in g:
@@ -123,22 +129,24 @@ def cmd_plots(a, cfg):
 
 
 def cmd_fidelity(a, cfg):
-    import torch
-    j = cfg["joint"]
-    run = Path(a.run) if a.run else cfg.path(j["runs_dir"]) / j["run"]
-    model = JointRangeModel.load(run / "model_best.pt" if (run / "model_best.pt").exists() else run / "model.pt",
-                                 a.device)
-    st = Standardizer.load(run / "norm.npz", j["train"]["flag_variables"])
-    data = JointData(a.data_dir or cfg.path(j["data_dir"]))
+    from national_store import load_run, stored_model
+    m = stored_model(cfg, a.model)
+    run = Path(a.run) if a.run else m["run"]
+    data_dir = Path(a.data_dir) if a.data_dir else m["data_dir"]
+    model, st = load_run(run, m["train"]["flag_variables"], a.device, data_dir / "field")
+    data = JointData(data_dir)
     labels = list(data.species().species)
     store = Store(a.store)
     T = store.T
     j_of = {s: j for j, s in enumerate(T["species"])}
-    with torch.no_grad():
-        Hf = features(model, st.transform(np.asarray(data["plot_X"])), a.device)
-        Wv, b = model.species_vectors().detach().float(), model.b.detach().float()
-    rr, cc, _ = grid_cells(cfg.path(cfg["store"]["grids"]["conus"]), np.asarray(data["plot_lon"], float),
-                           np.asarray(data["plot_lat"], float))
+    PX = np.asarray(data["plot_X"])
+    if m["train"].get("fill_plots"):                       # the plots as the model scores them (shoreline fill)
+        PX = np.load(data_dir / "plot_fill_vegbank.npz")["X"]
+    lat, lon = np.asarray(data["plot_lat"], np.float32), np.asarray(data["plot_lon"], np.float32)
+    rc = np.load(data_dir / "field" / "rc_plots_vegbank.npy") if model.field is not None else None
+    Hf = shared_features(model, st.transform(PX), np.stack([lat, lon], 1), rc, a.device)
+    Wv, b, pen = species_matrix(model)
+    rr, cc, _ = grid_cells(cfg.path(cfg["store"]["grids"]["conus"]), lon.astype(float), lat.astype(float))
     G, valid = store.cells("conus", rr, cc)
     peco = np.asarray(data["plot_eco"])
     Y = np.asarray(data["eval_y"]).astype(bool)
@@ -148,13 +156,18 @@ def cmd_fidelity(a, cfg):
         if y.sum() < cfg["evaluation"]["min_presence"]:
             continue
         j = j_of[labels[s]]
-        inside = np.isin(peco, [int(v) for v in str(T["calibration"][j]).split()]) & valid
+        in_area = np.isin(peco, [int(v) for v in str(T["calibration"][j]).split()])
+        inside = in_area & valid
         full = (Hf @ Wv[s] + b[s]).cpu().numpy()
         dec = G @ T["codes"][j] + T["offsets"][j]
-        rows.append({"species": labels[s], "auc_full": roc_auc_score(y, np.where(inside, full, -1e9)),
-                     "auc_stored": roc_auc_score(y, np.where(inside, dec, -1e9)),
-                     "spearman_inside": (spearmanr(full[inside], dec[inside]).correlation if inside.sum() > 10
-                                         else np.nan)})
+        rec = {"species": labels[s], "auc_full": roc_auc_score(y, np.where(inside, full, -1e9)),
+               "auc_stored": roc_auc_score(y, np.where(inside, dec, -1e9)),
+               "spearman_inside": (spearmanr(full[inside], dec[inside]).correlation if inside.sum() > 10 else np.nan)}
+        if pen is not None:                                # as served: outside the area lowered by the penalty
+            p_ = float(pen[s]) * ~in_area
+            rec["auc_full_served"] = roc_auc_score(y, np.where(valid, full - p_, -1e9))
+            rec["auc_stored_served"] = roc_auc_score(y, np.where(valid, dec - p_, -1e9))
+        rows.append(rec)
     d = pd.DataFrame(rows)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -162,6 +175,9 @@ def cmd_fidelity(a, cfg):
     print(f"{len(d)} species: median AUC full {d.auc_full.median():.4f} vs stored {d.auc_stored.median():.4f}; "
           f"mean loss {(d.auc_full - d.auc_stored).mean():+.4f}; Spearman inside the calibration area: median "
           f"{d.spearman_inside.median():.4f}, 5th percentile {d.spearman_inside.quantile(0.05):.4f}")
+    if "auc_full_served" in d:
+        print(f"as served: median AUC full {d.auc_full_served.median():.4f} vs stored "
+              f"{d.auc_stored_served.median():.4f}")
 
 
 def cmd_bench(a, cfg):
@@ -203,6 +219,7 @@ def main():
             p.add_argument("--out", required=True)
     f = sub.choices["fidelity"]
     f.add_argument("--run")
+    f.add_argument("--model", help="environment, or a stage of joint.stages (default store.model)")
     f.add_argument("--data-dir")
     f.add_argument("--device", default="cuda")
     b = sub.choices["bench"]

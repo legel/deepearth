@@ -1,5 +1,5 @@
 {
- "_comment": "The published product: native vascular plants of the contiguous United States (CONUS), one joint model (run conus_final, 2026-10-05) and its map store cards_conus_klt. Every path is relative to the data root (DEEPEARTH_HABITAT_DATA, else data_root relative to models/habitat/plant). Command-line flags of the scripts override single entries.",
+ "_comment": "The CONUS product: native vascular plants of the contiguous United States (CONUS). joint.run and joint.train: the environment model (run conus_final, 2026-10-05) behind the published store cards_conus_klt. joint.stages: the model with the landscape field, place pathway and learned calibration (docs/joint_model.md), trained in three stages (base, representation, species); store: the map store of the species stage's run. Every path is relative to the data root (DEEPEARTH_HABITAT_DATA, else data_root relative to models/habitat/plant). Command-line flags of the scripts override single entries.",
  "data_root": "data",
 
  "sources": {
@@ -55,6 +55,133 @@
    "log_variables": ["wc2.1_30s_bio_12", "wc2.1_30s_bio_13", "wc2.1_30s_bio_14", "wc2.1_30s_bio_16",
                      "wc2.1_30s_bio_17", "wc2.1_30s_bio_18", "wc2.1_30s_bio_19", "soil_soc"],
    "flag_variables": ["soil_phh2o", "soil_clay", "soil_sand", "soil_soc"]
+  },
+  "field": {
+   "stack": "work/fine/conus240_fine.f32",
+   "channels": ["fine_elev", "fine_slope", "fine_northness", "fine_eastness", "fine_tpi", "fine_bio_1", "fine_bio_5",
+                "fine_bio_6", "wc2.1_30s_bio_4", "wc2.1_30s_bio_12", "wc2.1_30s_bio_15", "wc2.1_30s_bio_17"],
+   "log_channels": ["bio_12", "bio_17"],
+   "levels": 8,
+   "pyramid": "work/deepearth/field"
+  },
+  "stages": {
+   "base": {
+    "data_dir": "work/deepearth",
+    "runs_dir": "work/deepearth/runs",
+    "run": "l22_base_s0",
+    "train": {
+     "width": 256,
+     "depth": 3,
+     "steps": 3000,
+     "batch_species": 256,
+     "n_presence": 64,
+     "n_background": 1024,
+     "lr": 0.001,
+     "weight_decay": 0.0001,
+     "weight_decay_edges": 0.01,
+     "weight_decay_species": 0.0001,
+     "grad_clip": 5.0,
+     "warmup": 0.05,
+     "eval_every": 500,
+     "eval_chunk": 65536,
+     "seed": 0,
+     "selection": "dev_joint_paired",
+     "log_variables": ["wc2.1_30s_bio_12", "wc2.1_30s_bio_13", "wc2.1_30s_bio_14", "wc2.1_30s_bio_16",
+                       "wc2.1_30s_bio_17", "wc2.1_30s_bio_18", "wc2.1_30s_bio_19", "soil_soc"],
+     "flag_variables": ["soil_phh2o", "soil_clay", "soil_sand", "soil_soc"]
+    }
+   },
+   "representation": {
+    "data_dir": "work/deepearth",
+    "runs_dir": "work/deepearth/runs",
+    "run": "arm4_both12_s0",
+    "init": "base",
+    "train": {
+     "width": 256,
+     "depth": 3,
+     "steps": 1000,
+     "batch_species": 256,
+     "n_presence": 64,
+     "n_background": 1024,
+     "lr": 0.0003,
+     "weight_decay": 0.0001,
+     "weight_decay_edges": 0.01,
+     "weight_decay_species": 0.0001,
+     "grad_clip": 5.0,
+     "warmup": 0.05,
+     "eval_every": 250,
+     "eval_chunk": 65536,
+     "seed": 0,
+     "selection": "dev_joint_paired",
+     "log_variables": ["wc2.1_30s_bio_12", "wc2.1_30s_bio_13", "wc2.1_30s_bio_14", "wc2.1_30s_bio_16",
+                       "wc2.1_30s_bio_17", "wc2.1_30s_bio_18", "wc2.1_30s_bio_19", "soil_soc"],
+     "flag_variables": ["soil_phh2o", "soil_clay", "soil_sand", "soil_soc"],
+     "target_group": true,
+     "continental_background": 512,
+     "shoreline_records": false,
+     "fill_plots": false,
+     "place_dim": 256,
+     "place_hidden": 256,
+     "place_blocks": 4,
+     "place_lr": 0.001,
+     "field": true,
+     "field_dim": 64,
+     "field_heads": 4,
+     "field_layers": 2,
+     "field_radii": [1, 2, 4, 8, 16, 32, 64, 128],
+     "field_angles": 8,
+     "field_orders": 3,
+     "field_chunk": 4096,
+     "calibration_penalty": 3.0,
+     "freeze_shared": false
+    }
+   },
+   "species": {
+    "data_dir": "work/deepearth/national_conus",
+    "runs_dir": "work/deepearth/national_conus/runs",
+    "run": "nat_arm4_s2",
+    "shared_from": "representation",
+    "cache": "work/deepearth/national_conus/frozen/arm4_both12_s0",
+    "train": {
+     "width": 256,
+     "depth": 3,
+     "steps": 6000,
+     "batch_species": 256,
+     "n_presence": 64,
+     "n_background": 1024,
+     "lr": 0.001,
+     "weight_decay": 0.0001,
+     "weight_decay_edges": 1.0,
+     "weight_decay_species": 0.0001,
+     "grad_clip": 5.0,
+     "warmup": 0.05,
+     "eval_every": 2000,
+     "eval_chunk": 65536,
+     "seed": 0,
+     "selection": "dev_joint_paired",
+     "log_variables": ["wc2.1_30s_bio_12", "wc2.1_30s_bio_13", "wc2.1_30s_bio_14", "wc2.1_30s_bio_16",
+                       "wc2.1_30s_bio_17", "wc2.1_30s_bio_18", "wc2.1_30s_bio_19", "soil_soc"],
+     "flag_variables": ["soil_phh2o", "soil_clay", "soil_sand", "soil_soc"],
+     "target_group": true,
+     "continental_background": 512,
+     "shoreline_records": true,
+     "fill_plots": true,
+     "place_dim": 256,
+     "place_hidden": 256,
+     "place_blocks": 4,
+     "place_lr": null,
+     "field": true,
+     "field_dim": 64,
+     "field_heads": 4,
+     "field_layers": 2,
+     "field_radii": [1, 2, 4, 8, 16, 32, 64, 128],
+     "field_angles": 8,
+     "field_orders": 3,
+     "field_chunk": 4096,
+     "calibration_penalty": 3.0,
+     "freeze_shared": true
+    }
+   }
   }
  },
 
@@ -71,7 +198,8 @@
  },
 
  "store": {
-  "out": "work/deepearth/cards_conus_klt",
+  "model": "species",
+  "out": "work/deepearth/cards_sota_klt",
   "delta": 3.2,
   "tile": 128,
   "grids": {"conus": "work/conus240"},
@@ -88,7 +216,16 @@
   "wgsrpd_l3": "raw/geo/wgsrpd_level3.geojson",
   "ecoregions": "raw/geo/ecoregions2017/Ecoregions2017.shp",
   "worldclim_stack": "work/global30s/worldclim30s_stack.f32",
-  "soil_dir": "work/soil"
+  "soil_dir": "work/soil",
+  "proj_grids": "raw/proj_grids"
+ },
+
+ "shoreline": {
+  "max_km": 5.0,
+  "max_water": 0.5,
+  "nalcms_30m": "work/landcover30/nalcms_conus30.tif",
+  "land_mask": {"conus": "work/conus240/us_mask_conus240.npy"},
+  "grid_fill": {"conus": "work/conus240/climate_fill_conus240.npz"}
  },
 
  "evaluation": {

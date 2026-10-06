@@ -13,16 +13,18 @@ A store is a directory:
 * ``species.npz``, one row per species: ``species`` (label, e.g. ``Quercus_lobata``), ``codes`` [S, d] and
   ``offsets`` [S] (the score is f_s(x) = q(x) . codes[s] + offsets[s]), ``quantiles`` [S, 254] (quantiles of f_s
   over the species' own background points), ``p5`` [S] (5th percentile of f_s over its training presences),
-  ``calibration`` (space-separated RESOLVE ecoregion ids) and ``inferred`` (True for a species without records,
-  mapped from its relatives).
+  ``calibration`` (space-separated RESOLVE ecoregion ids), ``inferred`` (True for a species without records,
+  mapped from its relatives) and, for a model with a learned calibration penalty, ``penalty`` [S].
 
 What a map value means, for species s at cell x:
 
 * score f_s(x): the joint model's log relative intensity of records (higher = more suitable);
-* suitability, 0..255: 1 + the number of the species' 254 background quantiles that f_s(x) exceeds, i.e. the share
-  of its calibration-area background that x outscores, in 254 steps; 0 outside its calibration ecoregions or where
-  there is no climate;
-* range, yes/no: f_s(x) >= P5 inside the calibration ecoregions (the threshold keeps 95% of its training presences).
+* served score g_s(x): f_s(x), lowered by the species' learned penalty pi_s where x lies outside its calibration
+  ecoregions (stores with ``penalty``; without it the calibration area is a hard rule: nothing is served outside);
+* suitability, 0..255: 1 + the number of the species' 254 background quantiles that g_s(x) exceeds, i.e. the share
+  of its calibration-area background that x outscores, in 254 steps; 0 where there is no climate and, under the hard
+  rule, outside the calibration ecoregions;
+* range, yes/no: g_s(x) >= P5 where a suitability is served (the threshold keeps 95% of its training presences).
 
 The calibration mask needs the region's 240 m ecoregion-id raster (``ecoregion_id_conus240.tif`` in the grid
 directory given as ``grids``); scores and the stored field do not. Only numpy and zstandard are needed to read
@@ -232,29 +234,46 @@ class Store:
         with rasterio.open(self.grids[region] / ECOREGION_RASTER) as r:
             return r.read(1), r.transform, r.crs.to_wkt()
 
+    @property
+    def has_penalty(self) -> bool:
+        """True for a store of a model with a learned calibration penalty (maps continue outside the area)."""
+        return "penalty" in self.T
+
     def inside(self, region: str, r0: int, r1: int, c0: int, c1: int, s: int) -> np.ndarray:
         """bool [h, w]: cells of species row ``s``'s calibration ecoregions that have climate data."""
         return np.isin(self.ecoregions(region)[r0:r1, c0:c1], self.calibration(s)) & self.valid(region, r0, r1, c0, c1)
 
-    def suitability_of(self, f: np.ndarray, s: int, inside: np.ndarray) -> np.ndarray:
-        """uint8 suitability of scores ``f`` of species row ``s``: 1 + the number of its background quantiles that
-        f exceeds (1..255) where ``inside``, else 0."""
-        q = (1 + np.searchsorted(self.T["quantiles"][s], f)).astype(np.uint8)
-        return np.where(inside, q, 0).astype(np.uint8)
+    def served(self, f: np.ndarray, s: int, in_area: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(served scores g, served cells) of species row ``s`` from its scores ``f``, the calibration-area membership
+        and the climate mask of the same cells: with a learned penalty g = f - penalty outside the area, served
+        wherever there is climate; under the hard rule g = f, served inside the area only."""
+        if self.has_penalty:
+            return f - float(self.T["penalty"][s]) * ~in_area, valid
+        return f, in_area & valid
+
+    def suitability_of(self, g: np.ndarray, s: int, served: np.ndarray) -> np.ndarray:
+        """uint8 suitability of served scores ``g`` of species row ``s``: 1 + the number of its background quantiles
+        that g exceeds (1..255) where ``served``, else 0."""
+        q = (1 + np.searchsorted(self.T["quantiles"][s], g)).astype(np.uint8)
+        return np.where(served, q, 0).astype(np.uint8)
+
+    def _served_window(self, region, r0, r1, c0, c1, s):
+        f = self.scores(region, r0, r1, c0, c1, [s])[0]
+        in_area = np.isin(self.ecoregions(region)[r0:r1, c0:c1], self.calibration(s))
+        return self.served(f, s, in_area, self.valid(region, r0, r1, c0, c1))
 
     def decode(self, region: str, r0: int, r1: int, c0: int, c1: int, s: int) -> np.ndarray:
-        """uint8 [h, w] suitability map of species row ``s``: 1..255 inside its calibration ecoregions where there is
-        climate, 0 elsewhere."""
-        f = self.scores(region, r0, r1, c0, c1, [s])[0].ravel()
-        inside = self.inside(region, r0, r1, c0, c1, s).ravel()
-        return self.suitability_of(f, s, inside).reshape(r1 - r0, c1 - c0)
+        """uint8 [h, w] suitability map of species row ``s``: 1..255 where served (with climate; under the hard rule
+        only inside its calibration ecoregions), 0 elsewhere."""
+        g, served = self._served_window(region, r0, r1, c0, c1, s)
+        return self.suitability_of(g, s, served)
 
     suitability = decode
 
     def in_range(self, region: str, r0: int, r1: int, c0: int, c1: int, s: int) -> np.ndarray:
-        """bool [h, w]: species row ``s``'s binary range, f_s >= P5 inside its calibration ecoregions."""
-        f = self.scores(region, r0, r1, c0, c1, [s])[0]
-        return (f >= self.T["p5"][s]) & self.inside(region, r0, r1, c0, c1, s)
+        """bool [h, w]: species row ``s``'s binary range, g_s >= P5 where served."""
+        g, served = self._served_window(region, r0, r1, c0, c1, s)
+        return (g >= self.T["p5"][s]) & served
 
     # -------------------------------------------------------------------------------------------- points
     def rowcol(self, region: str, lon, lat) -> tuple[np.ndarray, np.ndarray]:
@@ -273,8 +292,9 @@ class Store:
 
     def at(self, region: str, lon=None, lat=None, species: int | Sequence[int] = 0, rows=None, cols=None) -> dict:
         """Scores, suitability and range of one or more species rows at points, given as lon/lat or as grid
-        rows/cols: {"score": float32 [n, m], "suitability": uint8 [n, m], "range": bool [n, m], "valid": bool [n]}
-        for n points and m species. Off the grid and without climate: suitability 0, range False."""
+        rows/cols: {"score": float32 [n, m] (f_s, before any penalty), "suitability": uint8 [n, m], "range": bool
+        [n, m], "valid": bool [n]} for n points and m species. Off the grid and without climate: suitability 0,
+        range False."""
         if rows is None:
             rows, cols = self.rowcol(region, lon, lat)
         rows, cols = np.asarray(rows, np.int64), np.asarray(cols, np.int64)
@@ -287,7 +307,7 @@ class Store:
         suit = np.zeros(f.shape, np.uint8)
         rng = np.zeros(f.shape, bool)
         for j, s in enumerate(species):
-            inside = np.isin(eco, self.calibration(int(s))) & valid & on
-            suit[:, j] = self.suitability_of(f[:, j], int(s), inside)
-            rng[:, j] = (f[:, j] >= self.T["p5"][int(s)]) & inside
+            g, served = self.served(f[:, j], int(s), np.isin(eco, self.calibration(int(s))), valid & on)
+            suit[:, j] = self.suitability_of(g, int(s), served)
+            rng[:, j] = (g >= self.T["p5"][int(s)]) & served
         return {"score": f, "suitability": suit, "range": rng, "valid": valid}

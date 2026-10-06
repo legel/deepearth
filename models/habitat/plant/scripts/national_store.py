@@ -2,10 +2,12 @@
 """Build, update or recode the map store of the joint model (ranges/joint/store.py, docs/joint_model.md).
 
 usage:
-  national_store.py build [--config configs/conus.json] [--run RUN] [--out DIR] [--no-zero-shot] [--device cuda]
+  national_store.py build [--config configs/conus.json] [--model M] [--run RUN] [--out DIR] [--no-zero-shot]
       every species of the run, plus the species without records (zero-shot, from the configured inventory, tree and
-      region), with calibration areas extended so that every species native to the region has one on its grid
-  national_store.py update-zero-shot <store>... [--all] [--config ...] [--run RUN] [--device cuda]
+      region), with calibration areas extended so that every species native to the region has one on its grid; the
+      run is that of --model (default store.model): "species" (the species stage of joint.stages, whose grids take the
+      shoreline climate fill of shoreline.grid_fill) or "environment" (joint.run)
+  national_store.py update-zero-shot <store>... [--all] [--config ...] [--model M] [--run RUN] [--device cuda]
       recompute the species without records of existing stores (current zero-shot rule) without rebuilding fields
   national_store.py recode <src> <dst>
       rewrite a store's tiles in the current layout (lossless)
@@ -21,6 +23,7 @@ import pyproj  # noqa: F401,I001  (before rasterio: its bundled PROJ can break p
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from ranges import config  # noqa: E402
+from ranges.joint.climate_fill import GridFill  # noqa: E402
 from ranges.joint.data import JointData, Standardizer  # noqa: E402
 from ranges.joint.model import JointRangeModel  # noqa: E402
 from ranges.joint.reader import ECOREGION_RASTER  # noqa: E402
@@ -30,10 +33,22 @@ from ranges.joint.tree import Tree  # noqa: E402
 from ranges.joint.zero_shot import infer_species, l3_ecoregions  # noqa: E402
 
 
-def load_run(run: Path, flag_variables, device):
-    """The checkpoint chosen on VegBank-dev (model_best.pt, else the final model.pt) and its standardization."""
+def load_run(run: Path, flag_variables, device, field_dir: Path | None = None):
+    """The checkpoint chosen on VegBank-dev (model_best.pt, else the final model.pt) and its standardization; a model
+    with a landscape field gets the pyramid of ``field_dir``."""
     f = run / "model_best.pt" if (run / "model_best.pt").exists() else run / "model.pt"
-    return JointRangeModel.load(f, device), Standardizer.load(run / "norm.npz", flag_variables)
+    return JointRangeModel.load(f, device, field_dir), Standardizer.load(run / "norm.npz", flag_variables)
+
+
+def stored_model(cfg, name: str | None = None) -> dict:
+    """The run a store maps (``name``, default store.model: "environment" or a stage of joint.stages): its directory,
+    data directory and training settings."""
+    j = cfg["joint"]
+    name = name or cfg["store"].get("model", "environment")
+    spec = (j["stages"][name] if name != "environment" else
+            {"data_dir": j["data_dir"], "runs_dir": j["runs_dir"], "run": j["run"], "train": j["train"]})
+    return {"run": cfg.path(spec["runs_dir"]) / spec["run"], "data_dir": cfg.path(spec["data_dir"]),
+            "train": spec["train"]}
 
 
 def region_inventory(cfg) -> pd.DataFrame:
@@ -75,6 +90,7 @@ def main():
     b.add_argument("--data-dir")
     b.add_argument("--out")
     b.add_argument("--no-zero-shot", action="store_true", help="only species with records")
+    b.add_argument("--model", help="environment, or a stage of joint.stages (default store.model)")
     b.add_argument("--device", default="cuda")
     u = sub.add_parser("update-zero-shot")
     u.add_argument("stores", nargs="+")
@@ -82,6 +98,7 @@ def main():
     u.add_argument("--run")
     u.add_argument("--data-dir")
     u.add_argument("--device", default="cuda")
+    u.add_argument("--model", help="environment, or a stage of joint.stages (default store.model)")
     u.add_argument("--all", action="store_true",
                    help="recompute every species without records (per-row seeds), not only those whose vector changed")
     r = sub.add_parser("recode")
@@ -93,19 +110,24 @@ def main():
         recode_store(a.src, a.dst, log)
         return
     cfg = config.load(a.config)
-    j, sc = cfg["joint"], cfg["store"]
-    run = Path(a.run) if a.run else cfg.path(j["runs_dir"]) / j["run"]
-    model, st = load_run(run, j["train"]["flag_variables"], a.device)
-    data = JointData(a.data_dir or cfg.path(j["data_dir"]))
+    sc, m = cfg["store"], stored_model(cfg, a.model)
+    run = Path(a.run) if a.run else m["run"]
+    data_dir = Path(a.data_dir) if a.data_dir else m["data_dir"]
+    model, st = load_run(run, m["train"]["flag_variables"], a.device, data_dir / "field")
+    data = JointData(data_dir)
+    positions = data.positions(data_dir / "field") if model.field is not None else None
     if a.cmd == "update-zero-shot":
         zs = zero_shot(cfg, model, data)
         for store in a.stores:
-            update_zero_shot(store, model, st, data, zs, a.device, recompute_all=a.all, log=log)
+            update_zero_shot(store, model, st, data, zs, a.device, recompute_all=a.all, positions=positions, log=log)
         return
-    grids = {rg: GridInputs(cfg.path(d), cfg.path(sc["soil_dir"]), st.names) for rg, d in sc["grids"].items()}
+    fills = cfg.get("shoreline", {}).get("grid_fill", {}) if m["train"].get("fill_plots") else {}
+    grids = {rg: GridInputs(cfg.path(d), cfg.path(sc["soil_dir"]), st.names,
+                            GridFill.load(cfg.path(fills[rg])) if rg in fills else None)
+             for rg, d in sc["grids"].items()}
     zs = None if a.no_zero_shot else zero_shot(cfg, model, data)
     build_store(model, st, data, a.out or cfg.path(sc["out"]), grids, sc["delta"], zs, sc["sample"], sc["tile"],
-                a.device, calibration_rule(cfg, log), log)
+                a.device, calibration_rule(cfg, log), positions, log)
 
 
 if __name__ == "__main__":

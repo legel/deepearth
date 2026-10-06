@@ -22,6 +22,9 @@ Output layout (the directory ``data.JointData`` reads): ``species.csv``; per poi
 (float32), ``sid.npy`` (int32 species row), ``pres.npy`` (int8, 1 = presence) and ``train_points_cache.npy``
 (float32 [N, 24]); ``names.npy`` (the 24 predictor names); ``joint_data.npz`` (names and the VegBank plots) and
 ``plots_<source>.npz`` (further plot sets); ``tree/natives.dated.nwk``; ``meta.json``.
+
+Target-group background (``snap_to_records``, data.py): ``community/snap.npy``, for every row the row of the nearest
+record of another species.
 """
 from __future__ import annotations
 
@@ -298,3 +301,53 @@ def plot_sets(data_dir: str | Path, truth, predictors: Predictors, grid_dir: str
             np.savez(data_dir / f"plots_{src}.npz", **members)
         log(f"{src}: {len(lon):,} plots, {len(sids)} species with >= {min_presence} presence plots, "
             f"{int(np.isfinite(base['maxent_occ'][:, 0]).sum()) if len(sids) else 0} with MaxEnt cards")
+
+
+def unit_vectors(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Points on the unit sphere: Euclidean distance between them orders pairs as great-circle distance does."""
+    la, lo = np.radians(np.asarray(lat, np.float64)), np.radians(np.asarray(lon, np.float64))
+    return np.c_[np.cos(la) * np.cos(lo), np.cos(la) * np.sin(lo), np.sin(la)]
+
+
+def snap_to_records(data_dir: str | Path, chunk: int = 1_000_000, widen: Sequence[int] = (8, 64, 512),
+                    log=print) -> np.ndarray:
+    """For every training row, the row of the nearest record (presence row) of another species, by great-circle
+    distance (target-group background, data.py); a row with no other species among its ``widen[-1]`` nearest
+    records keeps itself. The search widens per row (8, then 64, then 512 nearest records) only where all nearer
+    records belong to the row's own species. Writes ``community/snap.npy`` (int32 [N]) and returns it."""
+    from scipy.spatial import cKDTree
+    from .data import JointData
+    data_dir = Path(data_dir)
+    out_dir = data_dir / "community"
+    out_dir.mkdir(exist_ok=True)
+    D = JointData(data_dir)
+    lat, lon = np.asarray(D["lat"]), np.asarray(D["lon"])
+    pres, sid = np.asarray(D["pres"]).astype(bool), np.asarray(D["sid"])
+    rec = np.flatnonzero(pres)
+    t0 = time.time()
+    tree = cKDTree(unit_vectors(lat[rec], lon[rec]))
+    rec_sid = sid[rec]
+    N = len(lat)
+    tmp = out_dir / "snap.tmp.npy"
+    snap = np.lib.format.open_memmap(tmp, mode="w+", dtype=np.int32, shape=(N,))
+    for i in range(0, N, chunk):
+        rows = np.arange(i, min(N, i + chunk))
+        pts = unit_vectors(lat[rows], lon[rows])
+        got = np.full(len(rows), -1, np.int64)
+        for k in widen:
+            todo = got < 0
+            if not todo.any():
+                break
+            _, j = tree.query(pts[todo], k=min(k, len(rec)), workers=-1)
+            j = j.reshape(int(todo.sum()), -1)
+            other = rec_sid[j] != sid[rows[todo]][:, None]
+            first = np.where(other.any(1), other.argmax(1), -1)
+            hit = first >= 0
+            got[np.flatnonzero(todo)[hit]] = rec[j[hit, first[hit]]]
+        got[got < 0] = rows[got < 0]
+        snap[i:i + len(rows)] = got
+        log(f"snap {i + len(rows):,}/{N:,} ({time.time() - t0:.0f} s)")
+    snap.flush()
+    del snap
+    tmp.replace(out_dir / "snap.npy")
+    return np.load(out_dir / "snap.npy", mmap_mode="r")
