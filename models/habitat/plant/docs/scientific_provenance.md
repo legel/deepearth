@@ -27,6 +27,17 @@ The log names code as it was called when each entry was written. In this package
 | `card_fidelity.py`, `eval_national_maps.py`, `store_bench.py` | `scripts/national_store_eval.py fidelity`, `plots`, `bench` |
 | `native_ranges/tests_store.py` | `tests/test_joint_store.py` |
 | `scripts/cloud/r_env_explicit.txt` | `r_environment.txt` |
+| `train_joint.py` `HarmonicField`, `ring_harmonics/` (`--field --field-kind harmonic`) | `ranges/joint/field.py`, `ranges/joint/kernels/ring_harmonics.cu` |
+| `train_joint.py` `SinrPlace`, `set_place_head` (`--place-head --place-kind sinr`) | `ranges/joint/place.py`, `ranges/joint/model.py` |
+| `train_joint.py` `--calib-soft`, `--tg-bg`, `--global-bg`, `--shore-records`, `--fill-climate` | `TrainConfig` `calibration_penalty`, `target_group`, `continental_background`, `shoreline_records`, `fill_plots` (`ranges/joint/train.py`, `data.py`) |
+| `train_joint.py` `--init`, `--shared-from --freeze-shared --frozen-cache`, `cache_shared.py`, `joint_model.py` | `ranges/joint/train.py` (`init`, `shared_from`, `freeze_shared`), `ranges/joint/cache.py`, `JointRangeModel.load`; `scripts/national_train.py --stage`, `scripts/national_cache.py` |
+| `train_joint.py` `auc_table_gpu` | `ranges/joint/train.py` `auc_table` |
+| `build_field.py` | `ranges/joint/field.py` `build_pyramid`, `scripts/national_field.py` |
+| `geodesy.py` | `ranges/joint/geodesy.py` |
+| `climate_fill.py`, `build_shore_records.py` | `ranges/joint/climate_fill.py`, `ranges/joint/shoreline.py`, `scripts/build_shoreline.py`, `scripts/build_climate_fill.py` |
+| `community_knn.py --snap` | `ranges/joint/prepare.py` `snap_to_records`, `scripts/national_snap.py` |
+| `national_cards.py` (place features, penalty), `eval_national_maps.py` (`auc_joint_shipped`) | `ranges/joint/store.py`, `reader.py` (`Store.served`); `national_store_eval.py plots` (`auc_joint_served`) |
+| `tests_ring_harmonics.py`, `tests_ring_tokens.py`, `tests_geodesy.py`, `tests_climate_fill.py`, `tests_auc_gpu.py` | `tests/test_field.py`, `tests/test_geodesy.py`, `tests/test_climate_fill.py`, `tests/test_joint_stages.py` |
 
 Research scripts named in the log that are not listed here (ablations, panels, studies) are not part of the published
 package; their results are recorded here as measured.
@@ -495,3 +506,211 @@ as much as two maxent.jar runs differ from each other (map Spearman 0.960–0.99
   recoded. Checkpoint selection is configurable (`selection`), with the production rule (median over species with a
   MaxEnt map) as default.
 
+
+### 2026-10-05 21:55 — Benchmark against published distribution products (SINR, iNaturalist, BIEN, Daru)
+- Protocol: every competitor scored as `national_store_eval.py plots` scores the stored maps (VegBank, BLM AIM, FIA;
+  CONUS; species with ≥ 20 presence plots; AUC per species × source; 5,875 tests over 4,630 species). Ours: a plot
+  outside the calibration ecoregions ranks lowest; competitors: their own score everywhere (missing = 0). Also scored
+  both masked to our calibration areas and neither masked. Statistics: median AUC, share of tests where ours is higher,
+  two-sided Wilcoxon signed-rank on paired tests. Code: research `benchmark/` (not part of this package).
+- Competitors (accessed 2026-10-05): SINR (Cole et al., ICML 2023; github.com/elijahcole/sinr @594040c) released
+  coordinates-only and distilled models, and SINR with WorldClim 5′ inputs retrained with the authors' code, data
+  (15.1M iNaturalist observations) and the released model's configuration (IUCN range MAP 0.765 vs 0.658 for the
+  released coordinates model; 4,282 tests); iNaturalist Open Range Map v2.34 and the public small geomodel; BIEN 4.2.8
+  ranges (AIM only: BIEN holds VegBank and FIA plots); Daru (2024).
+- Leakage: VegBank, AIM and FIA are not in GBIF; GBIF records within 2 m of a presence plot are 0.28% (VegBank, plot
+  vouchers at FLAS, DAV, NCU), 0.01% (AIM), 0.002% (FIA). Excluding them (leak1km), plots near our records (near1km)
+  or keeping only presence plots > 10 km from them (far10km) moves no median by more than 0.005.
+- Results (environment model, store `cards_conus_klt`; ours vs competitor, share ours higher): Daru 0.939 vs 0.896
+  (85%, p = 1e-27); iNaturalist ranges 0.944 vs 0.874 (92%); BIEN (AIM) 0.919 vs 0.743 (96%); SINR coordinates 0.943
+  vs 0.943 (58%); SINR distilled 0.943 vs 0.939 (59%); **SINR env 0.943 vs 0.951 (44%, p = 8e-24)**: VegBank 0.947
+  vs 0.957 (43%), FIA 0.943 vs 0.950 (33%), AIM 0.925 vs 0.927 (49%, parity), far10km 0.911 vs 0.924 (40%). With
+  both maps restricted to our calibration areas: parity (0.943 vs 0.942); with neither: SINR env ahead (0.936 vs
+  0.951, 34%). The calibration-area rule is what brought the environment model to parity.
+
+### 2026-10-05 22:45 — Toward beating SINR env: where it leads, background design, learned calibration, exact geodesy
+- **Where SINR env leads** (4,282 paired tests): paired median difference −0.0016; 10% of tests (difference < −0.05)
+  carry more than the whole mean deficit (−0.0107). In that tail the calibration area excludes the species' habitat:
+  median AUC clipped 0.819, unclipped 0.856, SINR 0.946, SINR clipped to our areas 0.850. Example: *Caltha
+  leptosepala* on AIM, 19 of 20 presence plots in an ecoregion holding none of its 1,856 training records (clipped
+  0.17, unclipped 0.993). Only 0.9–1.4% of presence plots lie outside calibration areas, but 5–9% of species have more
+  than 10% outside.
+- **Soft calibration bound** (saved VegBank scores of the environment model): penalty δ (score SD) outside the area,
+  dev/test: δ = 0 0.9372/0.9498, δ = 1 0.9464/0.9589, δ = ∞ (the hard rule) 0.9443/0.9580. The area is informative
+  but should not be absolute.
+- **Background design.** (i) Target-group background (Phillips et al. 2009): each effort-weighted background point
+  moves to the nearest training record of another species, so presences and background share the records'
+  fine-scale sampling. Without it every place pathway tested (absolute Earth4D hash grid of the coordinates; the
+  community of nearby records, DeepEarth fusion's neighbour context) learned "a record site is here" and lost on
+  held-out plots (e.g. community channel dev 0.906 at 250 steps, training loss −1.97). (ii) Continental background
+  (512 points per species and step from all species' background pools, moved the same way): the species learns where
+  it is absent, as SINR's "assume negative" loss does. Result (2,661-species benchmark, from the environment model,
+  1,000 steps): unclipped above clipped for the first time, dev 0.9414, test 0.9509, AIM 0.9342 (target-group
+  control, clipped: 0.9362 / 0.9497 / 0.9291).
+- **Learned calibration.** Per species a penalty softplus(Brownian-motion path sum + c0), initially 3, applied
+  outside its calibration ecoregions (ecoregion raster at the record's own 240 m cell, as for plots), learned against
+  the continental background; relatives share it through the tree. Store: species.npz `penalty`; decoding lowers
+  cells outside the area by the penalty instead of zeroing them.
+- **Exact coordinates.** Records and plots are placed on the 240 m EPSG:5070 rasters by the same transformation
+  gdalwarp applied when warping them: PROJ's per-point choice among EPSG's WGS 84 → NAD83 operations (best accuracy,
+  then PROJ's list order), NOAA HARN / NRC Canada grid shifts with PROJ's grid hierarchy (named parents,
+  bounding-box fallback, extent tolerance) and the inverse iteration, then Albers on GRS80. Maximum difference from
+  pyproj: 7e-8 m over 2M random CONUS points, 4.5e-8 m on the data.
+
+### 2026-10-05 22:50 – 2026-10-06 02:20 — The landscape field (Entropy3D) and the place pathway
+- **Absolute place loses.** Earth4D (latitude, longitude, elevation hash grid, 12 levels from 207 km to 249 m, own
+  decoder and Brownian-motion place vectors, learned probing) on the corrected base (target-group + continental
+  background + learned calibration), 1,000 steps, unclipped dev/test/> 10 km/AIM/FIA: 0.9258/0.9380/0.8917/0.9099/
+  0.9269 vs base 0.9417/0.9517/0.9103/0.9342/0.9414, worse with steps: with per-species place vectors a fine absolute
+  grid memorizes each species' record cells. Coarse absolute place (finest 10.8 km) and latitude/longitude Fourier
+  features (8 octaves) also lost on the earlier base.
+- **Entropy3D field** (DeepEarth's Entropy4D perceptive fields in their static, purely spatial case): a centre field
+  and 8 rings at learnable radii (initially 0.24–31 km) read at A angles on a 2× pyramid of the 240 m CONUS field
+  (12 channels: fine terrain and climate) with continuous level blending, so the extents are differentiable;
+  aggregation per ring and channel by masked circular harmonics of (value − centre value), orders 0 to 3 (radial
+  profile, north-aligned cos/sin pairs and their rotation-invariant magnitudes) and the missing share; fusion
+  self-attention across the tokens; attention pooling; G(C(x)) added to the environment features. Checks: at Mt
+  Whitney the 15 km ring's elevation first harmonic points uphill west (264°) and Owens Valley lies east; the radii
+  receive gradients. CUDA kernel (one warp per location and ring, lanes = angles, analytic radius gradient) equal to
+  the PyTorch path to 3.6e-7 (outputs) and 4 digits (radius gradients).
+- First evaluation (250 steps, unclipped): 0.9431/0.9527/0.9145/0.9392/0.9411 vs base 0.9410/0.9514/0.9111/0.9363/
+  0.9415. Over 1,000 steps (17-channel field: + SoilGrids and distance to the coast) dev +0.003, test +0.0024,
+  > 10 km +0.0048, AIM +0.003, FIA −0.0013; the 17-channel field equals the 12-channel one at 250 steps, so 12
+  channels are kept; 8 angles (exact to order 3) replace 32.
+- **SINR's place network** as its own pathway with Brownian-motion place vectors (relatives share range geometry):
+  untuned 0.9423/0.9517/0.9115/0.9357/0.9419 vs 0.9417/0.9517/0.9103/0.9342/0.9414 (small gains on four columns).
+  Uniform pseudo-absences over US land (SINR's random negatives, 1.98M cells) instead of the effort-weighted
+  continental background hurt transfer (> 10 km 0.9014): in a niche model uniform negatives penalize suitable,
+  unrecorded places.
+- **Field against SINR env** (17-channel field run `arm3_field_s0`, identical tests, share ours higher): pooled
+  0.9475/0.9485 (57%; the base: 53%), VegBank 53%, VegBank > 10 km 46%, AIM 70%, FIA 54%.
+- **Decision (02:20)**: field and place together (run `arm4_both12_s0`, 1,000 steps: 0.9450/0.9537/0.9165/0.9401/
+  0.9401; field alone 0.9445/0.9546/0.9156/0.9346/0.9402 at 750). AIM varies by ±0.003 between evaluations of one run,
+  so the head-to-head decides: with place the model wins every column beyond 10 km and AIM against SINR env and loses
+  FIA over all plots. Place is kept.
+
+### 2026-10-06 02:45 — Shoreline locations take the nearest climate
+- Root cause of SINR's remaining lead: per test (field model vs SINR env, plots > 10 km), 225 of 1,545 tests (15%)
+  carry 82% of the deficit, AUC 0.004–0.5, almost all shoreline species (mangroves, dune and salt-marsh plants).
+  WorldClim 2.1 at 30″ has no value in pixels whose centre is sea or lake: (1) the per-species preparation
+  (`pipeline.run_species`, step 6a) dropped drawn presences without climate (*Uniola paniculata* 224 of 683);
+  (2) 0.76% of VegBank and 0.09% of FIA plots have no climate (48% of *Uniola paniculata*'s presence plots, 53% of
+  *Croton punctatus*'), so a model reading the stack could not score them; (3) land cells without climate are blank
+  on the maps. SINR reads a 5′ raster bilinearly and always has a value.
+- Rule adopted (`climate_fill.py`): a location without climate takes all 20 WorldClim bands of the nearest pixel that
+  has climate — great-circle distance to the 30″ pixel centre for points, exact Euclidean distance on the equal-area
+  240 m grid for map cells — if within 5 km; otherwise it stays missing. Soil and terrain keep their own missing
+  flags. The batched fill equals its per-point definition on all 693 plots. VegBank: 408 of 408 filled (median 0.6
+  km, max 3.1 km); FIA 282 of 285.
+- Records (`shoreline.py`): replaying the preparation's seeded draw (`occurrences_clean.sample(min(n, 5000),
+  random_state=0)`) restores exactly the dropped presences (*Uniola paniculata* 224, *Croton punctatus* 178, *Abies
+  concolor* 0): 40,961 restored presences for the 2,661-species benchmark, 88,042 for the CONUS species (19 more lie
+  beyond 5 km and stay out). Proximity masks of the evaluation (near 1 km, far 10 km) count the restored records too.
+- Map grid (03:10): the strict US mask follows state boundaries ~3 nautical miles offshore, so most of its 1.07M
+  "land cells without climate" were coastal sea. The fill is restricted to cells NALCMS 2020 classifies as under half
+  water: 169,719 land cells (~9,800 km²) lacked climate, 169,454 are filled (median 0.24 km).
+- Same model, plots filled (`arm4_both12_s0` vs SINR env, share ours higher): pooled 0.9534/0.9485 (60.7%,
+  p = 7e-35), > 10 km 54.7%, VegBank 58.1%, VegBank > 10 km 51.1%, AIM 71.5%, FIA 55.0%.
+
+### 2026-10-06 04:05 — Two-stage training: the representation, then every species to convergence
+- Profile (20 steps per configuration, benchmark): a step with every pathway costs 8.55 s, without the field 186 ms,
+  the environment alone 84 ms: the field is ~97% of the cost (12 µs per row). Ring tokens are now built for all rings
+  at once (identical to the per-ring construction, max difference 0).
+- With target-group background every training row a step reads is a record, so with the shared networks fixed their
+  features are computed once (`cache_shared.py`; benchmark 6.45M record rows, 6.1 GB) and the species parameters are
+  fitted on them: `frz_heads_s0`, every species parameter re-learned from scratch on the frozen `arm4_both12_s0`
+  representation, 6,000 steps at 16–18 ms per step (150 s). Unclipped 0.9503/0.9621/0.9279/0.9389/0.9446; against
+  SINR env pooled 0.9547/0.9485, ours higher 63.2% (p = 6e-46), > 10 km 55.8%, VegBank 61.3%, VegBank > 10 km
+  52.8%, AIM 72.4%, FIA 56.4% — above the jointly trained model on every column (60.7/54.7/58.1/51.1/71.5/55.0):
+  1,000 joint steps had left the species parameters under-trained.
+- Prior strength (04:00–04:45): AdamW's decay is decoupled (a parameter shrinks by lr × decay per step), so decays of
+  1e-4 to 1e-3 on the species terms at lr 1e-3 had moved them by ≤ 0.6% over 6,000 steps and 1e-2 on the branch
+  vectors by ~6%: the prior had been nearly inert. With all records, species-term decays 0.1/1/10 and branch decay
+  0.1 are level with the default (data dominate: benchmark species have ≥ 20 presence plots and thousands of
+  records). Data-poor test (half of the evaluated species capped at 5 presences; mean of dev and test unclipped AUC
+  of the capped species): branch decay 0.01 0.9133, 0.1 0.9142, 1 0.9153, 10 0.9108; uncapped species unchanged
+  (0.9723–0.9724). Adopted: branch decay 1. 12,000 steps (0.9505/0.9618/0.9273/0.9387/0.9438) and 2,048 background
+  points did not gain; 6,000 steps and 1,024 are kept.
+
+### 2026-10-06 06:25 — Representation decision
+- After the species stage (all plots vs SINR env, identical tests; share ours higher / pooled median): `arm4_both12_s0`
+  representation, branch decay 0.01: 63.2% / 0.9547; branch decay 1 with restored shoreline records: 63.2% / 0.9547
+  (VegBank 61.2%, AIM 73.3%, FIA 55.9%); representation trained with the restored records (`shore_syn_s0`): 61.3% /
+  0.9543; 22-channel field with NALCMS land cover: 62.2% / 0.9554. Draw → the simplest: the `arm4_both12_s0`
+  representation (12-channel field + SINR place), species stage with branch decay 1, restored shoreline records and
+  filled plots, 6,000 steps. Wider rings (to ~120 km, `shore_wide_s0` 0.9499/0.9608/0.9257/0.9382/0.9461 at 1,000
+  steps) were a draw; focusing (each ring's radius adapted per location, `shore_focus2_s0`) was a draw at 250 steps
+  (0.9480/0.9604/0.9276/0.9375/0.9447) at 10 s per step. Neither is in the model.
+
+### 2026-10-06 06:45 — National model with the landscape field, place and learned calibration
+- `nat_arm4_s2`: the `arm4_both12_s0` representation fixed, species stage on all 16,448 CONUS species (15.37M record
+  rows cached), 6,000 steps, 142 s. Unclipped dev/test/> 10 km/AIM/FIA 0.9565/0.9658/0.9354/0.9344/0.9510, against
+  0.9434/0.9556/0.9162/0.9209/0.9391 recorded for the environment model `conus_final`.
+- Against every competitor, identical tests, unclipped, proximity masks extended to the national restored records:
+  SINR env pooled 0.9568 vs 0.9512, ours higher 63.1% (p = 8e-93, n = 4,281; the environment model: 44%), > 10 km
+  56.6% (p = 3e-27); SINR coordinates 73.0%; SINR distilled 75.8%; iNaturalist ranges 98.3%; iNaturalist geomodel
+  86.4%; BIEN 98.3%; Daru 93.4% (median +0.048). AIM vs SINR env 70.7% (> 10 km 65.2%), FIA 59.4% (> 10 km 54.4%,
+  p = 0.1: the one draw).
+- Taxon concepts: where GBIF usage of a name clearly spans segregate species (n_s ≥ 4 n_X and n_s ≥ 20; e.g.
+  *Pinus ponderosa* ⊃ *P. brachyptera*, *P. scopulorum*), scoring the broad taxon (log-sum-exp of member
+  intensities, 74 tests) gives 62.8% (strict names 63.1%) and > 10 km 56.5%: concepts do not drive the result;
+  strict-name results are primary.
+- Map store `cards_sota_klt` (d = 512: environment and field 256 | place 256; 494 species without records with their
+  place vectors and penalties from the joining node; 98 calibration extensions) building at the time of the port
+  (07:12: the fused attention launches one GPU block per row and head, so the field splits itself into 8,192-row
+  pieces; GPU AUC blocks sized to ~64 MB per float64 temporary).
+
+### 2026-10-06 — The full model ported into this package
+- Modules: `ranges/joint/field.py` (field pyramid, ring harmonic sums with the CUDA kernel `kernels/ring_harmonics.cu`
+  and its PyTorch reference, the Entropy3D module), `place.py`, `geodesy.py`, `climate_fill.py`, `shoreline.py`,
+  `cache.py`; `model.py` (optional place, field and learned penalty, rebuilt from any checkpoint's state dict),
+  `data.py` (restored records, field positions, row ecoregions, target-group snapping, filled plots), `train.py`
+  (one trainer for every stage: `init`, `shared_from` + `freeze_shared` on the cache; exact batched AUC; clipped and
+  unclipped tables), `store.py` / `reader.py` (stored features [F | P], penalty, served scores, grid climate fill),
+  `zero_shot.py` (place vectors and penalty from the joining node), `prepare.snap_to_records`. Scripts
+  `national_snap.py`, `national_field.py`, `build_shoreline.py`, `build_climate_fill.py`, `national_cache.py`,
+  `national_train.py --stage`. Configuration: `configs/conus.json` `joint.field`, `joint.stages`, `store.model`,
+  `shoreline`, `geo.proj_grids`. Only the final model is ported: the absolute Earth4D place encodings, the community
+  and relative-record channels, the sampled-token field, the effort field, uniform pseudo-absences, focusing and the
+  profiling options were left out.
+- Kept from the research code where it is a measured rule: weight decay applies to every network parameter (ring
+  radii included); the species stage trains c_0 as well as the species' parameters; checkpoints are selected on the
+  clipped dev median (`dev_joint_paired`), and both rankings are reported.
+- Checks: the trained national checkpoint (`nat_arm4_s2`) loads into the package model by its state dict alone;
+  scored by the package with the CUDA kernel at all 53,797 VegBank plots for its 3,605 evaluated species, its scores
+  equal the research run's saved scores to their float16 precision (largest difference 0.018 on scores up to 44,
+  median 0.004, per-species Spearman median 0.999998) and the unclipped AUCs agree (median 0.96306 vs 0.96303, largest
+  per-species difference 4e-4); on the CPU (PyTorch path of the field, bfloat16 on the CPU) 4,000 plots agree to a
+  median of 0.015 and the AUC medians to 1e-4. The plots' inputs are kept in float32 as in the research cache (with
+  float16 inputs the scores moved by a median 0.009). The CUDA kernel equals the PyTorch reference to
+  7e-6 relative (sums) and 3e-5 (radius gradients); the geodesy equals pyproj to 6e-8 m; the batched shoreline fill
+  equals the research files exactly (VegBank 408, FIA 282 filled plots); the restored benchmark records are
+  byte-identical to the research file (40,961; the research log's 40,962 was a miscount); grid positions of 100,000
+  benchmark rows equal the research positions in float32. Tests: `tests/test_field.py`, `test_geodesy.py`,
+  `test_climate_fill.py`, `test_joint_stages.py` (synthetic end to end: environment model, representation, cache,
+  species stage, store).
+
+### 2026-10-06 08:20 — Map store of the full model evaluated; it is the published product
+- Store `cards_sota_klt` (`nat_arm4_s2`; klt, step 3.2, d = 512): 16,942 species (494 inferred from relatives, with
+  place vectors and penalties from their joining node; 98 calibration areas extended), 6.95 GB (field 6.75 GB,
+  species table 161.7 MB, validity mask 32.9 MB). CPU decode of one species: 256² window median 76 ms (90th
+  percentile 98 ms), 512² 163 ms (210 ms).
+- Fidelity: per test (species × plot source), AUC of the stored maps vs the full model's own scores, 5,873 tests:
+  median absolute difference 0.00056, 99th percentile 0.010; medians 0.9551 vs 0.9559.
+- As served (outside a species' calibration ecoregions its score lowered by its learned penalty; every plot with
+  climate), `eval_national_maps.py`: VegBank 3,607 species median AUC 0.962, BLM AIM 2,009 species 0.934, FIA 259
+  species 0.950 (with the hard calibration rule 0.956 / 0.930 / 0.948). Against Daru's published maps 0.960 vs 0.910
+  (141 species, ours better 90%), 0.932 vs 0.853 (104, 96%), 0.973 vs 0.916 (14, 100%); against the per-species MaxEnt
+  maps 0.956 vs 0.938 (1,547, 76%), 0.938 vs 0.906 (480, 85%), 0.944 vs 0.935 (224, 73%).
+- Against every competitor (benchmark `rescore.py --cards`, the store's penalty applied as rendered; paired tests,
+  share ours higher, Wilcoxon p): SINR env (retrained) pooled 0.9563 vs 0.9512, 62.7% of 4,282 tests (p = 8e-85);
+  > 10 km from training presences 0.9290 vs 0.9240, 56.1% of 4,132 (p = 8e-24). By source: VegBank 59.4% (> 10 km
+  51.9%, p = 0.001), AIM 70.9% (> 10 km 65.1%), FIA 56.6% (p = 0.01; > 10 km 53.2%, p = 0.41: a draw). SINR
+  coordinates-only 73.0%; SINR released distilled 75.0%; iNaturalist range maps 98.2% (5,378 tests); iNaturalist
+  geomodel 88.0% (125 tests); BIEN 98.3% (1,854 AIM tests; its VegBank and FIA comparisons are not independent, as BIEN
+  holds those plots); Daru 93.1% (0.9507 vs 0.8962, 259 tests). The GBIF-leakage exclusion (leak1km) moves no pooled
+  share by more than 0.4 points.
+- From the model's own scores the same comparison gave 63.1% (2026-10-06 06:45): storing moves it by 0.4 points. The
+  environment model's store `cards_conus_klt` had won 44% of the same tests.
+- Decision: `cards_sota_klt` replaces `cards_conus_klt` as the published maps (README, docs/joint_model.md section 8).
+  `cards_conus_klt` and its numbers remain where the environment-only model is described.
