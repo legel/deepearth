@@ -11,6 +11,9 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 
 ## Exciting News:
 
+- _October 5, 2026_  
+  **Native plant habitat.** Species distribution models for the 16,942 vascular plant species native to the contiguous United States at 240 m, fitted jointly with a phylogenetic prior and extending [Daru (2024, PNAS)](https://doi.org/10.1073/pnas.2319989121); higher accuracy than Daru's published maps for 84 % of species on independent plots. See [_code_](models/habitat/plant).
+
 - _July 16, 2026_  
   **NASA award.** [NASA's Commercial Satellite Data Acquisition](https://science.nasa.gov/earth-science/csda/) has awarded DeepEarth investigators at UC Berkeley 5 million km**2 of [Planet](https://www.planet.com/) data, approximately $200,000 in value.
 

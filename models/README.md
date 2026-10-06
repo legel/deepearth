@@ -1,8 +1,9 @@
 # DeepEarth Simulator: methods
 
-The equations and code the DeepEarth Simulator runs for sun, wind and water at every point of a site, and how
-flux-tower measurements drive them. Each model is a small, flat Python package on PyTorch that runs on a CPU or a
-GPU, with its own tests, validation receipts and a full account of its method, experiments and known errors.
+The equations and code the DeepEarth Simulator runs for sun, wind and water at every point of a site, how
+flux-tower measurements drive them, and where each native plant can live. Each model is a small Python package on
+PyTorch that runs on a CPU or a GPU, with its own tests, validation receipts and a full account of its method,
+experiments and known errors.
 
 | model | method | account |
 |---|---|---|
@@ -11,6 +12,7 @@ GPU, with its own tests, validation receipts and a full account of its method, e
 | water | 2D local-inertial shallow water (Bates et al. 2010), Green-Ampt with redistribution and a per-cell soil state carried between storms (Ogden and Saghafian 1997) | [README](hydro/README.md), [water_simulation.md](hydro/water_simulation.md) |
 | soil | the hourly water balance of every ground cell: interception, Green-Ampt capacity, run-on over the terrain, ASCE hourly reference ET with the FAO-56 dual crop coefficient, exact Brooks-Corey drainage down three layers (the top half-meter its own store, a deep layer where roots reach it), each cover its own season, trees rooted to their site's measured storage, crowns drawing on the soil their roots reach, grass under a savanna's crowns, lateral flow down the terrain; sampled from the tower's last five years as SOIL MOISTURE (the median year), DROUGHT (Stephenson's deficit over the driest 91 days) and FLOOD (the 5-year storm, solved by hydro); against NEON's soil water sensors and the tower's ET | [README](soil/README.md) |
 | flux | how the tower's measurements become the forcing: the measured-only rule, the P rule over several gauges, the clear-sky index, the sonic carried to the reference height, station calms, NEON months past a release | [README](flux/README.md) |
+| habitat | species distribution models for the 16,942 vascular plant species native to the contiguous US at 240 m: one joint model of all species (MaxEnt's point-process likelihood, a shared environment network, a Brownian-motion prior along the dated phylogeny), extending Daru (2024); evaluated on VegBank, BLM AIM and FIA plots against Daru's published maps | [README](habitat/plant/README.md), [joint_model.md](habitat/plant/docs/joint_model.md), [scientific_provenance.md](habitat/plant/docs/scientific_provenance.md) |
 
 ## How a flux tower enters
 
