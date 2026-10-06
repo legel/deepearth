@@ -1,0 +1,24 @@
+# native plant habitat models. Python 3.10+.
+#
+#   python3 -m pip install --user -r requirements.txt
+#
+# Reading a map store needs only numpy and zstandard (rasterio and pyproj for the calibration mask and coordinates).
+# The CPU build of torch is enough for the tests and for decoding:
+#   python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+# The per-species pipeline also needs R with CoordinateCleaner 3.0.1, rangeBuilder, castor, ape and sf
+# (r_environment.txt) and Java 11+ for maxent.jar (or a CUDA GPU for the PyTorch fitter).
+
+numpy>=1.26
+zstandard             # the map store's tiles
+torch>=2.4
+scipy
+pandas
+pyarrow               # GBIF SIMPLE_PARQUET downloads
+scikit-learn          # AUC
+rasterio
+pyproj
+shapely>=2
+geopandas
+requests              # data downloads
+mapbox-vector-tile    # GBIF map counts (fetch_gbif_effort.py)
+pytest                # tests

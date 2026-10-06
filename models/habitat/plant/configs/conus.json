@@ -1,0 +1,104 @@
+{
+ "_comment": "The published product: native vascular plants of the contiguous United States (CONUS), one joint model (run conus_final, 2026-10-05) and its map store cards_conus_klt. Every path is relative to the data root (DEEPEARTH_HABITAT_DATA, else data_root relative to models/habitat/plant). Command-line flags of the scripts override single entries.",
+ "data_root": "data",
+
+ "sources": {
+  "gbif_downloads": {
+   "0009841-260928105237408": "raw/gbif_full",
+   "0010385-260928105237408": "raw/gbif_us_natives",
+   "0010622-260928105237408": "raw/gbif_us_natives_synonyms"
+  },
+  "carruthers_tree": "raw/trees/0001_.tre_dated",
+  "carruthers_trees_sbm": ["raw/trees/0001_.tre_dated", "raw/trees/0002_.tre_dated"]
+ },
+
+ "species": {
+  "regions": {"CONUS": {"l2": ["73", "74", "75", "76", "77", "78"]}, "ASK": {"l3": ["ASK", "ALU"]}, "HAW": {"l3": ["HAW"]}},
+  "table": "work/us_natives_table.csv",
+  "inventory": "work/national_inventory.csv",
+  "listed_table": null,
+  "name_reassignment": "work/national/name_reassignment_national.parquet"
+ },
+
+ "per_species": {
+  "sbm": "work/sbm/sbm_combined.csv",
+  "bias": "work/bias_grid_behrmann10km.npz",
+  "effort_counts": "raw/gbif_tracheophyta_effort_5min.csv",
+  "out": "work/national/prepared",
+  "products": ["work/natives/occurrences", "work/national/prepared/occurrences"],
+  "range_cards": {"occurrences": ["work/natives/occurrences"], "daru": ["work/natives/daru"]}
+ },
+
+ "joint": {
+  "tree_dir": "work/deepearth/tree_all",
+  "national_dir": "work/deepearth/national",
+  "data_dir": "work/deepearth/national_conus",
+  "runs_dir": "work/deepearth/national_conus/runs",
+  "run": "conus_final",
+  "train": {
+   "width": 256,
+   "depth": 3,
+   "steps": 21000,
+   "batch_species": 256,
+   "n_presence": 64,
+   "n_background": 1024,
+   "lr": 0.001,
+   "weight_decay": 0.0001,
+   "weight_decay_edges": 0.01,
+   "weight_decay_species": 0.0001,
+   "grad_clip": 5.0,
+   "warmup": 0.05,
+   "eval_every": 3000,
+   "eval_chunk": 65536,
+   "seed": 0,
+   "selection": "dev_joint_paired",
+   "log_variables": ["wc2.1_30s_bio_12", "wc2.1_30s_bio_13", "wc2.1_30s_bio_14", "wc2.1_30s_bio_16",
+                     "wc2.1_30s_bio_17", "wc2.1_30s_bio_18", "wc2.1_30s_bio_19", "soil_soc"],
+   "flag_variables": ["soil_phh2o", "soil_clay", "soil_sand", "soil_soc"]
+  }
+ },
+
+ "scope": {
+  "region": "CONUS",
+  "exclude_l3": ["ASK", "ALU"],
+  "exclude_buffer_deg": 0.05,
+  "exclude_boxes": [{"name": "Hawaii", "lat": [18.5, 22.6], "lon": [-160.6, -154.6]}],
+  "drop_plot_sets": ["alaska", "hawaii"],
+  "region_l3": ["ALA", "ARI", "ARK", "CAL", "CNT", "COL", "DEL", "FLA", "GEO", "IDA", "ILL", "INI", "IOW", "KAN",
+                "KTY", "LOU", "MAI", "MAS", "MIC", "MIN", "MNT", "MRY", "MSI", "MSO", "NCA", "NDA", "NEB", "NEV",
+                "NWH", "NWJ", "NWM", "NWY", "OHI", "OKL", "ORE", "PEN", "RHO", "SCA", "SDA", "TEN", "TEX", "UTA",
+                "VER", "VRG", "WAS", "WDC", "WIS", "WVA", "WYO"]
+ },
+
+ "store": {
+  "out": "work/deepearth/cards_conus_klt",
+  "delta": 3.2,
+  "tile": 128,
+  "grids": {"conus": "work/conus240"},
+  "soil_dir": "work/soil",
+  "sample": {"blocks": 32, "block": 512, "cells": 12000, "seed": 0},
+  "zero_shot": {
+   "full_tree": "work/deepearth/tree_all/natives.dated.nwk",
+   "l3_ecoregions": "work/deepearth/l3_ecoregions.csv",
+   "min_share": 0.10
+  }
+ },
+
+ "geo": {
+  "wgsrpd_l3": "raw/geo/wgsrpd_level3.geojson",
+  "ecoregions": "raw/geo/ecoregions2017/Ecoregions2017.shp",
+  "worldclim_stack": "work/global30s/worldclim30s_stack.f32",
+  "soil_dir": "work/soil"
+ },
+
+ "evaluation": {
+  "min_presence": 20,
+  "vegbank_dir": "raw/validation/vegbank",
+  "aim_csv": "raw/validation/blm_aim_species.csv",
+  "fia_dir": "raw/validation/fia",
+  "wcvp_dir": "raw/wcvp",
+  "daru_rasters": "daru_ref_all/rasters",
+  "daru_raw_rasters": "daru_ref_all/raw_rasters",
+  "maxent_cards": ["work/natives/occurrences", "work/national/prepared/occurrences"]
+ }
+}

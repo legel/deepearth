@@ -1,0 +1,4 @@
+# The data root (raw sources, built grids, per-species products, runs, map stores): every file is reproducible by
+# the scripts in scripts/ (README, "Reproducing the maps"), and far too large for git.
+data/
+.pytest_cache/
