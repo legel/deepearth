@@ -714,3 +714,46 @@ as much as two maxent.jar runs differ from each other (map Spearman 0.960–0.99
   environment model's store `cards_conus_klt` had won 44% of the same tests.
 - Decision: `cards_sota_klt` replaces `cards_conus_klt` as the published maps (README, docs/joint_model.md section 8).
   `cards_conus_klt` and its numbers remain where the environment-only model is described.
+  (Superseded on 2026-10-07 01:30 by `cards_final_klt`.)
+
+### 2026-10-07 01:30 — Final model: 256 presences per step
+- The one change: presences drawn per species in a training step (`n_presence`) 64 → 256, in both the representation
+  and the species stage; everything else in the recipe is identical. Each species' term of the objective is computed
+  on the presences drawn for it in that step; 64 gave a noisy view of species with thousands of records, and 256
+  lowers that variance.
+- Benchmark sweep, species stage on the fixed `arm4_both12_s0` representation (share of tests where ours beats the
+  retrained SINR env, all plots / > 10 km from records): 64 presences 63.2% / 55.5%, 128 63.5% / 56.0%, 256
+  65.7% / 58.2%, 512 63.9% / 58.0%, 1,024 63.2% / 58.7%; 512 presences with 2,048 background points 64.6% / 56.5%
+  (more background does not help). 256 in the representation stage too (`rep_np256_s0`: benchmark data, 1,000 steps,
+  started from the base `l22_base_s0`): 66.3% / 58.5%.
+- Tested and rejected: all thinned records beyond the 5,000 cap restored (+12.4 million presences): no gain in either
+  stage (62.2% and 62.8% against 63.2%); representation learned from all 16,448 national species: 50.9% (each species
+  drawn only about 16 times in 1,000 steps); environment network width 512: a draw (64.2% all plots; > 10 km 53.7%
+  against 55.5%); depth 5: worse (60.4%); at 256 presences, species-stage prior strength 0.3 and 3, 3,000 and 12,000
+  steps, learning rate 3e-4 and 3e-3: draws or worse.
+- `nat_repnp_s2`: the `rep_np256_s0` representation fixed (cache `national_conus/frozen/rep_np256_s0`), species stage
+  on all 16,448 CONUS species, 6,000 steps, 156 s. Unclipped dev/test/> 10 km/AIM/FIA 0.9581/0.9671/0.9382/0.9363/
+  0.9527 (`nat_arm4_s2`: 0.9565/0.9658/0.9354/0.9344/0.9510). Its own scores against SINR env (4,281 tests): 66.8%
+  (p = 2e-140), > 10 km 60.8% (`nat_arm4_s2`: 63.1%, 56.6%).
+- Store `cards_final_klt` (`nat_repnp_s2`; klt, step 3.2, d = 512): 16,942 species (494 inferred from relatives),
+  6.01 GB (field 5.82 GB, species table 161.7 MB, validity mask 32.9 MB). CPU decode of one species: 256² window
+  median 48 ms (cold 90th percentile 60 ms), 512² 138 ms. Fidelity, 5,873 tests: median absolute AUC difference
+  0.0006, 99th percentile 0.010; medians 0.9566 vs 0.9573.
+- Evaluated exactly as `cards_sota_klt` was (benchmark `rescore.py --cards`, the store's penalty applied as rendered,
+  standard proximity masks; paired tests, share ours higher, Wilcoxon p): SINR env (retrained) 0.9572 vs 0.9512,
+  65.9% of 4,282 tests (p = 4e-127); > 10 km 60.2% of 4,132 (p = 6e-55). By source, all / > 10 km: AIM 72.5% /
+  68.6%, FIA 61.4% / 60.4% (p = 0.003), VegBank 63.2% / 56.1%; the previous store's one draw (FIA > 10 km, 53.2%,
+  p = 0.41) is now a win. SINR coordinates-only 75.3%; SINR released distilled 77.4%; Daru 94.6% (> 10 km 82.7%);
+  iNaturalist geomodel 91.2%; iNaturalist range maps 98.4%; BIEN 98.5%. The previous store `cards_sota_klt`: 62.7%
+  (p = 8e-85), > 10 km 56.1%, 73.0%, 75.0%, 93.1%, 88.0%, 98.2%, 98.3%.
+- As served, per plot source (`eval_national_maps.py`; MaxEnt maps unchanged, so their AUCs are taken from the
+  2026-10-06 08:20 evaluation): VegBank 3,607 species 0.963, BLM AIM 2,009 0.935, FIA 259 0.951 (hard calibration rule
+  0.957 / 0.931 / 0.948). Against Daru's published maps 0.961 vs 0.910 (141 species, ours better 93%), 0.932 vs 0.853
+  (104, 96%), 0.973 vs 0.916 (14, 100%); against the per-species MaxEnt maps 0.958 vs 0.938 (1,547, 80%), 0.940 vs
+  0.906 (480, 86%), 0.944 vs 0.935 (224, 79%).
+- Package check: `nat_repnp_s2` loads strictly into the package model and, scored by the package (CUDA kernel) at all
+  53,797 VegBank plots for its 3,605 evaluated species, reproduces the research run's saved scores to float16
+  precision (largest difference 0.018 on scores up to 42, median 0.0036; per-species Spearman median 0.999997,
+  minimum 0.99999) and its AUCs (median 0.96357 vs 0.96362, largest per-species difference 4e-4).
+- Decision: `cards_final_klt` (`nat_repnp_s2`) replaces `cards_sota_klt` as the published maps (README,
+  docs/joint_model.md); `configs/conus.json` names the new runs and store and sets `n_presence` 256 in both stages.

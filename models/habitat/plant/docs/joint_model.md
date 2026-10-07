@@ -6,11 +6,11 @@ relatives: 16,942 maps on the 240 m CONUS grid, stored in one transform-coded fi
 
 The model exists in two versions. The **environment model** (sections 1 to 5; run `conus_final`, store
 `cards_conus_klt`, published 2026-10-05) reads climate and soil at a location. The **full model** (section 6; run
-`nat_arm4_s2`, store `cards_sota_klt`, the published maps) adds what that location's surroundings look like (the
+`nat_repnp_s2`, store `cards_final_klt`, the published maps) adds what that location's surroundings look like (the
 landscape field), where it is (place), a calibration area learned instead of imposed, records and plots on the
 shoreline, and a background drawn like the records; it is trained in stages and fits all 16,448 species' parameters
-to convergence in 142 s. As stored, its maps beat the strongest published competitor, SINR with environmental inputs,
-in 62.7% of 4,282 species-by-plot-source tests, where the environment model's maps won 44% (section 8).
+to convergence in 156 s. As stored, its maps beat the strongest published competitor, SINR with environmental inputs,
+in 65.9% of 4,282 species-by-plot-source tests, where the environment model's maps won 44% (section 8).
 
 Code: `ranges/joint/` (`prepare`, `scope`, `tree`, `model`, `field` with its CUDA kernel in `kernels/`, `place`,
 `geodesy`, `climate_fill`, `shoreline`, `data`, `train`, `cache`, `zero_shot`, `store`, `reader`); command-line entry
@@ -380,8 +380,8 @@ can be computed once (`cache.py`) and a step costs only the species' dot product
 | Stage | What is trained | Data | Settings |
 |---|---|---|---|
 | base | the environment model (sections 2 to 4) | 2,661-species benchmark | 3,000 steps, lr 0.001 (run `l22_base_s0`) |
-| representation | every pathway, started from the base run's final weights (new pathways at zero) | benchmark | 1,000 steps, lr 0.0003 (place network 0.001), target-group + 512 continental background points, field, place (256), learned penalty (run `arm4_both12_s0`) |
-| species | every species parameter (z, u, b, z_p, z_c) from scratch, and c_0; shared networks and input standardization fixed | the 16,448 CONUS species, restored shoreline records, filled plots | 6,000 steps, lr 0.001, weight decay 1 on the branch vectors, on cached features of 15.37 million record rows (142 s; run `nat_arm4_s2`) |
+| representation | every pathway, started from the base run's final weights (new pathways at zero) | benchmark | 1,000 steps, 256 presences per species a step, lr 0.0003 (place network 0.001), target-group + 512 continental background points, field, place (256), learned penalty (run `rep_np256_s0`) |
+| species | every species parameter (z, u, b, z_p, z_c) from scratch, and c_0; shared networks and input standardization fixed | the 16,448 CONUS species, restored shoreline records, filled plots | 6,000 steps, 256 presences per species a step, lr 0.001, weight decay 1 on the branch vectors, on cached features of 15.37 million record rows (156 s; run `nat_repnp_s2`) |
 
 The shared networks are species-independent, so the representation learned on the 2,661-species benchmark serves
 the national species stage. Re-learning every species parameter on the fixed representation beats the jointly
@@ -401,6 +401,20 @@ the species stage (ours higher against SINR env in 61.3% and 62.2% of the benchm
 focusing (each ring's radius adapted per location by a second pass, Entropy4D's focusing operator) was a draw at
 250 steps at 10 s per step, so the simplest representation is kept.
 
+**Presences per step.** A species' term of the objective is computed on the presences drawn for it in that step; 64
+gave a noisy view of species with thousands of records, and 256 lowers that variance. Benchmark, species stage on the
+fixed representation (share of tests where ours beats SINR env, all plots / > 10 km from records): 64 presences
+63.2% / 55.5%, 128 63.5% / 56.0%, 256 65.7% / 58.2%, 512 63.9% / 58.0%, 1,024 63.2% / 58.7%; 512 presences with
+2,048 background points 64.6% / 56.5% (more background does not help). With 256 presences in the representation stage
+too: 66.3% / 58.5%. Both stages use 256 (the base stage keeps the 64 of section 4).
+
+Also measured and not kept: every thinned record beyond the cap of 5,000 per species restored (12.4 million more
+presences) gained in neither stage (62.2% and 62.8% against 63.2%); a representation learned from all 16,448 national
+species instead of the benchmark lost (50.9%: in 1,000 steps each species is drawn only about 16 times); an
+environment network of width 512 was a draw (64.2% against 63.2%; > 10 km 53.7% against 55.5%) and depth 5 lost
+(60.4%); at 256 presences, species-stage prior strengths 0.3 and 3, 3,000 and 12,000 steps and learning rates 3e-4
+and 3e-3 were draws or worse.
+
 ### 6.8 Results
 
 In-training evaluation (`train.py`; VegBank dev/test halves, presence plots > 10 km from every training presence,
@@ -408,18 +422,19 @@ BLM AIM, FIA; median AUC per species, scores served as the maps serve them, i.e.
 
 | Model | VegBank dev | VegBank test | > 10 km | AIM | FIA |
 |---|---|---|---|---|---|
-| full model, national species stage (`nat_arm4_s2`, 16,448 species) | 0.9565 | 0.9658 | 0.9354 | 0.9344 | 0.9510 |
+| full model, national species stage (`nat_repnp_s2`, 16,448 species) | 0.9581 | 0.9671 | 0.9382 | 0.9363 | 0.9527 |
+| the same with 64 presences per species a step (`nat_arm4_s2`, published 2026-10-06) | 0.9565 | 0.9658 | 0.9354 | 0.9344 | 0.9510 |
 | environment model (`conus_final`; the comparison recorded with it, provenance 2026-10-06 06:45) | 0.9434 | 0.9556 | 0.9162 | 0.9209 | 0.9391 |
 
 Against every published product, on identical tests (plots filled, proximity masks extended to the restored
 records; 4,281 tests against SINR env; share of tests where ours is higher, Wilcoxon signed-rank p): SINR env pooled
-median 0.9568 against 0.9512, ours higher in 63.1% (p = 8e-93; the environment model: 44%), beyond 10 km from records
-56.6% (p = 3e-27); BLM AIM 70.7% (beyond 10 km 65.2%), FIA 59.4% (beyond 10 km 54.4%, p = 0.1, the one draw);
-SINR coordinates-only 73.0%, SINR distilled 75.8%, iNaturalist range maps 98.3%, iNaturalist geomodel 86.4%, BIEN
-98.3%, Daru (2024) 93.4% (median +0.048). Scoring the broad taxon where a name's usage clearly spans segregate
-species (74 tests) gives 62.8% instead of 63.1%.
+median 0.9580 against 0.9512, ours higher in 66.8% (p = 2e-140; the environment model: 44%), beyond 10 km from records
+60.8% (p = 1e-60); BLM AIM 73.0% (beyond 10 km 68.9%), FIA 63.7% (beyond 10 km 62.0%, p = 2e-4); SINR
+coordinates-only 75.7%, SINR distilled 78.1%, iNaturalist range maps 98.6%, iNaturalist geomodel 90.4%, BIEN 98.4%,
+Daru (2024) 94.6% (median +0.046). For the model with 64 presences per step, scoring the broad taxon where a name's
+usage clearly spans segregate species (74 tests) gave 62.8% instead of 63.1%.
 
-These are the model's own scores; the maps as stored (`cards_sota_klt`) are evaluated in section 8.
+These are the model's own scores; the maps as stored (`cards_final_klt`) are evaluated in section 8.
 
 ## 7. The map store
 
@@ -481,12 +496,12 @@ there is climate (`Store.served`). Its binary range is served score ≥ P5 where
 `Store.window` and `Store.cells` the stored field itself. Reading needs only numpy and zstandard (rasterio and pyproj
 for the calibration mask and coordinates).
 
-| Store `cards_sota_klt` (full model `nat_arm4_s2`, step 3.2, d = 512) | |
+| Store `cards_final_klt` (full model `nat_repnp_s2`, step 3.2, d = 512) | |
 |---|---|
 | Species | 16,942 (494 inferred from relatives, with place vectors and penalties from their joining node; 98 calibration areas extended) |
-| Size | 6.95 GB: CONUS field 6.75 GB, species table 0.16 GB, validity mask 0.03 GB |
-| AUC as stored vs full model, per species and plot set (5,873 tests) | median absolute difference 0.0006, 99th percentile 0.010; medians 0.9551 vs 0.9559 |
-| CPU decode of one species (benchmark median; 90th percentile) | 256 × 256 cells 76 ms (98 ms), 512 × 512 cells 163 ms (210 ms) |
+| Size | 6.01 GB: CONUS field 5.82 GB, species table 0.16 GB, validity mask 0.03 GB |
+| AUC as stored vs full model, per species and plot set (5,873 tests) | median absolute difference 0.0006, 99th percentile 0.010; medians 0.9566 vs 0.9573 |
+| CPU decode of one species (benchmark median; 90th percentile) | 256 × 256 cells 48 ms (60 ms), 512 × 512 cells 138 ms (163 ms) |
 
 | Store `cards_conus_klt` (environment model `conus_final`, step 3.2) | |
 |---|---|
@@ -501,17 +516,17 @@ is 16.7 GB, with a median VegBank AUC of 0.9506 as stored against 0.9505 for the
 ## 8. Results of the stored maps
 
 Evaluated exactly as stored and served (`scripts/national_store_eval.py plots`; species with at least 20 presence
-plots; for `cards_sota_klt` every plot with climate, outside the species' calibration ecoregions lowered by its learned
+plots; for `cards_final_klt` every plot with climate, outside the species' calibration ecoregions lowered by its learned
 penalty, as the maps serve it), against the maps Daru (2024) published and the per-species MaxEnt maps of the same
 species, at the same plots:
 
 | Plot source | Species | Stored joint maps | vs Daru (2024): joint / Daru, joint better for | vs per-species MaxEnt: joint / MaxEnt, joint better for |
 |---|---|---|---|---|
-| VegBank | 3,607 | 0.962 | 0.960 / 0.910, 90% (141 species) | 0.956 / 0.938, 76% (1,547 species) |
-| BLM AIM | 2,009 | 0.934 | 0.932 / 0.853, 96% (104 species) | 0.938 / 0.906, 85% (480 species) |
-| FIA | 259 | 0.950 | 0.973 / 0.916, 100% (14 species) | 0.944 / 0.935, 73% (224 species) |
+| VegBank | 3,607 | 0.963 | 0.961 / 0.910, 93% (141 species) | 0.958 / 0.938, 80% (1,547 species) |
+| BLM AIM | 2,009 | 0.935 | 0.932 / 0.853, 96% (104 species) | 0.940 / 0.906, 86% (480 species) |
+| FIA | 259 | 0.951 | 0.973 / 0.916, 100% (14 species) | 0.944 / 0.935, 79% (224 species) |
 
-With the hard calibration rule instead (plots outside the area ranked lowest) the same store scores 0.956, 0.930 and
+With the hard calibration rule instead (plots outside the area ranked lowest) the same store scores 0.957, 0.931 and
 0.948: the learned penalty is worth 0.006, 0.004 and 0.003.
 
 Against every published distribution product, scored the same way on the tests both cover (species × plot source;
@@ -520,18 +535,19 @@ share of tests where ours is higher; two-sided Wilcoxon signed-rank p; "> 10 km"
 
 | Competitor | Tests | Joint / competitor, median AUC | Ours higher | p | > 10 km from training records: ours higher |
 |---|---|---|---|---|---|
-| SINR, coordinates + environment (retrained with its authors' code and data) | 4,282 | 0.9563 / 0.9512 | 62.7% | 8e-85 | 56.1% (0.9290 / 0.9240; p = 8e-24) |
-| SINR, coordinates only (released) | 4,282 | 0.9563 / 0.9429 | 73.0% | 2e-242 | 62.1% |
-| SINR, distilled (released) | 4,282 | 0.9563 / 0.9386 | 75.0% | 1e-282 | 60.1% |
-| iNaturalist range maps | 5,378 | 0.9553 / 0.8744 | 98.2% | < 1e-300 | 92.5% |
-| iNaturalist geomodel (public small model) | 125 | 0.9156 / 0.8746 | 88.0% | 2e-15 | 87.2% |
-| BIEN range maps (AIM only: BIEN holds VegBank and FIA plots, so those are not independent) | 1,854 | 0.9325 / 0.7430 | 98.3% | 2e-297 | 97.0% |
-| Daru (2024) | 259 | 0.9507 / 0.8962 | 93.1% | 9e-38 | 79.6% |
+| SINR, coordinates + environment (retrained with its authors' code and data) | 4,282 | 0.9572 / 0.9512 | 65.9% | 4e-127 | 60.2% (0.9312 / 0.9240; p = 6e-55) |
+| SINR, coordinates only (released) | 4,282 | 0.9572 / 0.9429 | 75.3% | 2e-287 | 65.5% |
+| SINR, distilled (released) | 4,282 | 0.9572 / 0.9386 | 77.4% | < 1e-300 | 63.4% |
+| iNaturalist range maps | 5,378 | 0.9568 / 0.8744 | 98.4% | < 1e-300 | 93.2% |
+| iNaturalist geomodel (public small model) | 125 | 0.9222 / 0.8746 | 91.2% | 1e-16 | 89.6% |
+| BIEN range maps (AIM only: BIEN holds VegBank and FIA plots, so those are not independent) | 1,854 | 0.9335 / 0.7430 | 98.5% | 1e-297 | 97.3% |
+| Daru (2024) | 259 | 0.9536 / 0.8962 | 94.6% | 5e-39 | 82.7% |
 
-Against SINR env by plot source: VegBank 59.4% of 2,750 tests (0.9608 / 0.9572), beyond 10 km 51.9% (p = 0.001);
-BLM AIM 70.9% of 1,281 (0.9395 / 0.9266), beyond 10 km 65.1%; FIA 56.6% of 251 (0.9506 / 0.9501, p = 0.01), beyond
-10 km 53.2% (p = 0.41): a draw. Excluding plots within 1 km of GBIF records from the datasets that also hold plot
-vouchers changes no pooled share by more than 0.4 points. The environment model's maps had won 44% of the tests against SINR
+Against SINR env by plot source: VegBank 63.2% of 2,750 tests (0.9617 / 0.9572), beyond 10 km 56.1% (p = 2e-16);
+BLM AIM 72.5% of 1,281 (0.9416 / 0.9266), beyond 10 km 68.6%; FIA 61.4% of 251 (0.9539 / 0.9501, p = 3e-5), beyond
+10 km 60.4% (p = 0.003). Excluding plots within 1 km of GBIF records from the datasets that also hold plot vouchers
+changes the pooled share against SINR env by 0.2 points and no pooled share by more than 0.8 points (one of the 125
+iNaturalist geomodel tests). The environment model's maps had won 44% of the tests against SINR
 env (0.943 vs 0.951; `docs/scientific_provenance.md`, 2026-10-05 21:55).
 
 The environment model's store (`cards_conus_klt`), with its hard calibration rule, scored on the same plot sets:
@@ -573,7 +589,7 @@ Reading a store in Python:
 
 ```python
 from ranges.joint.reader import Store
-st = Store("cards_sota_klt", grids={"conus": "work/conus240"})
+st = Store("cards_final_klt", grids={"conus": "work/conus240"})
 s = st.index("Quercus lobata")
 suitability = st.suitability("conus", 6000, 6512, 1500, 2012, s)  # uint8 [512, 512]
 in_range = st.in_range("conus", 6000, 6512, 1500, 2012, s)        # bool [512, 512]
@@ -603,11 +619,11 @@ against brute force, the penalty and place pathways, and, end to end on syntheti
 cache equals the features the representation computes for its rows and plots, the species stage leaves the shared
 networks unchanged and its cached plot scores equal the full model's, and a store of the full model decodes within
 the quantization bound (d = 512) and serves maps outside the calibration area lowered by each species' penalty.
-The trained national checkpoint `nat_arm4_s2` loads into the package model from its state dict alone and, scored by
+The trained national checkpoint `nat_repnp_s2` loads into the package model from its state dict alone and, scored by
 the package (CUDA kernel) at all 53,797 VegBank plots for its 3,605 evaluated species, reproduces the research run's
-saved scores to the precision they were saved in (float16: largest difference 0.018 on scores up to 44, median 0.004;
-per-species Spearman correlation median 0.999998) and its AUCs (median 0.96306 vs 0.96303, largest per-species
-difference 4e-4).
+saved scores to the precision they were saved in (float16: largest difference 0.018 on scores up to 42, median 0.0036;
+per-species Spearman correlation median 0.999997, minimum 0.99999) and its AUCs (median 0.96357 vs 0.96362, largest
+per-species difference 4e-4).
 
 The package code was checked against the research code that produced the stores (2026-10-05; "the research code"
 below):

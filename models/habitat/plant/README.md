@@ -10,10 +10,10 @@ holding its records, and shares all of it among related species through a Browni
 phylogeny; the 494 species without records are inferred from their relatives. The pipeline reproduces and extends the
 global native-range method of Daru (2024, *PNAS*,
 [doi:10.1073/pnas.2319989121](https://doi.org/10.1073/pnas.2319989121)). On independent vegetation plots the stored
-maps reach a median AUC of 0.962 (VegBank), 0.934 (BLM AIM) and 0.950 (USFS FIA). Against SINR with environmental
+maps reach a median AUC of 0.963 (VegBank), 0.935 (BLM AIM) and 0.951 (USFS FIA). Against SINR with environmental
 inputs (Cole et al. 2023, retrained with its authors' code and data), the strongest published model, they score
-higher in 62.7 % of 4,282 species-by-plot-set tests (median AUC 0.956 vs 0.951; 56.1 % of the tests beyond 10 km
-from training records), and above Daru's published maps in 93 % of 259 tests. All maps are stored in 6.95 GB and
+higher in 65.9 % of 4,282 species-by-plot-set tests (median AUC 0.957 vs 0.951; 60.2 % of the tests beyond 10 km
+from training records), and above Daru's published maps in 95 % of 259 tests. All maps are stored in 6.01 GB and
 decoded on a CPU.
 
 Method: [docs/joint_model.md](docs/joint_model.md). Every decision, dated, with the measurement behind it:
@@ -59,7 +59,7 @@ store `cards_conus_klt`):
 | range | $f_s(x) \ge \mathrm{P5}_s$ inside $C_s$, $\mathrm{P5}_s$ the 5th percentile of $f_s$ over its training presences | [`in_range`](ranges/joint/reader.py#L273) |
 
 The model behind the stored maps ([docs/joint_model.md](docs/joint_model.md) section 6; configured in `joint.stages`,
-map store `cards_sota_klt`) adds to these:
+map store `cards_final_klt`) adds to these:
 
 | process | equation | code |
 |---|---|---|
@@ -68,7 +68,7 @@ map store `cards_sota_klt`) adds to these:
 | place | SINR's coordinate network on $(\sin, \cos)(\pi\,\mathrm{lon}/180)$, $(\sin, \cos)(\pi\,\mathrm{lat}/90)$ | [`place.py` `SinrPlace`](ranges/joint/place.py#L29) |
 | background | each background point moves to the nearest record of another species; each species also draws 512 continental background points per step | [`prepare.py` `snap_to_records`](ranges/joint/prepare.py#L312), [`train`](ranges/joint/train.py#L332) |
 | shoreline | a location without climate takes the 20 WorldClim bands of the nearest place with climate within 5 km; dropped shoreline presences restored | [`climate_fill.py` `fill_points`](ranges/joint/climate_fill.py#L53), [`shoreline.py` `restore_records`](ranges/joint/shoreline.py#L57) |
-| stages | environment model; every pathway for 1,000 steps from it; every species parameter for 6,000 steps on the cached features of the fixed representation | [`cache.py` `build_cache`](ranges/joint/cache.py#L41) |
+| stages | environment model; every pathway for 1,000 steps from it; every species parameter for 6,000 steps on the cached features of the fixed representation; these two stages draw 256 presences per species a step | [`cache.py` `build_cache`](ranges/joint/cache.py#L41) |
 | maps | served score $f_s(x) - \pi_s [x \notin C_s]$ wherever there is climate | [`reader.py` `served`](ranges/joint/reader.py#L246) |
 
 ## Departures from Daru (2024)
@@ -95,29 +95,30 @@ monitoring plots (arid West); USFS FIA: Forest Service inventory plots (trees).
 
 | plots | species | joint model | vs SINR env: joint / SINR (tests; share better) | vs Daru (2024): joint / Daru (species; share better) | vs per-species MaxEnt: joint / MaxEnt (species; share better) |
 |---|---|---|---|---|---|
-| VegBank | 3,607 | 0.962 | 0.961 / 0.957 (2,750; 59.4 %) | 0.960 / 0.910 (141; 90 %) | 0.956 / 0.938 (1,547; 76 %) |
-| BLM AIM | 2,009 | 0.934 | 0.940 / 0.927 (1,281; 70.9 %) | 0.932 / 0.853 (104; 96 %) | 0.938 / 0.906 (480; 85 %) |
-| USFS FIA | 259 | 0.950 | 0.951 / 0.950 (251; 56.6 %) | 0.973 / 0.916 (14; 100 %) | 0.944 / 0.935 (224; 73 %) |
+| VegBank | 3,607 | 0.963 | 0.962 / 0.957 (2,750; 63.2 %) | 0.961 / 0.910 (141; 93 %) | 0.958 / 0.938 (1,547; 80 %) |
+| BLM AIM | 2,009 | 0.935 | 0.942 / 0.927 (1,281; 72.5 %) | 0.932 / 0.853 (104; 96 %) | 0.940 / 0.906 (480; 86 %) |
+| USFS FIA | 259 | 0.951 | 0.954 / 0.950 (251; 61.4 %) | 0.973 / 0.916 (14; 100 %) | 0.944 / 0.935 (224; 79 %) |
 
 Against every published distribution product, on the tests both score (species × plot set; share of tests where ours
 is higher, two-sided Wilcoxon signed-rank p; the research benchmark of docs/scientific_provenance.md, 2026-10-05
-21:55 and 2026-10-06):
+21:55 to 2026-10-07):
 
 | competitor | tests | joint / competitor, median AUC | ours higher | p | > 10 km from training records: ours higher |
 |---|---|---|---|---|---|
-| SINR, coordinates + environment (retrained) | 4,282 | 0.9563 / 0.9512 | 62.7 % | 8e-85 | 56.1 % (p = 8e-24) |
-| SINR, coordinates only (released) | 4,282 | 0.9563 / 0.9429 | 73.0 % | 2e-242 | 62.1 % |
-| SINR, distilled (released) | 4,282 | 0.9563 / 0.9386 | 75.0 % | 1e-282 | 60.1 % |
-| iNaturalist range maps | 5,378 | 0.9553 / 0.8744 | 98.2 % | < 1e-300 | 92.5 % |
-| iNaturalist geomodel (public small model) | 125 | 0.9156 / 0.8746 | 88.0 % | 2e-15 | 87.2 % |
-| BIEN range maps (AIM only: BIEN holds VegBank and FIA plots) | 1,854 | 0.9325 / 0.7430 | 98.3 % | 2e-297 | 97.0 % |
-| Daru (2024) | 259 | 0.9507 / 0.8962 | 93.1 % | 9e-38 | 79.6 % |
+| SINR, coordinates + environment (retrained) | 4,282 | 0.9572 / 0.9512 | 65.9 % | 4e-127 | 60.2 % (p = 6e-55) |
+| SINR, coordinates only (released) | 4,282 | 0.9572 / 0.9429 | 75.3 % | 2e-287 | 65.5 % |
+| SINR, distilled (released) | 4,282 | 0.9572 / 0.9386 | 77.4 % | < 1e-300 | 63.4 % |
+| iNaturalist range maps | 5,378 | 0.9568 / 0.8744 | 98.4 % | < 1e-300 | 93.2 % |
+| iNaturalist geomodel (public small model) | 125 | 0.9222 / 0.8746 | 91.2 % | 1e-16 | 89.6 % |
+| BIEN range maps (AIM only: BIEN holds VegBank and FIA plots) | 1,854 | 0.9335 / 0.7430 | 98.5 % | 1e-297 | 97.3 % |
+| Daru (2024) | 259 | 0.9536 / 0.8962 | 94.6 % | 5e-39 | 82.7 % |
 
-Against SINR env beyond 10 km from training records: AIM 65.1 %, VegBank 51.9 %, FIA 53.2 % (p = 0.41, a draw).
+Against SINR env by plot set (all plots / beyond 10 km from training records): AIM 72.5 % / 68.6 %, VegBank
+63.2 % / 56.1 %, FIA 61.4 % / 60.4 % (p = 0.003).
 
-The map store holds 16,942 species (494 inferred from relatives) in 6.95 GB (a 6.75 GB field and a 0.16 GB species
+The map store holds 16,942 species (494 inferred from relatives) in 6.01 GB (a 5.82 GB field and a 0.16 GB species
 table); per test, the stored maps' AUC differs from the full model's by a median 0.0006 (99th percentile 0.010;
-medians 0.9551 and 0.9559 over 5,873 tests). The model's species stage takes 142 s on one RTX 3090. The
+medians 0.9566 and 0.9573 over 5,873 tests). The model's species stage takes 156 s on one RTX 3090. The
 environment-only model published before it (store `cards_conus_klt`) scored 0.951, 0.922 and 0.942 on the same plot
 sets ([docs/joint_model.md](docs/joint_model.md) section 8).
 
@@ -132,7 +133,7 @@ the CONUS grid's ecoregion layer `ecoregion_id_conus240.tif` ([`reader.py`](rang
 import sys; sys.path.insert(0, "models/habitat/plant")
 from ranges.joint.reader import Store
 
-st = Store("cards_sota_klt", grids={"conus": "work/conus240"})
+st = Store("cards_final_klt", grids={"conus": "work/conus240"})
 s = st.index("Quercus lobata")                                   # valley oak
 f = st.scores("conus", 6000, 6512, 1500, 2012, [s])[0]           # float32 scores f_s, a 512 x 512-cell window
 u = st.suitability("conus", 6000, 6512, 1500, 2012, s)           # uint8: 1..255 where there is climate, else 0
@@ -142,8 +143,8 @@ p = st.at("conus", lon=[-122.27, -121.5], lat=[37.87, 38.6], species=s)   # p["s
 
 Rows and columns index the 240 m CONUS Albers grid (EPSG:5070, 13,053 × 20,149 cells, upper-left corner
 x = −2,493,045 m, y = 3,310,005 m); `st.rowcol` converts longitude and latitude. A species row with
-`st.T["inferred"][s]` true was mapped from its relatives. A 512 × 512-cell window of one species decodes in 0.16 s
-(median of a CPU benchmark; 90th percentile 0.21 s).
+`st.T["inferred"][s]` true was mapped from its relatives. A 512 × 512-cell window of one species decodes in 0.14 s
+(median of a CPU benchmark; 90th percentile 0.16 s).
 
 ## Reproducing the maps
 
@@ -196,14 +197,14 @@ python3 scripts/run_fit.py --modes daru,occurrences   # or national_run.py on pr
 python3 scripts/validate_vegbank.py && python3 scripts/national_eval.py
 
 # 10. the published maps: the full model (landscape field, place, learned calibration; docs/joint_model.md section 6)
-#     and its store (cards_sota_klt);
+#     and its store (cards_final_klt);
 #     snap, field positions and shoreline run for each data directory a stage trains on (--data-dir)
 python3 scripts/national_snap.py && python3 scripts/national_field.py
 python3 scripts/build_shoreline.py && python3 scripts/build_climate_fill.py
 python3 scripts/national_train.py --stage base && python3 scripts/national_train.py --stage representation
 python3 scripts/national_cache.py && python3 scripts/national_train.py --stage species
-python3 scripts/national_store.py build                          # store.model: the species stage's run (cards_sota_klt)
-python3 scripts/national_store_eval.py plots data/work/deepearth/cards_sota_klt --out data/work/deepearth/eval_sota
+python3 scripts/national_store.py build                          # store.model: the species stage's run (cards_final_klt)
+python3 scripts/national_store_eval.py plots data/work/deepearth/cards_final_klt --out data/work/deepearth/eval_final
 ```
 
 Departures of the published run from a fresh run: 2,663 species took their per-species data from an earlier full

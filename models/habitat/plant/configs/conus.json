@@ -94,14 +94,14 @@
    "representation": {
     "data_dir": "work/deepearth",
     "runs_dir": "work/deepearth/runs",
-    "run": "arm4_both12_s0",
+    "run": "rep_np256_s0",
     "init": "base",
     "train": {
      "width": 256,
      "depth": 3,
      "steps": 1000,
      "batch_species": 256,
-     "n_presence": 64,
+     "n_presence": 256,
      "n_background": 1024,
      "lr": 0.0003,
      "weight_decay": 0.0001,
@@ -109,7 +109,7 @@
      "weight_decay_species": 0.0001,
      "grad_clip": 5.0,
      "warmup": 0.05,
-     "eval_every": 250,
+     "eval_every": 500,
      "eval_chunk": 65536,
      "seed": 0,
      "selection": "dev_joint_paired",
@@ -139,15 +139,15 @@
    "species": {
     "data_dir": "work/deepearth/national_conus",
     "runs_dir": "work/deepearth/national_conus/runs",
-    "run": "nat_arm4_s2",
+    "run": "nat_repnp_s2",
     "shared_from": "representation",
-    "cache": "work/deepearth/national_conus/frozen/arm4_both12_s0",
+    "cache": "work/deepearth/national_conus/frozen/rep_np256_s0",
     "train": {
      "width": 256,
      "depth": 3,
      "steps": 6000,
      "batch_species": 256,
-     "n_presence": 64,
+     "n_presence": 256,
      "n_background": 1024,
      "lr": 0.001,
      "weight_decay": 0.0001,
@@ -199,7 +199,7 @@
 
  "store": {
   "model": "species",
-  "out": "work/deepearth/cards_sota_klt",
+  "out": "work/deepearth/cards_final_klt",
   "delta": 3.2,
   "tile": 128,
   "grids": {"conus": "work/conus240"},
