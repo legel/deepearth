@@ -1,11 +1,11 @@
 """The DeepCal benchmark suite and the harmonic-mean north star.
 
 A trained :class:`~deepearth.core.fusion.DeepEarth` is scored on the full suite, each benchmark asking "given the
-widely-available context U (and sometimes a ground photo), how well is a sparse target induced?" Every metric is
-already in ``[0, 1]`` (top-k accuracy, macro-F1, unit-embedding cosine, recall@k, MRR), so the score IS the raw value:
+widely-available context U (and sometimes a ground photo), how well is a sparse target induced?" Capability metrics
+are in ``[0, 1]`` (top-k accuracy, macro-F1, unit-embedding cosine, recall@k, MRR), so the score IS the raw value:
 no baseline/target remap, because a hand-set target below a metric's attainable maximum is an artificial ceiling. The
-net score is the harmonic mean (power mean p = -1) of the active benchmarks, so lifting the weakest helps most and none
-can be traded for another.
+net score is the harmonic mean (power mean p = -1) of active human capabilities. Derived mechanism diagnostics and
+structurally quarantined measurements remain visible but do not decide promotion.
 
 ``U`` is everything obtainable at a point without observing the organism (space-time position, climate, soil, clay,
 NAIP, topo, chm, hydro). Benchmarks are computed on the held-out split (spatial 0.5-degree blocks by default;
@@ -19,6 +19,14 @@ import math
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+BENCHMARK_PROTOCOL = "v2-held-species-pollinator-transfer"
+
+QUARANTINED_BENCHMARKS = {
+    "B55_pollinator_phylo_transfer_recall": (
+        "scores focal predictions against spatial neighbors' pollinator union; does not test phylogenetic transfer"
+    ),
+}
 
 def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, num_classes: int) -> float:
     """Macro-F1 over the observed rows: mean per-class F1 (unweighted), so rare classes count as much as common."""
@@ -38,7 +46,7 @@ def _macro_f1(pred: torch.Tensor, target: torch.Tensor, observed: torch.Tensor, 
     return float(np.mean(f1s)) if f1s else float("nan")
 
 
-# The 62-benchmark suite (B1-B62), in suite order. Each is (given-set -> target, metric); the tag names the science.md
+# The benchmark suite, in suite order. Each is (given-set -> target, metric); the tag names the science.md
 # capability (A/Q) it realizes. Benchmarks whose required inputs or holdout split are absent report inactive and drop
 # out of the net score. Metrics are already in [0,1] (top-k, accuracy, macro-F1, cosine, recall@k, MRR).
 BENCHMARKS: List[str] = [
@@ -96,7 +104,7 @@ BENCHMARKS: List[str] = [
     "B52_pollinator_from_photo_recall", # env + ground photo -> pollinators, recall@10
     "B53_pollinator_calibration_mrr",   # pollinator posterior calibration, mean reciprocal rank
     "B54_pollinator_dist_kl",           # predicted vs true pollinator frequency distribution, exp(-KL)
-    "B55_pollinator_phylo_transfer_recall",  # rule 27: predict a plant's pollinators from its relatives' pollinators (cross-tree induction)
+    "B55_pollinator_phylo_transfer_recall",  # legacy spatial-neighbor-union recall; quarantined under v2
     "B56_family_phylo_graph_gain",      # ablation-delta: family-from-phylo accuracy gained from the species-graph refinement
     "B57_flowering_phylo_graph_gain",   # ablation-delta (phenology family): flowering-AUC gained from the species-graph refinement
     "B58_lfmc_phylo_graph_gain",        # ablation-delta (ecophysiology family): LFMC-correlation gained from the species-graph refinement
@@ -105,12 +113,30 @@ BENCHMARKS: List[str] = [
     "B61_trait_phylo_graph_gain",       # ablation-delta (trait family): trait macro-F1 gained from the species-graph refinement (traits are phylo-conserved)
     "B62_mycorrhiza_phylo_graph_gain",  # ablation-delta (symbiosis family): mycorrhiza macro-F1 gained from the species-graph refinement (symbiosis is phylo-conserved)
     "B63_myco_from_species_f1",         # symbiosis imputation GIVEN the species identity (isolates phylo imputation from env->species inference); honest bar = BioCLIP-NN 0.584
+    "B64_pollinator_phylo_transfer_ndcg", # held species' own interactions from identity/phylogeny, chance-normalized NDCG@10
+    "B65_pollinator_phylo_transfer_gain", # paired species-graph ablation delta for B64
 ]
+
+
+def normalized_ndcg_at_k(logits: torch.Tensor, target_idx: torch.Tensor,
+                         target_relevance: torch.Tensor, k: int = 10) -> torch.Tensor:
+    """NDCG above the exact uniform-ranking null for each observed interaction distribution."""
+    k = min(k, logits.shape[1])
+    discount = 1.0 / torch.log2(torch.arange(k, device=logits.device, dtype=torch.float32) + 2.0)
+    ranked = logits.topk(k, -1).indices
+    rel = target_relevance.float().clamp_min(0)
+    ranked_rel = ((ranked[:, :, None] == target_idx[:, None, :]) * rel[:, None, :]).sum(-1)
+    dcg = (ranked_rel * discount).sum(-1)
+    ideal = (rel.sort(-1, descending=True).values[:, :k] * discount).sum(-1)
+    null = (rel.sum(-1) / logits.shape[1]) * discount.sum()
+    raw = dcg / ideal.clamp_min(1e-12)
+    null = null / ideal.clamp_min(1e-12)
+    return ((raw - null) / (1.0 - null).clamp_min(1e-12)).clamp(max=1.0)
 
 
 @torch.no_grad()
 def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, float]:
-    """Score the 26-benchmark suite over the held-out split. Context is built once per batch and the encoder is run
+    """Score the benchmark suite over the held-out split. Context is built once per batch and the encoder is run
     once per distinct given-set (multiple targets decoded from a single encode), so the whole suite costs a bounded
     number of passes over the test set. Benchmarks whose inputs/split are unavailable are simply omitted (inactive)."""
     model.eval()
@@ -120,6 +146,10 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
     trait_nc = source.trait_classes if traits else {}
     fam = source.class_group if hasattr(source, "class_group") else None    # family index per species class
     holdout = getattr(source, "holdout", "spatial")
+    source_poll_holdout = getattr(source, "poll_transfer_holdout", None)
+    model_poll_holdout = getattr(model, "poll_transfer_holdout", None)
+    poll_transfer_ready = (source_poll_holdout is not None and model_poll_holdout is not None
+                           and torch.equal(source_poll_holdout.bool(), model_poll_holdout.bool()))
 
     vision = [v for v in ("vision_dino", "vision_bio") if v in have]
     U = [v for v in ("climate", "soil", "naip_rgb", "naip_ir", "clay", "topo", "chm", "hydro") if v in have]   # universal (no organism obs)
@@ -370,8 +400,8 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                 add("B53_pollinator_calibration_mrr", (1.0 / (rank.float() + 1))[vi].sum().item(), nv)
                 q = torch.softmax(Lp, -1).gather(1, pidx); kl = torch.where(pfrq > 0, pfrq * (torch.log(pfrq + 1e-9) - torch.log(q + 1e-9)), torch.zeros_like(pfrq)).sum(1)
                 add("B54_pollinator_dist_kl", torch.exp(-kl)[vi].sum().item(), nv)   # exp(-KL) of true pollinator freq vs predicted
-                # B55 cross-tree phylogenomic interaction induction (rule 27): can the model predict a plant's pollinators
-                # from its RELATIVES' pollinators? Target = pollinators observed for the plant's phylogenetic neighbors.
+                # Legacy B55 target: the spatial observation neighbors' pollinator union. Retained for continuity but
+                # quarantined because these are not phylogenetic relatives and the target is not the focal plant's set.
                 if hasattr(source, "neighbors"):
                     nc = source.cls[source.neighbors[idx]]                       # [B,K] neighbor plant classes
                     npi = source.poll_idx[nc].reshape(B, -1).clamp(0, source.n_pollinators - 1)   # neighbors' pollinator ids
@@ -380,7 +410,6 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
                     rv = vi & (ntset.sum(1) > 0)
                     if int(rv.sum()):
                         add("B55_pollinator_phylo_transfer_recall", recall_sum(Lp[rv], ntset[rv]), int(rv.sum()))
-
         # ---- forecasting (temporal holdout only): predict the held-out FUTURE environment ----
         if holdout == "temporal" and "climate" in have:
             add("B25_forecast_climate_cos", ccos_sum(infer([n for n in U if n != "climate"], ["climate"])["climate"], values["climate"], "climate"), B)
@@ -460,6 +489,19 @@ def evaluate_benchmarks(model, source, device, batch: int = 1536) -> Dict[str, f
             if not np.isnan(f1a): out["B61_trait_phylo_graph_gain"] = max(0.0, out["B10_traits_from_photo_env_f1"] - f1a)
     if "B2_species_from_photo_top1" in out and "B1_species_from_env_top10" in out:
         out["B24_geo_information_gain"] = max(0.0, out["B2_species_from_photo_top1"] - out["B1_species_from_env_top10"])
+    if poll_transfer_ready and getattr(model, "species_graph", None) is not None \
+            and getattr(model, "poll_head", None) is not None:
+        held = source.poll_valid & source_poll_holdout
+        if held.any():
+            basis = model.pollinator_graph() if getattr(model, "pollinator_graph", None) is not None else model.poll_emb
+            refined = model.species_graph()
+            logits = model.poll_head(refined[held]) @ basis.t()
+            ablated = model.poll_head(model.species_graph._seed()[held]) @ basis.t()
+            target_idx, target_rel = source.poll_idx[held], source.poll_frq[held]
+            skill = normalized_ndcg_at_k(logits, target_idx, target_rel).mean().item()
+            ablated_skill = normalized_ndcg_at_k(ablated, target_idx, target_rel).mean().item()
+            out["B64_pollinator_phylo_transfer_ndcg"] = max(0.0, skill)
+            out["B65_pollinator_phylo_transfer_gain"] = skill - ablated_skill
     return out
 
 
@@ -472,17 +514,17 @@ _SCORE_FLOOR = 1e-3   # keeps the harmonic mean finite/comparable if a benchmark
 
 
 def normalized(raw: Dict[str, float]) -> Dict[str, float]:
-    """Each benchmark's score in [0,1]. EVERY benchmark here is defined on a metric that is ALREADY naturally in
+    """Each capability's score in [0,1], with signed mechanism deltas retained in [-1,1]. Metrics are naturally
     [0,1] -- top-k accuracy, family accuracy, macro-F1, cosine similarity of unit embeddings, recall@k, calibration
     MRR -- so the score IS the raw value (clipped for safety). No baseline/target remap: a hand-set target below the
     attainable maximum is an ARTIFICIAL ceiling that saturates a still-improving metric at 1.0, which we reject."""
-    return {k: float(np.clip(v, 0.0, 1.0)) for k, v in raw.items()
+    return {k: float(np.clip(v, -1.0 if is_diagnostic(k) else 0.0, 1.0)) for k, v in raw.items()
             if not (isinstance(v, float) and np.isnan(v))}
 
 
 def is_diagnostic(k: str) -> bool:
     """A DERIVED difference benchmark (ablation-delta / information-gain): B24_geo_information_gain = B2-B1,
-    B56-B60_*_phylo_graph_gain = capability WITH minus WITHOUT the species graph. These isolate a MECHANISM's
+    B56-B65 `*_gain` = capability WITH minus WITHOUT a mechanism. These isolate a MECHANISM's
     contribution and live on a compressed 0-0.3 scale. They are reported as diagnostics but EXCLUDED from the net:
     folding a difference into the harmonic mean double-counts its own constituents and, being small (a good phylo
     gain is ~0.05, an untrained one is 0.0), it dominates/nukes the harmonic mean -> the north star would be pinned
@@ -490,63 +532,52 @@ def is_diagnostic(k: str) -> bool:
     return k.endswith("_gain")
 
 
-_GAIN_SCALE = 0.1   # logistic scale for ablation-delta ("_gain") benchmarks in the net (see _net_value)
-
-
-def _net_value(k: str, v: float) -> float:
-    """The safe [0,1) contribution of benchmark ``k`` (normalized score ``v``) to the harmonic net. 100% of the
-    benchmarks are included -- NOTHING is excluded (rule: every benchmark exists to be measured AND optimized). A
-    plain capability metric is already in [0,1] (floored at _SCORE_FLOOR so a genuine ~0 does not nuke the mean). An
-    ablation-delta ("_gain", e.g. B56 family-graph-gain, B24 geo-information-gain) is unbounded/ can sit near 0, so a
-    logistic squash maps it to (0,1): it NEVER exceeds 1.0, NEVER forms a below-0 well, and is MONOTONICALLY beneficial
-    to drive up -- optimizing the net therefore optimizes every benchmark, deltas included, even where signal repeats."""
-    if is_diagnostic(k):
-        # Affine map of the signed delta d in [-1,1] -> [0,1]: 0.5 = neutral (no gain / not computed), 1.0 only at a
-        # full +1 gain, 0.0 at a full -1 (graph hurts). Linear so it NEVER exceeds 1, NEVER forms a sub-0 well, is
-        # monotonically beneficial to raise, and — unlike a logistic — leaves FULL headroom (a 0.5 gain sits at 0.75,
-        # not 0.99, so there is real room to improve).
-        return 0.5 + 0.5 * float(np.clip(v, -1.0, 1.0))
-    return max(v, _SCORE_FLOOR)
+def capability_suite(raw: Dict[str, float]) -> tuple[str, ...]:
+    """Human capabilities eligible for the two headline means."""
+    return tuple(sorted(k for k in normalized(raw)
+                        if not is_diagnostic(k) and k not in QUARANTINED_BENCHMARKS))
 
 
 def net_score(raw: Dict[str, float]) -> float:
-    """North star = HARMONIC mean (power mean p=-1) of ALL active benchmarks -- capabilities AND ablation-deltas
-    (deltas safely renormalized by _net_value so their inclusion can only help, never nuke). Harmonic so lifting the
-    WEAKEST benchmark helps most and none can be sacrificed for another; 100% inclusion so a champion must carry the
-    entire suite, not a favoured subset."""
-    vals = [_net_value(k, v) for k, v in normalized(raw).items()]
+    """Harmonic mean of active human capabilities; diagnostics and quarantines remain visible."""
+    normed = normalized(raw)
+    vals = [max(normed[k], _SCORE_FLOOR) for k in capability_suite(normed)]
     if not vals:
         return 0.0
     return float(len(vals) / sum(1.0 / v for v in vals))
 
 
 def arithmetic_net(raw: Dict[str, float]) -> float:
-    """Arithmetic mean of the active CAPABILITY scores -- reported alongside the harmonic north star for legibility
-    (it moves when any benchmark improves, whereas the harmonic mean is dominated by the current weakest)."""
-    vals = [v for k, v in normalized(raw).items() if not is_diagnostic(k)]
+    """Arithmetic breadth guard over the same active human-capability suite."""
+    normed = normalized(raw)
+    vals = [normed[k] for k in capability_suite(normed)]
     return float(sum(vals) / len(vals)) if vals else 0.0
 
 
 def format_benchmarks(raw: Dict[str, float]) -> str:
-    """Render every benchmark's [0,1] score (weakest first, so the binding constraint is on top), plus both the
-    harmonic-mean north star and the arithmetic mean over the active benchmarks."""
+    """Render capabilities first, then every excluded measurement with its role."""
     normed = normalized(raw)
-    caps = {k: v for k, v in normed.items() if not is_diagnostic(k)}
+    caps = {k: normed[k] for k in capability_suite(normed)}
     diags = {k: v for k, v in normed.items() if is_diagnostic(k)}
-    lines = ["benchmark                             score"]
+    quarantined = {k: v for k, v in normed.items() if k in QUARANTINED_BENCHMARKS}
+    lines = [f"BENCHMARK PROTOCOL: {BENCHMARK_PROTOCOL}", "HUMAN CAPABILITIES (weakest first)"]
     for k in sorted(caps, key=lambda k: caps[k]):              # weakest-first: the harmonic mean's binding benchmarks lead
         lines.append(f"  {k:<34} {caps[k]:6.3f}")
-    defined_caps = [b for b in BENCHMARKS if not is_diagnostic(b)]
-    lines.append(f"NET SCORE (harmonic mean of ALL {len(normed)}/{len(BENCHMARKS)} active benchmarks, 100% incl. renormalized deltas): {net_score(raw):.4f}")
-    lines.append(f"  (arithmetic mean: {arithmetic_net(raw):.4f})")
+    defined_caps = [b for b in BENCHMARKS if not is_diagnostic(b) and b not in QUARANTINED_BENCHMARKS]
+    lines.append(f"CAPABILITY HARMONIC ({len(caps)} active): {net_score(raw):.4f}")
+    lines.append(f"CAPABILITY ARITHMETIC: {arithmetic_net(raw):.4f}")
+    if quarantined:
+        lines.append("QUARANTINED (reported raw; excluded from both means):")
+        for k in sorted(quarantined):
+            lines.append(f"  {k:<34} {quarantined[k]:6.3f}  ({QUARANTINED_BENCHMARKS[k]})")
     inactive = [b for b in defined_caps if b not in caps]      # declared but not produced by THIS eval (e.g. B25/B31 need a temporal-holdout run) -- named, never silently dropped
     if inactive:
         lines.append(f"INACTIVE ({len(inactive)} declared capabilities not produced by this eval run):")
         for b in inactive:
             why = "needs holdout: temporal (strictly-future forecast split)" if "forecast" in b else "required inputs/labels absent for this run"
             lines.append(f"  {b:<34} {why}")
-    if diags:                                                  # ablation-delta / information-gain: raw here, logistic-renormalized INTO the net (_net_value)
-        lines.append("ablation-delta / information-gain benchmarks (raw; logistic-renormalized into the net, never excluded):")
+    if diags:
+        lines.append("MECHANISM DIAGNOSTICS (reported raw; excluded from both means):")
         for k in sorted(diags, key=lambda k: -diags[k]):
-            lines.append(f"  {k:<34} {diags[k]:6.3f}  (net contrib {1.0 / (1.0 + math.exp(-diags[k] / _GAIN_SCALE)):.3f})")
+            lines.append(f"  {k:<34} {diags[k]:6.3f}")
     return "\n".join(lines)

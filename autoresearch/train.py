@@ -138,10 +138,11 @@ def train_and_evaluate(config, device):
                       smooth_geo_per_scale=m.get("smooth_geo_per_scale", 32),
                       alphaearth_geo=m.get("alphaearth_geo", False),
                       n_pollinators=getattr(source, "n_pollinators", 0) if m.get("poll_weight", 0.0) > 0 else 0, **poll_kw,
-                      poll_species_idx=(source.poll_idx if m.get("poll_species_mixture", 0.0) > 0 else None),
-                      poll_species_frq=(source.poll_frq if m.get("poll_species_mixture", 0.0) > 0 else None),
+                      poll_species_idx=(source.poll_train_idx if m.get("poll_species_mixture", 0.0) > 0 else None),
+                      poll_species_frq=(source.poll_train_frq if m.get("poll_species_mixture", 0.0) > 0 else None),
                       poll_species_mixture=m.get("poll_species_mixture", 0.0),
                       poll_species_all_masked=m.get("poll_species_all_masked", False),
+                      poll_transfer_holdout=getattr(source, "poll_transfer_holdout", None),
                       phylo_head_routing=m.get("phylo_head_routing", False),
                       species_trait_recon=m.get("species_trait_recon", False),
                       reference_latitude_deg=source.reference_latitude_deg, **species).to(device)
@@ -265,6 +266,8 @@ def train_and_evaluate(config, device):
     eval_ckpt = config.get("_eval_ckpt")
     if eval_ckpt:                                        # score an existing checkpoint: load weights, skip training
         sd = torch.load(eval_ckpt, map_location=device)
+        if getattr(source, "poll_transfer_holdout", None) is not None and "poll_transfer_holdout" not in sd:
+            raise ValueError("checkpoint predates the interaction holdout; retrain before reporting B64")
         model.load_state_dict(sd)
         print(f"loaded checkpoint {eval_ckpt} for eval-only scoring", flush=True)
         steps = 0
@@ -422,6 +425,18 @@ def train_and_evaluate(config, device):
     print(f"benchmark_suite_seconds: {_eval_s:.1f} ({len(source.test)} held-out rows, {len(ev.normalized(raw))} active)", flush=True)
     ns = ev.net_score(raw)
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if device.startswith("cuda") else 0.0
+    receipt = {
+        "protocol": ev.BENCHMARK_PROTOCOL,
+        "seed": int(seed),
+        "steps": int(t.get("steps", steps_done) if eval_ckpt else steps_done),
+        "parameters": sum(p.numel() for p in model.parameters()),
+        "peak_vram_mb": peak_vram_mb,
+        "capability_suite": list(ev.capability_suite(raw)),
+        "scores": raw,
+        "harmonic": ns,
+        "arithmetic": ev.arithmetic_net(raw),
+    }
+    print("BENCHMARK_RECEIPT: " + json.dumps(receipt, sort_keys=True), flush=True)
     if config.get("_tag"):
         print(f"tag:              {config['_tag']}", flush=True)   # parseable run label (matches --tag), so run.log self-identifies
     print(f"net_score:        {ns:.6f}", flush=True)          # parseable north star

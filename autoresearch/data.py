@@ -5,6 +5,7 @@ nearest-neighbor index. Register a new source by adding an adapter and naming it
 """
 from __future__ import annotations
 import csv, glob
+import hashlib
 from pathlib import Path
 from typing import Callable, Dict
 import numpy as np
@@ -189,6 +190,8 @@ class California:
         self.lca_tip_row = blob["lca_tip_row"].to(device) if torch.is_tensor(blob.get("lca_tip_row")) else None
         self.train_index = torch.tensor(self.train, device=device)     # derived: train row indices as a device tensor
         self.has_vision = (self.dino.abs().sum(-1) > 1e-6)             # derived: occurrence-only obs (zeroed vision) are masked (rule 18)
+        if hasattr(self, "poll_idx"):
+            self._set_pollinator_transfer_holdout()
 
     @staticmethod
     def _find_meta(cache: Path):
@@ -367,6 +370,31 @@ class California:
     def _norm_binom(s):                                                                 # genus+species, lowercased (matches build_pollinator.norm)
         p = str(s).split(); return (p[0] + " " + p[1]).lower() if len(p) >= 2 else str(s).strip().lower()
 
+    @staticmethod
+    def _interaction_holdout(names, valid, groups, fraction=0.2):
+        """Deterministic species-level split with a labelled relative left in every represented family."""
+        valid = np.asarray(valid, dtype=bool); groups = np.asarray(groups)
+        held = np.zeros(len(valid), dtype=bool)
+        for group in np.unique(groups[valid]):
+            members = np.flatnonzero(valid & (groups == group))
+            if len(members) < 2:
+                continue
+            ranked = sorted(members, key=lambda i: hashlib.sha256(
+                f"deepearth-pollinator-transfer-v1\0{California._norm_binom(names[i])}".encode()).digest())
+            n = min(len(members) - 1, max(1, int(round(len(members) * fraction))))
+            held[ranked[:n]] = True
+        return held
+
+    def _set_pollinator_transfer_holdout(self):
+        groups = self.class_group.detach().cpu().numpy()
+        held = self._interaction_holdout(self.binomial, self.poll_valid.detach().cpu().numpy(), groups)
+        self.poll_transfer_holdout = torch.as_tensor(held, device=self.poll_valid.device)
+        self.poll_train_valid = self.poll_valid & ~self.poll_transfer_holdout
+        self.poll_train_idx = self.poll_idx.clone()
+        self.poll_train_frq = self.poll_frq.clone()
+        self.poll_train_idx[self.poll_transfer_holdout] = 0
+        self.poll_train_frq[self.poll_transfer_holdout] = 0
+
     def _load_pollinator(self, cache, dev, topk=40):
         """Per-species-class marginal pollinator distribution (GloBI): class -> top-k pollinator vocab indices + freqs.
         Bridges the model's species (self.binomial) to the pollinator file's plant_idx by normalized binomial."""
@@ -394,7 +422,9 @@ class California:
                 if s > 0: ci[c] = idx; cf[c] = f / s; cv[c] = True
         self.poll_idx = torch.tensor(ci, device=dev); self.poll_frq = torch.tensor(cf, device=dev)
         self.poll_valid = torch.tensor(cv, device=dev)
-        print(f"pollinator loaded: {int(cv.sum())}/{self.n_classes} species have GloBI pollinators; vocab {self.n_pollinators}", flush=True)
+        self._set_pollinator_transfer_holdout()
+        print(f"pollinator loaded: {int(cv.sum())}/{self.n_classes} labelled species; "
+              f"{int(self.poll_transfer_holdout.sum())} held out for transfer; vocab {self.n_pollinators}", flush=True)
 
     def _frame(self, idx):
         lat = self.lat.cpu().numpy()[idx]; lon = self.lon.cpu().numpy()[idx]; elev = self.elev.cpu().numpy()[idx]
@@ -446,8 +476,9 @@ class California:
         if hasattr(self, "sdist_idx"):                                    # local species distribution (KL/community aux loss)
             values["_sdist_idx"] = self.sdist_idx[idx]; values["_sdist_frq"] = self.sdist_frq[idx]
         if hasattr(self, "poll_idx"):                                     # per-species pollinator distribution (GloBI aux loss)
-            c = self.cls[idx]; values["_poll_idx"] = self.poll_idx[c]; values["_poll_frq"] = self.poll_frq[c]
-            values["_poll_valid"] = self.poll_valid[c]
+            c = self.cls[idx]
+            values["_poll_idx"] = self.poll_train_idx[c]; values["_poll_frq"] = self.poll_train_frq[c]
+            values["_poll_valid"] = self.poll_train_valid[c]
         if hasattr(self, "lfmc"):                                         # per-species live fuel moisture (B34 aux head)
             c = self.cls[idx]; values["_lfmc"] = self.lfmc[c]; values["_lfmc_valid"] = self.lfmc_valid[c]
         if hasattr(self, "myco"):                                         # per-species mycorrhizal type (B42 symbiosis head)
