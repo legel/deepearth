@@ -17,7 +17,7 @@ Code: `ranges/joint/` (`prepare`, `scope`, `tree`, `model`, `field` with its CUD
 points `scripts/national_prepare.py`, `national_plots.py`, `national_scope.py`, `national_snap.py`,
 `national_field.py`, `build_shoreline.py`, `build_climate_fill.py`, `national_train.py`, `national_cache.py`,
 `national_store.py`, `national_store_eval.py`; configuration `configs/conus.json`. The measurements and decisions
-behind every choice are logged in `docs/scientific_provenance.md` (entries of 2026-10-04 to 2026-10-06). The model was
+behind every choice are logged in `docs/scientific_provenance.md` (entries of 2026-10-04 to 2026-10-07). The model was
 developed on all 18,600 US natives (CONUS, Alaska and Hawaii; run `national_final`, store `cards_national_klt`); on
 2026-10-05 the product was restricted to CONUS and retrained with the same settings (run `conus_final`, store
 `cards_conus_klt`). Numbers below are for the CONUS product unless they name another run.
@@ -294,8 +294,9 @@ pyproj on samples of up to 2 million CONUS points), so a record reads exactly it
 **Perceptive fields.** DeepEarth's Entropy4D design builds a representation from perceptive fields, encoders with a
 learnable position, extent and shape in space and time; the static, purely spatial case used here is called
 Entropy3D. Around x: the centre (the values at x) and R = 8 rings at learnable radii r_j = exp(rho_j), initially
-1, 2, 4, ..., 128 cells (0.24 to 31 km; the trained national model reads 0.22, 0.46, 1.04, 1.96, 3.65, 7.61, 15.07,
-28.35 km). Ring j is read at A = 8 angles theta_a = 2 pi a / A (a = 0 north, clockwise) at
+1, 2, 4, ..., 128 cells (0.24 to 31 km; the trained representation `rep_np256_s0` behind the published maps reads
+0.22, 0.45, 1.05, 1.97, 3.66, 7.64, 14.95, 28.50 km). Ring j is read at A = 8 angles theta_a = 2 pi a / A (a = 0
+north, clockwise) at
 
     (row, column) = (row_x - r_j cos theta_a, column_x + r_j sin theta_a),
 
@@ -327,9 +328,15 @@ recomputed in the backward pass.
 
 Benchmark, from the environment model with the background of section 6.3 (unclipped dev/test/> 10 km/AIM/FIA): at
 250 steps 0.9431/0.9527/0.9145/0.9392/0.9411 with the field against 0.9410/0.9514/0.9111/0.9363/0.9415 without; at
-1,000 steps (a 17-channel field) dev +0.003, test +0.002, > 10 km +0.005, AIM +0.003, FIA -0.001. The 17-channel
+1,000 steps (a 17-channel field) dev +0.003, test +0.0024, > 10 km +0.0048, AIM +0.003, FIA -0.0013. The 17-channel
 field (adding SoilGrids and distance to the coast), wider rings (to ~120 km) and 22 channels with NALCMS land cover
 were draws with the 12-channel field, which is kept.
+
+Against the retrained SINR env on identical tests (share of tests where ours is higher, all plots / > 10 km from
+training records; every pathway trained jointly for 1,000 steps, before the shoreline fill of section 6.6 and the
+species stage of section 6.7): base 53.1% / 47.4%, + place 54.1% / 48.4%, + field 56.8% / 50.6% (the 17-channel
+field), both 56.9% / 52.2%. The field carries most of the gain; on top of it, place adds mainly beyond 10 km
+(+1.6 points).
 
 ### 6.5 Place
 
@@ -380,8 +387,8 @@ can be computed once (`cache.py`) and a step costs only the species' dot product
 | Stage | What is trained | Data | Settings |
 |---|---|---|---|
 | base | the environment model (sections 2 to 4) | 2,661-species benchmark | 3,000 steps, lr 0.001 (run `l22_base_s0`) |
-| representation | every pathway, started from the base run's final weights (new pathways at zero) | benchmark | 1,000 steps, 256 presences per species a step, lr 0.0003 (place network 0.001), target-group + 512 continental background points, field, place (256), learned penalty (run `rep_np256_s0`) |
-| species | every species parameter (z, u, b, z_p, z_c) from scratch, and c_0; shared networks and input standardization fixed | the 16,448 CONUS species, restored shoreline records, filled plots | 6,000 steps, 256 presences per species a step, lr 0.001, weight decay 1 on the branch vectors, on cached features of 15.37 million record rows (156 s; run `nat_repnp_s2`) |
+| representation | every pathway, started from the base run's final weights (new pathways at zero) | benchmark | 1,000 steps, 256 presences per species a step, lr 0.0003 (place network 0.001), target-group + 512 continental background points, field, place (256), learned penalty (55 min on one RTX 3090; run `rep_np256_s0`) |
+| species | every species parameter (z, u, b, z_p, z_c) from scratch, and c_0; shared networks and input standardization fixed | the 16,448 CONUS species, restored shoreline records, filled plots | 6,000 steps, 256 presences per species a step, lr 0.001, weight decay 1 on the branch vectors, on cached features of 15.37 million record rows (156 s on one RTX 3090; run `nat_repnp_s2`) |
 
 The shared networks are species-independent, so the representation learned on the 2,661-species benchmark serves
 the national species stage. Re-learning every species parameter on the fixed representation beats the jointly
@@ -423,7 +430,7 @@ BLM AIM, FIA; median AUC per species, scores served as the maps serve them, i.e.
 | Model | VegBank dev | VegBank test | > 10 km | AIM | FIA |
 |---|---|---|---|---|---|
 | full model, national species stage (`nat_repnp_s2`, 16,448 species) | 0.9581 | 0.9671 | 0.9382 | 0.9363 | 0.9527 |
-| the same with 64 presences per species a step (`nat_arm4_s2`, published 2026-10-06) | 0.9565 | 0.9658 | 0.9354 | 0.9344 | 0.9510 |
+| the same with 64 presences per species a step (`nat_arm4_s2`, published 2026-10-06 as store `cards_sota_klt`, since replaced) | 0.9565 | 0.9658 | 0.9354 | 0.9344 | 0.9510 |
 | environment model (`conus_final`; the comparison recorded with it, provenance 2026-10-06 06:45) | 0.9434 | 0.9556 | 0.9162 | 0.9209 | 0.9391 |
 
 Against every published product, on identical tests (plots filled, proximity masks extended to the restored
@@ -433,6 +440,10 @@ median 0.9580 against 0.9512, ours higher in 66.8% (p = 2e-140; the environment 
 coordinates-only 75.7%, SINR distilled 78.1%, iNaturalist range maps 98.6%, iNaturalist geomodel 90.4%, BIEN 98.4%,
 Daru (2024) 94.6% (median +0.046). For the model with 64 presences per step, scoring the broad taxon where a name's
 usage clearly spans segregate species (74 tests) gave 62.8% instead of 63.1%.
+
+A second seed of the national species stage (seed 1, same representation; a check, not used for selection) gives
+0.9580/0.9670/0.9379/0.9359/0.9519 and beats SINR env in 66.3% of the tests (beyond 10 km 60.8%) against 66.8%
+(60.8%) for seed 0: seed variation is about ±0.5 points on these shares and below 0.001 in median AUC.
 
 These are the model's own scores; the maps as stored (`cards_final_klt`) are evaluated in section 8.
 
@@ -515,8 +526,9 @@ is 16.7 GB, with a median VegBank AUC of 0.9506 as stored against 0.9505 for the
 
 ## 8. Results of the stored maps
 
-Evaluated exactly as stored and served (`scripts/national_store_eval.py plots`; species with at least 20 presence
-plots; for `cards_final_klt` every plot with climate, outside the species' calibration ecoregions lowered by its learned
+Evaluated exactly as stored and served (`scripts/national_store_eval.py plots`; VegBank 53,797, BLM AIM 71,056 and
+USFS FIA 316,032 plots, 440,885 in all, none used in training; species with at least 20 presence plots; for
+`cards_final_klt` every plot with climate, outside the species' calibration ecoregions lowered by its learned
 penalty, as the maps serve it), against the maps Daru (2024) published and the per-species MaxEnt maps of the same
 species, at the same plots:
 

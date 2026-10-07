@@ -4,8 +4,8 @@ Species distribution models for the 16,942 vascular plant species native to the 
 resolution. One neural model is fitted jointly to the 16,448 species with usable GBIF occurrence records (179 million
 presence and sampling-effort-weighted background points, and 88,042 shoreline presences restored with the nearest
 climate), with the MaxEnt point-process likelihood. It reads WorldClim 2.1 climate and SoilGrids 2.0 soil at a
-location, the landscape around it (circular harmonics of the 240 m terrain and climate field on rings out to about
-30 km) and the location itself (SINR's coordinate network), learns how strictly each species keeps to the ecoregions
+location, the landscape around it (Entropy3D: the 240 m terrain and climate field read on rings out to about 30 km)
+and the location itself (SINR's coordinate network), learns how strictly each species keeps to the ecoregions
 holding its records, and shares all of it among related species through a Brownian-motion prior along a dated
 phylogeny; the 494 species without records are inferred from their relatives. The pipeline reproduces and extends the
 global native-range method of Daru (2024, *PNAS*,
@@ -13,8 +13,8 @@ global native-range method of Daru (2024, *PNAS*,
 maps reach a median AUC of 0.963 (VegBank), 0.935 (BLM AIM) and 0.951 (USFS FIA). Against SINR with environmental
 inputs (Cole et al. 2023, retrained with its authors' code and data), the strongest published model, they score
 higher in 65.9 % of 4,282 species-by-plot-set tests (median AUC 0.957 vs 0.951; 60.2 % of the tests beyond 10 km
-from training records), and above Daru's published maps in 95 % of 259 tests. All maps are stored in 6.01 GB and
-decoded on a CPU.
+from training records), and above Daru's published maps (~18 km cells) in 94.6 % of 259 tests. All maps are stored in
+6.01 GB and decoded on a CPU.
 
 Method: [docs/joint_model.md](docs/joint_model.md). Every decision, dated, with the measurement behind it:
 [docs/scientific_provenance.md](docs/scientific_provenance.md).
@@ -29,58 +29,77 @@ Data and calibration (per species; [`pipeline.py` `run_species`](ranges/pipeline
 | cleaning | CoordinateCleaner 3.0.1 (capitals, centroids, equal, GBIF, institutions within 100 m, outliers, seas, zeros, duplicates); on the native records alone when the outlier test removes the native cluster (provenance D11) | [`clean_coordinates.R`](ranges/r/clean_coordinates.R), [`clean_species`](ranges/pipeline.py#L205) |
 | native filter | records inside the species' WCVP native level-3 areas (WGSRPD) | [`occurrences.py` `native_filter`](ranges/occurrences.py#L65) |
 | thinning | one record per 30″ (~1 km) predictor cell at ≥ 5 localities; 1 to 4 localities topped up to 50 points within 30 km (provenance D3) | [`grid_thin`](ranges/occurrences.py#L71) |
-| calibration area | $C_s$ = the RESOLVE ecoregions containing the species' cleaned records, lakes excluded (provenance D8) | [`calibration_cells`](ranges/pipeline.py#L178) |
-| sampling effort | $\hat\lambda(x) \propto \sum_i n_i\, \phi\!\left(\frac{x_1 - u_{i1}}{h_1}\right) \phi\!\left(\frac{x_2 - u_{i2}}{h_2}\right)$, $h_k = 1.06 \min(\sigma_k, \mathrm{IQR}_k / 1.34)\, n^{-1/5}$, over 524.6 million GBIF vascular-plant records in ~9 km cells, Behrmann 10 km grid, scaled to 0..1 (spatialEco `sp.kde`) | [`background.py` `silverman_bandwidth`](ranges/background.py#L32), [`bias_grid`](ranges/background.py#L41) |
-| background | 10,000 ~1 km cells of $C_s$ drawn without replacement with probability $\propto \hat\lambda$ (all cells if fewer) | [`sample_background_index`](ranges/background.py#L72) |
-| predictors | WorldClim 2.1 bio1 to bio19 and elevation at 30″, screened per species by stepwise variance inflation, $\mathrm{VIF}_j = [R^{-1}]_{jj} < 5$ (`usdm::vifstep`) | [`modelling.py` `vifstep`](ranges/modelling.py#L40) |
+| calibration area | $`K_s`$ = the RESOLVE ecoregions containing the species' cleaned records, lakes excluded (provenance D8) | [`calibration_cells`](ranges/pipeline.py#L178) |
+| sampling effort | $`\hat\lambda(x) \propto \sum_i n_i\, \phi\!\left(\frac{x_1 - u_{i1}}{h_1}\right) \phi\!\left(\frac{x_2 - u_{i2}}{h_2}\right)`$, $`h_k = 1.06 \min(\sigma_k, \mathrm{IQR}_k / 1.34)\, n^{-1/5}`$, over 524.6 million GBIF vascular-plant records in ~9 km cells, Behrmann 10 km grid, scaled to 0..1 (spatialEco `sp.kde`) | [`background.py` `silverman_bandwidth`](ranges/background.py#L32), [`bias_grid`](ranges/background.py#L41) |
+| background | 10,000 ~1 km cells of $`K_s`$ drawn without replacement with probability $`\propto \hat\lambda`$ (all cells if fewer) | [`sample_background_index`](ranges/background.py#L72) |
+| predictors | WorldClim 2.1 bio1 to bio19 and elevation at 30″, screened per species by stepwise variance inflation, $`\mathrm{VIF}_j = [R^{-1}]_{jj} \lt 5`$ (`usdm::vifstep`) | [`modelling.py` `vifstep`](ranges/modelling.py#L40) |
 
 The per-species model (MaxEnt, as fitted by maxent.jar 3.4.4 or its exact PyTorch reimplementation,
 [docs/maxent_torch.md](docs/maxent_torch.md)):
 
 | process | equation | code |
 |---|---|---|
-| MaxEnt | $S(x) = \sum_j \lambda_j f_j(x)$ over linear, threshold and hinge features of the clamped predictors; $\mathrm{raw} = e^{S(x) - S_0} / Z$, $\mathrm{cloglog} = 1 - \exp(-e^{H} \mathrm{raw})$; $\beta \in \{2, 5, 10, 15, 20\}$ by 5-fold CV, then 5 replicates | [`maxent.py` `linear_predictor`](ranges/maxent.py#L122), [`cloglog`](ranges/maxent.py#L158), [`modelling.py` `fit_species`](ranges/modelling.py#L142) |
-| maps | suitability $1 + \mathrm{round}(254\, \mathrm{median}_r\, p_r(x))$; range: the replicates' median at least the median of their 5th-percentile training-presence thresholds (P5), or Daru's per-replicate majority vote | [`project.py` `compute_maps`](ranges/project.py#L44) |
+| MaxEnt | $`S(x) = \sum_j \lambda_j f_j(x)`$ over linear, threshold and hinge features of the clamped predictors; $`\mathrm{raw} = e^{S(x) - S_0} / Z`$, $`\mathrm{cloglog} = 1 - \exp(-e^{H} \mathrm{raw})`$; $`\beta \in \{2, 5, 10, 15, 20\}`$ by 5-fold CV, then 5 replicates | [`maxent.py` `linear_predictor`](ranges/maxent.py#L122), [`cloglog`](ranges/maxent.py#L158), [`modelling.py` `fit_species`](ranges/modelling.py#L142) |
+| maps | suitability $`1 + \mathrm{round}(254\, \mathrm{median}_r\, p_r(x))`$; range: the replicates' median at least the median of their 5th-percentile training-presence thresholds (P5), or Daru's per-replicate majority vote | [`project.py` `compute_maps`](ranges/project.py#L44) |
 
-The joint model ([`ranges/joint`](ranges/joint)), first its environment part (the published model of 2026-10-05,
-store `cards_conus_klt`):
+The joint model ([`ranges/joint`](ranges/joint)), first its environment part (the environment model, published on
+2026-10-05 as store `cards_conus_klt` and since superseded by the full model below):
 
 | process | equation | code |
 |---|---|---|
-| inputs | $z = \mathrm{clip}\!\left(\frac{t(X) - \mu}{\sigma}, -6, 6\right)$ over the 20 WorldClim layers and SoilGrids 2.0 topsoil pH, clay, sand and organic carbon (7.5″), $t = \log(1 + \cdot)$ for precipitation and carbon, $\mu, \sigma$ over the background; a missing soil value becomes 0 and sets one flag input | [`data.py` `Standardizer`](ranges/joint/data.py#L101) |
-| score | $f_s(x) = \langle h(x), w_s \rangle + b_s$, $h = \mathrm{trunk}(\mathrm{env}(z))$ of width 256, its last LayerNorm without scale fixing $\lVert h \rVert = 16$ | [`model.py` `JointRangeModel`](ranges/joint/model.py#L67), [`forward`](ranges/joint/model.py#L168) |
-| phylogenetic prior | $w_s = \sum_{e \in \mathrm{root} \to s} \sqrt{l_e / \bar l}\; z_e + u_s$, weight decay 0.01 on the branch vectors $z_e$ (a Brownian random walk along the dated tree), 0.0001 on the species terms $u_s$ | [`tree.py` `path_matrix`](ranges/joint/tree.py#L121), [`species_vectors`](ranges/joint/model.py#L117) |
-| objective | $L_s = -\frac{1}{\lvert P_s \rvert}\sum_{p \in P_s} f_s(p) + \log \frac{1}{\lvert P_s \cup B_s \rvert}\sum_{a \in P_s \cup B_s} e^{f_s(a)}$ (MaxEnt's point-process likelihood, presences in the normalizer), 256 species × (64 presences + 1,024 background points) a step, AdamW, 21,000 steps | [`train.py` `train`](ranges/joint/train.py#L332) |
-| species without records | $w_m = \sum_{e \in \mathrm{root} \to x} \sqrt{l_e / \bar l}\; z_e$, $x$ the node where $m$ joins its closest trained relatives $R_m$; $b_m = \overline{b}_{R_m}$; $C_m$ = ecoregions with ≥ 10 % of their area in $m$'s WCVP native areas | [`zero_shot.py` `infer_species`](ranges/joint/zero_shot.py#L74), [`l3_ecoregions`](ranges/joint/zero_shot.py#L40) |
-| region | training points in Alaska (with the Aleutians, 0.05° buffer) and Hawaii removed, points in native ranges abroad kept; a CONUS native whose $C_s$ misses the CONUS grid gains the ecoregions of its native areas there | [`scope.py` `restrict`](ranges/joint/scope.py#L57), [`extend_calibration`](ranges/joint/scope.py#L138) |
-| transform coding | $y(x) = (h(x) - \mu) M^{1/2} V$, $r_s = V^\top M^{-1/2} w_s$, $o_s = \langle \mu, w_s \rangle + b_s$, $M = W^\top W$, $V$ the eigenvectors of the feature covariance in that metric: $f_s = \langle y, r_s \rangle + o_s$ exactly and $\sum_s r_s r_s^\top = I$ | [`store.py` `klt`](ranges/joint/store.py#L168) |
-| stored field | $q(x) = \mathrm{round}(y(x) / \Delta)$, $\Delta = 3.2$; the total squared score error of a cell over all species is $\lVert y - \Delta q \rVert^2 \le 256\, (\Delta/2)^2$; 128 × 128-cell tiles, int16/int8 byte planes, zstd | [`write_field`](ranges/joint/store.py#L248), [`KltWriter`](ranges/joint/store.py#L204) |
-| suitability | $1 + \#\{k : Q_{s,k} < f_s(x)\}$ (1..255), $Q_s$ 254 quantiles of $f_s$ over the species' background; 0 outside $C_s$ or without climate | [`reader.py` `suitability_of`](ranges/joint/reader.py#L254) |
-| range | $f_s(x) \ge \mathrm{P5}_s$ inside $C_s$, $\mathrm{P5}_s$ the 5th percentile of $f_s$ over its training presences | [`in_range`](ranges/joint/reader.py#L273) |
+| inputs | $`z = \mathrm{clip}\!\left(\frac{t(X) - \mu}{\sigma}, -6, 6\right)`$ over the 20 WorldClim layers and SoilGrids 2.0 topsoil pH, clay, sand and organic carbon (7.5″), $`t = \log(1 + \cdot)`$ for precipitation and carbon, $`\mu, \sigma`$ over the background; a missing soil value becomes 0 and sets one flag input | [`data.py` `Standardizer`](ranges/joint/data.py#L101) |
+| score | $`f_s(x) = \langle h(x), w_s \rangle + b_s`$, $`h = \mathrm{trunk}(\mathrm{env}(z))`$ of width 256, its last LayerNorm without scale fixing $`\lVert h \rVert = 16`$ | [`model.py` `JointRangeModel`](ranges/joint/model.py#L67), [`forward`](ranges/joint/model.py#L168) |
+| phylogenetic prior | $`w_s = \sum_{e \in \mathrm{root} \to s} \sqrt{l_e / \bar l}\; z_e + u_s`$, weight decay 0.01 on the branch vectors $`z_e`$ (a Brownian random walk along the dated tree), 0.0001 on the species terms $`u_s`$ | [`tree.py` `path_matrix`](ranges/joint/tree.py#L121), [`species_vectors`](ranges/joint/model.py#L117) |
+| objective | $`L_s = -\frac{1}{\lvert P_s \rvert}\sum_{p \in P_s} f_s(p) + \log \frac{1}{\lvert P_s \cup B_s \rvert}\sum_{a \in P_s \cup B_s} e^{f_s(a)}`$ (MaxEnt's point-process likelihood, presences in the normalizer), 256 species × (64 presences + 1,024 background points) a step, AdamW, 21,000 steps | [`train.py` `train`](ranges/joint/train.py#L332) |
+| species without records | $`w_m = \sum_{e \in \mathrm{root} \to x} \sqrt{l_e / \bar l}\; z_e`$, $`x`$ the node where $`m`$ joins its closest trained relatives $`R_m`$; $`b_m = \overline{b}_{R_m}`$; $`K_m`$ = ecoregions with ≥ 10 % of their area in $`m`$'s WCVP native areas | [`zero_shot.py` `infer_species`](ranges/joint/zero_shot.py#L74), [`l3_ecoregions`](ranges/joint/zero_shot.py#L40) |
+| region | training points in Alaska (with the Aleutians, 0.05° buffer) and Hawaii removed, points in native ranges abroad kept; a CONUS native whose $`K_s`$ misses the CONUS grid gains the ecoregions of its native areas there | [`scope.py` `restrict`](ranges/joint/scope.py#L57), [`extend_calibration`](ranges/joint/scope.py#L138) |
+| transform coding | $`y(x) = (h(x) - \mu) M^{1/2} V`$, $`r_s = V^\top M^{-1/2} w_s`$, $`o_s = \langle \mu, w_s \rangle + b_s`$, $`M = W^\top W`$, $`V`$ the eigenvectors of the feature covariance in that metric: $`f_s = \langle y, r_s \rangle + o_s`$ exactly and $`\sum_s r_s r_s^\top = I`$ | [`store.py` `klt`](ranges/joint/store.py#L168) |
+| stored field | $`q(x) = \mathrm{round}(y(x) / \Delta)`$, $`\Delta = 3.2`$; the total squared score error of a cell over all species is $`\lVert y - \Delta q \rVert^2 \le 256\, (\Delta/2)^2`$; 128 × 128-cell tiles, int16/int8 byte planes, zstd | [`write_field`](ranges/joint/store.py#L248), [`KltWriter`](ranges/joint/store.py#L204) |
+| suitability | $`1 + \#\{k : Q_{s,k} \lt f_s(x)\}`$ (1..255), $`Q_s`$ 254 quantiles of $`f_s`$ over the species' background; 0 outside $`K_s`$ or without climate | [`reader.py` `suitability_of`](ranges/joint/reader.py#L254) |
+| range | $`f_s(x) \ge \mathrm{P5}_s`$ inside $`K_s`$, $`\mathrm{P5}_s`$ the 5th percentile of $`f_s`$ over its training presences | [`in_range`](ranges/joint/reader.py#L273) |
 
 The model behind the stored maps ([docs/joint_model.md](docs/joint_model.md) section 6; configured in `joint.stages`,
 map store `cards_final_klt`) adds to these:
 
 | process | equation | code |
 |---|---|---|
-| score | $f_s(x) = \langle h(x) + G(C(x)), w_s \rangle + \langle P(x), v_s \rangle + b_s - \pi_s [x \notin C_s]$, with $v = A z_p$ and $\pi = \mathrm{softplus}(A z_c + c_0)$ under the Brownian prior | [`model.py` `scores`](ranges/joint/model.py#L152) |
-| landscape field | rings at learned radii $r_j$ (0.24 to 31 km at the start) read at 8 angles on a 12-channel 240 m pyramid; per ring and channel $a_0 = \frac{1}{n}\sum_a d_a$, $a_m, b_m = \frac{2}{n}\sum_a d_a (\cos, \sin)(m\theta_a)$, $m \le 3$, their magnitudes and the missing share, $d_a = v(\theta_a) - v(x)$; attention over the ring tokens pools $C(x)$ | [`field.py` `HarmonicField`](ranges/joint/field.py#L267), [`ring_sums_reference`](ranges/joint/field.py#L176) |
-| place | SINR's coordinate network on $(\sin, \cos)(\pi\,\mathrm{lon}/180)$, $(\sin, \cos)(\pi\,\mathrm{lat}/90)$ | [`place.py` `SinrPlace`](ranges/joint/place.py#L29) |
+| score | $`f_s(x) = \langle h(x) + G(C(x)), w_s \rangle + \langle P(x), v_s \rangle + b_s - \pi_s [x \notin K_s]`$, with $`v = A z_p`$ and $`\pi = \mathrm{softplus}(A z_c + c_0)`$ under the Brownian prior; $`[x \notin K_s]`$ is 1 outside the species' calibration area, else 0 | [`model.py` `scores`](ranges/joint/model.py#L152) |
+| landscape field (Entropy3D) | 8 rings at learned radii $`r_j`$ (1 to 128 cells, 0.24 to 31 km, at the start; 0.22 to 28.5 km trained) read at 8 angles $`\theta_a`$ on a 12-channel 240 m pyramid; per ring and channel $`a_0 = \frac{1}{n}\sum_a d_a`$, $`a_m, b_m = \frac{2}{n}\sum_a d_a (\cos, \sin)(m\theta_a)`$, $`m \le 3`$, their magnitudes and the ring's missing share, $`d_a = v(\theta_a) - v(x)`$; the ring tokens and a centre token (the values at $`x`$) pass two self-attention blocks, 4 learned queries pool them into $`C(x)`$, and $`G`$, a two-layer network whose last layer starts at zero, maps $`C(x)`$ to the 256 environment features | [`field.py` `HarmonicField`](ranges/joint/field.py#L267), [`ring_sums_reference`](ranges/joint/field.py#L176) |
+| place | SINR's coordinate network on $`(\sin, \cos)(\pi\,\mathrm{lon}/180)`$, $`(\sin, \cos)(\pi\,\mathrm{lat}/90)`$ | [`place.py` `SinrPlace`](ranges/joint/place.py#L29) |
 | background | each background point moves to the nearest record of another species; each species also draws 512 continental background points per step | [`prepare.py` `snap_to_records`](ranges/joint/prepare.py#L312), [`train`](ranges/joint/train.py#L332) |
 | shoreline | a location without climate takes the 20 WorldClim bands of the nearest place with climate within 5 km; dropped shoreline presences restored | [`climate_fill.py` `fill_points`](ranges/joint/climate_fill.py#L53), [`shoreline.py` `restore_records`](ranges/joint/shoreline.py#L57) |
-| stages | environment model; every pathway for 1,000 steps from it; every species parameter for 6,000 steps on the cached features of the fixed representation; these two stages draw 256 presences per species a step | [`cache.py` `build_cache`](ranges/joint/cache.py#L41) |
-| maps | served score $f_s(x) - \pi_s [x \notin C_s]$ wherever there is climate | [`reader.py` `served`](ranges/joint/reader.py#L246) |
+| stages | base: the environment model on the 2,661-species benchmark, 3,000 steps (`l22_base_s0`); representation: every pathway for 1,000 steps from it, 55 min on one RTX 3090 (`rep_np256_s0`); species: every parameter of the 16,448 species for 6,000 steps on the cached features of the fixed representation, 156 s (`nat_repnp_s2`); the last two stages draw 256 presences per species a step | [`cache.py` `build_cache`](ranges/joint/cache.py#L41) |
+| maps | stored as above with the 512 features $`[h + G(C) \mid P]`$ and species vectors $`[w_s \mid v_s]`$ (error bound $`512\, (\Delta/2)^2`$); served score $`f_s(x) - \pi_s [x \notin K_s]`$ wherever there is climate | [`reader.py` `served`](ranges/joint/reader.py#L246) |
+
+**The landscape field (Entropy3D).** The environment network reads climate and soil in a location's own cell, but
+what a plant meets there also depends on the surroundings: a ridge or a valley, the foot of a mountain range or the
+middle of a basin, a coastline. Entropy3D reads them from the raw 240 m field: 12 channels of terrain (elevation,
+slope, northness, eastness, topographic position) and climate (three lapse-rate-corrected temperatures, temperature
+seasonality, three precipitation measures), sampled around each place on 8 rings whose radii the model learns. Each
+ring is summarized by circular harmonics of its difference from the centre: order 0 says whether the place lies
+higher or lower than its surroundings at that distance, order 1 a slope across the ring, order 2 a ridge or valley
+through the place, order 3 a three-fold pattern; their strengths regardless of direction and the share of the ring
+that is sea or off the grid are kept too. Attention lets each ring read the others (a valley inside a plateau is not
+a valley inside a plain) and pools them into $`C(x)`$; $`G(C(x))`$ is added to the environment features $`h(x)`$, so each
+species reads its surroundings through its own niche vector $`w_s`$. The name comes from DeepEarth's Entropy4D design,
+which builds representations from perceptive fields (encoders whose position, extent and shape in space and time are
+learned); this is its static case on the map and the terrain. One CUDA kernel computes every ring of every location,
+with analytic gradients for the radii. Details: [docs/joint_model.md](docs/joint_model.md) section 6.4; its contribution
+is under Results.
 
 ## Departures from Daru (2024)
 
 | | Daru (2024) | here |
 |---|---|---|
 | presences | 500 lattice points over an alpha hull | the cleaned, thinned occurrence records |
-| predictors | WorldClim 2.1 at ~9 km | WorldClim 2.1 at ~1 km, SoilGrids 2.0 at ~230 m |
-| model | one MaxEnt per species | one joint model, MaxEnt's likelihood, phylogenetic prior, landscape field and place |
+| predictors | WorldClim 2.1 at 5′ (~9 km) | WorldClim 2.1 at ~1 km, SoilGrids 2.0 at ~230 m; terrain and climate at 240 m on rings up to ~30 km around each place (Entropy3D) |
+| model | one MaxEnt per species | one joint model, MaxEnt's likelihood, phylogenetic prior, landscape field (Entropy3D) and place |
 | calibration area | maps clipped to it | a learned per-species penalty outside it |
 | species without records | not mapped | inferred from relatives on the dated tree |
-| maps | ~18 km | 240 m |
+| maps | 10′ (~18 km), as published on Dryad | 240 m: 75× finer than the published maps (37× finer than Daru's ~9 km modelling grain) |
+
+Daru (2024) reports modelling at 5′ (~9 km); the per-species maps published on Dryad (10,000 species) are 10′
+(~18 km), and these are the maps compared here.
 
 Names, cleaning, the native filter, thinning, calibration areas and the sampling-effort background follow Daru step by
 step; a faithful replica of his per-species pipeline (`scripts/run_fit.py --modes daru`) is kept as the reference.
@@ -90,8 +109,9 @@ step; a faithful replica of his per-species pipeline (`scripts/run_fit.py --mode
 Median AUC of the stored maps on plots withheld from training, for species with ≥ 20 presence plots, the maps scored
 as they are served (outside a species' calibration ecoregions its score is lowered by its learned penalty); Daru's
 maps and per-species MaxEnt scored on the same plots ([`national_store_eval.py`](scripts/national_store_eval.py)
-`plots`). VegBank: the Ecological Society of America's vegetation plot archive; BLM AIM: Bureau of Land Management
-monitoring plots (arid West); USFS FIA: Forest Service inventory plots (trees).
+`plots`). VegBank: the Ecological Society of America's vegetation plot archive (53,797 plots); BLM AIM: Bureau of
+Land Management monitoring plots, arid West (71,056); USFS FIA: Forest Service inventory plots, trees (316,032):
+440,885 independent test plots, none used in training.
 
 | plots | species | joint model | vs SINR env: joint / SINR (tests; share better) | vs Daru (2024): joint / Daru (species; share better) | vs per-species MaxEnt: joint / MaxEnt (species; share better) |
 |---|---|---|---|---|---|
@@ -105,7 +125,7 @@ is higher, two-sided Wilcoxon signed-rank p; the research benchmark of docs/scie
 
 | competitor | tests | joint / competitor, median AUC | ours higher | p | > 10 km from training records: ours higher |
 |---|---|---|---|---|---|
-| SINR, coordinates + environment (retrained) | 4,282 | 0.9572 / 0.9512 | 65.9 % | 4e-127 | 60.2 % (p = 6e-55) |
+| SINR, coordinates + environment (retrained) | 4,282 | 0.9572 / 0.9512 | 65.9 % | 4e-127 | 60.2 % of 4,132 (p = 6e-55) |
 | SINR, coordinates only (released) | 4,282 | 0.9572 / 0.9429 | 75.3 % | 2e-287 | 65.5 % |
 | SINR, distilled (released) | 4,282 | 0.9572 / 0.9386 | 77.4 % | < 1e-300 | 63.4 % |
 | iNaturalist range maps | 5,378 | 0.9568 / 0.8744 | 98.4 % | < 1e-300 | 93.2 % |
@@ -114,20 +134,45 @@ is higher, two-sided Wilcoxon signed-rank p; the research benchmark of docs/scie
 | Daru (2024) | 259 | 0.9536 / 0.8962 | 94.6 % | 5e-39 | 82.7 % |
 
 Against SINR env by plot set (all plots / beyond 10 km from training records): AIM 72.5 % / 68.6 %, VegBank
-63.2 % / 56.1 %, FIA 61.4 % / 60.4 % (p = 0.003).
+63.2 % / 56.1 %, FIA 61.4 % / 60.4 % (p = 0.003). A second seed of the national species stage, judged on the
+model's own scores (before storing), beats SINR env in 66.3 % / 60.8 % of the tests against 66.8 % / 60.8 % for the
+published seed: seed variation is about ±0.5 points.
 
 The map store holds 16,942 species (494 inferred from relatives) in 6.01 GB (a 5.82 GB field and a 0.16 GB species
 table); per test, the stored maps' AUC differs from the full model's by a median 0.0006 (99th percentile 0.010;
-medians 0.9566 and 0.9573 over 5,873 tests). The model's species stage takes 156 s on one RTX 3090. The
-environment-only model published before it (store `cards_conus_klt`) scored 0.951, 0.922 and 0.942 on the same plot
-sets ([docs/joint_model.md](docs/joint_model.md) section 8).
+medians 0.9566 and 0.9573 over 5,873 tests). On one RTX 3090 the representation stage takes 55 min and the species
+stage, which fits all 16,448 species, 156 s. The environment model published before it (store `cards_conus_klt`)
+scored 0.951, 0.922 and 0.942 on the same plot sets ([docs/joint_model.md](docs/joint_model.md) section 8).
+
+What the landscape field and place add, on the 2,661-species benchmark (share of tests where the model beats the
+retrained SINR env; base: the environment model with the background and learned calibration of the full model):
+
+| training | model | ours higher, all plots | > 10 km from training records |
+|---|---|---|---|
+| all pathways jointly, 1,000 steps (before the shoreline fill and the species stage) | base | 53.1 % | 47.4 % |
+| | + place | 54.1 % | 48.4 % |
+| | + Entropy3D field | 56.8 % | 50.6 % |
+| | + both | 56.9 % | 52.2 % |
+| final recipe (256 presences per step, shoreline fill, two stages), benchmark | full model | 66.3 % | 58.5 % |
+| | without place | 64.4 % | 57.5 % |
+| | without Entropy3D | 62.3 % | 55.1 % |
+| final recipe, national species stage (16,448 species) | full model (published) | 66.8 % | 60.8 % |
+| | without place | 66.2 % | 60.1 % |
+| | without Entropy3D | 64.2 % | 58.1 % |
+
+In that run the field raised median AUC over the base by 0.003 (VegBank dev half), 0.0024 (test half), 0.0048
+(> 10 km) and 0.003 (BLM AIM), and lowered it by 0.0013 on FIA; the field-alone run read 17 channels (the 12 plus
+SoilGrids and distance to the coast), which matched the 12-channel field at 250 steps. In the published model,
+removing Entropy3D lowers the share of tests above SINR by 2.6 points nationally (2.7 beyond 10 km; about five times
+the variation between training seeds, ±0.5) and lowers it on every plot source; removing place lowers it by 0.6. The
+field costs most of the representation stage's time (3.2 s a step against 0.25 s without it).
 
 ## Reading the maps in Python
 
 The store holds every species: `store.json`, one `field_conus.zst` with its tile index and validity mask, and
 `species.npz` (codes, offsets, quantiles, P5, calibration ecoregions, the learned penalty outside them, an
-`inferred` flag for species mapped from relatives). Reading needs numpy and zstandard (rasterio and pyproj for the calibration mask and coordinates), and
-the CONUS grid's ecoregion layer `ecoregion_id_conus240.tif` ([`reader.py`](ranges/joint/reader.py)).
+`inferred` flag for species mapped from relatives). Reading needs numpy and zstandard (rasterio and pyproj for the
+calibration mask and coordinates), and the CONUS grid's ecoregion layer `ecoregion_id_conus240.tif` ([`reader.py`](ranges/joint/reader.py)).
 
 ```python
 import sys; sys.path.insert(0, "models/habitat/plant")
@@ -150,7 +195,7 @@ x = −2,493,045 m, y = 3,310,005 m); `st.rowcol` converts longitude and latitud
 
 Everything lives under one data root (`DEEPEARTH_HABITAT_DATA`, default `models/habitat/plant/data`); paths and
 settings of the published run are in [configs/conus.json](configs/conus.json), and every script takes `--config`.
-Steps 1 to 5 run on CPUs (R for step 4), steps 6 to 9 on one CUDA GPU (24 GB).
+Steps 1 to 5 run on CPUs (R for step 4), steps 6 to 10 on one CUDA GPU (24 GB).
 
 ```bash
 cd models/habitat/plant
@@ -196,9 +241,10 @@ python3 scripts/national_store_eval.py bench data/work/deepearth/cards_conus_klt
 python3 scripts/run_fit.py --modes daru,occurrences   # or national_run.py on prepared species
 python3 scripts/validate_vegbank.py && python3 scripts/national_eval.py
 
-# 10. the published maps: the full model (landscape field, place, learned calibration; docs/joint_model.md section 6)
+# 10. the published maps: the full model (landscape field Entropy3D, place, learned calibration; docs/joint_model.md section 6)
 #     and its store (cards_final_klt);
 #     snap, field positions and shoreline run for each data directory a stage trains on (--data-dir)
+scripts/fetch_sources.sh glo90 && python3 scripts/build_fine_stacks.py   # 240 m terrain and climate of the field
 python3 scripts/national_snap.py && python3 scripts/national_field.py
 python3 scripts/build_shoreline.py && python3 scripts/build_climate_fill.py
 python3 scripts/national_train.py --stage base && python3 scripts/national_train.py --stage representation
@@ -207,16 +253,17 @@ python3 scripts/national_store.py build                          # store.model: 
 python3 scripts/national_store_eval.py plots data/work/deepearth/cards_final_klt --out data/work/deepearth/eval_final
 ```
 
-Departures of the published run from a fresh run: 2,663 species took their per-species data from an earlier full
-fit on the first GBIF download; records of 2,672 horticulturally listed species followed the name rule of ledger
-L17, whose list is not public; and the paired MaxEnt baseline used for checkpoint selection came from range cards
-decoded on 2026-10-04 (docs/scientific_provenance.md). The dated tree (`build_tree.py`) and the sampling-effort
-density (`build_bias_grid.py`) reproduce the published ones byte for byte.
+Departures of the published run from a fresh run: 2,663 species took their per-species data from an earlier full fit
+on the first GBIF download; records of 2,672 horticulturally listed species followed the name rule of ledger L17,
+whose list is not public, and the base and representation stages trained on the 2,661 natives of that list with
+records (the benchmark, data directory `work/deepearth`); and the paired MaxEnt baseline used for checkpoint selection
+came from range cards decoded on 2026-10-04 (docs/scientific_provenance.md). The dated tree (`build_tree.py`) and the
+sampling-effort density (`build_bias_grid.py`) reproduce the published ones byte for byte.
 
 Data layout under the root: `raw/` (wcvp, geo, worldclim, trees, gbif_*, validation, dem_glo90), `tools/maxent.jar`,
-`work/` (global30s and conus240 predictor grids, soil, sbm, bias grid, species tables, `natives/` and
-`national/prepared/` per-species products, `deepearth/` tree, training data, runs and the map store),
-`daru_ref_all/` (Daru's maps).
+`work/` (global30s and conus240 predictor grids, `fine/` 240 m terrain and climate stack, soil, sbm, bias grid,
+species tables, `natives/` and `national/prepared/` per-species products, `deepearth/` tree, training data, field
+pyramid, runs and the map stores), `daru_ref_all/` (Daru's maps).
 
 ## Sources
 
@@ -233,7 +280,7 @@ Data layout under the root: `raw/` (wcvp, geo, worldclim, trees, gbif_*, validat
 | plots | VegBank (ESA), BLM AIM, USFS FIA DataMart | public |
 | benchmark maps | Daru (2024), Dryad doi:10.5061/dryad.5x69p8d9w | CC0 |
 | MaxEnt | maxent.jar 3.4.4 (Phillips et al.) | MIT |
-| terrain (fine predictors only) | Copernicus GLO-90 DEM | Copernicus licence |
+| terrain (landscape field, fine predictors) | Copernicus GLO-90 DEM | Copernicus licence |
 
 Maps derived from GBIF records carry the records' attribution and non-commercial terms.
 
