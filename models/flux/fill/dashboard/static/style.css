@@ -1,0 +1,95 @@
+/* FluxFill dashboard. Brand: Ecological Intelligence, Inc. (BRAND.md): white ground, black ink, hairlines,
+   square corners, Cormorant Garamond headlines, Oxygen body, one accent (dark sage). */
+:root {
+  color-scheme: light;
+  --ground: #ffffff; --raised: #f7f7f7; --ink: #000000; --body: #555555; --quiet: #999999;
+  --hair: #e5e5e5; --accent: #6e7355; --wash: #f3f1e7; --sage: #979f76;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+  --band-1: rgba(42, 120, 214, 0.16); --band-2: rgba(42, 120, 214, 0.08);
+  --mask: #f3f1e7; --hidden: #8f8f8f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --ground: #1a1e1a; --raised: #232823; --ink: #f3f1e7; --body: #b8bda0; --quiet: #979f76;
+    --hair: #2b312b; --accent: #b8bda0; --wash: #232823;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    --band-1: rgba(57, 135, 229, 0.22); --band-2: rgba(57, 135, 229, 0.11);
+    --mask: #2a302a; --hidden: #8b9180;
+  }
+  :root:where(:not([data-theme="light"])) .logo-ink { filter: invert(1); }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #1a1e1a; --raised: #232823; --ink: #f3f1e7; --body: #b8bda0; --quiet: #979f76;
+  --hair: #2b312b; --accent: #b8bda0; --wash: #232823;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+  --band-1: rgba(57, 135, 229, 0.22); --band-2: rgba(57, 135, 229, 0.11);
+  --mask: #2a302a; --hidden: #8b9180;
+}
+:root[data-theme="dark"] .logo-ink { filter: invert(1); }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--ground); color: var(--ink); }
+body { font-family: "Oxygen", Helvetica, Arial, sans-serif; font-weight: 300; line-height: 1.6; font-size: 16px; }
+h1, h2, h3 { font-family: "Cormorant Garamond", Georgia, serif; font-weight: 600; font-feature-settings: "lnum" 1;
+  line-height: 1.15; margin: 0 0 0.5em; }
+h1 { font-size: clamp(2.1rem, 5vw, 3.2rem); }
+h2 { font-size: 1.9rem; margin-top: 1.6em; }
+h3 { font-size: 1.35rem; margin-top: 1.4em; }
+p, li, td, th { color: var(--body); }
+strong { color: var(--ink); font-weight: 700; }
+a { color: var(--ink); text-decoration-color: var(--hair); text-underline-offset: 3px; }
+a:hover, a:focus { color: var(--accent); }
+.lead { font-family: "Cormorant Garamond", Georgia, serif; font-style: italic; font-size: 1.4rem; color: var(--body); }
+.kicker { font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--quiet); font-weight: 400; }
+.col { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+header.masthead { border-bottom: 1px solid var(--hair); padding: 18px 0 0; }
+.affils { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; margin-bottom: 18px; }
+.affils img { height: 34px; width: auto; display: block; }
+.authors { margin: 0.4em 0 0; color: var(--body); }
+.authors a { color: var(--body); }
+nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 22px; }
+nav.tabs button { font: inherit; font-size: 0.74rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 400;
+  background: none; border: 0; border-bottom: 2px solid transparent; color: var(--body); padding: 10px 12px; cursor: pointer; }
+nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+nav.tabs button:hover, nav.tabs button:focus-visible { color: var(--accent); outline: none; }
+.theme-toggle { margin-left: auto; }
+
+main { padding: 28px 0 64px; }
+section[role="tabpanel"][hidden] { display: none; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin: 18px 0;
+  border-top: 1px solid var(--hair); border-left: 1px solid var(--hair); }
+.tile { padding: 16px 18px; border-right: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
+.tile .v { font-family: "Cormorant Garamond", Georgia, serif; font-size: 2.2rem; font-weight: 600; color: var(--ink);
+  font-feature-settings: "lnum" 1; }
+.tile .l { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--quiet); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; margin: 14px 0; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+th { font-weight: 400; font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--quiet); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-wrap { overflow-x: auto; }
+.note { font-size: 0.86rem; color: var(--quiet); }
+.pending { border: 1px solid var(--hair); background: var(--raised); padding: 18px; color: var(--body); }
+
+#map { height: 460px; border: 1px solid var(--hair); margin: 16px 0; }
+.legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.84rem; color: var(--body); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+
+.controls { display: flex; gap: 14px; flex-wrap: wrap; align-items: end; margin: 12px 0 18px; }
+.controls label { display: flex; flex-direction: column; font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--quiet); gap: 4px; }
+.controls select, .controls input { font: inherit; font-size: 0.92rem; color: var(--ink); background: var(--ground);
+  border: 1px solid var(--hair); border-radius: 2px; padding: 6px 8px; min-width: 150px; }
+.viz { position: relative; }
+.viz svg { display: block; width: 100%; height: auto; overflow: visible; }
+.viz .axis text, .viz .lab { font-family: "Oxygen", Helvetica, Arial, sans-serif; font-size: 11px; fill: var(--quiet); }
+.viz .lab-v { font-size: 12px; fill: var(--ink); }
+.viz .grid line { stroke: var(--hair); stroke-width: 1; }
+.tooltip { position: absolute; pointer-events: none; background: var(--ground); border: 1px solid var(--hair);
+  padding: 8px 10px; font-size: 0.8rem; color: var(--body); min-width: 180px; display: none; z-index: 5; }
+.tooltip b { color: var(--ink); font-weight: 700; }
+
+footer.foot { border-top: 1px solid var(--hair); padding: 22px 0 30px; text-align: center; font-size: 0.68rem; color: var(--quiet); }
+@media (max-width: 640px) { .affils img { height: 26px; } h2 { font-size: 1.6rem; } #map { height: 340px; } }

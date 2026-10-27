@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FluxFill</title>
+<meta name="description" content="FluxFill: a flux foundation model and benchmark for filling eddy-covariance tower records, with calibrated uncertainty.">
+<link rel="icon" href="img/favicon-32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Oxygen:wght@300;400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="col">
+    <div class="affils">
+      <a href="https://www.keenangroup.info/" title="Quantitative Ecosystem Dynamics lab, UC Berkeley"><img class="logo-ink" src="img/qed-lab.svg" alt="Quantitative Ecosystem Dynamics lab, UC Berkeley"></a>
+      <a href="https://ecological.dev/" title="Ecological Intelligence, Inc."><img class="logo-ink" src="img/logo_ei_lockup.png" alt="Ecological Intelligence, Inc."></a>
+    </div>
+    <div class="kicker">DeepEarth &middot; flux foundation model</div>
+    <h1>FluxFill</h1>
+    <p class="lead">Filling eddy-covariance tower records with a model of everything measured at every tower.</p>
+    <p class="authors">
+      <a href="mailto:mirashivanisankar@berkeley.edu">Mira Shivani Sankar</a>,
+      <a href="mailto:legel@berkeley.edu">Lance Legel</a>,
+      <a href="mailto:trevorkeenan@berkeley.edu">Trevor Keenan</a>.
+      Quantitative Ecosystem Dynamics lab, University of California, Berkeley. Sponsored by Ecological Intelligence, Inc.
+    </p>
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button role="tab" id="t-overview" aria-controls="p-overview" aria-selected="true">Overview</button>
+      <button role="tab" id="t-towers" aria-controls="p-towers" aria-selected="false">Towers</button>
+      <button role="tab" id="t-benchmark" aria-controls="p-benchmark" aria-selected="false">Benchmark</button>
+      <button role="tab" id="t-windows" aria-controls="p-windows" aria-selected="false">Windows</button>
+      <button role="tab" id="t-results" aria-controls="p-results" aria-selected="false">Results</button>
+      <button role="tab" id="t-report" aria-controls="p-report" aria-selected="false">Report</button>
+      <button class="theme-toggle" id="theme" aria-label="Toggle dark mode">Theme</button>
+    </nav>
+  </div>
+</header>
+
+<main class="col">
+<section role="tabpanel" id="p-overview" aria-labelledby="t-overview">
+  <p>FluxFill learns the joint field of what is measured at and around eddy-covariance towers: carbon dioxide, water
+  vapour, sensible heat and methane fluxes, the tower's meteorology, reanalysis drivers, and Sentinel-2 imagery. It
+  learns by masking parts of 180-day windows and reconstructing them, with a probability distribution for every
+  value. Its first application is filling the gaps in tower records. Every modality can be absent, so the same
+  model fills a missing flux, a missing temperature sensor or a missing satellite image.</p>
+  <div class="grid" id="status-tiles"></div>
+  <p class="note" id="status-time"></p>
+  <h2>What it addresses</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Limit of published methods</th><th>FluxFill and FluxFill-Bench</th></tr></thead>
+    <tbody>
+      <tr><td>One target variable per model, driven by sensors that fail in the same outages</td><td>All variables filled jointly; every modality can be masked, including a full station outage</td></tr>
+      <tr><td>No proper scoring rule; uncertainty calibrated on the test set or on short gaps only</td><td>CRPS as the primary score; calibration by gap length on sites and years never used for fitting</td></tr>
+      <tr><td>No multi-site benchmark of contiguous gaps of weeks to months scored on sums</td><td>Blocks of 1 to 180 days at every season, scored on daily, monthly and window sums from joint samples</td></tr>
+      <tr><td>Site-specific models that do not learn from other towers</td><td>One model trained on all towers, tested on 20% of sites held out with 50 km spatial blocking</td></tr>
+      <tr><td>Ecosystem state seen through coarse vegetation indices</td><td>Every Sentinel-2 acquisition over 300 m around each tower, embedded by the Clay foundation model</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">Code: <a href="https://github.com/legel/deepearth/tree/main/models/flux/fill">github.com/legel/deepearth/models/flux/fill</a>.</p>
+</section>
+
+<section role="tabpanel" id="p-towers" aria-labelledby="t-towers" hidden>
+  <h2>Towers</h2>
+  <p>Every candidate tower with measured half-hourly data from 2014 onward. Sources: FLUXNET ONEFlux v1.3 through the
+  FLUXNET Shuttle, AmeriFlux BASE, FLUXNET-CH4 V1.0 and ICOS. Only measured sensor values enter: gap-filled values are
+  excluded by their quality flags.</p>
+  <div class="controls">
+    <label>Vegetation (IGBP)<select id="f-igbp"><option value="">All</option></select></label>
+    <label>Network<select id="f-net"><option value="">All</option></select></label>
+    <label>Methane<select id="f-ch4"><option value="">All</option><option value="1">Measures FCH4</option></select></label>
+  </div>
+  <div id="map" role="img" aria-label="Map of flux towers"></div>
+  <div class="legend" id="map-legend"></div>
+  <p class="note" id="tower-count"></p>
+  <div class="table-wrap"><table id="tower-table"><thead><tr>
+    <th>Site</th><th>Name</th><th>IGBP</th><th>Köppen</th><th>Network</th><th>Years</th><th>CH4</th><th>Split</th>
+  </tr></thead><tbody></tbody></table></div>
+</section>
+
+<section role="tabpanel" id="p-benchmark" aria-labelledby="t-benchmark" hidden>
+  <h2>FluxFill-Bench</h2>
+  <p>A window is 180 days of one site at half-hourly resolution. Only measured values are ever scored. Test sites,
+  held-out years and masks are fixed before any model is fitted. Specification:
+  <a href="https://github.com/legel/deepearth/blob/main/models/flux/fill/docs/BENCHMARK.md">BENCHMARK.md</a>.</p>
+  <h3>Regimes</h3>
+  <table><tbody>
+    <tr><th>R1</th><td>Gap inside a record at a test site: the window's unmasked observations are visible.</td></tr>
+    <tr><th>R2</th><td>Held-out final year at a training site.</td></tr>
+    <tr><th>R3</th><td>No tower data: every tower channel masked for the whole window; reanalysis and imagery remain.</td></tr>
+  </tbody></table>
+  <h3>Mask families</h3>
+  <table><tbody>
+    <tr><th>M1</th><td>Distribution-matched gaps (Irvin et al. 2021), for continuity with published numbers.</td></tr>
+    <tr><th>M2</th><td>One contiguous block of 1, 7, 30, 90 or 180 days, uniform over the window, on all tower channels.</td></tr>
+    <tr><th>M3</th><td>A real joint outage of all tower channels transplanted from another site-year.</td></tr>
+    <tr><th>M4</th><td>One modality removed for the whole window: tower meteorology, reanalysis or Sentinel-2.</td></tr>
+  </tbody></table>
+  <h3>Scores</h3>
+  <p>CRPS from joint samples (primary); CRPS and bias of daily, monthly and window sums; coverage of the 50%, 80% and
+  95% intervals and PIT histograms by gap length; MAE, RMSE, nMAE, R2 and bias for comparison with the literature;
+  correlation of daily anomalies and interannual variability; tail error.</p>
+  <h3>Baselines</h3>
+  <table><thead><tr><th>Method</th><th>Reference</th></tr></thead><tbody>
+    <tr><td>Marginal distribution sampling (MDS)</td><td>Reichstein et al. 2005; REddyProc, Wutzler et al. 2018</td></tr>
+    <tr><td>Random forest, XGBoost, ANN and Lasso ensembles</td><td>Irvin et al. 2021</td></tr>
+    <tr><td>XGBoost with vegetation state</td><td>Liu et al. 2025</td></tr>
+    <tr><td>Deep ensemble with a Laplace likelihood</td><td>Vekuri et al. 2025</td></tr>
+    <tr><td>SAITS, BRITS, ImputeFormer, CSDI</td><td>PyPOTS, Du et al. 2023</td></tr>
+    <tr><td>Chronos-2</td><td>Ansari et al. 2025</td></tr>
+    <tr><td>Climatology</td><td>site mean diurnal cycle per day of year</td></tr>
+  </tbody></table>
+</section>
+
+<section role="tabpanel" id="p-windows" aria-labelledby="t-windows" hidden>
+  <h2>Windows</h2>
+  <p>Each panel is one variable over one 180-day window; the view shows the masked span or the whole window. Shaded spans are masked. Black is the measured value the
+  method saw; gray is the measured value it did not see; blue is the method's prediction with its 80% and 95%
+  intervals.</p>
+  <div class="controls">
+    <label>Site<select id="w-site"></select></label>
+    <label>Window<select id="w-win"></select></label>
+    <label>Mask<select id="w-mask"></select></label>
+    <label>Method<select id="w-method"></select></label>
+    <label>View<select id="w-zoom"><option value="mask">Masked span</option><option value="full">Whole window</option></select></label>
+  </div>
+  <div id="w-body"></div>
+</section>
+
+<section role="tabpanel" id="p-results" aria-labelledby="t-results" hidden>
+  <h2>Results</h2>
+  <div id="r-body"></div>
+</section>
+
+<section role="tabpanel" id="p-report" aria-labelledby="t-report" hidden>
+  <h2>Report</h2>
+  <div id="rep-body"></div>
+</section>
+</main>
+
+<footer class="foot">&copy; 2026 Ecological Intelligence, Inc.</footer>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
