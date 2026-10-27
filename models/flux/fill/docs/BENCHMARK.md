@@ -85,8 +85,13 @@ length class (1 half-hour; 2 to 8; 9 to 64; 65 to 576; more than 576 half-hours)
   joint sample. Scores: CRPS of the sum and bias of the sum's mean. Methods without joint samples have their
   per-step marginals summed under independence and are labelled as such.
 - **Calibration.** Coverage of the 50%, 80% and 95% central intervals, and PIT histograms by gap-length class.
-- **Point accuracy.** MAE, RMSE, nMAE (MAE / standard deviation of the truth), R2 (sklearn) and squared
-  Pearson r, and bias. Reported for comparison with the literature.
+- **Point accuracy.** Of the predictive mean (the mean of a method's samples): MAE, MSE, RMSE, nMAE (MAE /
+  standard deviation of the truth), R2 (sklearn) and squared Pearson r, bias, and the weighted absolute percentage
+  error WAPE = 100 x sum |pred - truth| / sum |truth|. WAPE is not capped at 100%. Per-value MAPE is not used: NEE, H
+  and FCH4 cross zero, so single terms with |truth| near 0 are unbounded. Reported for comparison with the
+  literature. Pooled over cells: MSE = sum n rmse^2 / sum n; R2 = 1 - sum n rmse^2 / (sum y^2 - (sum y)^2 / N), with
+  the truth sums that `bench/run.py` writes per cell (`bench/truth_stats.py` recomputes them for older parts). R2
+  and WAPE are reported only on cells a method fills completely.
 - **Variability.** Correlation of predicted and true daily anomalies, and of window means across years at one
   site (interannual variability).
 - **Tails.** The 90th percentile of absolute error, and CRPS on the top 5% of |flux| values (CH4 pulses,

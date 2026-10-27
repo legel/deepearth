@@ -97,3 +97,11 @@ against tower meteorology at the training sites:
 - Copernicus DEM, 30 m (static terrain).
 
 A driver is kept if it lowers validation-site CRPS for the meteorological variables in regime R3.
+
+## 9. Scaling
+
+Validation CRPS is measured against model size (width and depth at fixed data) and against the number of training
+sites (at fixed model size). Each finished run adds one record to `model/scaling/scaling.json`: run, n_params,
+n_train_sites, n_train_windows, tokens_seen, steps, val_crps, val_crps_flux, and axis ("model" or "data"). The
+dashboard fits L = a x^(-alpha) + c to each axis once it has 3 or more points.
+

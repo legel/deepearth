@@ -216,8 +216,8 @@ def column_headline(methods, cols, values, metric: str, what: str) -> str:
             wins.setdefault(methods[b], []).append(f)
     if not wins:
         return f"No method is scored for {what}."
-    order = sorted(wins, key=lambda m: (-len(wins[m]), cols.index(wins[m][0])))
-    m0 = order[0]
+    m0 = sorted(wins, key=lambda m: (-len(wins[m]), cols.index(wins[m][0])))[0]
+    order = [m0] + sorted((m for m in wins if m != m0), key=lambda m: cols.index(wins[m][0]))
     if len(order) == 1 and len(wins[m0]) == len(cols) and len(cols) > 1:
         if all(c.startswith("M2-") and c.endswith("d") for c in cols):
             return (f"{cap(SHORT[m0])} has {verb(metric)} for {what} at every gap length from {cols[0][3:-1]} to "
@@ -226,6 +226,10 @@ def column_headline(methods, cols, values, metric: str, what: str) -> str:
     first = f"{cap(SHORT[m0])} has {verb(metric)} for {what} at {days_phrase(wins[m0])}"
     rest = [f"{SHORT[m]} at {days_phrase(wins[m])}" for m in order[1:]]
     return first + ("; " + "; ".join(rest) if rest else "") + "."
+
+
+def plural(k: int, word: str) -> str:
+    return f"{k} {word}" + ("" if k == 1 else "s")
 
 
 def cap(s: str) -> str:
@@ -312,17 +316,19 @@ def summary_table(d, v, flux, methods, units):
     for m in methods:
         p = pool(cell_rows(d[d.variable == flux], cells, m, "values")) if cells else {}
         vals[m] = p
+    n = next((vals[m]["n"] for m in methods if vals[m]), 0)
+    for m in methods:
+        p = vals[m]
         rows.append({"method": m, "label": LABEL.get(m, m), "ours": m in OURS,
                      "cells": [{"v": p.get(k, float("nan"))} for k in SUMMARY_METRICS]})
     best = [best_index([vals[m].get(k) for m in methods], k) for k in SUMMARY_METRICS]
-    n = next((vals[m]["n"] for m in methods if vals[m]), 0)
     nw = len({(c[0], c[1]) for c in cells})
     ns = len({c[0] for c in cells})
     if cells and best[0] is not None:
         order = np.argsort([vals[m].get("crps", np.inf) for m in methods])
         b, s = methods[order[0]], methods[order[1]]
-        head = (f"{cap(SHORT[b])} has the lowest CRPS for {flux} on the {len(cells)} cells all {len(methods)} methods "
-                f"fill: {fmtv(vals[b]['crps'], 'crps')} against {fmtv(vals[s]['crps'], 'crps')} for {SHORT[s]} "
+        head = (f"{cap(SHORT[b])} has the lowest CRPS for {flux} on the {plural(len(cells), 'cell')} ({n:,} values) "
+                f"all {len(methods)} methods fill: {fmtv(vals[b]['crps'], 'crps')} against {fmtv(vals[s]['crps'], 'crps')} for {SHORT[s]} "
                 f"({units}).")
         r2b = methods[best[SUMMARY_METRICS.index("r2")]] if best[SUMMARY_METRICS.index("r2")] is not None else None
         if r2b is not None:
@@ -388,7 +394,8 @@ def findings(summ, gaps, sums, methods, scope):
             b = best_index(vals, "crps")
             if b is not None:
                 wins.setdefault(methods[b], []).append(f)
-        segs.append(f"{flux}: " + "; ".join(f"{SHORT[m]} at {days_phrase(fs)}" for m, fs in
+        lab = flux if max(g["n"]) >= 1000 else f"{flux} ({min(x for x in g['n'] if x):,} to {max(g['n']):,} values per gap length)"
+        segs.append(f"{lab}: " + "; ".join(f"{SHORT[m]} at {days_phrase(fs)}" for m, fs in
                                             sorted(wins.items(), key=lambda kv: g["families"].index(kv[1][0]))))
     if segs:
         out.append({"head": "Lowest CRPS by gap length.", "text": ". ".join(segs) + ".",
@@ -538,7 +545,7 @@ def main():
     }
     out_path = Path(a.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(clean(out), indent=1, allow_nan=False))
+    out_path.write_text(json.dumps(clean(out), separators=(",", ":"), ensure_ascii=False, allow_nan=False))
     print(f"wrote {a.out}: {len(summ)} summary tables, {sum(len(x) for x in by_gap_tables.values())} gap tables, "
           f"{len(out['findings'])} findings")
     for f in out["findings"]:

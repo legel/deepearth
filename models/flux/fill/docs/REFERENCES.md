@@ -20,6 +20,10 @@ version, commit, access date and checksum of what it used.
   *Biogeosciences* 15, 5015-5030. doi:10.5194/bg-15-5015-2018
 - Vuichard, N. and Papale, D. (2015). Filling the gaps in meteorological continuous data measured at FLUXNET sites
   with ERA-Interim reanalysis. *Earth System Science Data* 7, 157-171. doi:10.5194/essd-7-157-2015
+- Foken, T., Gockede, M., Mauder, M., Mahrt, L., Amiro, B. and Munger, W. (2004). Post-field data quality control.
+  In *Handbook of Micrometeorology*, Kluwer, 181-208. doi:10.1007/1-4020-2265-4_9
+- Beck, H. E., McVicar, T. R., Vergopolan, N. et al. (2023). High-resolution (1 km) Koppen-Geiger maps for 1901-2099
+  based on constrained CMIP6 projections. *Scientific Data* 10, 724. doi:10.1038/s41597-023-02549-6
 - Network data policies and site citations: AmeriFlux, ICOS, TERN, JapanFlux and FLUXNET. These are listed per site in
   `data/towers/sites.csv` (columns `shuttle_citation`, `shuttle_pid`, `acknowledgement`).
 
@@ -61,6 +65,20 @@ version, commit, access date and checksum of what it used.
   arXiv:2406.11838
 - Vaswani, A. et al. (2017). Attention is all you need. *NeurIPS 2017*. arXiv:1706.03762
 
+## Model components
+
+- Lipman, Y., Chen, R. T. Q., Ben-Hamu, H., Nickel, M. and Le, M. (2023). Flow matching for generative modeling.
+  *ICLR 2023*. arXiv:2210.02747
+- Chang, H., Zhang, H., Jiang, L., Liu, C. and Freeman, W. T. (2022). MaskGIT: masked generative image transformer.
+  *CVPR 2022*. arXiv:2202.04200
+- Su, J. et al. (2021). RoFormer: enhanced transformer with rotary position embedding. arXiv:2104.09864
+- Ho, J., Kalchbrenner, N., Weissenborn, D. and Salimans, T. (2019). Axial attention in multidimensional transformers.
+  arXiv:1912.12180
+- Peebles, W. and Xie, S. (2023). Scalable diffusion models with transformers. *ICCV 2023*. arXiv:2212.09748
+- Kendall, A. and Gal, Y. (2017). What uncertainties do we need in Bayesian deep learning for computer vision?
+  *NeurIPS 2017*. arXiv:1703.04977
+- Bishop, C. M. (1994). Mixture density networks. Technical report NCRG/94/004, Aston University.
+
 ## Scoring
 
 - Gneiting, T. and Raftery, A. E. (2007). Strictly proper scoring rules, prediction, and estimation. *Journal of the
@@ -77,6 +95,10 @@ version, commit, access date and checksum of what it used.
 - Drusch, M. et al. (2012). Sentinel-2: ESA's optical high-resolution mission for GMES operational services. *Remote
   Sensing of Environment* 120, 25-36. doi:10.1016/j.rse.2011.11.026. Data: Copernicus Sentinel data, Collection 1
   L2A via Element84 Earth Search, and L2A via Microsoft Planetary Computer.
+- Main-Knorn, M., Pflug, B., Louis, J., Debaecker, V., Müller-Wilm, U. and Gascon, F. (2017). Sen2Cor for
+  Sentinel-2. *Proc. SPIE* 10427, 1042704. doi:10.1117/12.2278218
+- Xiong, Z., Wang, Y., Zhang, F. et al. (2024). Neural plasticity-inspired multimodal foundation model for Earth
+  observation (DOFA). arXiv:2403.15356
 - Clay Foundation (2024-2025). Clay: an open-source foundation model for Earth observation, v1.5.
   github.com/Clay-foundation/model; huggingface.co/made-with-clay/Clay. The checkpoint hash is in
   `embeddings/clay/README.md`.

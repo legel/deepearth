@@ -1,6 +1,7 @@
 """FluxFill scaling study: collect runs into scaling.json and fit L(x) = a * x^(-alpha) + c.
 
-Runs are registered in `scaling/runs.json` as {run: axis}, axis "data" (fixed model, nested stratified subsets of the
+Runs are registered in `scaling/runs.json` as {run: axis}, axis "data", "model" or "data,model" (the reference run,
+which is a point of both). "data": fixed model, nested stratified subsets of the
 training sites, `train.py --n-train-sites`) or "model" (all training sites, model width and depth varied). For each run
 this reads `<run>/config.json`, `<run>/log.jsonl` and the per-window validation scores `<run>/val_windows/stepN.json`
 written by train.py at every evaluation, and takes the evaluation with the lowest validation CRPS.
@@ -66,7 +67,7 @@ def fit(x, y):
 
 
 def fit_axis(recs, axis: str, key: str, n_boot: int = 1000, seed: int = 0):
-    rs = sorted([r for r in recs if r["axis"] == axis and r["complete"]],
+    rs = sorted([r for r in recs if axis in r["axis"].split(",") and r["complete"]],
                 key=lambda r: r["n_train_sites"] if axis == "data" else r["n_params"])
     if len(rs) < 4:
         return {"axis": axis, "score": key, "n_runs": len(rs), "note": "fewer than 4 complete runs: no fit"}
@@ -109,7 +110,7 @@ def main():
     reg_f = OUT / "runs.json"
     reg = json.loads(reg_f.read_text()) if reg_f.exists() else {}
     for run, axis in a.register:
-        assert axis in ("data", "model"), axis
+        assert set(axis.split(",")) <= {"data", "model"}, axis
         reg[run] = axis
     reg_f.write_text(json.dumps(reg, indent=1))
     recs = [r for r in (run_record(run, axis) for run, axis in reg.items()) if r]

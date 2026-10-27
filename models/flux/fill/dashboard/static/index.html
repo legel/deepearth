@@ -33,6 +33,7 @@
       <button role="tab" id="t-benchmark" aria-controls="p-benchmark" aria-selected="false">Benchmark</button>
       <button role="tab" id="t-windows" aria-controls="p-windows" aria-selected="false">Windows</button>
       <button role="tab" id="t-results" aria-controls="p-results" aria-selected="false">Results</button>
+      <button role="tab" id="t-methods" aria-controls="p-methods" aria-selected="false">Methods</button>
       <button role="tab" id="t-report" aria-controls="p-report" aria-selected="false">Report</button>
       <button class="theme-toggle" id="theme" aria-label="Toggle dark mode">Theme</button>
     </nav>
@@ -100,8 +101,10 @@
   </tbody></table>
   <h3>Scores</h3>
   <p>CRPS from joint samples (primary); CRPS and bias of daily, monthly and window sums; coverage of the 50%, 80% and
-  95% intervals and PIT histograms by gap length; MAE, RMSE, nMAE, R2 and bias for comparison with the literature;
-  correlation of daily anomalies and interannual variability; tail error.</p>
+  95% intervals and PIT histograms by gap length; MAE, MSE, RMSE, bias, R² and the weighted absolute percentage error
+  of the predictive mean for comparison with the literature; correlation of daily anomalies and interannual
+  variability; tail error. Definitions and formulas: <a href="#results" data-tab="results">Results, Metrics</a>.
+  Exact settings of every method: <a href="#methods" data-tab="methods">Methods</a>.</p>
   <h3>Baselines</h3>
   <table><thead><tr><th>Method</th><th>Reference</th></tr></thead><tbody>
     <tr><td>Marginal distribution sampling (MDS)</td><td>Reichstein et al. 2005; REddyProc, Wutzler et al. 2018</td></tr>
@@ -131,12 +134,40 @@
 
 <section role="tabpanel" id="p-results" aria-labelledby="t-results" hidden>
   <h2>Results</h2>
-  <div id="r-body"></div>
+  <p class="scope" id="r-scope"></p>
+  <div id="r-findings"></div>
+  <div id="r-chart"></div>
+  <h3 id="r-tables-h">Tables</h3>
+  <div class="controls" id="r-controls">
+    <div class="seg" role="radiogroup" aria-label="Flux" id="r-flux"></div>
+  </div>
+  <div id="r-summary"></div>
+  <div id="r-bygap"></div>
+  <div id="r-sums"></div>
+  <div id="r-fill"></div>
+  <h3 id="metrics">Metrics</h3>
+  <div id="r-glossary"></div>
+  <h3 id="scaling">Scaling</h3>
+  <div id="r-scaling"></div>
+</section>
+
+<section role="tabpanel" id="p-methods" aria-labelledby="t-methods" hidden>
+  <h2>Methods</h2>
+  <p>Every method on the benchmark: what it is, where its code comes from, the exact settings it runs with here, what
+  it sees and how it produces uncertainty. Settings are read from the code at build time. Citations link to the
+  reference list of the Report.</p>
+  <nav class="toc" id="m-toc" aria-label="Methods"></nav>
+  <h3 id="m-fluxfill-h">FluxFill</h3>
+  <div id="m-fluxfill"></div>
+  <h3>Baselines</h3>
+  <div class="cards" id="m-cards"></div>
+  <h3 id="m-exp-h">FluxFill experiments</h3>
+  <div id="m-exp"></div>
 </section>
 
 <section role="tabpanel" id="p-report" aria-labelledby="t-report" hidden>
-  <h2>Report</h2>
   <div id="rep-body"></div>
+  <div id="rep-refs"></div>
 </section>
 </main>
 

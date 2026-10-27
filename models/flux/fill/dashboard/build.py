@@ -9,9 +9,11 @@ import csv
 import datetime as dt
 import json
 import shutil
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 
 
 def truthy(v: str) -> bool:
@@ -77,6 +79,90 @@ def status_json(root: Path, sites: dict) -> dict:
             "note": "The dataset, benchmark and model are in construction; counts update with each build."}
 
 
+FLUXFILL_PY = Path("/home/photon/4tb/envs/fluxfill/bin/python")
+
+
+def param_counts(root: Path) -> dict:
+    """Parameter counts from the checkpoints (param_counts.py, run in the FluxFill environment, which has torch);
+    the cached file is used when that environment is not available."""
+    import os
+    import subprocess
+    cache = root / "bench" / "dashboard" / "param_counts.json"
+    if FLUXFILL_PY.exists():
+        tmp = cache.with_suffix(".json.tmp")
+        env = dict(os.environ, OMP_NUM_THREADS=os.environ.get("OMP_NUM_THREADS", "2"))
+        r = subprocess.run([str(FLUXFILL_PY), str(HERE / "param_counts.py"), "--model-root", str(root / "model"),
+                            "--out", str(tmp), "--cache", str(cache)], capture_output=True, text=True, env=env,
+                           timeout=900)
+        if r.returncode == 0 and tmp.exists():
+            tmp.replace(cache)
+        else:
+            print("param_counts.py failed; using the cached counts:", r.stderr[-400:])
+    return json.loads(cache.read_text()) if cache.exists() else {}
+
+
+def scored_config(root: Path, counts: dict) -> dict:
+    sc = counts.get("scored") or {}
+    p = root / "model" / sc.get("run", "") / "config.json"
+    return json.loads(p.read_text()) if sc and p.exists() else {}
+
+
+def bench_defaults() -> dict:
+    """Sample and round counts of the FluxFill benchmark runner (model/score_bench.py argument defaults)."""
+    import re
+    t = (HERE.parent / "model" / "score_bench.py").read_text()
+    get = lambda k: int(re.search(r'"--' + k + r'", type=int, default=(\d+)', t).group(1))
+    return {"samples": get("samples"), "rounds": get("steps")}
+
+
+def arch_values(root: Path, counts: dict, fig) -> dict:
+    c = scored_config(root, counts)
+    sc = counts.get("scored", {})
+    rows = len(c.get("stats", {}).get("vars", []))
+    days = 180
+    return dict(d=c.get("d", "?"), depth=c.get("depth", "?"), heads=c.get("heads", "?"), window_days=days,
+                n_rows=rows, n_tokens=f"{(rows + 1) * days:,}", n_params=f"{sc.get('n_params', 0):,}",
+                scored_run=sc.get("run", "?"), scored_step=f"{sc.get('step', 0):,}",
+                train_sites=len(c.get("train_sites", [])), batch=c.get("batch", 0) * c.get("accum", 1),
+                train_steps=f"{c.get('steps', 0):,}", lr=f"{c.get('lr', 0):g}", fig=fig, **bench_defaults())
+
+
+def report_json(root: Path, counts: dict, meth: dict, results: dict, status: dict) -> dict:
+    """The draft report: dashboard/report_draft.html with values from the dataset, benchmark and run files."""
+    import methods
+    rep = json.loads((root / "towers" / "report.json").read_text())
+    man = json.loads((HERE.parent / "bench" / "release" / "MANIFEST.json").read_text())
+    c = scored_config(root, counts)
+    sc = counts.get("scored", {})
+    bl = counts.get("baselines", {})
+    s2 = {t["label"]: t["value"] for t in status.get("tiles", [])}
+    scope = results.get("scope", {})
+    sp, sf, mv = rep["split"], rep["split_fch4"], rep["measured_values"]
+    v = dict(sites_candidate=rep["sites_candidate"], sites_included=rep["sites_included"],
+             sites_fch4=rep["sites_with_fch4"], windows_all=rep["windows"], windows_usable=rep["usable_windows"],
+             n_train=sp["train"], n_val=sp["val"], n_test=sp["test"], fch4_train=sf["train"], fch4_val=sf["val"],
+             fch4_test=sf["test"], hourly_sites=rep["hourly_sites"], size_gb=rep["size_gb"]["hh"],
+             nee_measured=mv["NEE"], le_measured=mv["LE"], h_measured=mv["H"], fch4_measured=mv["FCH4"],
+             release_version=man["version"], release_windows=man["n_windows"], release_sites=man["n_sites"],
+             release_families=", ".join(man["families"]), split_sha=man["split_sha256"][:12],
+             s2_chips=s2.get("Sentinel-2 chips gathered", 0), s2_sites=s2.get("towers with Sentinel-2 complete", 0),
+             clay_sites=s2.get("towers with Clay embeddings", 0),
+             model_params=f"{sc.get('n_params', 0):,}", scored_run=sc.get("run", "?"),
+             scored_step=f"{sc.get('step', 0):,}", d=c.get("d", "?"), depth=c.get("depth", "?"),
+             heads=c.get("heads", "?"), n_rows=len(c.get("stats", {}).get("vars", [])),
+             train_steps=f"{c.get('steps', 0):,}", batch=c.get("batch", 0) * c.get("accum", 1),
+             lr=f"{c.get('lr', 0):g}", warmup=c.get("warmup", 0),
+             saits_params=f"{bl.get('saits', {}).get('n_params', 0):,}",
+             csdi_params=f"{bl.get('csdi', {}).get('n_params', 0):,}",
+             chronos_params=f"{bl.get('chronos2', {}).get('n_params', 0) / 1e6:.1f} million",
+             pypots_sites=bl.get("saits", {}).get("n_train_sites", 0),
+             val_windows=scope.get("windows", 0), val_sites=scope.get("sites", 0),
+             built=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d"), **bench_defaults())
+    v["arch"] = methods.render((HERE / "arch_svg.html").read_text(), arch_values(root, counts, 1), meth["references"])
+    body = methods.render((HERE / "report_draft.html").read_text(), v, meth["references"])
+    return {"html": body, "references": meth["references"], "draft": True}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
@@ -98,16 +184,28 @@ def main() -> None:
     sites = sites_json(root)
     (data / "sites.json").write_text(json.dumps(sites, separators=(",", ":")))
     (data / "status.json").write_text(json.dumps(status_json(root, sites), indent=1))
-    for name in ("results.json", "report.json"):
-        src = root / "bench" / "dashboard" / name
-        if src.exists():
-            shutil.copy2(src, data / name)
+    import gzip
+    src = root / "bench" / "dashboard" / "results.json"
+    results = {}
+    if src.exists():
+        shutil.copy2(src, data / "results.json")
+        (data / "results.json.gz").write_bytes(gzip.compress(src.read_bytes(), 9))
+        results = json.loads(src.read_text())
+    scaling = root / "model" / "scaling" / "scaling.json"
+    if scaling.exists():
+        shutil.copy2(scaling, data / "scaling.json")
+    counts = param_counts(root)
+    import methods
+    meth = methods.build(root / "model", counts)
+    meth["arch_html"] = methods.render((HERE / "arch_svg.html").read_text(), arch_values(root, counts, 1), meth["references"])
+    (data / "methods.json").write_text(json.dumps(meth, separators=(",", ":"), ensure_ascii=False))
+    (data / "report.json").write_text(json.dumps(report_json(root, counts, meth, results, status_json(root, sites)),
+                                                 separators=(",", ":"), ensure_ascii=False))
     win_src = root / "bench" / "dashboard" / "windows"
     if win_src.exists():
         shutil.copytree(win_src, data / "windows", dirs_exist_ok=True)
         # The server sends JSON uncompressed; a gzip copy of each window is read by the page (DecompressionStream),
         # with the plain file as the fallback.
-        import gzip
         for f in (data / "windows").glob("*.json"):
             if f.name != "index.json":
                 (f.parent / (f.name + ".gz")).write_bytes(gzip.compress(f.read_bytes(), 9))
