@@ -139,8 +139,8 @@ topographic wetness index is $\ln(a / \tan\beta)$. The columns are Spearman corr
   conduct faster along the slope, which this does not assume.
 - **Arrival within the hour.** Rain enters layer 1 in the hour it falls (model arrival 0 h). The shallow sensors
   respond a median 1 to 2 h later.
-- **No water table.** Drainage leaves the root zone for good, and nothing rises from below.
-- **No irrigation.** Rain alone: a watered lawn reads as dry as it would unwatered.
+- **The water table comes from the soil survey and the terrain.** A shallow water table from the soil survey and the terrain bounds the root zone ([below](#the-water-table-under-the-root-zone)); its sensitivity to the terrain is a published value used at every site.
+- **Irrigation is detected from greenness** ([below](#irrigation-detected)). Ground under a crown is never judged watered.
 - **Canopy edges follow the roots, not the leaves.** A crown draws its transpiration from every soil cell within 10 m
   and its unmet demand is charged to that soil, so the deficit ramps across a drip line instead of stepping. Where trees
   stand in grassland the dry season's dead grass still leaves a deficit near the air's whole demand beside the trees,
@@ -166,3 +166,82 @@ cd models/soil && python -m pytest -q
 ```
 
 Requires `torch`, `numpy`, `numba` and `scipy`.
+
+## The water table under the root zone
+
+The balance holds a shallow water table as a lower boundary, from the soil survey and the terrain
+([`groundwater.py`](groundwater.py)). It is distributed by the terrain as TOPMODEL distributes it (Beven and Kirkby
+1979) and held in the soil above its restrictive layer (Saulnier, Beven and Obled 1997).
+
+| quantity | equation | code |
+|---|---|---|
+| the site's mean table, by month | $\bar z(m)$, the median over the soil cells of the survey's top of the Wet layer that month (SSURGO `cosoilmoist`); a cell whose unit has none counts 0.5 m under its restrictive layer | [`site_monthly_mean`](groundwater.py#L71) |
+| each cell's table | $z_i = \max\!\left(0,\ \bar z + \dfrac{m}{\phi}(\lambda - \mathrm{TWI}_i)\right)$, $\mathrm{TWI} = \ln(a / \tan\beta)$ on the 3DEP DEM, $\lambda$ its mean over the soil cells, $m / \phi = 0.25$ m (Beven 2012; Johnson 1967) | [`depth`](groundwater.py#L147), [`SENS_M`](groundwater.py#L37) |
+| each unit its own table | the wetness index shifted so a cell's table stands at its own map unit's survey table | [`unit_twi`](groundwater.py#L89) |
+| the hour's exchange | the root zone's layers between the capillary fringe's top, $z_i - h_b$, and the restrictive layer $D_i$ are held at saturation; what that takes is the hour's inflow from the table | [`step`](groundwater.py#L214) |
+
+A ridge's table lies under its restrictive layer and gives nothing. Where the survey records no Wet layer (Urban land),
+the table lies 0.5 m under the restrictive layer: 2.5 m at every cell of UC Berkeley's 40 acres.
+
+## Irrigation, detected
+
+Turf that stays green through a dry season with no rain to keep it so is watered ([`irrigation.py`](irrigation.py)).
+A watered cell's root zone is refilled to field capacity at the start of each local day (FAO-56, ch. 8): the water it
+gets is its depletion, so it follows the cell's own demand.
+
+| step | rule | code |
+|---|---|---|
+| where greenness is evidence | open herbaceous ground where the drought window's rain and a full root zone meet less than half of turf's demand: $P_w + \mathrm{TAW} < (1 - p)\,K_{cb,\mathrm{turf}}\,ET_{0,w}$, $p = 0.5$ | [`dry_cells`](irrigation.py#L497) |
+| unmixing | each Sentinel-2 L2A 10 m view's red and near infrared solved for four class reflectances over the site's pixels (non-negative least squares); the herbaceous part of each pixel read where it is at least 0.25 turf | [`unmix`](irrigation.py#L414), [`HERB_MIN`](irrigation.py#L57) |
+| a lawn judged whole | 8-connected turf; watered when the median over its readable cells of their dry-season NDVI (the 25th percentile of at least 3 clear views) is 0.4 or more, from at least 400 readable cells | [`lawn_values`](irrigation.py#L475), [`GREEN_NDVI`](irrigation.py#L66), [`LAWN_MIN_READ`](irrigation.py#L63) |
+| what is never judged | ground under a crown, paving, roofs and open water | [`detect`](irrigation.py#L576) |
+
+Measured: rain-fed straw at Tonzi Ranch reads 0.28 as a lawn in its drought window; watered city lawns read 0.41 to
+0.90. At UC Berkeley's 40 acres (2024 drought window, 0.8 mm of rain), 536,253 of 818,041 open herbaceous cells
+(21,450 m²) were judged watered.
+
+## Held to ground truth: soil moisture and drought
+
+The balance drains freely below its root zone, so ground beside a tidal marsh or a creek can read dry where the soil
+survey says it is wet. SOIL MOISTURE is held inside what the survey and the National Wetlands Inventory say each
+place's ground can be ([`moisture_truth.py`](moisture_truth.py)). All values are on the product's relative scale:
+0 at each soil's wilting point, 1 at field capacity, 2 at saturation.
+
+| quantity | equation | code |
+|---|---|---|
+| a map unit's floor | the NRCS natural drainage class (Soil Survey Manual 2017, ch. 3): very poorly drained 1.6, poorly 1.3, somewhat poorly 0.9, moderately well 0.4, well and better 0; annual minimum water table under 30 cm 1.5, under 60 cm 1.1; 85 % or more hydric 1.3; the highest applies | [`drainage_band`](moisture_truth.py#L113), [`DRAINAGE_FLOOR`](moisture_truth.py#L45) |
+| a map unit's ceiling | 1.2 for excessively drained soils, else 2 | [`drainage_band`](moisture_truth.py#L113) |
+| a wetland's floor | 1.8 under NWI estuarine, palustrine vegetated and unconsolidated-bottom wetlands and intermittent streambeds (Cowardin et al. 1979); lakes, rivers and the sea are open water | [`wetland_floor`](moisture_truth.py#L133) |
+| ground just above water | $f_{rip} = 1.7\, s\!\left(\dfrac{2 - \mathrm{HAND}}{1.5}\right) s\!\left(\dfrac{40 - d}{30}\right)$, $s(t) = t^2 (3 - 2t)$ on $t$ clipped to [0, 1]; HAND the height above the nearest water body's level (the 25th percentile of its shore), $d$ the distance to it in m (Nobre et al. 2011); a body under 500 m² seeds no floor unless the NWI maps water within 10 m | [`riparian_value`](moisture_truth.py#L590), [`riparian_floor`](moisture_truth.py#L619) |
+| the floor | $f = \max\!\left(\overline{\max(f_{SSURGO}, f_{NWI})}^{\,10\,\mathrm{m}},\ f_{rip}\right)$, the polygon floors averaged over a 10 m box (the survey's mapping scale) | [`bounds`](moisture_truth.py#L442), [`feather`](moisture_truth.py#L433) |
+| the held value | $r' = \min\!\left(c,\ \max\!\left(r,\ f + \dfrac{w\, r}{f + w}\right)\right)$, $w = 0.1$: ground at or above $f + w$ keeps the model's value; ground below is lifted into $[f, f + w]$ with its pattern kept | [`_constrain`](moisture_truth.py#L246) |
+| DROUGHT held to the same floors | a floor of 1.5 or more has no deficit; 1.3 to 1.5 at most 25 % of the scale's top; 0.9 to 1.3 at most 50 % | [`constrain_drought`](moisture_truth.py#L259), [`DROUGHT_CAPS`](moisture_truth.py#L53) |
+
+The model's own grids are kept beside the held ones (`drainage_model_u8.bin`, `drought_model_u8.bin`).
+
+Measured. UC Berkeley, 40 acres, every plantable cell on Urban land: 119,034 of 1,868,535 plantable cells raised, by
+intermittent streambeds and the ground beside them; the median moved from 0.504 to 0.528. Harvard Forest: Becket-Skerry,
+well drained, its annual minimum water table at 51 cm (floor 1.1); 48 of 168,379 plantable cells raised; the median
+1.264 unchanged.
+
+## Site conditions: salinity, flooding and seasonal water
+
+Seven layers beside soil moisture, on the same grid ([`site_conditions.py`](site_conditions.py)). Nothing here changes
+the moisture product.
+
+| quantity | equation | code |
+|---|---|---|
+| salinity | EC of the saturation extract (SSURGO `ec_r`, dS/m) and SAR over 0 to 30 cm: each component's horizons weighted by thickness, a map unit's components by `comppct_r` over those with a value; nonsaline under 2, very slightly 2 to 4, slightly 4 to 8, moderately 8 to 16, strongly saline 16 or more; sodic at SAR 13 (Richards 1954) | [`layer_mean`](site_conditions.py#L290), [`_weighted`](site_conditions.py#L304), [`EC_CLASSES`](site_conditions.py#L88) |
+| tidal ground | NWI estuarine polygons: 1 intertidal (E2), 2 subtidal (E1) | [`estuarine_code`](site_conditions.py#L263) |
+| months saturated | months a year with a `cosoilmoist` Wet layer whose top is at 30 cm or shallower (the hydric soil criterion), weighted by `comppct_r` | [`components`](site_conditions.py#L324) |
+| flooding and ponding | NSSH Part 618 frequency and duration classes, by month; a component takes its most frequent month, a map unit its dominant condition | [`components`](site_conditions.py#L324), [`_dominant`](site_conditions.py#L315) |
+| the relative scale | $r = \dfrac{\theta - \theta_{wp}}{\theta_{fc} - \theta_{wp}}$ up to 1, then $1 + \dfrac{\theta - \theta_{fc}}{\theta_s - \theta_{fc}}$ up to 2 | [`relative`](site_conditions.py#L550) |
+| seasonal swing | $\delta_{dry,wet} = \dfrac{\theta_{dry,wet} - \tfrac12(\theta_{dry} + \theta_{wet})}{b}$, $\theta$ SMAP-HydroBlocks' seasonal means of the top 5 cm at 30 m (Vergopolan et al. 2021), $b$ the width of the half of the scale the annual value sits in | [`swing`](site_conditions.py#L586), [`hydroblocks.py` `site_window`](hydroblocks.py#L193) |
+| dry-season low, wet-season high | $r_{low} = \mathrm{clip}(r + \delta_{dry}, 0, 2)$, at least 1.5 where saturated 11.5 months or more and 1.8 under very frequent flooding; $r_{high} = \mathrm{clip}(r + \delta_{wet}, 0, 2)$, at least 1.5 where saturated any month and 2 under frequent flooding or ponding | [`seasonal`](site_conditions.py#L602) |
+
+Urban land map units carry no horizons, drainage class, water table, salinity or flooding record in SSURGO: on such
+ground the moisture hold acts only near mapped water, and salinity and months saturated have no value.
+
+## Topsoil: pH, texture and organic matter
+
+See [`topsoil/README.md`](topsoil/README.md).

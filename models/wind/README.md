@@ -137,3 +137,22 @@ python3 -m pytest         # 191 tests, no network and no site data
 ## License
 
 MIT, via the repository root [`LICENSE`](../../LICENSE).
+
+## Since 11 October 2026: 8 headings on 2 m cells
+
+Sites ordered since 11 October 2026 solve 8 headings 45° apart on 2 m cells; earlier sites solved 16 headings 22.5°
+apart on 1 m cells. The adaptive cells keep the grid's own cells within 3 cells of every surface and double to 8 times
+the cell (16 m on the 2 m grid). Since 25 October 2026 every heading marches exactly 20 steps and the last step is
+delivered; before, a heading stepped until its near-ground speed settled.
+
+[`exposure.py`](exposure.py) is the year's wind at every return as production runs it:
+
+| quantity | equation | code |
+|---|---|---|
+| the blend on 8 headings | the speed blended, the direction along the vector blend: $\lvert \mathbf{S} \rvert = (1 - a)\lvert \mathbf{S}_k \rvert + a \lvert \mathbf{S}_{k+1} \rvert$ (a chord of two vectors 45° apart runs up to 7.6 % short); 16 headings blend the vectors as before | [`unit_field`](exposure.py#L41), [`POLAR_BELOW`](exposure.py#L20) |
+| a tower outside the solve | $u_{ref} = U \dfrac{\ln((z_b - d_t)/z_{0,t})}{\ln((z_m - d_t)/z_{0,t})} \cdot \dfrac{\ln((10 - d_s)/z_{0,s})}{\ln((z_b - d_s)/z_{0,s})}$, $z_b = 60$ m (Wieringa 1986), the tower's $z_{0,t}$ per 30° sector from its near-neutral hours, $z_0 = (z - d)\, e^{-\kappa U / u_*}$ | [`transfer`](exposure.py#L166), [`z0_by_sector`](exposure.py#L149) |
+
+Measured against the earlier settings (2026-10-11 to 2026-10-24): 8 headings with the polar blend give an exposure
+within 0.5 to 2.8 % (median) of 16 headings' on five sites; 2 m against 1 m cells, bias +0.6 % at 4 m and +1.8 % at
+10 m, cells ranked 0.96 to 0.99; the 20-step march against the settled field on two parcels, the year's mean −0.24 and
++0.04 %, strong-wind hours −0.59 and −2.76 %, the 4 m level's median 0.21 and 0.58 % (p95 1.1 and 5.1 %).
