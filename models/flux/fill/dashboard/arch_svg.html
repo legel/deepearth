@@ -1,0 +1,95 @@
+<figure class="arch">
+<div class="arch-scroll">
+<svg viewBox="0 0 960 500" role="img" aria-labelledby="arch-t arch-d" class="arch-svg">
+<title id="arch-t">FluxFill architecture</title>
+<desc id="arch-d">A 180-day window of one site becomes a grid of day-tokens, one per variable and day plus one imagery row. A shared linear map embeds each token's 48 half-hourly values, their flags and the site-memory channels; learned embeddings of variable, provenance, day and site are added. {{depth}} pairs of time attention and variable attention blocks encode the grid. A Student-t head gives marginal distributions per half-hour (v0). A flow-matching head generates masked day-tokens one group at a time and feeds them back (v1), which gives joint samples.</desc>
+<defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" class="a-arrowhead"/></marker></defs>
+
+<!-- 1. field -->
+<text class="a-step" x="20" y="24">1 · Field</text>
+<text class="a-sub" x="20" y="42">one site, {{window_days}} days × 48 half-hours</text>
+<g transform="translate(20,56)">
+  <g class="a-grid">
+    <rect x="0" y="0" width="200" height="16" class="a-row a-flux"/><text class="a-lab" x="6" y="12">fluxes NEE LE H FCH4 G</text>
+    <rect x="0" y="20" width="200" height="16" class="a-row"/><text class="a-lab" x="6" y="32">tower meteorology, soil</text>
+    <rect x="0" y="40" width="200" height="16" class="a-row"/><text class="a-lab" x="6" y="52">ERA5 drivers</text>
+    <rect x="0" y="60" width="200" height="16" class="a-row"/><text class="a-lab" x="6" y="72">ERA5-Land drivers</text>
+    <rect x="0" y="80" width="200" height="16" class="a-row a-img"/><text class="a-lab" x="6" y="92">Sentinel-2, Clay CLS</text>
+    <rect x="160" y="0" width="34" height="36" class="a-mask"/>
+    <text class="a-note" x="177" y="112" text-anchor="middle">masked span</text>
+  </g>
+  <text class="a-sub" x="0" y="140">{{n_rows}} variable rows + 1 imagery row</text>
+  <text class="a-sub" x="0" y="156">= {{n_tokens}} day-tokens per window</text>
+</g>
+
+<!-- 2. token -->
+<path d="M232 110 H262" class="a-link" marker-end="url(#arr)"/>
+<text class="a-step" x="270" y="24">2 · Day-token</text>
+<g transform="translate(270,40)">
+  <rect x="0" y="0" width="200" height="150" class="a-box"/>
+  <text class="a-lab" x="10" y="20">48 values × visible flag</text>
+  <text class="a-lab" x="10" y="38">48 flags</text>
+  <text class="a-lab" x="10" y="56">site memory: mean, spread,</text>
+  <text class="a-lab" x="10" y="72">present (other years, ±15 d)</text>
+  <path d="M10 82 H190" class="a-rule"/>
+  <text class="a-lab" x="10" y="100">shared linear map → d = {{d}}</text>
+  <text class="a-note" x="10" y="118">+ variable, provenance, day,</text>
+  <text class="a-note" x="10" y="132">day of year, site location</text>
+  <text class="a-note" x="10" y="146">no visible value: learned mask vector</text>
+</g>
+
+<!-- 3. encoder -->
+<path d="M472 110 H502" class="a-link" marker-end="url(#arr)"/>
+<text class="a-step" x="510" y="24">3 · Encoder, × {{depth}}</text>
+<g transform="translate(510,40)">
+  <rect x="0" y="0" width="200" height="66" class="a-box a-acc"/>
+  <text class="a-lab-b" x="10" y="20">time attention</text>
+  <text class="a-note" x="10" y="38">each variable over its {{window_days}} days</text>
+  <text class="a-note" x="10" y="54">rotary encoding of the day index</text>
+  <path d="M100 66 V84" class="a-link" marker-end="url(#arr)"/>
+  <rect x="0" y="84" width="200" height="66" class="a-box a-acc"/>
+  <text class="a-lab-b" x="10" y="104">variable attention</text>
+  <text class="a-note" x="10" y="122">each day across its variables</text>
+  <text class="a-note" x="10" y="138">and the imagery token</text>
+  <text class="a-note" x="0" y="172">{{heads}} heads, MLP 4 × d, pre-norm</text>
+  <text class="a-note" x="0" y="188">{{n_params}} parameters</text>
+</g>
+
+<!-- 4. heads -->
+<path d="M712 110 H742" class="a-link" marker-end="url(#arr)"/>
+<text class="a-step" x="750" y="24">4 · Heads</text>
+<g transform="translate(750,40)">
+  <rect x="0" y="0" width="190" height="78" class="a-box"/>
+  <text class="a-lab-b" x="10" y="20">v0 · Student-t</text>
+  <text class="a-note" x="10" y="38">location, scale, df per half-hour</text>
+  <text class="a-note" x="10" y="54">location = memory mean + output</text>
+  <text class="a-note" x="10" y="68">trained on NLL; marginal</text>
+  <rect x="0" y="88" width="190" height="78" class="a-box"/>
+  <text class="a-lab-b" x="10" y="108">v1 · flow matching</text>
+  <text class="a-note" x="10" y="126">adaLN MLP, width 256, 3 blocks</text>
+  <text class="a-note" x="10" y="142">48 values of a day-token</text>
+  <text class="a-note" x="10" y="158">24 midpoint ODE steps</text>
+  <rect x="0" y="176" width="190" height="44" class="a-box"/>
+  <text class="a-lab-b" x="10" y="194">imagery · Gaussian</text>
+  <text class="a-note" x="10" y="211">NLL on masked Clay CLS</text>
+</g>
+
+<!-- 5. joint generation loop -->
+<text class="a-step" x="20" y="300">5 · Joint samples (v1): masked generation</text>
+<g transform="translate(20,316)">
+  <rect x="0" y="0" width="150" height="54" class="a-box"/><text class="a-lab" x="10" y="22">hidden day-tokens</text><text class="a-note" x="10" y="40">random order per sample</text>
+  <path d="M152 27 H184" class="a-link" marker-end="url(#arr)"/>
+  <rect x="190" y="0" width="170" height="54" class="a-box a-acc"/><text class="a-lab" x="200" y="22">encode the window</text><text class="a-note" x="200" y="40">generate the next group</text>
+  <path d="M362 27 H394" class="a-link" marker-end="url(#arr)"/>
+  <rect x="400" y="0" width="170" height="54" class="a-box"/><text class="a-lab" x="410" y="22">feed back as visible</text><text class="a-note" x="410" y="40">cosine schedule (MaskGIT)</text>
+  <path d="M485 56 V84 H275 V58" class="a-link" marker-end="url(#arr)"/>
+  <text class="a-note" x="380" y="100" text-anchor="middle">{{rounds}} rounds</text>
+  <path d="M572 27 H604" class="a-link" marker-end="url(#arr)"/>
+  <rect x="610" y="0" width="320" height="54" class="a-box"/><text class="a-lab" x="620" y="22">{{samples}} joint samples per window</text><text class="a-note" x="620" y="40">sums over a day, a month or the window keep their dependence</text>
+</g>
+<text class="a-note" x="20" y="460">Training: hidden measured values only; masks from the benchmark families, random blocks and whole-modality dropout;</text>
+<text class="a-note" x="20" y="476">{{train_sites}} training sites, batch {{batch}}, {{train_steps}} steps, AdamW, learning rate {{lr}} with cosine decay. Selection on validation sites only.</text>
+</svg>
+</div>
+<figcaption><b>Figure {{fig}}.</b> FluxFill as implemented in the scored checkpoint ({{scored_run}}, step {{scored_step}}). Values in the figure are read from its configuration at build time.</figcaption>
+</figure>
