@@ -231,7 +231,18 @@ def method_registry() -> Dict:
                             n_jobs=int(os.environ.get("FLUXFILL_NJOBS", "1"))),
             "saits": lazy("pypots_imputers", "SAITSMethod"),
             "csdi": lazy("pypots_imputers", "CSDIMethod"),
-            "chronos2": lazy("chronos2", "Chronos2")}
+            "chronos2": lazy("chronos2", "Chronos2"),
+            "fluxfill": fluxfill_method}
+
+
+def fluxfill_method():
+    """FluxFill (models/flux/fill/model) as a runner method. Checkpoint from FLUXFILL_CKPT; FLUXFILL_MODE marginal (v0,
+    exact coverage from its predictive CDF) or joint (v1); FLUXFILL_DEVICE (default cuda); FLUXFILL_SAMPLES (64)."""
+    sys.path.insert(0, str(HERE.parent / "model"))
+    from method import FluxFill
+    mode = os.environ.get("FLUXFILL_MODE", "marginal")
+    return FluxFill(os.environ["FLUXFILL_CKPT"], mode=mode, n_samples=int(os.environ.get("FLUXFILL_SAMPLES", "64")),
+                    device=os.environ.get("FLUXFILL_DEVICE", "cuda"), name="fluxfill" if mode == "marginal" else "fluxfill-v1")
 
 
 def main():

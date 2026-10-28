@@ -136,9 +136,14 @@ def test_flow_head_shapes_and_loss():
 
 @pytest.mark.parametrize("memory,mem_residual,components", [(False, False, 1), (True, False, 1), (True, True, 1),
                                                            (True, True, 3)])
-@pytest.mark.parametrize("local_base,gated_base,gate_scale", [(False, False, False), (True, False, False),
-                                                              (False, True, False), (False, True, True)])
-def test_method_protocol(tmp_path, memory, mem_residual, components, local_base, gated_base, gate_scale):
+@pytest.mark.parametrize("local_base,gated_base,gate_scale,edge_continue", [(False, False, False, False),
+                                                                            (True, False, False, False),
+                                                                            (False, True, False, False),
+                                                                            (False, True, True, False),
+                                                                            (False, True, True, True)])
+@pytest.mark.parametrize("memory_skew", [False, True])
+def test_method_protocol(tmp_path, memory, mem_residual, components, local_base, gated_base, gate_scale, edge_continue,
+                         memory_skew):
     """FluxFill.predict returns (S, V, T) samples, the visible truth outside the mask, finite values inside it, in
     both sampling modes."""
     from data import Stats
@@ -151,7 +156,7 @@ def test_method_protocol(tmp_path, memory, mem_residual, components, local_base,
     st = stats_of(rec)
     net = FluxFillNet(d=32, depth=1, heads=4, flow_width=32, flow_depth=1, memory=memory, mem_residual=mem_residual,
                       components=components, local_base=local_base, gated_base=gated_base,
-                      gate_scale=gate_scale)
+                      gate_scale=gate_scale, edge_continue=edge_continue, memory_skew=memory_skew)
     ck = tmp_path / "ck.pt"
     torch.save({"model": net.state_dict(), "config": {"stats": st.to_dict(), "d": 32, "depth": 1, "heads": 4,
                                                                  "flow_width": 32, "flow_depth": 1, "memory": memory,
@@ -159,7 +164,9 @@ def test_method_protocol(tmp_path, memory, mem_residual, components, local_base,
                                                                  "components": components,
                                                                  "local_base": local_base,
                                                                  "gated_base": gated_base,
-                                                                 "gate_scale": gate_scale}}, ck)
+                                                                 "gate_scale": gate_scale,
+                                                                 "edge_continue": edge_continue,
+                                                                 "memory_skew": memory_skew}}, ck)
     keys = [v for v in VARS if v not in ("FCH4", "G")]
     rows = [VARS.index(k) for k in keys]
     vals = window_values(rec, 30)[rows].astype(np.float64)
@@ -414,11 +421,158 @@ def test_method_exact_pit_matches_samples_and_runner_uses_it(tmp_path, gated):
     mask[[i for i, p in enumerate(prov) if p == "tower"], 500:1500] = True
     w = Window("XX-Syn", t[0], t, keys, vals, np.isfinite(vals), prov)
     vis = Window("XX-Syn", t[0], t, keys, np.where(mask, np.nan, vals), np.isfinite(vals) & ~mask, prov)
-    m = FluxFill(str(ck), mode="marginal", n_samples=4000, device="cpu")
+    m = FluxFill(str(ck), mode="marginal", n_samples=200, device="cpu")       # small: the mixture sampler expands per component
     s = m.predict(vis, mask, {})
     pit = m.pit(vals)
     sel = mask & np.isfinite(vals)
     emp = (s[:, sel] <= vals[sel][None]).mean(0)                     # empirical CDF of the samples at the truth
-    assert np.abs(emp - pit[sel]).mean() < 0.02
+    assert np.abs(emp - pit[sel]).mean() < 0.05                      # sampling error of a 200-draw ECDF is about 0.03
     out = bench.score("ff", "R1", "M2-x", w, mask, s, pit)
     assert {r.get("cov_method") for r in out if r["kind"] == "values" and r.get("n", 0) > 0} == {"exact"}
+
+
+def test_edge_anomaly_reference_no_leak_and_anchor():
+    from net import edge_anomaly, local_course_stats
+    z = torch.zeros(1, 1, 3, 48); obs = torch.zeros(1, 1, 3, 48, dtype=torch.bool)
+    obs[0, 0, 1, :10] = True; obs[0, 0, 1, 30:] = True                 # day 1 visible except half-hours 10-29
+    z[0, 0, 1, 9] = 2.0; z[0, 0, 1, 30] = -1.0
+    course = torch.zeros_like(z); ok = torch.ones_like(obs)
+    A, d = edge_anomaly(z, obs, course, ok)
+    t = 48 + np.arange(10, 30)
+    assert np.array_equal(d[0, 0].reshape(-1)[t].numpy(), np.minimum(t - (48 + 9), (48 + 30) - t).astype(np.float32))
+    assert float(A[0, 0, 1, 12]) == 2.0 and float(A[0, 0, 1, 28]) == -1.0   # nearest edge's anomaly
+    z2 = torch.where(obs, z, z + 50.0)                                     # hidden values changed
+    A2, d2 = edge_anomaly(z2, obs, course, ok)
+    assert torch.equal(A, A2) and torch.equal(d, d2)
+    # anchor with a zero head: local component = course + A * 0.5 ** d where a local course exists
+    rec = synthetic_record(days=1500); st = stats_of(rec)
+    from sampler import WindowSampler
+    smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True)
+    hide = np.zeros((V_TAB, T_WIN), bool); hide[IS_TOWER, 2000:2048] = True
+    b = collate([make_example(rec, 400, st, hide, np.zeros(180, bool), None, smp.window_memory("XX-Syn", 400))])
+    net = FluxFillNet(d=32, depth=1, heads=4, memory=True, mem_residual=True, gated_base=True, edge_continue=True).eval()
+    torch.nn.init.zeros_(net.head_t.mlp[-1].weight); torch.nn.init.zeros_(net.head_t.mlp[-1].bias)
+    with torch.no_grad():
+        loc = net(b)[1][0]
+    lm, okk, _ = local_course_stats(b["z"], b["obs"])
+    Ae, de = edge_anomaly(b["z"], b["obs"], lm, okk)
+    want = torch.where(okk, lm + Ae * 0.5 ** de, b["mem_m"] * b["mem_h"].float())
+    assert torch.allclose(loc[..., 0], want, atol=1e-5)
+
+
+def test_memory_skew_accuracy_stability_no_leak_and_consistency():
+    from memory import memory_from_table, memory_from_table_skew
+    from sampler import WindowSampler
+    rng = np.random.default_rng(5)
+    def make():
+        r = synthetic_record(days=1500)
+        T = r.values.shape[1]
+        g = np.random.default_rng(7)
+        r.values[VARS.index("NEE")] = g.gamma(2.0, 1.0, T).astype(np.float32)              # skewness 1.41
+        r.values[VARS.index("PA")] = (100.0 + 0.5 * g.standard_normal(T)).astype(np.float32)  # large mean, small spread
+        tt = r.t0 + pd.to_timedelta(np.arange(T) * 30, unit="m")
+        r.values[VARS.index("TS_1")] = (10 + 12 * np.sin(2 * np.pi * tt.day_of_year / 365.25) + g.gamma(2.0, 0.3, T)).astype(np.float32)
+        return r, tt
+    rec, t = make()
+    st = stats_of(rec)
+    start = pd.Timestamp("2017-03-01")
+    ctx = rec.values.copy(); ctx[:, t.year == 2017] = np.nan
+    mz, sz, kz, has = memory_from_table_skew(ctx, rec.t0, st, start)
+    mz0, sz0, has0 = memory_from_table(ctx, rec.t0, st, start)
+    assert np.array_equal(has, has0)
+    assert np.allclose(mz, mz0, atol=2e-3) and np.allclose(sz, sz0, atol=2e-3)       # same mean and sd as before
+    day, k = 10, 20
+    doy = (start + pd.Timedelta(days=day)).day_of_year
+    dd = np.abs(t.day_of_year - doy); dd = np.minimum(dd, 366 - dd)
+    slot = t.hour * 2 + t.minute // 30
+    for v, tol in (("NEE", 0.05), ("PA", 0.1)):
+        i = VARS.index(v)
+        pool = ctx[i, (slot == k) & (dd <= 15)]; pool = pool[np.isfinite(pool)].astype(np.float64)
+        assert abs(kz[i, day, k] - sst.skew(pool)) < tol, v
+    # no leak: change every value of the window's year; all four channels stay within float16 resolution
+    smp = WindowSampler({"X": rec}, ["X"], st, {}, train=False, memory=True, memory_skew=True)
+    rec2, t2 = make(); rec2.values[:, t2.year == 2017] += 7.0
+    smp2 = WindowSampler({"X": rec2}, ["X"], st, {}, train=False, memory=True, memory_skew=True)
+    for a, b in zip(smp.window_memory("X", 400), smp2.window_memory("X", 400)):
+        assert np.allclose(a.astype(np.float64), b.astype(np.float64), atol=2e-2)
+
+
+def test_driver_anomaly_zero_init_formula_and_no_leak():
+    from net import local_course_stats
+    rec = synthetic_record(days=1500); st = stats_of(rec)
+    from sampler import WindowSampler
+    smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True)
+    hide = np.zeros((V_TAB, T_WIN), bool); hide[IS_TOWER, 2000:2048] = True
+    ex = make_example(rec, 400, st, hide, np.zeros(180, bool), None, smp.window_memory("XX-Syn", 400))
+    b = collate([ex])
+    torch.manual_seed(0)
+    a = FluxFillNet(d=32, depth=1, heads=4, memory=True, mem_residual=True, gated_base=True).eval()
+    torch.manual_seed(0)
+    g = FluxFillNet(d=32, depth=1, heads=4, memory=True, mem_residual=True, gated_base=True, driver_anomaly=True).eval()
+    g.load_state_dict({**a.state_dict(), **{k: v for k, v in g.state_dict().items() if k.startswith("beta_out")}})
+    with torch.no_grad():
+        pa, pg = a(b)[1], g(b)[1]
+    for x, y in zip(pa, pg):
+        assert torch.allclose(x, y)                                     # zero-initialised: identical
+    with torch.no_grad():
+        g.beta_out.bias.copy_(torch.tensor([0.5, -0.2, 0.1]))
+        pg2 = g(b)[1]
+    lm, ok, _ = local_course_stats(b["z"], b["obs"])
+    dr = g.driver_rows
+    danom = torch.where(b["obs"][:, dr] & ok[:, dr], b["z"][:, dr] - lm[:, dr], torch.zeros_like(lm[:, dr]))
+    shift = 0.5 * danom[:, 0] - 0.2 * danom[:, 1] + 0.1 * danom[:, 2]                # (B, D, 48), same for every row
+    assert torch.allclose(pg2[0][..., 1] - pa[0][..., 1], shift[:, None].expand_as(pa[0][..., 1]), atol=1e-5)
+    ex2 = dict(ex); ex2["tgt"] = ex["tgt"] + 9.0
+    with torch.no_grad():
+        p3 = g(collate([ex2]))[1]
+    for x, y in zip(pg2, p3):
+        assert torch.equal(x, y)
+
+
+def test_memory_skew_fluxes_only_ignores_other_rows():
+    from data import IS_FLUX
+    rec = synthetic_record(days=1500); st = stats_of(rec)
+    from sampler import WindowSampler
+    smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True, memory_skew=True)
+    hide = np.zeros((V_TAB, T_WIN), bool); hide[IS_TOWER, 2000:2048] = True
+    ex = make_example(rec, 400, st, hide, np.zeros(180, bool), None, smp.window_memory("XX-Syn", 400))
+    b = collate([ex])
+    net = FluxFillNet(d=32, depth=1, heads=4, memory=True, mem_residual=True, gated_base=True,
+                      memory_skew_fluxes_only=True).eval()
+    assert net.memory_skew and net.tab_in.in_features == 5 * 48 and net.skew_in.in_features == 48
+    b2 = {k: (v.clone() if torch.is_tensor(v) else v) for k, v in b.items()}
+    b2["mem_k"][:, torch.from_numpy(~IS_FLUX)] += 3.0                     # change the skewness of non-flux rows only
+    with torch.no_grad():
+        p1, p2 = net(b)[1], net(b2)[1]
+    for x, y in zip(p1, p2):
+        assert torch.equal(x, y)
+    b3 = {k: (v.clone() if torch.is_tensor(v) else v) for k, v in b.items()}
+    b3["mem_k"][:, torch.from_numpy(IS_FLUX)] += 3.0                       # flux rows: the output changes
+    with torch.no_grad():
+        net.skew_in.weight.normal_()                                       # (zero at initialisation by design)
+        p1 = net(b)[1]
+        p3 = net(b3)[1]
+    assert not torch.equal(p1[0], p3[0])
+
+
+
+@pytest.mark.parametrize("option", [dict(driver_anomaly=True), dict(memory_skew=True), dict(memory_skew_fluxes_only=True),
+                                    dict(driver_anomaly=True, memory_skew_fluxes_only=True)])
+def test_option_arms_start_from_the_base_weights(option):
+    """An A/B arm with an option has exactly the base model's initial weights (and output) at the same seed."""
+    base = dict(d=32, depth=2, heads=4, memory=True, mem_residual=True, gated_base=True, gate_scale=True, img_nll=True,
+                edge_continue=True)
+    torch.manual_seed(0); A = FluxFillNet(**base).eval()
+    torch.manual_seed(0); B = FluxFillNet(**base, **option).eval()
+    sa, sb = A.state_dict(), B.state_dict()
+    assert all(torch.equal(sa[k], sb[k]) for k in sa)                      # every base tensor equal
+    extra = [k for k in sb if k not in sa]
+    assert extra and all(torch.count_nonzero(sb[k]) == 0 for k in extra)   # option parameters start at zero
+    rec = synthetic_record(days=1500); st = stats_of(rec)
+    from sampler import WindowSampler
+    smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True, memory_skew=True)
+    hide = np.zeros((V_TAB, T_WIN), bool); hide[IS_TOWER, 2000:2048] = True
+    b = collate([make_example(rec, 400, st, hide, np.zeros(180, bool), None, smp.window_memory("XX-Syn", 400))])
+    with torch.no_grad():
+        for x, y in zip(A(b)[1], B(b)[1]):
+            assert torch.allclose(x, y, atol=1e-6)

@@ -48,9 +48,13 @@ def make_example(rec: SiteRecord, start_day: int, stats: Stats, hide: np.ndarray
 def mem_arrays(mem) -> Dict[str, np.ndarray]:
     if mem is None:
         z = np.zeros((V_TAB, WINDOW_DAYS, STEPS_PER_DAY), np.float32)
-        return {"mem_m": z, "mem_s": z, "mem_h": np.zeros(z.shape, bool)}
-    m, s_, h = mem
-    return {"mem_m": np.asarray(m, np.float32), "mem_s": np.asarray(s_, np.float32), "mem_h": np.asarray(h, bool)}
+        return {"mem_m": z, "mem_s": z, "mem_k": z, "mem_h": np.zeros(z.shape, bool)}
+    if len(mem) == 4:                 # with the skewness channel (E23)
+        m, s_, k, h = mem
+    else:
+        (m, s_, h), k = mem, np.zeros(np.shape(mem[0]), np.float32)
+    return {"mem_m": np.asarray(m, np.float32), "mem_s": np.asarray(s_, np.float32), "mem_k": np.asarray(k, np.float32),
+            "mem_h": np.asarray(h, bool)}
 
 
 class WindowSampler:
@@ -59,9 +63,9 @@ class WindowSampler:
 
     def __init__(self, records: Dict[str, SiteRecord], sites, stats: Stats, imagery: Dict[str, SiteImagery],
                  train: bool, cfg: masking.MaskConfig = masking.MaskConfig(), site_weights: Optional[Dict] = None,
-                 memory: bool = False, p_drop_mem: float = 0.2):
+                 memory: bool = False, p_drop_mem: float = 0.2, memory_skew: bool = False):
         self.records, self.stats, self.imagery, self.cfg = records, stats, imagery, cfg
-        self.memory, self.p_drop_mem = memory, p_drop_mem
+        self.memory, self.p_drop_mem, self.memory_skew = memory, p_drop_mem, memory_skew
         self._mem, self._cache = {}, {}
         self.starts = {s: valid_starts(records[s], exclude_heldout=train) for s in sites if s in records}
         self.sites = [s for s, v in self.starts.items() if v.size]
@@ -86,6 +90,8 @@ class WindowSampler:
         """Site memory of window (s, d) without its own calendar years (cached per site and year span)."""
         if drop:
             return None
+        if self.memory_skew:
+            return self._window_memory_skew(s, d)
         from memory import SiteMemory, memory_from_sums, window_memory, year_sums
         rec = self.records[s]
         if s not in self._mem:
@@ -107,6 +113,24 @@ class WindowSampler:
         mz, sz, has = self._cache[key]
         m, sd, h = window_memory(mz, sz, has, start)
         return m.astype(np.float32), sd.astype(np.float32), h
+
+
+    def _window_memory_skew(self, s: str, d: int):
+        from memory import SiteMemorySkew, window_memory_skew
+        rec = self.records[s]
+        key = ("skew", s)
+        if key not in self._mem:
+            self._mem[key] = SiteMemorySkew(rec, [rec.heldout_year] if rec.heldout_year is not None else [])
+        sm = self._mem[key]
+        start = rec.t0 + pd.Timedelta(days=d)
+        years = tuple(range(start.year, (start + pd.Timedelta(days=WINDOW_DAYS - 1)).year + 1))
+        ck = ("skew", s, years)
+        if ck not in self._cache:
+            if len(self._cache) >= 400:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[ck] = tuple(x.astype(np.float16) if x.dtype != bool else x for x in sm.tables(years, self.stats))
+        mz, sz, kz, has = self._cache[ck]
+        return tuple(x.astype(np.float32) if x.dtype != bool else x for x in window_memory_skew(mz, sz, kz, has, start))
 
 
 def collate(examples, device=None) -> Dict[str, torch.Tensor]:

@@ -1,7 +1,8 @@
 """FluxFill scaling study: collect runs into scaling.json and fit L(x) = a * x^(-alpha) + c.
 
-Runs are registered in `scaling/runs.json` as {run: axis}, axis "data", "model" or "data,model" (the reference run,
-which is a point of both). "data": fixed model, nested stratified subsets of the
+Runs are registered in `scaling/runs.json` as {run: axis}, axis "data", "model", "data,model" (the reference run,
+which is a point of both) or "ablation" (recorded in scaling.json, never fitted: the imagery ablation and paired
+checks). "data": fixed model, nested stratified subsets of the
 training sites, `train.py --n-train-sites`) or "model" (all training sites, model width and depth varied). For each run
 this reads `<run>/config.json`, `<run>/log.jsonl` and the per-window validation scores `<run>/val_windows/stepN.json`
 written by train.py at every evaluation, and takes the evaluation with the lowest validation CRPS.
@@ -45,7 +46,9 @@ def run_record(run: str, axis: str):
             "tokens_seen_at_best": int(best["step"] * tps), "val_crps": best["val_crps"],
             "val_crps_flux": best["val_crps_flux"], "val_cov95": best.get("val_cov95"),
             "complete": last >= cfg["steps"] or (cfg.get("stop_at") and last >= cfg["stop_at"]),
-            "flags": {k: cfg.get(k) for k in ("flow", "memory", "mem_residual", "gated_base", "local_base",
+            # still improving at the end: the best evaluation is the last one and it improved on the one before
+            "step_limited": best["step"] == last and len(ev) > 1 and sorted(ev, key=lambda e: e["step"])[-2]["val_crps"] > best["val_crps"],
+            "flags": {k: cfg.get(k) for k in ("flow", "memory", "mem_residual", "gated_base", "gate_scale", "local_base",
                                                "components", "img_nll", "imagery_sites")}}
 
 
@@ -110,7 +113,7 @@ def main():
     reg_f = OUT / "runs.json"
     reg = json.loads(reg_f.read_text()) if reg_f.exists() else {}
     for run, axis in a.register:
-        assert set(axis.split(",")) <= {"data", "model"}, axis
+        assert set(axis.split(",")) <= {"data", "model", "ablation"}, axis
         reg[run] = axis
     reg_f.write_text(json.dumps(reg, indent=1))
     recs = [r for r in (run_record(run, axis) for run, axis in reg.items()) if r]

@@ -43,6 +43,10 @@ def main():
     ap.add_argument("--days", type=int, nargs="+", default=[1, 7])
     ap.add_argument("--imagery-sites", default="")
     ap.add_argument("--chronos-from", default="", help="reuse Chronos-2 columns of an earlier output (same windows)")
+    ap.add_argument("--no-climatology", action="store_true", help="skip climatology (cl_* columns are NaN)")
+    ap.add_argument("--edge-blocks", type=int, default=0,
+                    help="instead of the M2 blocks: this many seeded, non-overlapping 1-day blocks per window, each its "
+                         "own mask (edge study; more values near gap edges)")
     a = ap.parse_args()
     specs = json.loads(Path(a.windows).read_text())
     specs = list({(s["site"], s["start"]): s for s in specs}.values())        # distinct windows
@@ -65,8 +69,16 @@ def main():
         V, T = w.values.shape
         tower = w.rows("tower")
         flux = [w.keys.index(k) for k in FLUXES if k in w.keys]
-        for d in a.days:
-            mk = contiguous_block(tower, V, T, d, np.random.default_rng(seed_for(w.site, spec["start"], "M2", d)))
+        if a.edge_blocks:
+            rng = np.random.default_rng(seed_for(w.site, spec["start"], "edge", a.edge_blocks))
+            starts = rng.choice(np.arange(2, 178), size=a.edge_blocks, replace=False) * 48 + rng.integers(0, 48, a.edge_blocks)
+            masks = []
+            for b_ in sorted(starts):
+                mk_ = np.zeros((V, T), bool); mk_[tower, b_:b_ + 48] = True; masks.append((f"edge-1d-{b_}", mk_))
+        else:
+            masks = [(f"M2-{d}d", contiguous_block(tower, V, T, d, np.random.default_rng(seed_for(w.site, spec["start"], "M2", d))))
+                     for d in a.days]
+        for mname, mk in masks:
             vis = Window(w.site, w.start, w.t, w.keys, np.where(mk, np.nan, w.values), w.measured & ~mk, w.provenance)
             mflux = np.zeros_like(mk)
             mflux[flux] = mk[flux]
@@ -74,7 +86,7 @@ def main():
                           w.provenance)
             s_ff = ff.predict(vis, mk, ctx)
             s_ch = ch.predict(visf, mflux, ctx) if ch is not None else np.full((64,) + mk.shape, np.nan)
-            s_cl = cl.predict(vis, mk, ctx)
+            s_cl = np.full((64,) + mk.shape, np.nan) if a.no_climatology else cl.predict(vis, mk, ctx)
             hid = mk[tower].any(0)
             e = np.flatnonzero(np.diff(np.concatenate(([0], hid.astype(np.int8), [0]))))
             for a0, b0 in zip(e[::2], e[1::2]):
@@ -83,7 +95,7 @@ def main():
                     if j.size == 0:
                         continue
                     y = w.values[i, j]
-                    r = dict(site=w.site, window=spec["start"], mask=f"M2-{d}d", variable=w.keys[i], j=j,
+                    r = dict(site=w.site, window=spec["start"], mask=mname, variable=w.keys[i], j=j,
                              from_start=j - a0 + 1, to_end=b0 - j, edge=np.minimum(j - a0 + 1, b0 - j),
                              hour=w.t[j].hour + w.t[j].minute / 60, truth=y, sw_in_era5=w.values[w.keys.index("ERA5_SW_IN"), j]
                              if "ERA5_SW_IN" in w.keys else np.nan)
@@ -94,9 +106,10 @@ def main():
                         if ok.any():
                             c[ok] = crps_samples(ss[:, ok], y[ok])
                         r[f"{name}_mean"] = np.where(ok, np.nanmean(np.where(np.isfinite(ss), ss, np.nan), 0), np.nan)
+                        r[f"{name}_median"] = np.where(ok, np.nanmedian(np.where(np.isfinite(ss), ss, np.nan), 0), np.nan)
                         r[f"{name}_crps"] = c
                     rows.append(pd.DataFrame(r))
-            print(w.site, spec["start"], d, flush=True)
+            print(w.site, spec["start"], mname, flush=True)
         out = pd.concat(rows, ignore_index=True)
         if ch is None:
             out = out.drop(columns=["ch_mean", "ch_crps"]).merge(prev, on=["site", "window", "mask", "variable", "j"],

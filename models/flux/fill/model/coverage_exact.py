@@ -43,7 +43,9 @@ def main():
     net = FluxFillNet(d=c["d"], depth=c["depth"], heads=c["heads"], memory=c.get("memory", False),
                       mem_residual=c.get("mem_residual", False), components=c.get("components", 1),
                       local_base=c.get("local_base", False), gated_base=c.get("gated_base", False),
-                      gate_scale=c.get("gate_scale", False),
+                      gate_scale=c.get("gate_scale", False), edge_continue=c.get("edge_continue", False),
+                      memory_skew=c.get("memory_skew", False), driver_anomaly=c.get("driver_anomaly", False),
+                      memory_skew_fluxes_only=c.get("memory_skew_fluxes", False),
                       img_nll=c.get("img_nll", False))
     net.load_state_dict(ck["model"]); net.eval()
     stats = Stats.from_dict(c["stats"])
@@ -58,7 +60,8 @@ def main():
             im = load_imagery(s, r.utc_offset_h)
             if im is not None:
                 imagery[s] = im
-    vex = train.val_examples(records, val, stats, imagery, memory=c.get("memory", False))
+    vex = train.val_examples(records, val, stats, imagery, memory=c.get("memory", False),
+                             memory_skew=c.get("memory_skew", False) or c.get("memory_skew_fluxes", False))
     rows = []
     for e in vex:
         b = collate([{k: v for k, v in e.items() if not k.startswith("_")}])

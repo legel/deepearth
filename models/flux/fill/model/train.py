@@ -76,12 +76,13 @@ def site_weights():
     return w.groupby("site_id")[col].first().astype(float).to_dict()
 
 
-def val_examples(records, val, stats, imagery, n_per_site: int = 2, max_n: int = 60, memory: bool = False):
+def val_examples(records, val, stats, imagery, n_per_site: int = 2, max_n: int = 60, memory: bool = False,
+                 memory_skew: bool = False):
     """Fixed validation windows: up to `n_per_site` usable windows per site (evenly spaced starts), each with the
     M2 all-tower block of one length in turn, seeded as in the benchmark."""
     out = []
     k = 0
-    msmp = WindowSampler(records, val, stats, imagery, train=False, memory=True) if memory else None
+    msmp = WindowSampler(records, val, stats, imagery, train=False, memory=True, memory_skew=memory_skew) if memory else None
     for s in val:
         if s not in records:
             continue
@@ -108,7 +109,8 @@ def val_examples(records, val, stats, imagery, n_per_site: int = 2, max_n: int =
     return out
 
 
-def imagery_val_examples(records, val, stats, imagery, memory: bool, per_site: int = 4, frac: float = 0.3):
+def imagery_val_examples(records, val, stats, imagery, memory: bool, per_site: int = 4, frac: float = 0.3,
+                         memory_skew: bool = False):
     """Validation windows at validation sites with Clay embeddings, for imagery scores only: up to `per_site` windows
     with at least 5 acquisition days, a seeded 30 % of those days hidden (the targets) and the M2 7-day all-tower
     block. Kept apart from `val_examples`, so the main validation numbers do not change with imagery coverage."""
@@ -116,7 +118,7 @@ def imagery_val_examples(records, val, stats, imagery, memory: bool, per_site: i
     out = []
     if sum(s in imagery for s in val) > 5:      # imagery at many validation sites: one window per site keeps it fast
         per_site = 1
-    msmp = WindowSampler(records, val, stats, imagery, train=False, memory=True) if memory else None
+    msmp = WindowSampler(records, val, stats, imagery, train=False, memory=True, memory_skew=memory_skew) if memory else None
     for s in val:
         if s not in imagery or s not in records:
             continue
@@ -316,6 +318,13 @@ def main():
                     help="E20: two Student-t anchored at the local course and the memory mean, gated per half-hour")
     ap.add_argument("--gate-scale", action="store_true",
                     help="E21: the gate's evidence features also scale each component's spread (with --gated-base)")
+    ap.add_argument("--driver-anomaly", action="store_true",
+                    help="E25: both anchors follow the ERA5 SW_IN, TA, VPD anomalies with per-token learned slopes")
+    ap.add_argument("--memory-skew-fluxes", action="store_true",
+                    help="E23b: site-memory skewness for the flux rows only (NEE, LE, H, FCH4)")
+    ap.add_argument("--memory-skew", action="store_true", help="E23: site-memory skewness as a fourth memory channel")
+    ap.add_argument("--edge-continue", action="store_true",
+                    help="E24: local anchor continues the nearest visible anomaly with a learned per-variable decay")
     ap.add_argument("--components", type=int, default=1, help="Student-t mixture components per half-hour (1: v0)")
     ap.add_argument("--flow", action="store_true", help="train the v1 flow head jointly")
     ap.add_argument("--no-imagery", action="store_true")
@@ -334,8 +343,8 @@ def main():
     records, train, val, split_name, stats, imagery = setup(a)
     print(f"split {split_name}: {len(train)} train, {len(val)} val sites; {len(records)} loaded; imagery at "
           f"{sorted(imagery)}; {time.time() - t0:.0f} s", flush=True)
-    vex = val_examples(records, val, stats, imagery, memory=a.memory)
-    vimg = imagery_val_examples(records, val, stats, imagery, memory=a.memory)
+    vex = val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
+    vimg = imagery_val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
     print(f"imagery validation: {len(vimg)} windows at {sorted({e['_id'][0] for e in vimg})}", flush=True)
     cfg = dict(vars(a), split=split_name, train_sites=train, val_sites=val, stats=stats.to_dict(),
                imagery_sites_used=sorted(imagery))
@@ -343,7 +352,8 @@ def main():
     net = FluxFillNet(d=a.d, depth=a.depth, heads=a.heads, dropout=a.dropout, use_imagery=not a.no_imagery,
                       memory=a.memory, mem_residual=a.mem_residual, img_nll=a.img_nll,
                       components=a.components, local_base=a.local_base, gated_base=a.gated_base,
-                      gate_scale=a.gate_scale).to(device)
+                      gate_scale=a.gate_scale, edge_continue=a.edge_continue, memory_skew=a.memory_skew,
+                      driver_anomaly=a.driver_anomaly, memory_skew_fluxes_only=a.memory_skew_fluxes).to(device)
     n_params = sum(p.numel() for p in net.parameters())
     print(f"params {n_params / 1e6:.2f} M", flush=True)
     cfg["n_params"] = int(n_params)
@@ -356,7 +366,7 @@ def main():
         net.load_state_dict(ck["model"]); opt.load_state_dict(ck["opt"]); step0 = ck["step"]
     if a.mode == "overfit":
         rng = np.random.default_rng(a.seed)
-        smp = WindowSampler(records, train, stats, imagery, train=True, memory=a.memory)
+        smp = WindowSampler(records, train, stats, imagery, train=True, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
         fixed = []
         while len(fixed) < a.n_overfit:
             e = smp.draw(rng)
@@ -370,7 +380,8 @@ def main():
     else:
         sw = site_weights()
         print(f"site weights: {'weights.parquet' if sw else 'uniform'}", flush=True)
-        smp = WindowSampler(records, train, stats, imagery, train=True, site_weights=sw, memory=a.memory)
+        smp = WindowSampler(records, train, stats, imagery, train=True, site_weights=sw, memory=a.memory,
+                            memory_skew=a.memory_skew or a.memory_skew_fluxes)
         dl = torch.utils.data.DataLoader(Stream(smp, a.batch, a.seed), batch_size=None, num_workers=a.workers,
                                          persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None)
         it = (({k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in b.items()}) for b in dl)

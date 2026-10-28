@@ -11,9 +11,22 @@ from pathlib import Path
 PAUSE_FILE = Path("/home/photon/4tb/fluxfill/model/PAUSE_GPU1")
 
 
+def uses_gpu() -> bool:
+    """False for CPU-only processes (CUDA_VISIBLE_DEVICES empty or no CUDA device), which the pause does not concern."""
+    import os
+    if os.environ.get("CUDA_VISIBLE_DEVICES", None) == "":
+        return False
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
+
 def wait_if_paused(tag: str = "", on_pause=None) -> bool:
-    """Block while the pause file exists; return True if a pause happened. `on_pause` runs once before waiting."""
-    if not PAUSE_FILE.exists():
+    """Block while the pause file exists; return True if a pause happened. `on_pause` runs once before waiting.
+    CPU-only processes never pause."""
+    if not PAUSE_FILE.exists() or not uses_gpu():
         return False
     if on_pause is not None:
         on_pause()

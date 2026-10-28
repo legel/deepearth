@@ -29,7 +29,7 @@ sys.path.insert(0, str(HERE))
 
 from data import (IS_LAND, STEPS_PER_DAY, V_TAB, VARS, WINDOW_DAYS, Stats, doy_features, land_matrix,  # noqa: E402
                   record_from_table, site_features, sites_table)
-from memory import memory_from_table  # noqa: E402
+from memory import memory_from_table, memory_from_table_skew  # noqa: E402
 from sampler import mem_arrays  # noqa: E402
 from imagery import load_imagery, window_imagery  # noqa: E402
 from net import FluxFillNet, mixture_cdf, sample_marginal_params  # noqa: E402
@@ -49,7 +49,9 @@ class FluxFill:
                                memory=c.get("memory", False), mem_residual=c.get("mem_residual", False),
                                img_nll=c.get("img_nll", False), components=c.get("components", 1),
                                local_base=c.get("local_base", False), gated_base=c.get("gated_base", False),
-                               gate_scale=c.get("gate_scale", False))
+                               gate_scale=c.get("gate_scale", False), edge_continue=c.get("edge_continue", False),
+                               memory_skew=c.get("memory_skew", False), driver_anomaly=c.get("driver_anomaly", False),
+                               memory_skew_fluxes_only=c.get("memory_skew_fluxes", False))
         self.net.load_state_dict(ck["model"])
         self.net.use_imagery = self.net.use_imagery and imagery      # False: imagery modality removed (M4)
         # Imagery only at these sites (None: every site with a Clay store). Defaults to the list the checkpoint was
@@ -108,7 +110,8 @@ class FluxFill:
         key = (w.site, str(w.start.date()), len(tab))
         if key not in self._memc:
             rec = record_from_table(tab, w.site)
-            self._memc = {key: memory_from_table(rec.values, rec.t0, self.stats, w.start)}
+            f = memory_from_table_skew if self.net.memory_skew else memory_from_table
+            self._memc = {key: f(rec.values, rec.t0, self.stats, w.start)}
         return self._memc[key]
 
     def _batch(self, ex, n):

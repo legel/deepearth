@@ -109,3 +109,93 @@ def memory_from_table(values: np.ndarray, t0: pd.Timestamp, stats: Stats, start:
     rec = SiteRecord("ctx", t0, values)
     S1, S2, N = site_totals(rec)
     return window_memory(*memory_from_sums(S1, S2, N, stats), start)
+
+
+# ------------------------------------------------------------------------------------- skewness channel (E23, flag)
+# Separate functions, used only when the memory skewness is requested, so runs without it execute the code above
+# unchanged. Power sums are taken of values minus a per-(variable, half-hour) centre of the site; the centre is the
+# same for every day of the year, so within each (day-of-year, half-hour) pool it is a constant and the central
+# moments do not depend on it. Removing the diurnal offset keeps the float32 cancellation of the third moment small
+# (what remains is the seasonal offset of the pool from the centre).
+
+def slot_shift(rec: SiteRecord) -> np.ndarray:
+    """(V, 48) mean of each variable at each half-hour of the day over the whole record (0 where none)."""
+    x = rec.values[:, : rec.n_days * K].reshape(V_TAB, rec.n_days, K).astype(np.float64)
+    with np.errstate(all="ignore"):
+        c = np.nanmean(x, 1)
+    return np.nan_to_num(c)
+
+
+def year_sums_skew(rec: SiteRecord, year: int, shift: np.ndarray):
+    """Sums of the first three powers of (value - shift) and the count, one calendar year, by (V, 366, 48)."""
+    yr, doy = _day_doy(rec)
+    sel = np.flatnonzero(yr == year)
+    S1, S2, S3, N = (np.zeros((V_TAB, 366, K)) for _ in range(4))
+    if sel.size == 0:
+        return S1, S2, S3, N
+    x = rec.values[:, sel[0] * K:(sel[-1] + 1) * K].reshape(V_TAB, sel.size, K).astype(np.float64) - shift[:, None, :]
+    ok = np.isfinite(x)
+    x0 = np.where(ok, x, 0.0)
+    d = doy[sel]
+    S1[:, d] = x0; S2[:, d] = x0 * x0; S3[:, d] = x0 * x0 * x0; N[:, d] = ok
+    return S1, S2, S3, N
+
+
+def site_totals_skew(rec: SiteRecord, skip_years: Iterable[int], shift: np.ndarray):
+    yr, _ = _day_doy(rec)
+    skip = set(int(y) for y in skip_years)
+    tot = [np.zeros((V_TAB, 366, K)) for _ in range(4)]
+    for y in np.unique(yr):
+        if int(y) not in skip:
+            for a_, b_ in zip(tot, year_sums_skew(rec, int(y), shift)):
+                a_ += b_
+    return tuple(tot)
+
+
+def memory_from_sums_skew(S1, S2, S3, N, shift: np.ndarray, stats: Stats):
+    """Standardised mean, standardised sd, skewness (clipped to +/- 5, 0 where the spread is negligible) and has."""
+    s1, s2, s3, n = smooth_doy(S1), smooth_doy(S2), smooth_doy(S3), smooth_doy(N)
+    has = n >= MIN_COUNT
+    nn = np.maximum(n, 1)
+    mc = np.where(has, s1 / nn, 0.0)
+    e2 = np.where(has, s2 / nn, 0.0)
+    var = np.maximum(e2 - mc * mc, 0.0)
+    m3 = np.where(has, s3 / nn - 3 * mc * e2 + 2 * mc ** 3, 0.0)
+    m = mc + shift[:, None, :]
+    small = var <= (1e-4 * stats.std[:, None, None]) ** 2
+    skew = np.where(has & ~small, np.clip(m3 / np.maximum(var, 1e-30) ** 1.5, -5.0, 5.0), 0.0)
+    mz = np.where(has, (m - stats.mean[:, None, None]) / stats.std[:, None, None], 0.0)
+    sz = np.where(has, np.sqrt(var) / stats.std[:, None, None], 0.0)
+    return mz.astype(np.float32), sz.astype(np.float32), skew.astype(np.float32), has
+
+
+def window_memory_skew(mz, sz, kz, has, start: pd.Timestamp, n_days: int = WINDOW_DAYS):
+    d = pd.date_range(pd.Timestamp(start), periods=n_days, freq="D").day_of_year.to_numpy() - 1
+    return mz[:, d], sz[:, d], kz[:, d], has[:, d]
+
+
+class SiteMemorySkew:
+    """As SiteMemory, with the third power sum, for the skewness channel."""
+
+    def __init__(self, rec: SiteRecord, never_years: Iterable[int] = ()):
+        self.rec = rec
+        self.never = [int(y) for y in never_years]
+        self.shift = slot_shift(rec)
+        self.S1, self.S2, self.S3, self.N = (x.astype(np.float32) for x in site_totals_skew(rec, self.never, self.shift))
+
+    def tables(self, years: Iterable[int], stats: Stats):
+        """(mean, sd, skew, has) day-of-year tables without the given calendar years."""
+        S = [x.astype(np.float64) for x in (self.S1, self.S2, self.S3, self.N)]
+        for y in years:
+            if y not in self.never:
+                for a_, b_ in zip(S, year_sums_skew(self.rec, y, self.shift)):
+                    a_ -= b_
+        S[3] = np.maximum(S[3], 0)
+        return memory_from_sums_skew(*S, self.shift, stats)
+
+
+def memory_from_table_skew(values: np.ndarray, t0: pd.Timestamp, stats: Stats, start: pd.Timestamp):
+    """(mean, sd, skew, has) channels for a window from a context record without the window's years."""
+    rec = SiteRecord("ctx", t0, values)
+    sh = slot_shift(rec)
+    return window_memory_skew(*memory_from_sums_skew(*site_totals_skew(rec, (), sh), sh, stats), start)

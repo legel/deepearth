@@ -31,10 +31,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from data import PROV_OF_VAR, STEPS_PER_DAY, V_TAB, WINDOW_DAYS
+from data import IS_FLUX, PROV_OF_VAR, STEPS_PER_DAY, V_TAB, VARS, WINDOW_DAYS
 from imagery import CLS_DIM, N_META
 
 K = STEPS_PER_DAY
+
+
+def option_module(build):
+    """Build an optional module without changing the base model's initialisation: it is constructed under a saved
+    and restored random state (so the parameters built after it draw the same numbers as without it) and its
+    parameters are set to zero (so the network computes the same function as the base at initialisation). An A/B arm
+    with an option then starts from exactly the base weights."""
+    with torch.random.fork_rng(devices=[]):
+        m = build()
+    for p in m.parameters():
+        nn.init.zeros_(p)
+    return m
 
 
 def rope_tables(n: int, dim: int, base: float = 10000.0, device=None):
@@ -93,7 +105,8 @@ class FluxFillNet(nn.Module):
     def __init__(self, d: int = 192, depth: int = 6, heads: int = 6, mlp: int = 4, dropout: float = 0.0,
                  flow_width: int = 256, flow_depth: int = 3, use_imagery: bool = True, memory: bool = False,
                  mem_residual: bool = False, img_nll: bool = False, components: int = 1, local_base: bool = False,
-                 gated_base: bool = False, gate_scale: bool = False):
+                 gated_base: bool = False, gate_scale: bool = False, edge_continue: bool = False,
+                 memory_skew: bool = False, driver_anomaly: bool = False, memory_skew_fluxes_only: bool = False):
         super().__init__()
         # img_nll: the imagery head is a diagonal Gaussian (mean and log-scale per Clay dimension) trained on its
         # negative log-likelihood, a proper score; otherwise a point head trained on MSE (v0, kept for old checkpoints).
@@ -116,10 +129,31 @@ class FluxFillNet(nn.Module):
         # gate_scale (E21): the same per-half-hour evidence also scales each component, scale_k * exp(linear_k(f)), so a
         # component's spread can depend on whether it acts alone (no local course) or beside the other one; zero-init.
         self.gate_scale = gate_scale and self.gated_base
+        # edge_continue (E24): the local component's anchor continues the anomaly of the nearest visible step,
+        # course(t) + A_edge * rho_v ** d(t), rho_v = sigmoid(edge_logit_v) per variable, initialised at 0.5 (the
+        # lag-1 autocorrelation of NEE anomalies measured on visible data).
+        self.edge_continue = edge_continue and self.gated_base
+        if self.edge_continue:
+            self.edge_logit = nn.Parameter(torch.zeros(V_TAB))
+        # driver_anomaly (E25): both anchors add sum_k beta_k x anomaly_k(t) over the ERA5 drivers SW_IN, TA, VPD, where
+        # anomaly_k is the driver minus its own local course (visible values only) and beta (per token, from the encoder
+        # state) is zero-initialised, so the head starts identical and learns each site's day-to-day light, temperature
+        # and VPD response.
+        self.driver_anomaly = driver_anomaly and self.gated_base
+        if self.driver_anomaly:
+            self.driver_rows = [VARS.index(k) for k in ("ERA5_SW_IN", "ERA5_TA", "ERA5_VPD")]
+            self.beta_out = option_module(lambda: nn.Linear(d, len(self.driver_rows)))
         if self.gate_scale:
             self.scale_in = nn.Linear(4, 2)
             nn.init.zeros_(self.scale_in.weight); nn.init.zeros_(self.scale_in.bias)
+        # memory_skew (E23): the skewness of the site memory as a fourth memory channel (scaled by 1/5, its clip).
+        self.memory_skew = (memory_skew or memory_skew_fluxes_only) and memory
+        # E23b: the skewness enters only the flux rows (NEE, LE, H, FCH4); zero elsewhere
+        self.register_buffer("skew_rows", torch.tensor(IS_FLUX if memory_skew_fluxes_only else np.ones(V_TAB, bool)),
+                             persistent=False)
         self.tab_in = nn.Linear((5 if memory else 2) * K, d)
+        if self.memory_skew:     # its own projection, zero at initialisation, built without drawing random numbers
+            self.skew_in = option_module(lambda: nn.Linear(K, d, bias=False))
         self.mask_tab = nn.Parameter(torch.zeros(d))
         self.img_norm = nn.LayerNorm(CLS_DIM, elementwise_affine=False)
         self.img_in = nn.Linear(CLS_DIM, d)
@@ -154,6 +188,8 @@ class FluxFillNet(nn.Module):
             mh = b["mem_h"].float()
             parts += [b["mem_m"] * mh, b["mem_s"] * mh, mh]
         tab = self.tab_in(torch.cat(parts, -1))                                   # (B, V, D, d)
+        if self.memory_skew:
+            tab = tab + self.skew_in(b["mem_k"] * b["mem_h"].float() * self.skew_rows.view(1, -1, 1, 1).float() / 5.0)
         empty = (obs.sum(-1, keepdim=True) == 0)
         # A token with no visible value: the learned mask vector, plus its memory channels when memory is on (the value
         # channels of such a token are zero, so tab - bias is exactly the memory part of the projection).
@@ -185,7 +221,7 @@ class FluxFillNet(nn.Module):
             base = torch.where(ok, mean, base)
         return base
 
-    def gated_params(self, b, params):
+    def gated_params(self, b, params, h=None):
         loc, scale, df, logw = params
         mem = b["mem_m"] * b["mem_h"].float()
         lmean, ok, cnt = local_course_stats(b["z"], b["obs"])
@@ -195,7 +231,18 @@ class FluxFillNet(nn.Module):
         diff = (logw[..., 0] - logw[..., 1]) + self.gate_in(feats.to(logw.dtype))[..., 0].float()
         diff = torch.where(ok, diff, torch.full_like(diff, -30.0))          # no local course: memory component only
         logw = torch.log_softmax(torch.stack([diff, torch.zeros_like(diff)], -1), -1)
-        base = torch.stack([torch.where(ok, lmean, mem), mem], -1)
+        local = lmean
+        if self.edge_continue:
+            A, dist_e = edge_anomaly(b["z"], b["obs"], lmean, ok)
+            rho = torch.sigmoid(self.edge_logit).view(1, -1, 1, 1)
+            local = lmean + A * torch.exp(dist_e * torch.log(rho))
+        base = torch.stack([torch.where(ok, local, mem), mem], -1)
+        if self.driver_anomaly and h is not None:
+            dr = self.driver_rows
+            danom = torch.where(b["obs"][:, dr] & ok[:, dr], b["z"][:, dr] - lmean[:, dr], torch.zeros_like(lmean[:, dr]))
+            beta = self.beta_out(h[:, :V_TAB]).float()                                   # (B, V, D, 3)
+            shift = (beta[:, :, :, :, None] * danom[:, None].permute(0, 1, 3, 2, 4).float()).sum(3)   # (B, V, D, 48)
+            base = base + shift[..., None]
         if self.gate_scale:
             scale = scale * torch.exp(self.scale_in(feats.to(scale.dtype)).float().clamp(-5.0, 5.0))
         return loc + base, scale, df, logw
@@ -204,7 +251,7 @@ class FluxFillNet(nn.Module):
         h = self.encode(b)
         params = self.head_t(h[:, :V_TAB])
         if self.gated_base:
-            return h, self.gated_params(b, params)
+            return h, self.gated_params(b, params, h)
         off = self.offset(b)
         loc = params[0] + (off[..., None] if params[0].dim() == off.dim() + 1 else off)
         return h, (loc,) + tuple(params[1:])
@@ -231,6 +278,30 @@ def nearest_visible_distance(obs):
     nxt = torch.where(nxt > 2 * T, torch.full_like(nxt, 10 * T), nxt)
     d = torch.minimum(t - last, nxt - t).clamp(0, T)
     return d.reshape(B, V, D, K_).float()
+
+
+def edge_anomaly(z, obs, course, ok):
+    """Anomaly at the nearest visible step of each variable and the distance to it, both (B, V, D, 48).
+
+    The anomaly of a visible step is its value minus the local course there (0 where that step has no local course);
+    every step takes the anomaly of its nearest visible step (the earlier one on a tie) and the distance in
+    half-hours. Only visible values enter, so no hidden value is read."""
+    B, V, D, K_ = z.shape
+    T = D * K_
+    o, zf, cf, kf = (x.reshape(B, V, T) for x in (obs, z, course, ok))
+    an = torch.where(o & kf, zf - cf, torch.zeros_like(zf))
+    t = torch.arange(T, device=z.device).expand(B, V, T)
+    big = 10 * T
+    last = torch.cummax(torch.where(o, t, torch.full_like(t, -big)), -1).values
+    nxt = (T - 1) - torch.cummax(torch.where(o.flip(-1), t, torch.full_like(t, -big)), -1).values.flip(-1)
+    d_last = torch.where(last >= 0, t - last, torch.full_like(t, big))
+    d_next = torch.where(nxt <= T - 1, nxt - t, torch.full_like(t, big))
+    use_last = d_last <= d_next
+    e = torch.where(use_last, last, nxt).clamp(0, T - 1)
+    dist = torch.minimum(d_last, d_next)
+    A = torch.gather(an, -1, e)
+    A = torch.where(dist < big, A, torch.zeros_like(A))
+    return A.reshape(B, V, D, K_), dist.clamp(max=T).float().reshape(B, V, D, K_)
 
 
 def local_course_stats(z, obs, days: int = LOCAL_DAYS, min_count: int = LOCAL_MIN):
