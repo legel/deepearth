@@ -80,7 +80,11 @@ def outage_library(path: str = "/home/photon/4tb/fluxfill/bench/outages_train.pa
     return _OUTAGES
 
 
-def score(method: str, regime: str, fam: str, w: Window, mask: np.ndarray, samples: np.ndarray) -> List[Dict]:
+def score(method: str, regime: str, fam: str, w: Window, mask: np.ndarray, samples: np.ndarray,
+          pit: np.ndarray = None) -> List[Dict]:
+    """Rows of scores for one (window, mask). `pit` (V, T), optional: the method's exact predictive CDF at the truth;
+    where given, interval coverage is computed from it (a central interval of level q contains y exactly when
+    (1 - q) / 2 <= F(y) <= (1 + q) / 2) instead of from sample quantiles, and `cov_method` says which was used."""
     rows = []
     runs = gap_runs(mask)
     cls = gap_class(runs)
@@ -103,11 +107,17 @@ def score(method: str, regime: str, fam: str, w: Window, mask: np.ndarray, sampl
                 continue
             y, s = w.values[i, sel], samples[:, i, sel]
             mu = s.mean(axis=0)
-            cov = coverage_samples(s, y, (0.5, 0.8, 0.95))
+            pv = pit[i, sel] if pit is not None else None
+            if pv is not None and np.isfinite(pv).all():
+                cov = {q: float(np.mean((pv >= (1 - q) / 2) & (pv <= (1 + q) / 2))) for q in (0.5, 0.8, 0.95)}
+                cov_method = "exact"
+            else:
+                cov = coverage_samples(s, y, (0.5, 0.8, 0.95))
+                cov_method = "samples"
             rows.append(dict(base, kind="values", gap_class="all" if c == -1 else f"{GAP_CLASSES[c][0]}-{GAP_CLASSES[c][1]}",
                              n=int(sel.sum()), crps=float(crps_samples(s, y).mean()), mae=float(np.abs(mu - y).mean()),
                              rmse=float(np.sqrt(((mu - y) ** 2).mean())), bias=float((mu - y).mean()),
-                             cov50=cov[0.5], cov80=cov[0.8], cov95=cov[0.95], **truth_sums(y)))
+                             cov50=cov[0.5], cov80=cov[0.8], cov95=cov[0.95], cov_method=cov_method, **truth_sums(y)))
         if k in FLUXES:
             for bname, blk in SUM_BLOCKS.items():
                 ss, ts = block_sums(np.nan_to_num(samples[:, i]), w.values[i], scored, blk)
@@ -168,7 +178,10 @@ def run(methods, windows: List[Dict], tables: Dict[str, pd.DataFrame], regime: s
             else:
                 outs = (m.predict(v, mk, context) for _, mk, v in items)
             for (name, mask, _), s in zip(items, outs):
-                rows += score(m.name, regime, name, w, mask, s)
+                # Exact coverage for methods with a closed-form predictive CDF: the truth is handed over only after
+                # this mask's prediction has returned (and never with predict_many, whose last state is not per mask).
+                pit = m.pit(w.values) if hasattr(m, "pit") and not hasattr(m, "predict_many") else None
+                rows += score(m.name, regime, name, w, mask, s, pit)
         if progress:
             print(f"{site} {start}: {len(rows)} rows", flush=True)
     return pd.DataFrame(rows)

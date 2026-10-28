@@ -136,8 +136,9 @@ def test_flow_head_shapes_and_loss():
 
 @pytest.mark.parametrize("memory,mem_residual,components", [(False, False, 1), (True, False, 1), (True, True, 1),
                                                            (True, True, 3)])
-@pytest.mark.parametrize("local_base,gated_base", [(False, False), (True, False), (False, True)])
-def test_method_protocol(tmp_path, memory, mem_residual, components, local_base, gated_base):
+@pytest.mark.parametrize("local_base,gated_base,gate_scale", [(False, False, False), (True, False, False),
+                                                              (False, True, False), (False, True, True)])
+def test_method_protocol(tmp_path, memory, mem_residual, components, local_base, gated_base, gate_scale):
     """FluxFill.predict returns (S, V, T) samples, the visible truth outside the mask, finite values inside it, in
     both sampling modes."""
     from data import Stats
@@ -149,14 +150,16 @@ def test_method_protocol(tmp_path, memory, mem_residual, components, local_base,
     rec = synthetic_record()
     st = stats_of(rec)
     net = FluxFillNet(d=32, depth=1, heads=4, flow_width=32, flow_depth=1, memory=memory, mem_residual=mem_residual,
-                      components=components, local_base=local_base, gated_base=gated_base)
+                      components=components, local_base=local_base, gated_base=gated_base,
+                      gate_scale=gate_scale)
     ck = tmp_path / "ck.pt"
     torch.save({"model": net.state_dict(), "config": {"stats": st.to_dict(), "d": 32, "depth": 1, "heads": 4,
                                                                  "flow_width": 32, "flow_depth": 1, "memory": memory,
                                                                  "mem_residual": mem_residual,
                                                                  "components": components,
                                                                  "local_base": local_base,
-                                                                 "gated_base": gated_base}}, ck)
+                                                                 "gated_base": gated_base,
+                                                                 "gate_scale": gate_scale}}, ck)
     keys = [v for v in VARS if v not in ("FCH4", "G")]
     rows = [VARS.index(k) for k in keys]
     vals = window_values(rec, 30)[rows].astype(np.float64)
@@ -364,3 +367,58 @@ def test_scaling_power_law_fit_recovers_parameters():
     y = power_law(x, 0.5, 0.35, 0.15)
     a, alpha, c = fit(x, y)
     assert alpha == pytest.approx(0.35, abs=0.02) and c == pytest.approx(0.15, abs=0.01)
+
+
+def test_gate_scale_zero_init_equals_gated_and_scales_with_evidence():
+    rec = synthetic_record(days=1500)
+    st = stats_of(rec)
+    from sampler import WindowSampler
+    smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True)
+    hide = np.zeros((V_TAB, T_WIN), bool); hide[IS_TOWER, 2000:2100] = True; hide[IS_TOWER, 5000:8000] = True
+    b = collate([make_example(rec, 400, st, hide, np.zeros(180, bool), None, smp.window_memory("XX-Syn", 400))])
+    torch.manual_seed(0)
+    a = FluxFillNet(d=32, depth=1, heads=4, memory=True, mem_residual=True, gated_base=True).eval()
+    torch.manual_seed(0)
+    g = FluxFillNet(d=32, depth=1, heads=4, memory=True, mem_residual=True, gated_base=True, gate_scale=True).eval()
+    g.load_state_dict({**a.state_dict(), **{k: v for k, v in g.state_dict().items() if k.startswith("scale_in")}})
+    with torch.no_grad():
+        pa, pg = a(b)[1], g(b)[1]
+    for x, y in zip(pa, pg):
+        assert torch.allclose(x, y)                                   # zero-initialised: identical to --gated-base
+    with torch.no_grad():
+        g.scale_in.bias.copy_(torch.tensor([0.0, 0.5]))
+        pg2 = g(b)[1]
+    assert torch.allclose(pg2[1][..., 1], pa[1][..., 1] * np.exp(0.5), rtol=1e-5)
+
+
+@pytest.mark.parametrize("gated", [False, True])
+def test_method_exact_pit_matches_samples_and_runner_uses_it(tmp_path, gated):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bench"))
+    from method import FluxFill
+    from windows import Window
+    import run as bench
+    rec = synthetic_record()
+    st = stats_of(rec)
+    net = FluxFillNet(d=32, depth=1, heads=4, memory=True, mem_residual=True, gated_base=gated)
+    ck = tmp_path / "ck.pt"
+    torch.save({"model": net.state_dict(), "config": {"stats": st.to_dict(), "d": 32, "depth": 1, "heads": 4,
+                                                       "memory": True, "mem_residual": True, "gated_base": gated}}, ck)
+    keys = [v for v in VARS if v not in ("FCH4", "G")]
+    rows = [VARS.index(k) for k in keys]
+    vals = window_values(rec, 30)[rows].astype(np.float64)
+    t = pd.date_range(rec.t0 + pd.Timedelta(days=30), periods=T_WIN, freq="30min")
+    prov = ["tower" if IS_TOWER[r] else "reanalysis" for r in rows]
+    mask = np.zeros(vals.shape, bool)
+    mask[[i for i, p in enumerate(prov) if p == "tower"], 500:1500] = True
+    w = Window("XX-Syn", t[0], t, keys, vals, np.isfinite(vals), prov)
+    vis = Window("XX-Syn", t[0], t, keys, np.where(mask, np.nan, vals), np.isfinite(vals) & ~mask, prov)
+    m = FluxFill(str(ck), mode="marginal", n_samples=4000, device="cpu")
+    s = m.predict(vis, mask, {})
+    pit = m.pit(vals)
+    sel = mask & np.isfinite(vals)
+    emp = (s[:, sel] <= vals[sel][None]).mean(0)                     # empirical CDF of the samples at the truth
+    assert np.abs(emp - pit[sel]).mean() < 0.02
+    out = bench.score("ff", "R1", "M2-x", w, mask, s, pit)
+    assert {r.get("cov_method") for r in out if r["kind"] == "values" and r.get("n", 0) > 0} == {"exact"}

@@ -32,7 +32,7 @@ from data import (IS_LAND, STEPS_PER_DAY, V_TAB, VARS, WINDOW_DAYS, Stats, doy_f
 from memory import memory_from_table  # noqa: E402
 from sampler import mem_arrays  # noqa: E402
 from imagery import load_imagery, window_imagery  # noqa: E402
-from net import FluxFillNet, sample_marginal_params  # noqa: E402
+from net import FluxFillNet, mixture_cdf, sample_marginal_params  # noqa: E402
 
 K = STEPS_PER_DAY
 
@@ -48,7 +48,8 @@ class FluxFill:
                                flow_width=c.get("flow_width", 256), flow_depth=c.get("flow_depth", 3),
                                memory=c.get("memory", False), mem_residual=c.get("mem_residual", False),
                                img_nll=c.get("img_nll", False), components=c.get("components", 1),
-                               local_base=c.get("local_base", False), gated_base=c.get("gated_base", False))
+                               local_base=c.get("local_base", False), gated_base=c.get("gated_base", False),
+                               gate_scale=c.get("gate_scale", False))
         self.net.load_state_dict(ck["model"])
         self.net.use_imagery = self.net.use_imagery and imagery      # False: imagery modality removed (M4)
         # Imagery only at these sites (None: every site with a Clay store). Defaults to the list the checkpoint was
@@ -123,15 +124,28 @@ class FluxFill:
         hide[rows] = mask
         hide &= ex["present"][:, None]
         z = self.sample_joint(ex, hide) if self.mode == "joint" else self.sample_marginal(ex)   # (S, V_TAB, T) std.
+        self._last = (np.array(rows), self._params_last) if self.mode == "marginal" else None
         x = self.stats.denorm(z.reshape(self.n * V_TAB, -1).astype(np.float64),
                               np.tile(np.arange(V_TAB), self.n)).reshape(self.n, V_TAB, -1)
         out = x[:, rows]
         return np.where(mask[None], out, w.values[None])
 
+    def pit(self, values: np.ndarray) -> np.ndarray:
+        """Exact PIT F(y) of `values` (the window's rows, raw units) under the predictive distribution of the last
+        `predict` call (marginal mode only; NaN in joint mode, whose flow samples have no closed-form CDF). The runner
+        calls it after `predict` has returned, with the truth, to score coverage exactly."""
+        if self.mode != "marginal" or getattr(self, "_last", None) is None:
+            return np.full(values.shape, np.nan)
+        rows, params = self._last
+        z = (values - self.stats.mean[rows, None]) / self.stats.std[rows, None]
+        sel = [u[rows] for u in params]
+        return mixture_cdf(sel, z)
+
     def sample_marginal(self, ex) -> np.ndarray:
         b = self._batch(ex, 1)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             _, params = self.net(b)
+        self._params_last = tuple(u[0].float().cpu().numpy().reshape(V_TAB, -1, *u.shape[4:]) for u in params)
         s = sample_marginal_params(tuple(u[0] for u in params), self.n)
         return s.reshape(self.n, V_TAB, -1).float().cpu().numpy()
 

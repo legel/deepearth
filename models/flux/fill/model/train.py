@@ -28,7 +28,7 @@ import masking  # noqa: E402
 from data import (scaling_order, IS_TOWER, STEPS_PER_DAY, T_WIN, V_TAB, VARS, fit_stats, heldout_year, load_records, load_split,  # noqa: E402
                   table_dir, valid_starts, window_values)
 from imagery import load_imagery  # noqa: E402
-from net import FluxFillNet, imagery_scores, marginal_mean, marginal_nll, sample_marginal_params  # noqa: E402
+from net import FluxFillNet, imagery_scores, marginal_mean, marginal_nll, mixture_cdf, sample_marginal_params  # noqa: E402
 from sampler import Stream, WindowSampler, collate, make_example  # noqa: E402
 
 sys.path.insert(0, str(HERE.parent / "bench"))
@@ -213,9 +213,10 @@ def evaluate(net, exs, device, use_flow: bool, batch: int = 4):
             else:
                 dj = draws[:, j].cpu().numpy()
                 mu = mean_j[tm]
-                crps = crps_samples(dj[:, tm], y)
-                lo_j, hi_j = np.quantile(dj, [0.025, 0.975], axis=0)
-                cov = (y >= lo_j[tm]) & (y <= hi_j[tm])
+                crps = crps_samples(dj[:, tm], y)                 # fair CRPS estimator from 64 draws
+                lo_j, hi_j = np.quantile(dj, [0.025, 0.975], axis=0)   # for the reconstruction figure only
+                pit = mixture_cdf([u[j].float().cpu().numpy()[tm] for u in params], y)
+                cov = (pit >= 0.025) & (pit <= 0.975)             # exact coverage from the mixture CDF
             vi = np.nonzero(tm)[0]
             flux = np.isin(vi, [VARS.index(v) for v in ("NEE", "LE", "H", "FCH4")])
             rows.append(dict(id="|".join(map(str, e.get("_id", ("", "", "")))), fam=e["family"], n=int(tm.sum()),
@@ -313,6 +314,8 @@ def main():
                     help="residual base = local mean diurnal course (+/- 3 days) where it exists, memory elsewhere")
     ap.add_argument("--gated-base", action="store_true",
                     help="E20: two Student-t anchored at the local course and the memory mean, gated per half-hour")
+    ap.add_argument("--gate-scale", action="store_true",
+                    help="E21: the gate's evidence features also scale each component's spread (with --gated-base)")
     ap.add_argument("--components", type=int, default=1, help="Student-t mixture components per half-hour (1: v0)")
     ap.add_argument("--flow", action="store_true", help="train the v1 flow head jointly")
     ap.add_argument("--no-imagery", action="store_true")
@@ -339,7 +342,8 @@ def main():
     (out / "config.json").write_text(json.dumps(cfg, indent=1, default=str))
     net = FluxFillNet(d=a.d, depth=a.depth, heads=a.heads, dropout=a.dropout, use_imagery=not a.no_imagery,
                       memory=a.memory, mem_residual=a.mem_residual, img_nll=a.img_nll,
-                      components=a.components, local_base=a.local_base, gated_base=a.gated_base).to(device)
+                      components=a.components, local_base=a.local_base, gated_base=a.gated_base,
+                      gate_scale=a.gate_scale).to(device)
     n_params = sum(p.numel() for p in net.parameters())
     print(f"params {n_params / 1e6:.2f} M", flush=True)
     cfg["n_params"] = int(n_params)

@@ -26,6 +26,7 @@ Heads:
 import math
 from typing import Dict, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -92,7 +93,7 @@ class FluxFillNet(nn.Module):
     def __init__(self, d: int = 192, depth: int = 6, heads: int = 6, mlp: int = 4, dropout: float = 0.0,
                  flow_width: int = 256, flow_depth: int = 3, use_imagery: bool = True, memory: bool = False,
                  mem_residual: bool = False, img_nll: bool = False, components: int = 1, local_base: bool = False,
-                 gated_base: bool = False):
+                 gated_base: bool = False, gate_scale: bool = False):
         super().__init__()
         # img_nll: the imagery head is a diagonal Gaussian (mean and log-scale per Clay dimension) trained on its
         # negative log-likelihood, a proper score; otherwise a point head trained on MSE (v0, kept for old checkpoints).
@@ -112,6 +113,12 @@ class FluxFillNet(nn.Module):
         if self.gated_base:
             components, self.local_base = 2, False
             self.gate_in = nn.Linear(4, 1)
+        # gate_scale (E21): the same per-half-hour evidence also scales each component, scale_k * exp(linear_k(f)), so a
+        # component's spread can depend on whether it acts alone (no local course) or beside the other one; zero-init.
+        self.gate_scale = gate_scale and self.gated_base
+        if self.gate_scale:
+            self.scale_in = nn.Linear(4, 2)
+            nn.init.zeros_(self.scale_in.weight); nn.init.zeros_(self.scale_in.bias)
         self.tab_in = nn.Linear((5 if memory else 2) * K, d)
         self.mask_tab = nn.Parameter(torch.zeros(d))
         self.img_norm = nn.LayerNorm(CLS_DIM, elementwise_affine=False)
@@ -189,6 +196,8 @@ class FluxFillNet(nn.Module):
         diff = torch.where(ok, diff, torch.full_like(diff, -30.0))          # no local course: memory component only
         logw = torch.log_softmax(torch.stack([diff, torch.zeros_like(diff)], -1), -1)
         base = torch.stack([torch.where(ok, lmean, mem), mem], -1)
+        if self.gate_scale:
+            scale = scale * torch.exp(self.scale_in(feats.to(scale.dtype)).float().clamp(-5.0, 5.0))
         return loc + base, scale, df, logw
 
     def forward(self, b):
@@ -276,6 +285,19 @@ def marginal_nll(y, params):
         return student_t_nll(y, *params)
     loc, scale, df, logw = params
     return -torch.logsumexp(logw - student_t_nll(y[..., None], loc, scale, df), -1)
+
+
+def mixture_cdf(params, y):
+    """Exact predictive CDF F(y) (numpy) of a Student-t head (loc, scale, df) or a mixture head (loc, scale, df,
+    logw; component axis last). A central interval of level q contains y exactly when (1 - q) / 2 <= F(y) <= (1 + q) / 2,
+    so coverage and the PIT follow from F(y) without sampling."""
+    from scipy import stats as sst
+    y = np.asarray(y, np.float64)
+    if len(params) == 3:
+        loc, scale, df = (np.asarray(u, np.float64) for u in params)
+        return sst.t.cdf((y - loc) / scale, df)
+    loc, scale, df, logw = (np.asarray(u, np.float64) for u in params)
+    return (np.exp(logw) * sst.t.cdf((y[..., None] - loc) / scale, df)).sum(-1)
 
 
 def marginal_mean(params):
