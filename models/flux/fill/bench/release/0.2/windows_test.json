@@ -1,0 +1,3086 @@
+[
+ {
+  "site": "AR-TF1",
+  "start": "2016-02-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AR-TF1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AR-TF1",
+  "start": "2016-05-31",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AR-TF1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AR-TF1",
+  "start": "2016-08-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AR-TF1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AR-TF1",
+  "start": "2016-09-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AR-TF1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AT-PsM",
+  "start": "2016-03-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AT-PsM.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AT-PsM",
+  "start": "2018-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AT-PsM.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AT-PsM",
+  "start": "2018-11-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AT-PsM.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AT-PsM",
+  "start": "2019-02-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AT-PsM.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AT-Zoe",
+  "start": "2015-09-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AT-Zoe.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AT-Zoe",
+  "start": "2017-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AT-Zoe.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AT-Zoe",
+  "start": "2021-05-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AT-Zoe.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AT-Zoe",
+  "start": "2021-06-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AT-Zoe.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-ASM",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-ASM.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-ASM",
+  "start": "2015-08-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-ASM.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-ASM",
+  "start": "2018-11-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-ASM.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-ASM",
+  "start": "2018-12-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-ASM.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Cum",
+  "start": "2015-12-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Cum.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Cum",
+  "start": "2016-05-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Cum.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Cum",
+  "start": "2016-08-18",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Cum.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Cum",
+  "start": "2016-09-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Cum.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Dry",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Dry.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Dry",
+  "start": "2015-04-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Dry.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Dry",
+  "start": "2024-08-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Dry.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Dry",
+  "start": "2024-09-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Dry.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Gin",
+  "start": "2016-12-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Gin.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Gin",
+  "start": "2017-10-12",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Gin.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Gin",
+  "start": "2021-05-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Gin.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Gin",
+  "start": "2021-08-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Gin.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Lon",
+  "start": "2020-08-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Lon.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Lon",
+  "start": "2020-10-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Lon.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Lon",
+  "start": "2024-02-10",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Lon.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Lon",
+  "start": "2024-03-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Lon.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Rig",
+  "start": "2015-05-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Rig.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Rig",
+  "start": "2015-07-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Rig.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Rig",
+  "start": "2015-10-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Rig.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Rig",
+  "start": "2015-12-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Rig.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Sno",
+  "start": "2024-01-31",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Sno.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Sno",
+  "start": "2024-05-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Sno.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Sno",
+  "start": "2024-06-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Sno.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Sno",
+  "start": "2024-09-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Sno.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Stp",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Stp.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Stp",
+  "start": "2015-11-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Stp.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Stp",
+  "start": "2019-04-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Stp.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Stp",
+  "start": "2019-06-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Stp.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-TTE",
+  "start": "2018-11-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-TTE.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-TTE",
+  "start": "2019-02-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-TTE.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-TTE",
+  "start": "2019-03-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-TTE.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-TTE",
+  "start": "2019-06-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-TTE.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Wel",
+  "start": "2024-01-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Wel.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Wel",
+  "start": "2024-11-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Wel.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Wel",
+  "start": "2025-05-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Wel.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Wel",
+  "start": "2025-06-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Wel.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Whr",
+  "start": "2023-11-10",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Whr.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Whr",
+  "start": "2025-02-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Whr.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Whr",
+  "start": "2025-03-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Whr.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Whr",
+  "start": "2025-06-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Whr.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Wom",
+  "start": "2017-11-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Wom.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Wom",
+  "start": "2017-12-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Wom.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Wom",
+  "start": "2024-08-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Wom.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Wom",
+  "start": "2025-03-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Wom.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Ya1",
+  "start": "2024-05-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Ya1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Ya1",
+  "start": "2024-07-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Ya1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Ya1",
+  "start": "2024-09-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Ya1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Ya1",
+  "start": "2024-12-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Ya1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "AU-Ya2",
+  "start": "2023-09-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Ya2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "AU-Ya2",
+  "start": "2024-05-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Ya2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "AU-Ya2",
+  "start": "2024-06-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Ya2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "AU-Ya2",
+  "start": "2024-12-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/AU-Ya2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "BE-Bra",
+  "start": "2023-02-13",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/BE-Bra.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "BE-Bra",
+  "start": "2023-03-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/BE-Bra.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "BE-Bra",
+  "start": "2023-06-13",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/BE-Bra.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "BE-Bra",
+  "start": "2023-10-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/BE-Bra.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CA-EM1",
+  "start": "2022-02-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-EM1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CA-EM1",
+  "start": "2022-05-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-EM1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CA-EM1",
+  "start": "2022-06-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-EM1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CA-EM1",
+  "start": "2022-09-18",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-EM1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CA-EM2",
+  "start": "2021-05-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-EM2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CA-EM2",
+  "start": "2021-07-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-EM2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CA-EM2",
+  "start": "2021-10-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-EM2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CA-EM2",
+  "start": "2022-02-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-EM2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CA-KLP",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-KLP.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CA-KLP",
+  "start": "2015-11-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-KLP.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CA-KLP",
+  "start": "2016-04-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-KLP.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CA-KLP",
+  "start": "2019-06-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-KLP.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CA-LP1",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-LP1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CA-LP1",
+  "start": "2016-04-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-LP1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CA-LP1",
+  "start": "2022-09-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-LP1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CA-LP1",
+  "start": "2024-06-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-LP1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CA-Mer",
+  "start": "2017-02-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-Mer.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CA-Mer",
+  "start": "2017-04-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-Mer.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CA-Mer",
+  "start": "2017-06-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-Mer.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CA-Mer",
+  "start": "2019-11-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-Mer.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CA-RSB",
+  "start": "2025-03-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-RSB.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CA-SCB",
+  "start": "2015-11-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-SCB.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CA-SCB",
+  "start": "2016-01-31",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-SCB.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CA-SCB",
+  "start": "2017-03-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-SCB.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CA-SCB",
+  "start": "2017-06-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-SCB.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CA-SCC",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-SCC.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CA-SCC",
+  "start": "2015-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-SCC.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CA-SCC",
+  "start": "2017-02-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-SCC.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CA-SCC",
+  "start": "2017-11-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CA-SCC.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CH-Aws",
+  "start": "2017-02-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CH-Aws.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CH-Aws",
+  "start": "2017-03-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CH-Aws.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CH-Aws",
+  "start": "2019-06-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CH-Aws.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CH-Aws",
+  "start": "2019-09-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CH-Aws.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CH-Dav",
+  "start": "2016-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CH-Dav.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CH-Dav",
+  "start": "2016-11-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CH-Dav.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CH-Dav",
+  "start": "2017-02-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CH-Dav.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CH-Dav",
+  "start": "2017-03-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CH-Dav.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CN-Aro",
+  "start": "2021-03-12",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Aro.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CN-Aro",
+  "start": "2021-11-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Aro.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CN-Aro",
+  "start": "2021-12-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Aro.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CN-Aro",
+  "start": "2023-08-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Aro.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CN-Ash",
+  "start": "2015-01-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Ash.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CN-Ash",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Ash.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CN-Ash",
+  "start": "2016-08-18",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Ash.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CN-Ash",
+  "start": "2018-11-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Ash.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CN-Dzo",
+  "start": "2015-01-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Dzo.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CN-Dzo",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Dzo.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CN-Dzo",
+  "start": "2019-08-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Dzo.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CN-Dzo",
+  "start": "2019-10-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Dzo.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CN-Qng",
+  "start": "2022-04-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Qng.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CN-Qng",
+  "start": "2022-06-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Qng.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CN-Qng",
+  "start": "2022-11-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Qng.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CN-Qng",
+  "start": "2022-12-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-Qng.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CN-You",
+  "start": "2018-08-13",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-You.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CN-You",
+  "start": "2018-12-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-You.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CN-You",
+  "start": "2019-03-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-You.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CN-You",
+  "start": "2023-10-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CN-You.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CR-AqC",
+  "start": "2015-09-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CR-AqC.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CR-AqC",
+  "start": "2016-02-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CR-AqC.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CR-AqC",
+  "start": "2016-05-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CR-AqC.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CR-AqC",
+  "start": "2016-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CR-AqC.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CZ-BK1",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CZ-BK1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "CZ-BK1",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CZ-BK1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CZ-BK1",
+  "start": "2015-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CZ-BK1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CZ-BK1",
+  "start": "2015-10-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CZ-BK1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CZ-RAJ",
+  "start": "2015-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CZ-RAJ.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "CZ-RAJ",
+  "start": "2017-11-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CZ-RAJ.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "CZ-RAJ",
+  "start": "2019-03-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CZ-RAJ.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "CZ-RAJ",
+  "start": "2020-01-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/CZ-RAJ.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DE-Gri",
+  "start": "2020-11-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Gri.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "DE-Gri",
+  "start": "2021-02-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Gri.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DE-Gri",
+  "start": "2021-03-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Gri.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DE-Gri",
+  "start": "2021-08-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Gri.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DE-Hzd",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Hzd.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DE-Hzd",
+  "start": "2018-04-10",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Hzd.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DE-Hzd",
+  "start": "2018-06-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Hzd.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DE-Hzd",
+  "start": "2023-10-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Hzd.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "DE-Kli",
+  "start": "2019-11-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Kli.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "DE-Kli",
+  "start": "2020-01-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Kli.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DE-Kli",
+  "start": "2020-04-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Kli.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DE-Kli",
+  "start": "2020-06-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Kli.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DE-Obe",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Obe.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DE-Obe",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Obe.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DE-Obe",
+  "start": "2015-08-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Obe.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DE-Obe",
+  "start": "2015-10-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Obe.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "DE-Tha",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Tha.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DE-Tha",
+  "start": "2015-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Tha.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DE-Tha",
+  "start": "2015-11-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Tha.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "DE-Tha",
+  "start": "2017-02-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DE-Tha.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DK-Gds",
+  "start": "2020-11-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Gds.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "DK-Gds",
+  "start": "2021-02-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Gds.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DK-Gds",
+  "start": "2021-06-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Gds.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DK-Gds",
+  "start": "2022-03-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Gds.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DK-RCW",
+  "start": "2024-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-RCW.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DK-RCW",
+  "start": "2024-10-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-RCW.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "DK-RCW",
+  "start": "2025-05-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-RCW.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DK-RCW",
+  "start": "2025-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-RCW.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DK-Skj",
+  "start": "2021-11-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Skj.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "DK-Skj",
+  "start": "2022-02-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Skj.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DK-Skj",
+  "start": "2022-03-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Skj.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DK-Skj",
+  "start": "2022-06-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Skj.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DK-Sor",
+  "start": "2016-11-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Sor.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "DK-Sor",
+  "start": "2017-02-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Sor.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DK-Sor",
+  "start": "2020-04-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Sor.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DK-Sor",
+  "start": "2020-06-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Sor.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DK-Vng",
+  "start": "2021-02-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Vng.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "DK-Vng",
+  "start": "2021-05-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Vng.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "DK-Vng",
+  "start": "2021-06-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Vng.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "DK-Vng",
+  "start": "2021-09-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/DK-Vng.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "EE-Pts",
+  "start": "2023-03-13",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/EE-Pts.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "EE-Pts",
+  "start": "2024-07-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/EE-Pts.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "EE-Pts",
+  "start": "2024-11-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/EE-Pts.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "EE-Pts",
+  "start": "2025-01-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/EE-Pts.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "ES-Abr",
+  "start": "2017-11-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ES-Abr.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "ES-Abr",
+  "start": "2018-02-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ES-Abr.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "ES-Abr",
+  "start": "2018-03-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ES-Abr.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "ES-Abr",
+  "start": "2018-06-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ES-Abr.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "ES-Pdu",
+  "start": "2015-01-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ES-Pdu.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "ES-Pdu",
+  "start": "2015-11-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ES-Pdu.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "ES-Pdu",
+  "start": "2016-03-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ES-Pdu.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "ES-Pdu",
+  "start": "2016-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ES-Pdu.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FI-Let",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Let.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FI-Let",
+  "start": "2015-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Let.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FI-Let",
+  "start": "2023-04-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Let.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FI-Let",
+  "start": "2024-10-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Let.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FI-Qvd",
+  "start": "2019-10-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Qvd.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FI-Qvd",
+  "start": "2020-06-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Qvd.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FI-Qvd",
+  "start": "2022-02-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Qvd.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FI-Qvd",
+  "start": "2023-04-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Qvd.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FI-Rk2",
+  "start": "2020-06-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Rk2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FI-Rk2",
+  "start": "2021-11-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Rk2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FI-Rk2",
+  "start": "2021-12-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Rk2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FI-Rk2",
+  "start": "2023-04-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Rk2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FI-Ruk",
+  "start": "2020-01-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Ruk.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FI-Ruk",
+  "start": "2020-05-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Ruk.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FI-Ruk",
+  "start": "2020-06-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Ruk.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FI-Ruk",
+  "start": "2021-09-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Ruk.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FI-Sod",
+  "start": "2024-11-10",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Sod.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FI-Sod",
+  "start": "2025-02-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Sod.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FI-Sod",
+  "start": "2025-05-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Sod.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FI-Sod",
+  "start": "2025-06-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FI-Sod.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FR-Aur",
+  "start": "2018-06-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Aur.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FR-Aur",
+  "start": "2020-11-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Aur.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FR-Aur",
+  "start": "2021-01-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Aur.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FR-Aur",
+  "start": "2021-03-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Aur.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FR-EM2",
+  "start": "2017-11-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-EM2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FR-EM2",
+  "start": "2018-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-EM2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FR-EM2",
+  "start": "2018-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-EM2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FR-EM2",
+  "start": "2020-06-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-EM2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FR-Hes",
+  "start": "2015-04-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Hes.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FR-Hes",
+  "start": "2017-02-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Hes.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FR-Hes",
+  "start": "2017-06-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Hes.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FR-Hes",
+  "start": "2017-11-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Hes.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FR-Lam",
+  "start": "2021-01-31",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lam.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FR-Lam",
+  "start": "2021-11-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lam.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FR-Lam",
+  "start": "2023-03-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lam.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FR-Lam",
+  "start": "2023-06-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lam.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FR-Lqu",
+  "start": "2024-03-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lqu.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FR-Lqu",
+  "start": "2025-01-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lqu.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FR-Lqu",
+  "start": "2025-08-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lqu.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FR-Lqu",
+  "start": "2025-11-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lqu.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FR-Lus",
+  "start": "2022-11-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lus.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FR-Lus",
+  "start": "2023-01-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lus.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FR-Lus",
+  "start": "2025-03-12",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lus.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FR-Lus",
+  "start": "2025-06-10",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Lus.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FR-Mej",
+  "start": "2019-11-10",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Mej.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "FR-Mej",
+  "start": "2023-01-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Mej.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FR-Mej",
+  "start": "2025-03-13",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Mej.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FR-Mej",
+  "start": "2025-06-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Mej.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FR-Tou",
+  "start": "2022-03-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Tou.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "FR-Tou",
+  "start": "2022-06-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Tou.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "FR-Tou",
+  "start": "2024-02-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Tou.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "FR-Tou",
+  "start": "2024-11-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/FR-Tou.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "GL-Dsk",
+  "start": "2020-01-31",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GL-Dsk.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "GL-Dsk",
+  "start": "2020-04-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GL-Dsk.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "GL-Dsk",
+  "start": "2020-06-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GL-Dsk.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "GL-Dsk",
+  "start": "2020-09-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GL-Dsk.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "GR-HeK",
+  "start": "2024-11-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GR-HeK.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "GR-HeK",
+  "start": "2025-02-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GR-HeK.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "GR-HeK",
+  "start": "2025-03-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GR-HeK.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "GR-HeK",
+  "start": "2025-06-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GR-HeK.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "GR-HeM",
+  "start": "2022-11-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GR-HeM.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "GR-HeM",
+  "start": "2023-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GR-HeM.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "GR-HeM",
+  "start": "2024-05-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GR-HeM.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "GR-HeM",
+  "start": "2024-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/GR-HeM.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "IT-BFt",
+  "start": "2023-06-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-BFt.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "IT-BFt",
+  "start": "2023-11-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-BFt.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "IT-BFt",
+  "start": "2024-03-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-BFt.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "IT-BFt",
+  "start": "2025-02-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-BFt.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "IT-Lsn",
+  "start": "2018-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-Lsn.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "IT-Lsn",
+  "start": "2021-11-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-Lsn.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "IT-Lsn",
+  "start": "2022-02-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-Lsn.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "IT-Lsn",
+  "start": "2022-03-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-Lsn.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "IT-PCm",
+  "start": "2024-10-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-PCm.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "IT-PCm",
+  "start": "2024-12-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-PCm.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "IT-PCm",
+  "start": "2025-03-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-PCm.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "IT-PCm",
+  "start": "2025-06-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/IT-PCm.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "JP-Api",
+  "start": "2015-08-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Api.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "JP-Api",
+  "start": "2018-11-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Api.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "JP-Api",
+  "start": "2018-12-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Api.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "JP-Api",
+  "start": "2019-03-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Api.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "JP-Fhk",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Fhk.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "JP-Fhk",
+  "start": "2017-04-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Fhk.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "JP-Fhk",
+  "start": "2018-10-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Fhk.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "JP-Fhk",
+  "start": "2023-06-13",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Fhk.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "JP-Fjy",
+  "start": "2016-08-18",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Fjy.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "JP-Fjy",
+  "start": "2016-11-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Fjy.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "JP-Fjy",
+  "start": "2016-12-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Fjy.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "JP-Fjy",
+  "start": "2017-03-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Fjy.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "JP-Srk",
+  "start": "2015-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Srk.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "JP-Srk",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Srk.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "JP-Srk",
+  "start": "2015-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/JP-Srk.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "MY-LHP",
+  "start": "2015-08-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/MY-LHP.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "MY-LHP",
+  "start": "2015-10-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/MY-LHP.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "MY-LHP",
+  "start": "2015-12-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/MY-LHP.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "MY-LHP",
+  "start": "2016-05-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/MY-LHP.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "NZ-ADd",
+  "start": "2016-04-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-ADd.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "NZ-ADd",
+  "start": "2016-08-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-ADd.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "NZ-ADd",
+  "start": "2019-10-12",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-ADd.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "NZ-ADd",
+  "start": "2019-12-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-ADd.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "NZ-ADw",
+  "start": "2016-05-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-ADw.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "NZ-ADw",
+  "start": "2020-12-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-ADw.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "NZ-ADw",
+  "start": "2021-08-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-ADw.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "NZ-ADw",
+  "start": "2021-09-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-ADw.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "NZ-Cla",
+  "start": "2022-11-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-Cla.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "NZ-Cla",
+  "start": "2022-12-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-Cla.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "NZ-Cla",
+  "start": "2024-04-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-Cla.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "NZ-Cla",
+  "start": "2024-08-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/NZ-Cla.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "PE-QFR",
+  "start": "2018-11-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/PE-QFR.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "PE-QFR",
+  "start": "2019-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/PE-QFR.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "PE-QFR",
+  "start": "2019-05-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/PE-QFR.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "PE-QFR",
+  "start": "2019-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/PE-QFR.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "RU-Fy2",
+  "start": "2015-05-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "RU-Fy2",
+  "start": "2016-10-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "RU-Fy2",
+  "start": "2017-01-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "RU-Fy2",
+  "start": "2017-06-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "RU-Fy3",
+  "start": "2017-05-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy3.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "RU-Fy3",
+  "start": "2017-06-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy3.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "RU-Fy3",
+  "start": "2017-11-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy3.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "RU-Fy3",
+  "start": "2018-02-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy3.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "RU-Fy4",
+  "start": "2016-04-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy4.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "RU-Fy4",
+  "start": "2018-06-10",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy4.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "RU-Fy4",
+  "start": "2019-11-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy4.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "RU-Fy4",
+  "start": "2020-01-31",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fy4.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "RU-Fyo",
+  "start": "2021-05-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fyo.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "RU-Fyo",
+  "start": "2021-08-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fyo.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "RU-Fyo",
+  "start": "2021-10-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fyo.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "RU-Fyo",
+  "start": "2022-01-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/RU-Fyo.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "SN-Dhr",
+  "start": "2016-09-13",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/SN-Dhr.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "SN-Dhr",
+  "start": "2022-02-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/SN-Dhr.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "SN-Dhr",
+  "start": "2022-04-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/SN-Dhr.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "SN-Dhr",
+  "start": "2022-06-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/SN-Dhr.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "SN-Nkr",
+  "start": "2022-08-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/SN-Nkr.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "SN-Nkr",
+  "start": "2022-11-13",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/SN-Nkr.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "SN-Nkr",
+  "start": "2024-01-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/SN-Nkr.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "SN-Nkr",
+  "start": "2024-03-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/SN-Nkr.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "UK-Ags",
+  "start": "2023-04-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/UK-Ags.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "UK-Ags",
+  "start": "2023-06-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/UK-Ags.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "UK-Ags",
+  "start": "2023-10-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/UK-Ags.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "UK-Ags",
+  "start": "2024-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/UK-Ags.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-ADR",
+  "start": "2016-02-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ADR.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-ADR",
+  "start": "2016-03-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ADR.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-ADR",
+  "start": "2016-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ADR.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-ADR",
+  "start": "2016-11-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ADR.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Act",
+  "start": "2017-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Act.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-Act",
+  "start": "2017-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Act.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-Act",
+  "start": "2017-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Act.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-Act",
+  "start": "2017-09-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Act.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Akn",
+  "start": "2019-06-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Akn.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-Akn",
+  "start": "2020-02-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Akn.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-Akn",
+  "start": "2021-04-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Akn.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-Akn",
+  "start": "2021-09-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Akn.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Atq",
+  "start": "2015-01-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Atq.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-Atq",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Atq.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-Atq",
+  "start": "2015-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Atq.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-BRG",
+  "start": "2017-05-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-BRG.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-BRG",
+  "start": "2017-06-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-BRG.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-BRG",
+  "start": "2017-11-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-BRG.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-BRG",
+  "start": "2018-01-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-BRG.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-CF1",
+  "start": "2017-11-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-CF1",
+  "start": "2017-12-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-CF1",
+  "start": "2018-03-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-CF1",
+  "start": "2019-06-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-CF2",
+  "start": "2019-11-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-CF2",
+  "start": "2020-01-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-CF2",
+  "start": "2020-05-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-CF2",
+  "start": "2020-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-CF3",
+  "start": "2019-12-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF3.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-CF3",
+  "start": "2020-04-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF3.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-CF3",
+  "start": "2020-08-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF3.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-CF3",
+  "start": "2020-09-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF3.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-CF4",
+  "start": "2017-06-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF4.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-CF4",
+  "start": "2018-02-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF4.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-CF4",
+  "start": "2018-03-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF4.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-CF4",
+  "start": "2020-10-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-CF4.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-DPW",
+  "start": "2015-08-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-DPW.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-DPW",
+  "start": "2015-09-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-DPW.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-DPW",
+  "start": "2016-02-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-DPW.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-DPW",
+  "start": "2016-03-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-DPW.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-EKH",
+  "start": "2024-02-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKH.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-EKH",
+  "start": "2025-04-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKH.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-EKH",
+  "start": "2025-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKH.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-EKH",
+  "start": "2025-09-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKH.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-EKN",
+  "start": "2025-02-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKN.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-EKN",
+  "start": "2025-03-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKN.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-EKN",
+  "start": "2025-06-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKN.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-EKN",
+  "start": "2025-11-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKN.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-EKP",
+  "start": "2025-02-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKP.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-EKP",
+  "start": "2025-05-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKP.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-EKP",
+  "start": "2025-06-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKP.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-EKP",
+  "start": "2025-11-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-EKP.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Ho1",
+  "start": "2015-04-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-Ho1",
+  "start": "2015-06-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-Ho1",
+  "start": "2015-11-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Ho1",
+  "start": "2016-02-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-Ho2",
+  "start": "2015-11-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Ho2",
+  "start": "2016-02-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-Ho2",
+  "start": "2016-03-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-Ho2",
+  "start": "2016-06-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-Ho3",
+  "start": "2015-08-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho3.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-Ho3",
+  "start": "2015-09-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho3.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Ho3",
+  "start": "2016-01-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho3.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-Ho3",
+  "start": "2020-04-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Ho3.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-Jo1",
+  "start": "2017-10-12",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Jo1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Jo1",
+  "start": "2018-06-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Jo1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-Jo1",
+  "start": "2020-02-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Jo1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-Jo1",
+  "start": "2020-03-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Jo1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-Jo2",
+  "start": "2015-09-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Jo2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Jo2",
+  "start": "2016-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Jo2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-Jo2",
+  "start": "2019-02-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Jo2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-Jo2",
+  "start": "2020-03-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Jo2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-KPL",
+  "start": "2021-03-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-KPL.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-KPL",
+  "start": "2021-06-18",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-KPL.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-KPL",
+  "start": "2021-11-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-KPL.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-KPL",
+  "start": "2022-02-13",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-KPL.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-KS3",
+  "start": "2018-05-12",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-KS3.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-KS3",
+  "start": "2018-06-11",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-KS3.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-LA2",
+  "start": "2021-05-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-LA2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-LA2",
+  "start": "2021-06-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-LA2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-LA2",
+  "start": "2021-09-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-LA2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-LA2",
+  "start": "2022-02-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-LA2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-MEF",
+  "start": "2024-01-31",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-MEF.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-MEF",
+  "start": "2024-03-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-MEF.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-MEF",
+  "start": "2024-08-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-MEF.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-MEF",
+  "start": "2024-11-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-MEF.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-MMS",
+  "start": "2020-11-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-MMS.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-MMS",
+  "start": "2021-08-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-MMS.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-MMS",
+  "start": "2021-12-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-MMS.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-MMS",
+  "start": "2022-03-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-MMS.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-ONA",
+  "start": "2023-05-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ONA.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-ONA",
+  "start": "2023-08-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ONA.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-ONA",
+  "start": "2024-10-28",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ONA.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-ONA",
+  "start": "2024-12-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ONA.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-OWC",
+  "start": "2022-11-08",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-OWC.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-OWC",
+  "start": "2024-08-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-OWC.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-OWC",
+  "start": "2025-02-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-OWC.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-OWC",
+  "start": "2025-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-OWC.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-PAS",
+  "start": "2021-06-10",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-PAS.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-PAS",
+  "start": "2021-11-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-PAS.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-PAS",
+  "start": "2022-02-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-PAS.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-PAS",
+  "start": "2022-03-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-PAS.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-RC1",
+  "start": "2015-01-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-RC1",
+  "start": "2015-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-RC1",
+  "start": "2015-09-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-RC1",
+  "start": "2016-03-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-RC2",
+  "start": "2015-03-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-RC2",
+  "start": "2015-06-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-RC2",
+  "start": "2015-11-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-RC2",
+  "start": "2016-01-21",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-RC4",
+  "start": "2015-02-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC4.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-RC4",
+  "start": "2015-06-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC4.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-RC4",
+  "start": "2015-11-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC4.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-RC4",
+  "start": "2016-03-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RC4.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-RGW",
+  "start": "2022-11-09",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RGW.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-RGW",
+  "start": "2023-07-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RGW.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-RGW",
+  "start": "2024-02-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RGW.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-RGW",
+  "start": "2024-03-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RGW.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-RRC",
+  "start": "2022-06-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RRC.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-RRC",
+  "start": "2022-11-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RRC.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-RRC",
+  "start": "2023-02-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RRC.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-RRC",
+  "start": "2023-03-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-RRC.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-Slt",
+  "start": "2015-08-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Slt.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-Slt",
+  "start": "2015-10-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Slt.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-Slt",
+  "start": "2016-12-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Slt.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-Slt",
+  "start": "2017-03-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-Slt.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-UMd",
+  "start": "2016-05-20",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UMd.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-UMd",
+  "start": "2016-08-18",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UMd.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-UMd",
+  "start": "2016-09-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UMd.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-UMd",
+  "start": "2023-01-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UMd.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-UTL",
+  "start": "2024-11-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UTL.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-UTL",
+  "start": "2025-02-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UTL.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-UTL",
+  "start": "2025-04-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UTL.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-UTV",
+  "start": "2023-11-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UTV.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-UTV",
+  "start": "2024-02-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UTV.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-UTV",
+  "start": "2024-03-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UTV.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-UTV",
+  "start": "2024-06-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-UTV.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-VT1",
+  "start": "2024-03-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-VT1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-VT1",
+  "start": "2024-08-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-VT1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-VT1",
+  "start": "2024-11-24",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-VT1.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-VT1",
+  "start": "2025-01-23",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-VT1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-VT2",
+  "start": "2024-01-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-VT2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-VT2",
+  "start": "2024-03-29",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-VT2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-VT2",
+  "start": "2024-08-26",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-VT2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-VT2",
+  "start": "2024-09-25",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-VT2.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-ZF1",
+  "start": "2025-01-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ZF1.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-ZF1",
+  "start": "2025-03-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ZF1.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-ZF1",
+  "start": "2025-06-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ZF1.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-ZF2",
+  "start": "2025-01-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ZF2.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-ZF2",
+  "start": "2025-05-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ZF2.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-ZF2",
+  "start": "2025-06-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-ZF2.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-xDC",
+  "start": "2019-12-27",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xDC.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-xDC",
+  "start": "2021-10-17",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xDC.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-xDC",
+  "start": "2022-06-14",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xDC.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-xDC",
+  "start": "2024-04-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xDC.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-xDS",
+  "start": "2019-07-30",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xDS.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-xDS",
+  "start": "2023-11-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xDS.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-xDS",
+  "start": "2023-12-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xDS.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-xDS",
+  "start": "2024-03-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xDS.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-xGR",
+  "start": "2023-09-07",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xGR.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-xGR",
+  "start": "2024-02-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xGR.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-xGR",
+  "start": "2024-05-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xGR.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-xGR",
+  "start": "2024-06-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xGR.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-xJE",
+  "start": "2020-09-22",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xJE.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-xJE",
+  "start": "2021-12-16",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xJE.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-xJE",
+  "start": "2024-05-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xJE.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-xJE",
+  "start": "2024-06-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xJE.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-xJR",
+  "start": "2021-06-19",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xJR.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "US-xJR",
+  "start": "2022-04-15",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xJR.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-xJR",
+  "start": "2023-11-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xJR.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-xJR",
+  "start": "2024-01-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xJR.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-xWD",
+  "start": "2023-11-06",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xWD.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "US-xWD",
+  "start": "2024-02-04",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xWD.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "US-xWD",
+  "start": "2024-03-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xWD.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "US-xWD",
+  "start": "2024-06-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/US-xWD.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "ZA-BfK",
+  "start": "2022-05-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ZA-BfK.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "ZA-BfK",
+  "start": "2022-08-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ZA-BfK.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "ZA-BfK",
+  "start": "2022-10-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ZA-BfK.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "ZA-BfK",
+  "start": "2022-12-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ZA-BfK.parquet",
+  "season": "DJF"
+ },
+ {
+  "site": "ZA-BfS",
+  "start": "2022-05-05",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ZA-BfS.parquet",
+  "season": "MAM"
+ },
+ {
+  "site": "ZA-BfS",
+  "start": "2022-08-03",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ZA-BfS.parquet",
+  "season": "JJA"
+ },
+ {
+  "site": "ZA-BfS",
+  "start": "2022-09-02",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ZA-BfS.parquet",
+  "season": "SON"
+ },
+ {
+  "site": "ZA-BfS",
+  "start": "2022-12-01",
+  "table": "/home/photon/4tb/fluxfill/towers/hh/ZA-BfS.parquet",
+  "season": "DJF"
+ }
+]

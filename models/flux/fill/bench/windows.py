@@ -24,6 +24,32 @@ LABELS = {"NEE": "Net ecosystem exchange", "LE": "Latent heat", "H": "Sensible h
           "VPD": "Vapour pressure deficit", "PA": "Air pressure", "P": "Precipitation", "WS": "Wind speed",
           "USTAR": "Friction velocity", "SWC_1": "Soil water content", "TS_1": "Soil temperature"}
 
+# Further measured tower channels (E30; opt-in, not rows of release 0.2): radiation components, humidity, wind
+# direction, CO2 concentration, water-table depth and the deeper soil layers. Wind direction enters as the sine and
+# cosine of its angle (WD_SIN, WD_COS; `with_extra_columns`), so the row is continuous at north.
+EXTRA_TOWER_SOURCE = ("SW_OUT", "LW_OUT", "NETRAD", "PPFD_IN", "PPFD_OUT", "RH", "WD", "CO2", "WTD",
+                      "SWC_2", "SWC_3", "SWC_4", "SWC_5", "TS_2", "TS_3", "TS_4", "TS_5")
+EXTRA_TOWER_VARS = tuple(c for v in EXTRA_TOWER_SOURCE for c in (("WD_SIN", "WD_COS") if v == "WD" else (v,)))
+UNITS.update({"SW_OUT": "W m⁻²", "LW_OUT": "W m⁻²", "NETRAD": "W m⁻²", "PPFD_IN": "µmol m⁻² s⁻¹",
+              "PPFD_OUT": "µmol m⁻² s⁻¹", "RH": "%", "WD_SIN": "", "WD_COS": "", "CO2": "µmol mol⁻¹", "WTD": "m",
+              **{f"SWC_{i}": "%" for i in range(2, 6)}, **{f"TS_{i}": "°C" for i in range(2, 6)}})
+LABELS.update({"SW_OUT": "Shortwave out", "LW_OUT": "Longwave out", "NETRAD": "Net radiation",
+               "PPFD_IN": "PPFD in", "PPFD_OUT": "PPFD out", "RH": "Relative humidity",
+               "WD_SIN": "Wind direction (sine)", "WD_COS": "Wind direction (cosine)", "CO2": "CO2 concentration",
+               "WTD": "Water-table depth", **{f"SWC_{i}": f"Soil water content, layer {i}" for i in range(2, 6)},
+               **{f"TS_{i}": f"Soil temperature, layer {i}" for i in range(2, 6)}})
+
+
+def with_extra_columns(table: pd.DataFrame) -> pd.DataFrame:
+    """The table with WD_SIN and WD_COS (and their flags, those of WD) where it has WD; unchanged otherwise."""
+    if "WD" not in table or "WD_SIN" in table:
+        return table
+    a = np.radians(table["WD"].to_numpy(np.float64))
+    extra = {"WD_SIN": np.sin(a), "WD_COS": np.cos(a)}
+    if "WD_flag" in table:
+        extra.update({"WD_SIN_flag": table["WD_flag"].to_numpy(), "WD_COS_flag": table["WD_flag"].to_numpy()})
+    return table.assign(**extra)
+
 
 def lst_index(table: pd.DataFrame) -> pd.DatetimeIndex:
     """Local standard time of each row: `time_lst` (final tables) or `t_lst` in minutes since 1970 (interim)."""
