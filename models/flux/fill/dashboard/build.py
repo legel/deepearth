@@ -191,6 +191,10 @@ def main() -> None:
         shutil.copy2(src, data / "results.json")
         (data / "results.json.gz").write_bytes(gzip.compress(src.read_bytes(), 9))
         results = json.loads(src.read_text())
+    src_test = root / "bench" / "dashboard" / "results_test.json"
+    if src_test.exists():
+        shutil.copy2(src_test, data / "results_test.json")
+        (data / "results_test.json.gz").write_bytes(gzip.compress(src_test.read_bytes(), 9))
     scaling = root / "model" / "scaling" / "scaling.json"
     if scaling.exists():
         shutil.copy2(scaling, data / "scaling.json")

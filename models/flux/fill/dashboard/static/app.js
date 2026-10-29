@@ -100,25 +100,51 @@ let windows = null, winCache = {};
 function opt(sel, values, labels) {
   sel.innerHTML = values.map((v, i) => `<option value="${v}">${labels ? labels[i] : v}</option>`).join("");
 }
+const METHOD_NAMES = { climatology: "Climatology", mds: "MDS (REddyProc)", fluxfill: "FluxFill" };
+const SPLIT_TEXT = {
+  test: "Test tower: held out from training and from every model choice; FluxFill was scored on the test towers once.",
+  validation: "Validation tower: held out from training; used to choose between model versions." };
+let WSPLIT = "test";
 function initWindows(idx) {
   windows = idx;
   if (!idx || !idx.windows || !idx.windows.length) {
     $("#w-body").innerHTML = '<div class="pending">No windows are exported yet. Windows appear here once the tower dataset build finishes and the first methods are scored.</div>';
     return;
   }
-  const sitesW = [...new Set(idx.windows.map((w) => w.site))].sort();
-  opt($("#w-site"), sitesW);
+  const splitOf = (w) => w.split || "validation";
+  const splits = new Set(idx.windows.map(splitOf));
+  if (!splits.has(WSPLIT)) WSPLIT = [...splits][0];
+  for (const b of $("#w-split").querySelectorAll("button")) {
+    b.disabled = !splits.has(b.dataset.split);
+    b.setAttribute("aria-checked", String(b.dataset.split === WSPLIT));
+    b.addEventListener("click", () => { if (b.disabled) return; WSPLIT = b.dataset.split; for (const o of $("#w-split").querySelectorAll("button")) o.setAttribute("aria-checked", String(o === b)); pickSplit(); });
+  }
+  const pickSplit = () => {
+    opt($("#w-site"), [...new Set(idx.windows.filter((w) => splitOf(w) === WSPLIT).map((w) => w.site))].sort());
+    refresh();
+  };
   const refresh = () => {
-    const ws = idx.windows.filter((w) => w.site === $("#w-site").value);
+    const ws = idx.windows.filter((w) => w.site === $("#w-site").value && splitOf(w) === WSPLIT);
     opt($("#w-win"), ws.map((w) => w.file), ws.map((w) => `${w.start} to ${w.end}`));
     const w = ws[0];
     opt($("#w-mask"), w ? w.masks : []);
-    opt($("#w-method"), w ? w.methods : []);
+    const ms = w ? w.methods : [];
+    opt($("#w-method"), ms, ms.map((m) => METHOD_NAMES[m] || m));
+    if (ms.includes("fluxfill")) $("#w-method").value = "fluxfill";
     drawWindow();
   };
   $("#w-site").addEventListener("change", refresh);
   for (const id of ["#w-win", "#w-mask", "#w-method", "#w-zoom"]) $(id).addEventListener("change", drawWindow);
-  refresh();
+  pickSplit();
+}
+
+// Role of a row under the selected mask: an input the methods see, or hidden (and then filled and scored).
+function rowRole(v, spans, sc) {
+  if (!v.values.some((x) => x !== null)) return "not measured in this window";
+  if (!spans || !spans.length) return "input: visible to every method";
+  if (sc && sc.n) return "hidden: filled, then scored against the measurement";
+  if (sc && sc.filled === 0) return "hidden: this method does not fill it";
+  return "hidden: no measurement inside the hidden span";
 }
 
 async function drawWindow() {
@@ -131,23 +157,34 @@ async function drawWindow() {
   const body = $("#w-body");
   body.innerHTML = "";
   const T = w.t.length;
+  const ms = w.masks[mask] || {};
   // x-range: the whole window, or the union of masked spans with 25% padding on each side
   let x0 = 0, x1 = T - 1;
   if ($("#w-zoom").value === "mask") {
-    const sp = Object.values(w.masks[mask] || {}).flat();
+    const sp = Object.values(ms).flat();
     if (sp.length) { const a = Math.min(...sp.map((x) => x[0])), b = Math.max(...sp.map((x) => x[1])); const pad = Math.max(48, Math.round((b - a) * 0.25)); x0 = Math.max(0, a - pad); x1 = Math.min(T - 1, b + pad); }
   }
-  if (w.note) body.insertAdjacentHTML("beforeend", `<p class="note">${w.note}</p>`);
   const sc = ((w.scores || {})[method] || {})[mask] || {};
+  const split = w.split || "validation";
+  const nHid = w.variables.filter((v) => (ms[v.key] || []).length).length;
+  const ctx = w.context_years === undefined ? "the tower's other years as site memory; the window's own years are never in the context" : w.context_years.length ? `the tower's other years (${w.context_years[0]} to ${w.context_years[w.context_years.length - 1]}, ${w.context_years.length} years) as site memory; the window's own years are never in the context` : "no other years of this tower";
+  $("#w-info").innerHTML = `<p><span class="split-tag">${esc(split)}</span>${esc(SPLIT_TEXT[split] || "")}</p>
+    <p><b>Mask.</b> ${esc(mask)}: ${nHid} of ${w.variables.length} rows hidden in part or in full; the rest are inputs.</p>
+    <p><b>Context.</b> ${esc(METHOD_NAMES[method] || method)} reads the visible values of this window and ${ctx}. FluxFill's weights were trained on the training towers only.</p>
+    ${w.note ? `<p class="note">${esc(w.note)}</p>` : ""}`;
   const rows = w.variables.filter((v) => sc[v.key]);
-  body.insertAdjacentHTML("beforeend", rows.length ? `<div class="table-wrap"><table><thead><tr><th>Variable</th><th class="num">CRPS</th><th class="num">MAE</th><th class="num">80% coverage</th><th class="num">95% coverage</th><th class="num">filled</th><th class="num">masked values</th></tr></thead><tbody>${rows.map((v) => { const r = sc[v.key]; if (!r.n) return `<tr><td>${v.label} <span class="note">${v.units || ""}</span></td><td class="num" colspan="5">not filled by this method</td><td class="num">–</td></tr>`; return `<tr><td>${v.label} <span class="note">${v.units || ""}</span></td><td class="num">${fmt(r.crps, 3)}</td><td class="num">${fmt(r.mae, 3)}</td><td class="num">${fmt(100 * r.cov80, 1)}%</td><td class="num">${fmt(100 * r.cov95, 1)}%</td><td class="num">${fmt(100 * (r.filled ?? 1), 0)}%</td><td class="num">${fmt(r.n)}</td></tr>`; }).join("")}</tbody></table></div><p class="note">Scores on the masked, measured values of this window only. CRPS and MAE in each variable's units.</p>` : "");
+  body.insertAdjacentHTML("beforeend", rows.length ? `<div class="table-wrap"><table><thead><tr><th>Hidden variable</th><th class="num">CRPS</th><th class="num">MAE</th><th class="num">80% coverage</th><th class="num">95% coverage</th><th class="num">filled</th><th class="num">hidden measured values</th></tr></thead><tbody>${rows.map((v) => { const r = sc[v.key]; if (!r.n) return `<tr><td>${v.label} <span class="note">${v.units || ""}</span></td><td class="num" colspan="5">not filled by this method</td><td class="num">–</td></tr>`; return `<tr><td>${v.label} <span class="note">${v.units || ""}</span></td><td class="num">${fmt(r.crps, 3)}</td><td class="num">${fmt(r.mae, 3)}</td><td class="num">${fmt(100 * r.cov80, 1)}%</td><td class="num">${fmt(100 * r.cov95, 1)}%</td><td class="num">${fmt(100 * (r.filled ?? 1), 0)}%</td><td class="num">${fmt(r.n)}</td></tr>`; }).join("")}</tbody></table></div><p class="note">Scores on the hidden, measured values of this window only. CRPS and MAE in each variable's units.</p>` : "");
   let group = null;
   for (const v of w.variables) {
-    const g = v.provenance === "reanalysis" ? "Reanalysis drivers (ERA5, downscaled to the site by ONEFlux)" : (["NEE", "LE", "H", "FCH4", "G"].includes(v.key) ? "Fluxes" : "Tower meteorology and soil");
-    if (g !== group) { group = g; body.insertAdjacentHTML("beforeend", `<h3>${g}</h3>`); }
-    const m = (w.masks[mask] || {})[v.key];               // array of [start, stop) index pairs hidden
+    const g = v.provenance === "reanalysis" ? "rean" : (["NEE", "LE", "H", "FCH4", "G"].includes(v.key) ? "flux" : "met");
+    if (g !== group) {
+      group = g;
+      if (g === "rean") body.insertAdjacentHTML("beforeend", `<h3>Reanalysis drivers</h3><p class="note">ERA5, bias-corrected to the tower by ONEFlux. They are inputs unless the mask hides them. ONEFlux fits the correction (a slope and offset per variable) against this tower's measured meteorology over its whole record, so these rows carry a few site-level coefficients estimated partly from hidden periods; every method receives the same rows. Mask M4 removes them entirely; its Results row shows what they add.</p>`);
+      else body.insertAdjacentHTML("beforeend", `<h3>${g === "flux" ? "Fluxes (tower)" : "Tower meteorology and soil"}</h3>`);
+    }
+    const m = ms[v.key];                                   // array of [start, stop) index pairs hidden
     const segs = ((w.predictions[method] || {})[mask] || {})[v.key]; // [{a, mean, q025, q10, q90, q975}]
-    body.appendChild(panel(w, v, m, expand(segs, T), T, x0, x1));
+    body.appendChild(panel(w, v, m, expand(segs, T), T, x0, x1, rowRole(v, m, sc[v.key])));
   }
 }
 
@@ -166,7 +203,7 @@ function niceTicks(lo, hi, n) {
   return { ticks: out, step };
 }
 
-function panel(w, v, maskSpans, pred, T, x0 = 0, x1 = T - 1) {
+function panel(w, v, maskSpans, pred, T, x0 = 0, x1 = T - 1, role = "") {
   const W = 1080, H = 120, ml = 64, mr = 14, mt = 18, mb = 22;
   const iw = W - ml - mr, ih = H - mt - mb;
   const vals = v.values;
@@ -199,7 +236,7 @@ function panel(w, v, maskSpans, pred, T, x0 = 0, x1 = T - 1) {
   s += `<path d="${path(vals, (i) => hidden[i])}" fill="none" stroke="${css("--hidden")}" stroke-width="1"/>`;
   s += `<path d="${path(vals, (i) => !hidden[i])}" fill="none" stroke="${css("--ink")}" stroke-width="1"/>`;
   if (pred) s += `<path d="${path(pred.mean, (i) => hidden[i])}" fill="none" stroke="${css("--series-1")}" stroke-width="1.5"/>`;
-  s += `<text class="lab-v" x="${ml}" y="12">${v.label}</text><text class="lab" x="${ml + 8 + v.label.length * 6.6}" y="12">${v.units || ""}</text>`;
+  s += `<text class="lab-v" x="${ml}" y="12">${v.label}</text><text class="lab" x="${ml + 8 + v.label.length * 6.6}" y="12">${v.units || ""}</text><text class="lab" x="${W - mr}" y="12" text-anchor="end">${esc(role)}</text>`;
   s += `<line class="xh" x1="0" x2="0" y1="${mt}" y2="${mt + ih}" stroke="${css("--quiet")}" stroke-width="1" visibility="hidden"/>`;
   s += `<rect x="${ml}" y="${mt}" width="${iw}" height="${ih}" fill="transparent"/></svg><div class="tooltip"></div>`;
   wrap.innerHTML = s;
@@ -208,7 +245,7 @@ function panel(w, v, maskSpans, pred, T, x0 = 0, x1 = T - 1) {
     const r = svg.getBoundingClientRect(), sx = (e.clientX - r.left) * (W / r.width);
     const i = Math.max(x0, Math.min(x1, Math.round(x0 + ((sx - ml) / iw) * (x1 - x0))));
     xh.setAttribute("x1", X(i)); xh.setAttribute("x2", X(i)); xh.setAttribute("visibility", "visible");
-    let h = `<b>${w.t[i]}</b><br>${hidden[i] ? "masked" : "visible"}<br>measured: ${fmt(vals[i], 2)} ${v.units || ""}`;
+    let h = `<b>${w.t[i]}</b><br>${hidden[i] ? "hidden from the method" : "input (visible)"}<br>${hidden[i] ? "ground truth" : "measured"}: ${fmt(vals[i], 2)} ${v.units || ""}`;
     if (pred && hidden[i]) h += `<br>predicted: ${fmt(pred.mean[i], 2)}<br>80%: ${fmt(pred.q10[i], 2)} to ${fmt(pred.q90[i], 2)}<br>95%: ${fmt(pred.q025[i], 2)} to ${fmt(pred.q975[i], 2)}`;
     tip.innerHTML = h; tip.style.display = "block";
     const px = (X(i) / W) * r.width; tip.style.left = Math.min(px + 12, r.width - 200) + "px"; tip.style.top = "8px";
@@ -259,7 +296,7 @@ function renderResults(res) {
   }
   const sc = res.scope;
   const fams = sc.families.map((f) => f.replace(/^M2-(\d+)d$/, "$1 d")).join(", ");
-  $("#r-scope").innerHTML = `<span class="pill">${esc(res.label)} sites</span> ${sc.windows} windows of 180 days at ${sc.sites} ${esc(sc.split)} sites (${sc.site_list.map(esc).join(", ")}); regime ${sc.regimes.join(", ")}; mask family M2, one all-tower block of ${fams}; ${sc.methods} methods on identical windows, masks and scoring code. These sites are held out from training and used for model selection. No test-site result exists yet. Generated ${esc(res.generated_utc)} UTC.${res.note ? " " + esc(res.note) : ""} <a href="#metrics" data-tab="results">Metric definitions and formulas</a>.`;
+  $("#r-scope").innerHTML = `<span class="pill">${esc(res.label)} sites</span> ${sc.windows} windows of 180 days at ${sc.sites} ${esc(sc.split)} sites (${sc.site_list.map(esc).join(", ")}); regime ${sc.regimes.join(", ")}; mask families ${fams}; ${sc.methods} methods on identical windows, masks and scoring code. ${sc.split === "test" ? "Test sites of the frozen split, at least 50 km from every training site, never used for training or model selection; masks verified against the frozen release manifest. Methods not yet scored on the test release are absent from these tables." : "These sites are held out from training and used for model selection."} Generated ${esc(res.generated_utc)} UTC.${res.note ? " " + esc(res.note) : ""} <a href="#metrics" data-tab="results">Metric definitions and formulas</a>.`;
   $("#r-findings").innerHTML = `<div class="findings"><h3>Findings on ${esc(res.label.toLowerCase())} sites</h3><ol>${res.findings.map((f) => `<li><b>${esc(f.head)}</b> ${esc(f.text)}<span class="data">Data: ${esc(f.data)}</span></li>`).join("")}</ol></div>`;
   $("#r-flux").innerHTML = res.fluxes.map((f) => `<button role="radio" aria-checked="${f.id === FLUX}" data-flux="${f.id}">${f.id}</button>`).join("");
   $("#r-flux").addEventListener("click", (e) => { const b = e.target.closest("button[data-flux]"); if (!b) return; FLUX = b.dataset.flux; for (const x of $("#r-flux").children) x.setAttribute("aria-checked", x.dataset.flux === FLUX); renderTables(); });
@@ -317,12 +354,19 @@ function renderTables() {
   on("#r-gm", (v) => { GAPMETRIC = v; }); on("#r-sk", (v) => { SUMKIND = v; }); on("#r-sm", (v) => { SUMMETRIC = v; });
 }
 
+// The current FluxFill: the last "ours" method of the results file (results_dashboard.py lists earlier versions first).
+function currentFluxFill() {
+  const ours = RES.methods.filter((m) => m.ours);
+  return ours.find((m) => m.id === "fluxfill-ref") || ours.find((m) => m.id === "fluxfill") || ours[ours.length - 1];
+}
+
 // Figure: CRPS relative to climatology by gap length, one panel per flux.
 function drawChart() {
   const box = $("#r-chart");
   if (!RES || !RES.chart || !box || $("#p-results").hidden) return;
   const ch = RES.chart, F = ch.fluxes;
   const base = RES.methods.filter((m) => !m.ours && m.id !== "climatology");
+  if (HIGHLIGHT && !base.some((m) => m.id === HIGHLIGHT)) HIGHLIGHT = null;   // not scored on this split
   if (!HIGHLIGHT) {   // default: the baseline with the lowest mean CRPS relative to climatology over every panel and gap
     let best = null, bv = Infinity;
     for (const m of base) {
@@ -333,12 +377,14 @@ function drawChart() {
     HIGHLIGHT = best || (base[0] && base[0].id);
   }
   const hl = RES.methods.find((m) => m.id === HIGHLIGHT);
-  const style = { "fluxfill-v0": { c: "--series-1", shape: "circle" }, "fluxfill-v1": { c: "--series-3", shape: "square" } };
+  const cur = currentFluxFill();
+  const style = {};
+  if (cur) style[cur.id] = { c: "--series-1", shape: "circle" };
   style[HIGHLIGHT] = { c: "--series-2", shape: "diamond" };
   box.innerHTML = `<div class="figure"><h3 class="headline">${esc(ch.headline)}</h3>
   <p class="sub-title"><b>Figure 1.</b> CRPS of half-hourly values relative to climatology, by gap length, on ${esc(RES.label.toLowerCase())} sites; 1 is climatology, below 1 is better. Each gap length compares the methods on the cells they all fill completely (n values under each label). Hover for every method's CRPS.</p>
   <div class="controls"><label>Compare with<select id="r-hl">${base.map((m) => `<option value="${m.id}"${m.id === HIGHLIGHT ? " selected" : ""}>${esc(m.label)}</option>`).join("")}</select></label></div>
-  <div class="legend chart-legend"><span><svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="${css("--series-1")}" stroke-width="2"/><circle cx="11" cy="5" r="3.5" fill="${css("--series-1")}"/></svg>FluxFill v0</span><span><svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="${css("--series-3")}" stroke-width="2"/><rect x="7.5" y="1.5" width="7" height="7" fill="${css("--series-3")}"/></svg>FluxFill v1</span><span><svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="${css("--series-2")}" stroke-width="2"/><path d="M11 0.5 L15.5 5 L11 9.5 L6.5 5 Z" fill="${css("--series-2")}"/></svg>${esc(hl ? hl.label : "")}</span><span><svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="${css("--hidden")}" stroke-width="1"/></svg>other baselines</span><span><svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="${css("--ink")}" stroke-width="1"/></svg>climatology = 1</span></div>
+  <div class="legend chart-legend"><span><svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="${css("--series-1")}" stroke-width="2"/><circle cx="11" cy="5" r="3.5" fill="${css("--series-1")}"/></svg>${esc(cur ? cur.label : "FluxFill")}</span><span><svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="${css("--series-2")}" stroke-width="2"/><path d="M11 0.5 L15.5 5 L11 9.5 L6.5 5 Z" fill="${css("--series-2")}"/></svg>${esc(hl ? hl.label : "")}</span><span><svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="${css("--hidden")}" stroke-width="1"/></svg>other methods and earlier FluxFill versions</span><span><svg width="22" height="10"><line x1="1" x2="21" y1="5" y2="5" stroke="${css("--ink")}" stroke-width="1"/></svg>climatology = 1</span></div>
   <div class="panels">${Object.keys(F).map((k) => `<div class="viz panel" data-flux="${k}"></div>`).join("")}</div></div>`;
   $("#r-hl").addEventListener("change", (e) => { HIGHLIGHT = e.target.value; drawChart(); });
   for (const el of box.querySelectorAll(".panel")) panelChart(el, el.dataset.flux, F[el.dataset.flux], style);
@@ -360,12 +406,14 @@ function panelChart(el, flux, f, style) {
   s += `<text class="lab-v" x="${ml}" y="14">${flux}</text><text class="lab" x="${ml + 8 + flux.length * 8}" y="14">CRPS / climatology CRPS</text>`;
   s += '<g class="grid">' + nt.ticks.map((y) => `<line x1="${ml}" x2="${W - mr}" y1="${Y(y)}" y2="${Y(y)}"/>`).join("") + "</g><g class=\"axis\">";
   s += nt.ticks.map((y) => `<text x="${ml - 6}" y="${Y(y) + 4}" text-anchor="end">${fmt(y, nt.step < 0.1 ? 2 : 1)}</text>`).join("");
-  s += f.families.map((lab, j) => `<text x="${X(j)}" y="${H - mb + 16}" text-anchor="middle">${lab}</text><text x="${X(j)}" y="${H - mb + 30}" text-anchor="middle" class="tiny">n ${fmtSI(f.n[j])}</text>`).join("") + "</g>";
+  // Axis ticks use the family code (M1, M3, M4, M5) where the full label is long; the tooltip has the full label.
+  const tick = (lab) => { const m = lab.match(/\((M\d)\)/); return m ? m[1] : /no reanalysis/.test(lab) ? "M4" : lab; };
+  s += f.families.map((lab, j) => `<text x="${X(j)}" y="${H - mb + 16}" text-anchor="middle">${esc(tick(lab))}</text><text x="${X(j)}" y="${H - mb + 30}" text-anchor="middle" class="tiny">n ${fmtSI(f.n[j])}</text>`).join("") + "</g>";
   s += `<line x1="${ml}" x2="${W - mr}" y1="${Y(1)}" y2="${Y(1)}" stroke="${css("--ink")}" stroke-width="1"/>`;
   const Yu = (v) => mt + (1 - (v - lo) / (hi - lo)) * ih;   // unclamped: lines leave the plot and are clipped
   const line = (r) => { let d = "", on = false; r.forEach((v, j) => { if (v === null) { on = false; return; } d += (on ? "L" : "M") + X(j).toFixed(1) + " " + Yu(v).toFixed(1); on = true; }); return d; };
   for (const se of f.series) if (!style[se.method] && se.method !== "climatology") s += `<path d="${line(ratio(se))}" fill="none" stroke="${css("--hidden")}" stroke-width="1" stroke-opacity="0.55" clip-path="url(#${clip})"/>`;
-  const order = ["fluxfill-v1", HIGHLIGHT, "fluxfill-v0"];
+  const order = [HIGHLIGHT, ...Object.keys(style).filter((k) => k !== HIGHLIGHT)];
   for (const id of order) {
     const se = f.series.find((x) => x.method === id); if (!se || !style[id]) continue;
     const col = css(style[id].c), r = ratio(se);
@@ -495,8 +543,14 @@ function renderReport(rep) {
 
 // ---------- boot ----------
 (async () => {
-  const [st, s, idx, res, rep, meth, scal] = await Promise.all([getJSON("data/status.json"), getJSON("data/sites.json"), getJSON("data/windows/index.json"), getJSONgz("data/results.json"), getJSON("data/report.json"), getJSON("data/methods.json"), getJSON("data/scaling.json")]);
+  const [st, s, idx, res, rep, meth, scal, rtest] = await Promise.all([getJSON("data/status.json"), getJSON("data/sites.json"), getJSON("data/windows/index.json"), getJSONgz("data/results.json"), getJSON("data/report.json"), getJSON("data/methods.json"), getJSON("data/scaling.json"), getJSONgz("data/results_test.json")]);
   SCALING = scal;
   renderStatus(st); initTowers(s); initWindows(idx); renderResults(res); renderMethods(meth); renderReport(rep);
+  const splitBtns = [...document.querySelectorAll("#r-split button")];
+  if (!rtest) splitBtns[1].disabled = true;
+  for (const btn of splitBtns) btn.addEventListener("click", () => {
+    for (const x of splitBtns) x.setAttribute("aria-checked", String(x === btn));
+    renderResults(btn.dataset.split === "test" ? rtest : res);
+  });
   show(location.hash.slice(1) || "overview");
 })();

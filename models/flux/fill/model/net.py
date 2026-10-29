@@ -31,22 +31,66 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from data import IS_FLUX, PROV_OF_VAR, STEPS_PER_DAY, V_TAB, VARS, WINDOW_DAYS
+from data import IS_FLUX, PROV_OF_VAR, STEPS_PER_DAY, V_BASE, V_TAB, VARS, WINDOW_DAYS
 from imagery import CLS_DIM, N_META
 
 K = STEPS_PER_DAY
 
 
-def option_module(build):
+def option_module(build, zero_prefix: Optional[str] = None):
     """Build an optional module without changing the base model's initialisation: it is constructed under a saved
     and restored random state (so the parameters built after it draw the same numbers as without it) and its
     parameters are set to zero (so the network computes the same function as the base at initialisation). An A/B arm
-    with an option then starts from exactly the base weights."""
+    with an option then starts from exactly the base weights. `zero_prefix`: zero only the parameters whose name
+    starts with it (the output projection of a deeper module, whose hidden layers keep their random initialisation
+    so that they can learn; the output is still zero at initialisation)."""
     with torch.random.fork_rng(devices=[]):
         m = build()
-    for p in m.parameters():
-        nn.init.zeros_(p)
+    for name, p in m.named_parameters():
+        if zero_prefix is None or name.startswith(zero_prefix):
+            nn.init.zeros_(p)
     return m
+
+
+class SinrPlace(nn.Module):
+    """Location encoder of SINR (Cole et al. 2023, "Spatial implicit neural representations for global-scale species
+    mapping", ICML), as ported in the DeepEarth habitat model (models/habitat/plant/ranges/joint/place.py, SinrPlace):
+    sin/cos of longitude and latitude, Linear(n_in, hidden) + ReLU, `blocks` residual blocks
+    (Linear-ReLU-Linear-ReLU with a skip connection) and a zero-initialised projection to d.
+
+    Additions for FluxFill: elevation (km) as a fifth input, and an optional ladder of frequencies (NeRF positional
+    encoding, Mildenhall et al. 2020; Fourier features, Tancik et al. 2020): sin and cos of 2^k pi lon / 180 and
+    2^k pi lat / 90 for k = 0..n_freq. n_freq = 0 is SINR's input. A site without a location (all-zero site
+    features, the "unknown location" encoding) gets a zero output."""
+
+    def __init__(self, d: int, n_freq: int = 0, hidden: int = 256, blocks: int = 4):
+        super().__init__()
+        self.n_freq = n_freq
+        self.inp = nn.Sequential(nn.Linear(4 * (n_freq + 1) + 1, hidden), nn.ReLU())
+        self.blocks = nn.ModuleList([nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(), nn.Linear(hidden, hidden),
+                                                   nn.ReLU()) for _ in range(blocks)])
+        self.out = nn.Linear(hidden, d)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+
+    def encode(self, site: torch.Tensor) -> torch.Tensor:
+        """(B, 4) unit-sphere xyz and elevation (data.site_features) -> (B, 4 (n_freq + 1) + 1)."""
+        x, y, z, elev = site.float().unbind(-1)
+        lat = torch.asin(z.clamp(-1.0, 1.0))                     # radians; pi lat / 90 in degrees is 2 lat here
+        lon = torch.atan2(y, x)                                   # radians; pi lon / 180 in degrees is lon here
+        f = [elev[:, None]]
+        for k in range(self.n_freq + 1):
+            w = 2.0 ** k
+            f += [torch.sin(w * lon)[:, None], torch.cos(w * lon)[:, None], torch.sin(2 * w * lat)[:, None],
+                  torch.cos(2 * w * lat)[:, None]]
+        return torch.cat(f, -1)
+
+    def forward(self, site: torch.Tensor) -> torch.Tensor:
+        h = self.inp(self.encode(site))
+        for blk in self.blocks:
+            h = h + blk(h)
+        known = (site != 0).any(-1, keepdim=True)
+        return torch.where(known, self.out(h), torch.zeros_like(h[:, :1]).expand(-1, self.out.out_features))
 
 
 def rope_tables(n: int, dim: int, base: float = 10000.0, device=None):
@@ -106,7 +150,9 @@ class FluxFillNet(nn.Module):
                  flow_width: int = 256, flow_depth: int = 3, use_imagery: bool = True, memory: bool = False,
                  mem_residual: bool = False, img_nll: bool = False, components: int = 1, local_base: bool = False,
                  gated_base: bool = False, gate_scale: bool = False, edge_continue: bool = False,
-                 memory_skew: bool = False, driver_anomaly: bool = False, memory_skew_fluxes_only: bool = False):
+                 memory_skew: bool = False, driver_anomaly: bool = False, memory_skew_fluxes_only: bool = False,
+                 scale_anchor: bool = False, year_anomaly: bool = False, sinr_place: int = -1,
+                 sinr_replace: bool = False):
         super().__init__()
         # img_nll: the imagery head is a diagonal Gaussian (mean and log-scale per Clay dimension) trained on its
         # negative log-likelihood, a proper score; otherwise a point head trained on MSE (v0, kept for old checkpoints).
@@ -143,6 +189,18 @@ class FluxFillNet(nn.Module):
         if self.driver_anomaly:
             self.driver_rows = [VARS.index(k) for k in ("ERA5_SW_IN", "ERA5_TA", "ERA5_VPD")]
             self.beta_out = option_module(lambda: nn.Linear(d, len(self.driver_rows)))
+        # scale_anchor (E27): both components' scales are relative to the site memory's standard deviation at that day
+        # of year and half-hour, scale_k * (mem_s + SCALE_FLOOR) where memory exists (scale_k * (1 + SCALE_FLOOR)
+        # where it does not), as mem_residual makes the location relative to the memory mean; no parameters.
+        self.scale_anchor = scale_anchor and self.gated_base
+        # year_anomaly (E28): the memory component's anchor adds this window's departure from the site's other years,
+        # mem + c_near,v * A_near + c_win,v * A_win, where A is the mean of (visible value - memory mean) at the same
+        # half-hour over the window's visible days, weighted exp(-|day distance| / YEAR_ANOM_DAYS) (A_near) or
+        # uniformly (A_win); c is zero-initialised per variable, so the arm starts identical to the base. It carries
+        # the year's state (a crop after harvest, a different crop, a disturbed stand) into long gaps.
+        self.year_anomaly = year_anomaly and self.gated_base
+        if self.year_anomaly:
+            self.yanom_coef = nn.Parameter(torch.zeros(2, V_TAB))
         if self.gate_scale:
             self.scale_in = nn.Linear(4, 2)
             nn.init.zeros_(self.scale_in.weight); nn.init.zeros_(self.scale_in.bias)
@@ -159,11 +217,21 @@ class FluxFillNet(nn.Module):
         self.img_in = nn.Linear(CLS_DIM, d)
         self.img_meta = nn.Linear(N_META, d)
         self.mask_img = nn.Parameter(torch.zeros(d))
-        self.var_emb = nn.Embedding(V_TAB + 1, d)
+        # Variable embeddings: the base rows and the imagery row (var_emb, as in every checkpoint); with the extended
+        # channel set (E30, data.CHANNELS) the extra rows get their own table, built by option_module (zero, and
+        # without changing the random numbers of the base weights), placed between the base rows and imagery.
+        self.var_emb = nn.Embedding(V_BASE + 1, d)
+        if V_TAB > V_BASE:
+            self.extra_emb = option_module(lambda: nn.Embedding(V_TAB - V_BASE, d))
         self.prov_emb = nn.Embedding(4, d)                  # tower, reanalysis, reanalysis-land, imagery
         self.day_emb = nn.Embedding(WINDOW_DAYS, d)
         self.doy_in = nn.Linear(4, d)
         self.site_in = nn.Sequential(nn.Linear(4, d), nn.GELU(), nn.Linear(d, d))
+        # sinr_place (E29): SinrPlace with sinr_place frequency octaves (0: SINR's sin/cos input) added to the location
+        # term (site_in) or, with sinr_replace, in its place; output projection zero at initialisation.
+        self.sinr_place, self.sinr_replace = sinr_place, sinr_replace and sinr_place >= 0
+        if sinr_place >= 0:
+            self.place = option_module(lambda: SinrPlace(d, n_freq=sinr_place), zero_prefix="out.")
         self.register_buffer("prov", torch.tensor(list(PROV_OF_VAR) + [3]), persistent=False)
         self.blocks = nn.ModuleList()
         for _ in range(depth):
@@ -199,9 +267,12 @@ class FluxFillNet(nn.Module):
         img = torch.where(io, img, self.mask_img.to(img.dtype))[:, None]          # (B, 1, D, d)
         x = torch.cat([tab, img], 1)
         R = x.shape[1]
-        x = x + self.var_emb.weight[None, :, None] + self.prov_emb(self.prov)[None, :, None]
+        x = x + self.var_table()[None, :, None] + self.prov_emb(self.prov)[None, :, None]
         x = x + self.day_emb.weight[None, None] + self.doy_in(b["doy"])[:, None]
-        x = x + self.site_in(b["site"])[:, None, None]
+        if not self.sinr_replace:
+            x = x + self.site_in(b["site"])[:, None, None]
+        if self.sinr_place >= 0:
+            x = x + self.place(b["site"]).to(x.dtype)[:, None, None]
         img_ok = b["img_present"].reshape(B, 1) & torch.tensor(self.use_imagery, device=z.device)
         row_ok = torch.cat([b["present"], img_ok], 1)
         row_ok = row_ok | ~row_ok.any(1, keepdim=True)
@@ -209,6 +280,13 @@ class FluxFillNet(nn.Module):
         for blk in self.blocks:
             x = blk(x, row_ok, rope)
         return self.norm(x)
+
+    def var_table(self) -> torch.Tensor:
+        """(V_TAB + 1, d) embeddings of the rows in order: base variables, extra variables (E30), imagery."""
+        w = self.var_emb.weight
+        if V_TAB == V_BASE:
+            return w
+        return torch.cat([w[:V_BASE], self.extra_emb.weight, w[V_BASE:]], 0)
 
     def offset(self, b) -> torch.Tensor:
         """(B, V, D, 48) residual base, standardised: the local mean diurnal course (local_base) where it exists, else
@@ -236,6 +314,10 @@ class FluxFillNet(nn.Module):
             A, dist_e = edge_anomaly(b["z"], b["obs"], lmean, ok)
             rho = torch.sigmoid(self.edge_logit).view(1, -1, 1, 1)
             local = lmean + A * torch.exp(dist_e * torch.log(rho))
+        if self.year_anomaly:
+            an, an_ok = year_anomalies(b["z"], b["obs"], b["mem_m"], b["mem_h"])
+            c = self.yanom_coef.view(2, 1, -1, 1, 1)
+            mem = torch.where(b["mem_h"], mem + c[0] * an[0] + c[1] * an[1], mem)
         base = torch.stack([torch.where(ok, local, mem), mem], -1)
         if self.driver_anomaly and h is not None:
             dr = self.driver_rows
@@ -245,6 +327,9 @@ class FluxFillNet(nn.Module):
             base = base + shift[..., None]
         if self.gate_scale:
             scale = scale * torch.exp(self.scale_in(feats.to(scale.dtype)).float().clamp(-5.0, 5.0))
+        if self.scale_anchor:
+            s = torch.where(b["mem_h"], b["mem_s"], torch.ones_like(b["mem_s"])) + SCALE_FLOOR
+            scale = scale * s[..., None].to(scale.dtype)
         return loc + base, scale, df, logw
 
     def forward(self, b):
@@ -258,6 +343,23 @@ class FluxFillNet(nn.Module):
 
 
 LOCAL_DAYS, LOCAL_MIN = 3, 2
+SCALE_FLOOR = 0.02          # standardised units (0.02 population standard deviations)
+YEAR_ANOM_DAYS = 10.0       # e-folding distance of the near-window anomaly (E28)
+
+
+def year_anomalies(z, obs, mem_m, mem_h, tau: float = YEAR_ANOM_DAYS):
+    """(2, B, V, D, 48) mean departure of the visible values from the memory mean at the same half-hour, over the
+    window's days weighted exp(-|d - d'| / tau) (index 0) or uniformly (index 1), and (B, V, D, 48) where any
+    visible value entered. Only visible values with memory enter (z * obs), so no hidden value is read."""
+    D = z.shape[2]
+    o = (obs & mem_h).float()
+    a = (z - mem_m) * o
+    dd = torch.arange(D, device=z.device, dtype=torch.float32)
+    W = torch.stack([torch.exp(-(dd[:, None] - dd[None, :]).abs() / tau), torch.ones(D, D, device=z.device)])
+    num = torch.einsum("wde,bvek->wbvdk", W, a.float())
+    den = torch.einsum("wde,bvek->wbvdk", W, o)
+    ok = den[1] > 0
+    return torch.where(den > 0, num / den.clamp_min(1e-6), torch.zeros_like(num)), ok
 
 
 def local_diurnal_course(z, obs, days: int = LOCAL_DAYS, min_count: int = LOCAL_MIN):

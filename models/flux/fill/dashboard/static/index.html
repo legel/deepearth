@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -119,21 +119,36 @@
 
 <section role="tabpanel" id="p-windows" aria-labelledby="t-windows" hidden>
   <h2>Windows</h2>
-  <p>Each panel is one variable over one 180-day window; the view shows the masked span or the whole window. Shaded spans are masked. Black is the measured value the
-  method saw; gray is the measured value it did not see; blue is the method's prediction with its 80% and 95%
-  intervals.</p>
+  <p>Each example is one 180-day window at a tower that FluxFill never trained on. A benchmark mask hides part of the
+  window; every method receives the window with those values removed and fills them in. The hidden measurements are
+  kept aside and used only to score the fill.</p>
+  <div class="w-legend" aria-label="How to read the panels">
+    <span><svg width="26" height="12"><line x1="1" x2="25" y1="6" y2="6" stroke="var(--ink)" stroke-width="1.5"/></svg><span><b>Input</b>: measured, visible to the method</span></span>
+    <span><svg width="26" height="12"><rect x="0" y="0" width="26" height="12" fill="var(--mask)"/></svg><span><b>Hidden</b>: removed by the mask</span></span>
+    <span><svg width="26" height="12"><rect x="0" y="0" width="26" height="12" fill="var(--mask)"/><line x1="1" x2="25" y1="6" y2="6" stroke="var(--hidden)" stroke-width="1.5"/></svg><span><b>Ground truth</b>: the hidden measurement, used only for scoring</span></span>
+    <span><svg width="26" height="12"><rect x="0" y="1" width="26" height="10" fill="var(--band-2)"/><rect x="0" y="3" width="26" height="6" fill="var(--band-1)"/><line x1="1" x2="25" y1="6" y2="6" stroke="var(--series-1)" stroke-width="2"/></svg><span><b>Inference</b>: predicted mean, 80% and 95% intervals</span></span>
+  </div>
   <div class="controls">
-    <label>Site<select id="w-site"></select></label>
+    <div class="seg" role="radiogroup" aria-label="Site split" id="w-split">
+      <button role="radio" data-split="test" aria-checked="true">Test towers</button>
+      <button role="radio" data-split="validation" aria-checked="false">Validation towers</button>
+    </div>
+    <label>Tower<select id="w-site"></select></label>
     <label>Window<select id="w-win"></select></label>
     <label>Mask<select id="w-mask"></select></label>
     <label>Method<select id="w-method"></select></label>
-    <label>View<select id="w-zoom"><option value="mask">Masked span</option><option value="full">Whole window</option></select></label>
+    <label>View<select id="w-zoom"><option value="mask">Hidden span</option><option value="full">Whole window</option></select></label>
   </div>
+  <div id="w-info" class="w-info"></div>
   <div id="w-body"></div>
 </section>
 
 <section role="tabpanel" id="p-results" aria-labelledby="t-results" hidden>
   <h2>Results</h2>
+  <div class="controls"><div class="seg" role="radiogroup" aria-label="Site split" id="r-split">
+    <button role="radio" data-split="validation" aria-checked="true">Validation sites</button>
+    <button role="radio" data-split="test" aria-checked="false">Test sites</button>
+  </div></div>
   <p class="scope" id="r-scope"></p>
   <div id="r-findings"></div>
   <div id="r-chart"></div>

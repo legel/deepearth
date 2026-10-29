@@ -36,7 +36,7 @@ case "${1:-gpu}" in
       sp=$(awk -F, -v s="$1" '$1==s{print $2}' /home/photon/4tb/fluxfill/towers/split.csv)
       if [ "$sp" = "val" ]; then note="$note $1 is a validation site; these are validation-site development numbers."
       else note="$note $1 is a $sp site of the trained methods (SAITS, CSDI), so their curves here are in-sample."; fi
-      step $PY -u "$HERE/../bench/export_dashboard.py" "$T/$1.parquet" "$1" "$2" "$D" --methods $M --lat ${ll% *} --lon ${ll#* } --note "$note"
+      step $PY -u "$HERE/../bench/export_dashboard.py" "$T/$1.parquet" "$1" "$2" "$D" --split validation --methods $M --lat ${ll% *} --lon ${ll#* } --note "$note"
     done
     ;;
   publish)

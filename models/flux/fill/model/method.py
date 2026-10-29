@@ -51,7 +51,9 @@ class FluxFill:
                                local_base=c.get("local_base", False), gated_base=c.get("gated_base", False),
                                gate_scale=c.get("gate_scale", False), edge_continue=c.get("edge_continue", False),
                                memory_skew=c.get("memory_skew", False), driver_anomaly=c.get("driver_anomaly", False),
-                               memory_skew_fluxes_only=c.get("memory_skew_fluxes", False))
+                               memory_skew_fluxes_only=c.get("memory_skew_fluxes", False),
+                               scale_anchor=c.get("scale_anchor", False), year_anomaly=c.get("year_anomaly", False),
+                               sinr_place=c.get("sinr_place", -1), sinr_replace=c.get("sinr_replace", False))
         self.net.load_state_dict(ck["model"])
         self.net.use_imagery = self.net.use_imagery and imagery      # False: imagery modality removed (M4)
         # Imagery only at these sites (None: every site with a Clay store). Defaults to the list the checkpoint was
@@ -67,14 +69,21 @@ class FluxFill:
         self._memc = {}
 
     # ------------------------------------------------------------------------------------------------ inputs
+    @staticmethod
+    def window_rows(w):
+        """Model rows of the window's rows that this model has, and their positions in the window. A window can
+        carry rows the model lacks (--extra-tower rows with a base-channel model); those are not filled."""
+        pos = [i for i, k in enumerate(w.keys) if k in VARS]
+        return [VARS.index(w.keys[i]) for i in pos], pos
+
     def example(self, w, context: Dict) -> Dict[str, np.ndarray]:
-        rows = [VARS.index(k) for k in w.keys]
-        off = self.utc_offset(context)
+        rows, pos = self.window_rows(w)
+        off = self.utc_offset(context, w.site)
         vals = np.full((V_TAB, w.values.shape[1]), np.nan)
-        vals[rows] = w.values
+        vals[rows] = w.values[pos]
         vals[IS_LAND] = land_matrix(w.site, w.t, off)       # the reanalysis-land drivers of the window
         meas = np.isfinite(vals)
-        meas[rows] &= w.measured
+        meas[rows] &= w.measured[pos]
         z = np.where(meas, self.stats.norm(np.nan_to_num(vals)), 0.0).astype(np.float32).reshape(V_TAB, WINDOW_DAYS, K)
         present = meas.any(1)
         present[rows] = True
@@ -92,14 +101,17 @@ class FluxFill:
                 "img_cls": cls, "img_meta": meta, "img_obs": has, "img_present": np.array(img is not None and has.any()),
                 "doy": doy_features(w.start), "site": site_features(lat, lon, elev)}
 
-    @staticmethod
-    def utc_offset(context: Dict) -> float:
+    def utc_offset(self, context: Dict, site: str = "") -> float:
+        """Local standard time minus UTC (hours) from the context table, else from the site table (the R3 regime
+        has an empty context), else 0."""
         tab = context.get("table") if context else None
         if tab is not None and "t_lst" in tab and "t_utc" in tab and len(tab):
             return float(np.median((tab["t_lst"].to_numpy() - tab["t_utc"].to_numpy())[:1000]) / 60.0)
         if tab is not None and "time_utc" in tab and len(tab):
             u = pd.Timestamp(tab["time_utc"].iloc[0])
             return float((pd.Timestamp(tab["time_lst"].iloc[0]) - (u.tz_convert(None) if u.tzinfo else u)) / pd.Timedelta(hours=1))
+        if site in self.sites.index and pd.notna(self.sites.loc[site].get("utc_offset_h", np.nan)):
+            return float(self.sites.loc[site, "utc_offset_h"])
         return 0.0
 
     def memory(self, w, context: Dict):
@@ -122,15 +134,16 @@ class FluxFill:
     @torch.no_grad()
     def predict(self, w, mask: np.ndarray, context: Dict) -> np.ndarray:
         ex = self.example(w, context)
-        rows = [VARS.index(k) for k in w.keys]
+        rows, pos = self.window_rows(w)
         hide = np.zeros((V_TAB, mask.shape[1]), bool)
-        hide[rows] = mask
+        hide[rows] = mask[pos]
         hide &= ex["present"][:, None]
         z = self.sample_joint(ex, hide) if self.mode == "joint" else self.sample_marginal(ex)   # (S, V_TAB, T) std.
-        self._last = (np.array(rows), self._params_last) if self.mode == "marginal" else None
+        self._last = (np.array(rows), np.array(pos), self._params_last) if self.mode == "marginal" else None
         x = self.stats.denorm(z.reshape(self.n * V_TAB, -1).astype(np.float64),
                               np.tile(np.arange(V_TAB), self.n)).reshape(self.n, V_TAB, -1)
-        out = x[:, rows]
+        out = np.full((self.n,) + w.values.shape, np.nan)
+        out[:, pos] = x[:, rows]
         return np.where(mask[None], out, w.values[None])
 
     def pit(self, values: np.ndarray) -> np.ndarray:
@@ -139,10 +152,11 @@ class FluxFill:
         calls it after `predict` has returned, with the truth, to score coverage exactly."""
         if self.mode != "marginal" or getattr(self, "_last", None) is None:
             return np.full(values.shape, np.nan)
-        rows, params = self._last
-        z = (values - self.stats.mean[rows, None]) / self.stats.std[rows, None]
-        sel = [u[rows] for u in params]
-        return mixture_cdf(sel, z)
+        rows, pos, params = self._last
+        out = np.full(values.shape, np.nan)
+        z = (values[pos] - self.stats.mean[rows, None]) / self.stats.std[rows, None]
+        out[pos] = mixture_cdf([u[rows] for u in params], z)
+        return out
 
     def sample_marginal(self, ex) -> np.ndarray:
         b = self._batch(ex, 1)

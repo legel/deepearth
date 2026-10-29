@@ -199,3 +199,100 @@ def memory_from_table_skew(values: np.ndarray, t0: pd.Timestamp, stats: Stats, s
     rec = SiteRecord("ctx", t0, values)
     sh = slot_shift(rec)
     return window_memory_skew(*memory_from_sums_skew(*site_totals_skew(rec, (), sh), sh, stats), start)
+
+
+# ------------------------------------------------------------------------------------- direct window memory (speed)
+# The same channels as SiteMemory with the window's years subtracted followed by `window_memory`, computed only at
+# the window's 180 days of year and the +/- 15 days around them, from the site totals and the record itself, in one
+# compiled pass (numba). The moving sums are linear, so subtracting the years' values before the moving sum on this
+# sub-range equals the full-year computation; the float64 operations are those of `memory_from_sums` except the
+# origin of the running sums, which changes results by at most one float16 unit in a few elements per million
+# (tests/test_model.py, test_window_memory_direct). No per-(site, years) table is built or cached.
+
+def _moving_memory_kernel():
+    import numba
+
+    @numba.njit(cache=True)
+    def kern(S1, S2, N, cols, values, days, pos, off, w, min_count, mean, std):
+        V, _, Kk = S1.shape
+        L = cols.size
+        D = off.size
+        mz = np.empty((V, D, Kk), np.float32)
+        sz = np.empty((V, D, Kk), np.float32)
+        has = np.empty((V, D, Kk), np.bool_)
+        c = np.empty((3, L + 1, Kk))
+        for v in range(V):
+            c[:, 0, :] = 0.0
+            for j in range(L):
+                for k in range(Kk):
+                    c[0, j + 1, k] = S1[v, cols[j], k]
+                    c[1, j + 1, k] = S2[v, cols[j], k]
+                    c[2, j + 1, k] = N[v, cols[j], k]
+            for q in range(days.size):          # the window's calendar years, in year order
+                p = pos[q] + 1
+                for k in range(Kk):
+                    x = values[v, days[q] * Kk + k]
+                    if np.isfinite(x):
+                        x0 = np.float64(x)
+                        c[0, p, k] -= x0
+                        c[1, p, k] -= x0 * x0
+                        c[2, p, k] -= 1.0
+            for j in range(1, L + 1):
+                for k in range(Kk):
+                    if c[2, j, k] < 0.0:
+                        c[2, j, k] = 0.0
+                    for r in range(3):
+                        c[r, j, k] += c[r, j - 1, k]
+            for i in range(D):
+                a, b = off[i], off[i] + w
+                for k in range(Kk):
+                    n = c[2, b, k] - c[2, a, k]
+                    if n >= min_count:
+                        m = (c[0, b, k] - c[0, a, k]) / n
+                        e2 = (c[1, b, k] - c[1, a, k]) / n
+                        sd = np.sqrt(max(e2 - m * m, 0.0))
+                        mz[v, i, k] = np.float32((m - mean[v]) / std[v])
+                        sz[v, i, k] = np.float32(sd / std[v])
+                        has[v, i, k] = True
+                    else:
+                        mz[v, i, k] = 0.0
+                        sz[v, i, k] = 0.0
+                        has[v, i, k] = False
+        return mz, sz, has
+    return kern
+
+
+_KERN = None
+
+
+def window_memory_direct(sm: "SiteMemory", start: pd.Timestamp, stats: Stats, n_days: int = WINDOW_DAYS):
+    """(mean, sd, has) channels (V, D, 48) of the window starting at `start`, without its calendar years and the
+    site's never-used years; equal to `window_memory(*memory_from_sums(totals - years), start)` kept in float16."""
+    global _KERN
+    if _KERN is None:
+        _KERN = _moving_memory_kernel()
+    rec = sm.rec
+    start = pd.Timestamp(start)
+    d = pd.date_range(start, periods=n_days, freq="D").day_of_year.to_numpy() - 1
+    w = 2 * HALF_WIDTH_DAYS + 1
+    u0 = (d[0] - HALF_WIDTH_DAYS) % 366
+    off = ((d - d[0]) % 366).astype(np.int64)            # offsets of the window's days in the circular interval
+    L = int(off[-1]) + w
+    cols = ((u0 + np.arange(L)) % 366).astype(np.int64)
+    if not hasattr(sm, "_day_doy"):
+        sm._day_doy = _day_doy(rec)
+    yr, doy = sm._day_doy
+    days, pos = [], []
+    for y in range(start.year, (start + pd.Timedelta(days=n_days - 1)).year + 1):
+        if y in sm.never:
+            continue
+        sel = np.flatnonzero(yr == y)
+        p = (doy[sel] - u0) % 366
+        keep = p < L
+        days.append(sel[keep]); pos.append(p[keep])
+    days = np.concatenate(days).astype(np.int64) if days else np.zeros(0, np.int64)
+    pos = np.concatenate(pos).astype(np.int64) if pos else np.zeros(0, np.int64)
+    mz, sz, has = _KERN(sm.S1, sm.S2, sm.N, cols, rec.values, days, pos, off, w, float(MIN_COUNT),
+                        np.asarray(stats.mean, np.float64), np.asarray(stats.std, np.float64))
+    # the cached path keeps the tables in float16; the same rounding here
+    return mz.astype(np.float16).astype(np.float32), sz.astype(np.float16).astype(np.float32), has

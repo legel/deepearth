@@ -63,3 +63,28 @@ def test_extra_tower_rows_leave_release_masks_unchanged():
         assert np.array_equal(m0[k], m1[k][idx]), k
     tow = [i for i, p in enumerate(w1.provenance) if p == "tower" and i not in ext]
     assert np.array_equal(m1["M2-30d"][ext], np.repeat(m1["M2-30d"][tow[:1]], len(ext), 0))
+
+
+def test_regime_r3_empty_context_and_m2_180d_only():
+    """R3 (ungauged site): every method gets an empty context and only the M2-180d mask is scored."""
+    from run import run
+    T = 180 * 48
+    t = pd.date_range("2019-01-01", periods=3 * T, freq="30min")
+    rng = np.random.default_rng(1)
+    tab = pd.DataFrame({"time_lst": t, "NEE": rng.normal(size=t.size), "NEE_flag": 0, "TA": rng.normal(size=t.size),
+                        "TA_flag": 0, "ERA5_TA": rng.normal(size=t.size)})
+    seen = []
+
+    class Probe:
+        name = "probe"
+
+        def predict(self, w, mask, context):
+            seen.append(len(context["table"]))
+            return np.where(mask[None], 0.0, w.values[None]).repeat(4, 0)
+
+    spec = {"site": "XX-Tst", "start": str(t[T].date())}
+    r1 = run([Probe()], [spec], {"XX-Tst": tab}, "R1", ["M2"])
+    n1 = len(seen)
+    r3 = run([Probe()], [spec], {"XX-Tst": tab}, "R3", ["M2"])
+    assert min(seen[:n1]) > 0 and seen[n1:] == [0]
+    assert set(r3.family) == {"M2-180d"} and set(r3.regime) == {"R3"} and len(set(r1.family)) == 5

@@ -12,6 +12,10 @@ Output: one parquet row per (method, regime, family, site, window, variable, gap
 coverage, n and the truth sums sum_y, sum_y2, sum_abs_y (for pooled R2 and percentage error); and one row per
 (method, ..., variable, sum block) with the CRPS and bias of daily, 30-day and window sums from the joint samples.
 Point scores (MAE, RMSE, bias) use each method's predictive mean, the mean of its samples.
+
+Regimes: R1 (default) as above. R3, the ungauged site (upscaling): the context is empty (no other year of the site,
+so no climatology pool and no site memory) and only the M2-180d mask is scored, so every tower channel of the
+window is hidden and the method has the window's reanalysis drivers, the site's location and its imagery only.
 """
 
 import argparse
@@ -206,8 +210,12 @@ def run(methods, windows: List[Dict], tables: Dict[str, pd.DataFrame], regime: s
         idx = lst_index(tab)
         years = set(range(w.t[0].year, w.t[-1].year + 1))
         context = {"table": tab[~idx.year.isin(list(years))], "index": idx[~idx.year.isin(list(years))]}
+        if regime == "R3":                      # ungauged site: no other year of the site at all
+            context = {"table": tab.iloc[:0], "index": idx[:0]}
         items = []
         ms = masks_for(w, families)
+        if regime == "R3":
+            ms = {k: v for k, v in ms.items() if k == "M2-180d"}
         if manifest is not None:
             verify_masks(w, ms, manifest)
         for name, mask in ms.items():
@@ -297,7 +305,8 @@ def fluxfill_method():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--windows", required=True, help="JSON list of {site, start, table}")
-    ap.add_argument("--regime", default="R1")
+    ap.add_argument("--regime", default="R1", choices=["R1", "R3"],
+                    help="R1: other years as context; R3: ungauged site (empty context, M2-180d only)")
     ap.add_argument("--families", nargs="+", default=["M2", "M4-reanalysis"])
     ap.add_argument("--out", required=True)
     ap.add_argument("--methods", nargs="+", default=["climatology"])
@@ -306,6 +315,8 @@ def main():
     ap.add_argument("--extra-tower", action="store_true",
                     help="opt-in (E30, not release 0.2): windows also carry windows.EXTRA_TOWER_VARS as tower rows")
     a = ap.parse_args()
+    if a.regime == "R3" and "M2" not in a.families:
+        raise SystemExit("--regime R3 scores the M2-180d mask: include family M2")
     if a.extra_tower and a.manifest:
         raise SystemExit("--extra-tower windows are not those of a frozen release: no --manifest")
     specs = json.loads(Path(a.windows).read_text())

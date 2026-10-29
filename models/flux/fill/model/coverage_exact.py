@@ -46,7 +46,8 @@ def main():
                       gate_scale=c.get("gate_scale", False), edge_continue=c.get("edge_continue", False),
                       memory_skew=c.get("memory_skew", False), driver_anomaly=c.get("driver_anomaly", False),
                       memory_skew_fluxes_only=c.get("memory_skew_fluxes", False),
-                      img_nll=c.get("img_nll", False))
+                      scale_anchor=c.get("scale_anchor", False), year_anomaly=c.get("year_anomaly", False),
+                      sinr_place=c.get("sinr_place", -1), sinr_replace=c.get("sinr_replace", False), img_nll=c.get("img_nll", False))
     net.load_state_dict(ck["model"]); net.eval()
     stats = Stats.from_dict(c["stats"])
     sites = sorted(p.stem for p in table_dir().glob("*.parquet"))

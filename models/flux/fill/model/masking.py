@@ -20,7 +20,7 @@ from typing import Tuple
 
 import numpy as np
 
-from data import IS_LAND, IS_REAN, IS_TOWER, IS_TOWER_MET, STEPS_PER_DAY, T_WIN, WINDOW_DAYS
+from data import IS_FLUX, IS_LAND, IS_REAN, IS_TOWER, IS_TOWER_MET, STEPS_PER_DAY, T_WIN, WINDOW_DAYS
 
 
 @dataclass
@@ -36,6 +36,8 @@ class MaskConfig:
     p_drop_img: float = 0.30
     p_img_acq: float = 0.15      # each imagery day hidden (a reconstruction target)
     p_reveal: float = 0.5
+    p_fluxes_off: float = 0.0    # all flux rows hidden for the whole window, the rest as drawn (eddy-covariance
+                                 # system down, meteorology up); 0 keeps the reference masks
 
 
 FAMILIES = ("block_all", "block_var", "short", "r3", "mixed")
@@ -81,6 +83,9 @@ def draw(rng: np.random.Generator, present: np.ndarray, cfg: MaskConfig = MaskCo
         show = tok & (rng.random(tok.shape) < r)
         if show.sum() < tok.sum():      # keep at least one hidden token
             hide &= ~np.repeat(show, STEPS_PER_DAY, axis=1)
+    if cfg.p_fluxes_off and fam != "r3" and rng.random() < cfg.p_fluxes_off:
+        hide[present & IS_FLUX] = True
+        fam = fam + "+fluxes_off"
     if rng.random() < cfg.p_drop_met:
         hide[present & IS_TOWER_MET] = True
     if fam != "r3" and rng.random() < cfg.p_drop_rean:

@@ -200,3 +200,9 @@ ol.refs li:target { background: var(--wash); }
   .panel .lab-v { font-size: 15px; }
   .panel .tiny { font-size: 12px; }
 }
+
+.w-legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 0.85rem; margin: 10px 0 14px; color: var(--body); }
+.w-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.w-info { border-left: 3px solid var(--accent); padding: 8px 12px; margin: 12px 0; font-size: 0.88rem; background: var(--raised); }
+.w-info p { margin: 4px 0; }
+.split-tag { display: inline-block; font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 7px; border: 1px solid var(--ink); margin-right: 6px; }

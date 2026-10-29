@@ -58,3 +58,7 @@ Validation windows: `val_windows.py` (rule in its docstring). These are validati
 Run: `bench/run.py --windows /home/photon/4tb/fluxfill/bench/val/windows_val_list.json --families M2 --methods
 <name> --out ...`; `pypots_imputers.py train saits|csdi`, then `pypots_imputers.py spread`. Tests:
 `pytest baselines/tests` (shape, no use of hidden values, determinism).
+
+**Chronos-2 on test release 0.2.** Chronos-2 forecasts each hidden block on its own. On M1 (many short gaps) and M5 (a
+block per variable) that is about 7 minutes per window on one GPU, about 60 GPU-hours for the 514 test windows, so
+Chronos-2 is scored on M2 (2 h to 180 d), M3 and M4 only. Its M1 and M5 cells are reported as not run.
