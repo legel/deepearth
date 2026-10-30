@@ -152,7 +152,7 @@ class FluxFillNet(nn.Module):
                  gated_base: bool = False, gate_scale: bool = False, edge_continue: bool = False,
                  memory_skew: bool = False, driver_anomaly: bool = False, memory_skew_fluxes_only: bool = False,
                  scale_anchor: bool = False, year_anomaly: bool = False, sinr_place: int = -1,
-                 sinr_replace: bool = False):
+                 sinr_replace: bool = False, scale_anchor_fch4: bool = False):
         super().__init__()
         # img_nll: the imagery head is a diagonal Gaussian (mean and log-scale per Clay dimension) trained on its
         # negative log-likelihood, a proper score; otherwise a point head trained on MSE (v0, kept for old checkpoints).
@@ -193,6 +193,11 @@ class FluxFillNet(nn.Module):
         # of year and half-hour, scale_k * (mem_s + SCALE_FLOOR) where memory exists (scale_k * (1 + SCALE_FLOOR)
         # where it does not), as mem_residual makes the location relative to the memory mean; no parameters.
         self.scale_anchor = scale_anchor and self.gated_base
+        # scale_anchor_fch4 (E33): the same, on the FCH4 row only, so a low-flux methane site gets widths on its own
+        # scale (its memory spread) instead of the population's; no parameters.
+        self.scale_anchor_fch4 = scale_anchor_fch4 and self.gated_base and "FCH4" in VARS
+        if self.scale_anchor_fch4:
+            self.register_buffer("fch4_row", torch.tensor(np.array(VARS) == "FCH4"), persistent=False)
         # year_anomaly (E28): the memory component's anchor adds this window's departure from the site's other years,
         # mem + c_near,v * A_near + c_win,v * A_win, where A is the mean of (visible value - memory mean) at the same
         # half-hour over the window's visible days, weighted exp(-|day distance| / YEAR_ANOM_DAYS) (A_near) or
@@ -329,6 +334,10 @@ class FluxFillNet(nn.Module):
             scale = scale * torch.exp(self.scale_in(feats.to(scale.dtype)).float().clamp(-5.0, 5.0))
         if self.scale_anchor:
             s = torch.where(b["mem_h"], b["mem_s"], torch.ones_like(b["mem_s"])) + SCALE_FLOOR
+            scale = scale * s[..., None].to(scale.dtype)
+        if self.scale_anchor_fch4:
+            s = torch.where(b["mem_h"], b["mem_s"], torch.ones_like(b["mem_s"])) + SCALE_FLOOR
+            s = torch.where(self.fch4_row.view(1, -1, 1, 1), s, torch.ones_like(s))
             scale = scale * s[..., None].to(scale.dtype)
         return loc + base, scale, df, logw
 

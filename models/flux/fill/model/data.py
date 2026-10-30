@@ -40,8 +40,12 @@ LAND_VARS = tuple(f"LAND_{v}" for v in LAND_SOURCE)
 # variable FLUXFILL_CHANNELS (train.py sets it from --extra-channels; a checkpoint records its set and method.py
 # refuses a mismatch), because the row layout is fixed for the whole process.
 CHANNELS = os.environ.get("FLUXFILL_CHANNELS", "base")
-assert CHANNELS in ("base", "extended"), f"FLUXFILL_CHANNELS must be base or extended, not {CHANNELS}"
-EXTRA_VARS: Tuple[str, ...] = tuple(EXTRA_TOWER_VARS) if CHANNELS == "extended" else ()
+assert CHANNELS in ("base", "extended", "methane"), f"FLUXFILL_CHANNELS must be base, extended or methane, not {CHANNELS}"
+# "methane" (E34): only the measured channels that control methane production and transport: water-table depth,
+# soil temperature and soil water below the first layer.
+METHANE_VARS = ("WTD", "TS_2", "TS_3", "SWC_2")
+EXTRA_VARS: Tuple[str, ...] = (tuple(EXTRA_TOWER_VARS) if CHANNELS == "extended" else
+                               METHANE_VARS if CHANNELS == "methane" else ())
 V_BASE = len(TOWER_VARS) + len(REANALYSIS_VARS) + len(LAND_VARS)
 VARS: Tuple[str, ...] = tuple(TOWER_VARS) + tuple(REANALYSIS_VARS) + LAND_VARS + EXTRA_VARS
 V_TAB = len(VARS)
@@ -75,13 +79,15 @@ def provisional_is_val(site: str) -> bool:
 def load_split(sites: Sequence[str], root: Path = TOWERS) -> Tuple[Dict[str, str], str]:
     """{site: 'train' | 'val'} and the split's name. Test sites of the frozen split are dropped here, so no code
     downstream can read them."""
-    f = root / "split.csv"
+    # FLUXFILL_SPLIT selects another split file with the same test sites (split_v2.csv: 13 more methane validation
+    # sites); the frozen split.csv itself is never changed (the test release manifest records its checksum).
+    f = root / os.environ.get("FLUXFILL_SPLIT", "split.csv")
     if f.exists():
         s = pd.read_csv(f)
         col = "site_id" if "site_id" in s else s.columns[0]
         scol = "split" if "split" in s else [c for c in s.columns if c != col][0]
         m = dict(zip(s[col].astype(str), s[scol].astype(str)))
-        return {k: m[k] for k in sites if m.get(k) in ("train", "val")}, "frozen"
+        return {k: m[k] for k in sites if m.get(k) in ("train", "val")}, "frozen" if f.name == "split.csv" else f.stem
     return {k: ("val" if provisional_is_val(k) else "train") for k in sites}, "provisional"
 
 

@@ -23,9 +23,9 @@ import torch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-if "--extra-channels" in sys.argv:            # E30: the row layout is fixed at import of data (data.CHANNELS)
+if "--extra-channels" in sys.argv or "--methane-channels" in sys.argv:   # E30, E34: row layout fixed at import
     import os
-    os.environ["FLUXFILL_CHANNELS"] = "extended"
+    os.environ["FLUXFILL_CHANNELS"] = "extended" if "--extra-channels" in sys.argv else "methane"
 
 import masking  # noqa: E402
 from data import (CHANNELS, V_BASE, scaling_order, IS_TOWER, STEPS_PER_DAY, T_WIN, V_TAB, VARS, fit_stats, heldout_year, load_records, load_split,  # noqa: E402
@@ -162,10 +162,15 @@ def evaluate_imagery(net, exs, device) -> dict:
     return {k: float(np.average(v, weights=w)) for k, v in tot.items()} | {"val_img_days": int(w.sum())}
 
 
-def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, fwd=None):
+def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, fwd=None, row_w=None):
+    """row_w: optional (V_TAB,) loss weight per row (E30b, --extra-weight); None weighs every hidden cell equally."""
     h, params = (net if fwd is None else fwd)(b)          # fwd: the compiled forward (--compile), same module and weights
     tm = b["tmask"]
-    nll = marginal_nll(b["tgt"], params)[tm].mean()
+    if row_w is None:
+        nll = marginal_nll(b["tgt"], params)[tm].mean()
+    else:
+        wt = row_w.view(1, -1, *([1] * (tm.dim() - 2))).expand_as(tm)[tm]
+        nll = (marginal_nll(b["tgt"], params)[tm] * wt).sum() / wt.sum().clamp_min(1e-6)
     out = {"nll": nll}
     total = nll
     if b["img_tgt"].any():
@@ -182,7 +187,7 @@ def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, 
         bi, vi, di = idx.unbind(1)
         cond = h[bi, vi, di]
         x1 = b["tgt"][bi, vi, di] - net.offset(b)[bi, vi, di]          # residual from site memory (mem_residual)
-        out["flow"] = net.head_flow.loss(cond, x1, tm[bi, vi, di].float(), b["z"][bi, vi, di],
+        out["flow"] = net.head_flow.loss(cond, x1, tm[bi, vi, di].float() * (1.0 if row_w is None else row_w[vi][:, None]), b["z"][bi, vi, di],
                                          b["obs"][bi, vi, di].float())
         total = total + out["flow"]
     out["total"] = total
@@ -232,7 +237,10 @@ def evaluate(net, exs, device, use_flow: bool, batch: int = 4):
                              crps_base=float(crps[base].mean()) if base.any() else np.nan,
                              cov95_base=float(cov[base].mean()) if base.any() else np.nan,
                              n_extra=int((~base).sum()),
-                             crps_extra=float(crps[~base].mean()) if (~base).any() else np.nan))
+                             crps_extra=float(crps[~base].mean()) if (~base).any() else np.nan,
+                             **{f"crps_{fv}": float(crps[vi == VARS.index(fv)].mean()) if (vi == VARS.index(fv)).any()
+                                else np.nan for fv in ("NEE", "LE", "H", "FCH4")},
+                             **{f"n_{fv}": int((vi == VARS.index(fv)).sum()) for fv in ("NEE", "LE", "H", "FCH4")}))
             recs.append((e, mean_j, lo_j, hi_j))
         if use_flow and "flow" in L:
             flows.append(float(L["flow"]))
@@ -244,6 +252,10 @@ def evaluate(net, exs, device, use_flow: bool, batch: int = 4):
             "val_nll": float(np.average(df_.nll, weights=w))}
     if flows:
         summ["val_flow"] = float(np.mean(flows))
+    for fv in ("NEE", "LE", "H", "FCH4"):
+        okf = df_[f"n_{fv}"] > 0
+        if okf.any():
+            summ[f"val_crps_{fv}"] = float(np.average(df_[f"crps_{fv}"][okf], weights=df_[f"n_{fv}"][okf]))
     ok = df_.n_base > 0
     summ["val_crps_base"] = float(np.average(df_.crps_base[ok], weights=df_.n_base[ok]))   # = val_crps without E30
     summ["val_cov95_base"] = float(np.average(df_.cov95_base[ok], weights=df_.n_base[ok]))
@@ -334,6 +346,8 @@ def main():
                     help="E21: the gate's evidence features also scale each component's spread (with --gated-base)")
     ap.add_argument("--driver-anomaly", action="store_true",
                     help="E25: both anchors follow the ERA5 SW_IN, TA, VPD anomalies with per-token learned slopes")
+    ap.add_argument("--p-long", type=float, default=0.0,
+                    help="share of all-tower blocks drawn 90 days to the full window (long-gap training)")
     ap.add_argument("--p-fluxes-off", type=float, default=0.0,
                     help="probability of a training mask that hides every flux row for the whole window")
     ap.add_argument("--memory-skew-fluxes", action="store_true",
@@ -342,6 +356,16 @@ def main():
     ap.add_argument("--gate-at", type=int, default=0, help="A/B early stop: at this evaluation step ...")
     ap.add_argument("--gate-max", type=float, default=0.0, help="... exit (code 3) if the gate metric exceeds this")
     ap.add_argument("--gate-metric", default="val_crps", help="val_crps_base for an arm with extra channels (E30)")
+    ap.add_argument("--extra-weight", type=float, default=1.0,
+                    help="E30b: loss weight of the extra-channel rows relative to the base rows (1 = every hidden cell equal)")
+    ap.add_argument("--methane-channels", action="store_true",
+                    help="E34: data.METHANE_VARS (WTD, TS_2, TS_3, SWC_2) as extra rows; with --extra-weight 0, inputs only")
+    ap.add_argument("--row-weight", nargs="*", default=[], metavar="VAR=W",
+                    help="E32: per-variable loss weight, e.g. FCH4=4 (NLL and flow; evaluation unweighted)")
+    ap.add_argument("--ch4-site-boost", type=float, default=1.0,
+                    help="E32: sampling weight multiplier for training sites that measure FCH4")
+    ap.add_argument("--scale-anchor-fch4", action="store_true",
+                    help="E33: FCH4 component widths relative to the site-memory spread (net.scale_anchor_fch4)")
     ap.add_argument("--extra-channels", action="store_true",
                     help="E30: the extended channel set (data.EXTRA_VARS, further measured tower channels)")
     ap.add_argument("--sinr-place", type=int, default=-1,
@@ -390,7 +414,7 @@ def main():
                       gate_scale=a.gate_scale, edge_continue=a.edge_continue, memory_skew=a.memory_skew,
                       driver_anomaly=a.driver_anomaly, memory_skew_fluxes_only=a.memory_skew_fluxes,
                       scale_anchor=a.scale_anchor, year_anomaly=a.year_anomaly, sinr_place=a.sinr_place,
-                      sinr_replace=a.sinr_replace).to(device)
+                      sinr_replace=a.sinr_replace, scale_anchor_fch4=a.scale_anchor_fch4).to(device)
     n_params = sum(p.numel() for p in net.parameters())
     print(f"params {n_params / 1e6:.2f} M", flush=True)
     cfg["n_params"] = int(n_params)
@@ -399,6 +423,14 @@ def main():
     opt = torch.optim.AdamW(net.parameters(), lr=a.lr, weight_decay=0.05, betas=(0.9, 0.98),
                             **({"fused": True} if a.fused_adam else {}))
     fwd = torch.compile(net, dynamic=False) if a.compile else None
+    row_w = None
+    if a.extra_weight != 1.0 or a.row_weight:
+        from data import IS_EXTRA
+        w_np = np.where(IS_EXTRA, a.extra_weight, 1.0)
+        for kv in a.row_weight:
+            k, v = kv.split("=")
+            w_np[VARS.index(k)] = float(v)
+        row_w = torch.from_numpy(w_np).float().to(device)
     step0 = 0
     if a.resume:
         ck = torch.load(a.resume, map_location=device)
@@ -419,8 +451,15 @@ def main():
     else:
         sw = site_weights()
         print(f"site weights: {'weights.parquet' if sw else 'uniform'}", flush=True)
+        if a.ch4_site_boost != 1.0:
+            fi = VARS.index("FCH4")
+            ch4 = [s_ for s_ in train if np.isfinite(records[s_].values[fi]).any()]
+            sw = dict(sw or {})
+            for s_ in ch4:
+                sw[s_] = sw.get(s_, 1.0) * a.ch4_site_boost
+            print(f"FCH4 site boost x{a.ch4_site_boost:g} at {len(ch4)} of {len(train)} training sites", flush=True)
         smp = WindowSampler(records, train, stats, imagery, train=True, site_weights=sw, memory=a.memory,
-                            cfg=masking.MaskConfig(p_fluxes_off=a.p_fluxes_off),
+                            cfg=masking.MaskConfig(p_fluxes_off=a.p_fluxes_off, p_long=a.p_long),
                             memory_skew=a.memory_skew or a.memory_skew_fluxes, fast_memory=a.fast_memory)
         dl = torch.utils.data.DataLoader(Stream(smp, a.batch, a.seed), batch_size=None, num_workers=a.workers,
                                          persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None)
@@ -453,7 +492,7 @@ def main():
                 keep = (torch.rand(b["site"].shape[0], 1, device=device) >= a.site_drop).float()
                 b["site"] = b["site"] * keep
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                L = losses(net, b, a.flow, fwd=fwd)
+                L = losses(net, b, a.flow, fwd=fwd, row_w=row_w)
             if not a.lazy_sync and not torch.isfinite(L["total"]):
                 stop = True
                 break

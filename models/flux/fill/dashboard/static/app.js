@@ -64,7 +64,7 @@ function renderTowers() {
   const igbp = $("#f-igbp").value, net = $("#f-net").value, ch4 = $("#f-ch4").value;
   const rows = sites.filter((s) => (!igbp || s.igbp === igbp) && (!net || s.network === net) && (!ch4 || s.ch4));
   $("#tower-count").textContent = `${rows.length} of ${sites.length} towers shown.`;
-  $("#tower-table tbody").innerHTML = rows.map((s) => `<tr><td>${s.id}</td><td>${s.name || ""}</td><td>${s.igbp || ""}</td><td>${s.koppen || ""}</td><td>${s.network || ""}</td><td>${s.years || ""}</td><td>${s.ch4 ? "yes" : ""}</td><td>${s.split || "not included"}</td></tr>`).join("");
+  $("#tower-table tbody").innerHTML = rows.map((s) => `<tr><td>${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.source)} site page">${esc(s.id)}</a>` : esc(s.id)}</td><td>${s.name || ""}</td><td>${s.igbp || ""}</td><td>${s.koppen || ""}</td><td>${s.network || ""}</td><td>${s.years || ""}</td><td>${s.ch4 ? "yes" : ""}</td><td>${s.split || "not included"}</td></tr>`).join("");
   if (!map) return;
   if (layer) layer.remove();
   layer = L.layerGroup(rows.map((s) => L.circleMarker([s.lat, s.lon], {
@@ -100,11 +100,13 @@ let windows = null, winCache = {};
 function opt(sel, values, labels) {
   sel.innerHTML = values.map((v, i) => `<option value="${v}">${labels ? labels[i] : v}</option>`).join("");
 }
-const METHOD_NAMES = { climatology: "Climatology", mds: "MDS (REddyProc)", fluxfill: "FluxFill" };
+const METHOD_NAMES = { climatology: "Climatology", mds: "MDS (REddyProc)", irvin_rf: "RF ensemble (Irvin 2021)",
+  vekuri_de: "Deep ensemble (Vekuri 2025)", liu_xgb: "XGBoost (Liu 2025)", saits: "SAITS", csdi: "CSDI",
+  chronos2: "Chronos-2 zero-shot", fluxfill: "FluxFill v3", "fluxfill-v4": "FluxFill v4 (v3 + site adaptation)" };
 const SPLIT_TEXT = {
   test: "Test tower: held out from training and from every model choice; FluxFill was scored on the test towers once.",
   validation: "Validation tower: held out from training; used to choose between model versions." };
-let WSPLIT = "test";
+let WSPLIT = "validation";
 function initWindows(idx) {
   windows = idx;
   if (!idx || !idx.windows || !idx.windows.length) {
@@ -130,7 +132,8 @@ function initWindows(idx) {
     opt($("#w-mask"), w ? w.masks : []);
     const ms = w ? w.methods : [];
     opt($("#w-method"), ms, ms.map((m) => METHOD_NAMES[m] || m));
-    if (ms.includes("fluxfill")) $("#w-method").value = "fluxfill";
+    const ff = ["fluxfill-v4", "fluxfill"].find((m) => ms.includes(m));
+    if (ff) $("#w-method").value = ff;
     drawWindow();
   };
   $("#w-site").addEventListener("change", refresh);
@@ -316,8 +319,9 @@ function headCell(c) { return `<th class="num" scope="col">${esc(c.label)}${c.n 
 function rowsHTML(t, metricOf) {
   return t.rows.map((r) => `<tr class="${r.ours ? "ours" : ""}"><th scope="row">${esc(r.label)}</th>${r.cells.map((c, j) => {
     if (c.v === null || c.v === undefined) return `<td class="num muted">${esc(c.t || "–")}</td>`;
-    const best = t.best[j] !== null && t.best[j] !== undefined && t.rows[t.best[j]] === r;
-    return `<td class="num${best ? " best" : ""}"${best ? ' title="best in column"' : ""}>${fmtMetric(c.v, metricOf(j))}</td>`;
+    const ties = t.best_all ? t.best_all[j] : [t.best[j]];
+    const best = (ties || []).some((i) => i !== null && i !== undefined && t.rows[i] === r);
+    return `<td class="num${best ? " best" : ""}"${best ? ' title="best in column (ties at the shown precision are all marked)"' : ""}>${fmtMetric(c.v, metricOf(j))}</td>`;
   }).join("")}</tr>`).join("");
 }
 
@@ -338,7 +342,7 @@ function renderTables() {
     <p class="sub-title">${esc(s.title)}: ${fmtInt(s.cells)} cells, ${fmtInt(s.n)} half-hourly values, ${s.windows} windows at ${s.sites} ${esc(RES.scope.split)} sites, gaps of ${s.families.map((f) => f.replace(/^M2-(\d+)d$/, "$1 d")).join(", ")}.</p>
     <div class="table-wrap"><table class="results"><thead><tr><th></th><th class="grp" colspan="${prob}">Probabilistic (primary)</th><th class="grp" colspan="${ms.length - prob}">Point, predictive mean (secondary)</th></tr>
     <tr><th scope="col">Method</th>${ms.map((m) => `<th class="num" scope="col">${esc(RES.metrics[m].name)}</th>`).join("")}</tr></thead><tbody>${rowsHTML(s, (j) => ms[j])}</tbody></table></div>
-    <p class="defs">${ms.map((m) => metricDef(m, flux.units)).join(" ")} Bold: best in the column.</p></div>`;
+    <p class="defs">${ms.map((m) => metricDef(m, flux.units)).join(" ")} Bold: best in the column (lowest error, highest R², bias nearest 0, coverage nearest its nominal level); values that tie at the shown precision are all bold.</p></div>`;
   }
   const g = (RES.by_gap[FLUX] || {});
   const gopts = VALUE_METRICS.filter((m) => g[m]).map((m) => `<option value="${m}"${m === GAPMETRIC ? " selected" : ""}>${esc(RES.metrics[m].name)}</option>`).join("");
@@ -357,7 +361,7 @@ function renderTables() {
 // The current FluxFill: the last "ours" method of the results file (results_dashboard.py lists earlier versions first).
 function currentFluxFill() {
   const ours = RES.methods.filter((m) => m.ours);
-  return ours.find((m) => m.id === "fluxfill-ref") || ours.find((m) => m.id === "fluxfill") || ours[ours.length - 1];
+  return ours.find((m) => m.id === "fluxfill-adapt") || ours.find((m) => m.id === "fluxfill") || ours.find((m) => m.id === "fluxfill-ref") || ours[ours.length - 1];
 }
 
 // Figure: CRPS relative to climatology by gap length, one panel per flux.
@@ -543,14 +547,17 @@ function renderReport(rep) {
 
 // ---------- boot ----------
 (async () => {
-  const [st, s, idx, res, rep, meth, scal, rtest] = await Promise.all([getJSON("data/status.json"), getJSON("data/sites.json"), getJSON("data/windows/index.json"), getJSONgz("data/results.json"), getJSON("data/report.json"), getJSON("data/methods.json"), getJSON("data/scaling.json"), getJSONgz("data/results_test.json")]);
+  const [st, s, idx, res, rep, meth, scal, rtest, rch4, bm] = await Promise.all([getJSON("data/status.json"), getJSON("data/sites.json"), getJSON("data/windows/index.json"), getJSONgz("data/results.json"), getJSON("data/report.json"), getJSON("data/methods.json"), getJSON("data/scaling.json"), getJSONgz("data/results_test.json"), getJSONgz("data/results_ch4.json"), getJSON("data/benchmark.json")]);
   SCALING = scal;
-  renderStatus(st); initTowers(s); initWindows(idx); renderResults(res); renderMethods(meth); renderReport(rep);
+  renderStatus(st); initTowers(s); initWindows(idx); renderResults(res); renderMethods(meth); renderReport(rep); renderBenchmark(bm);
   const splitBtns = [...document.querySelectorAll("#r-split button")];
-  if (!rtest) splitBtns[1].disabled = true;
+  const testBtn = splitBtns.find((b) => b.dataset.split === "test");
+  const ch4Btn = splitBtns.find((b) => b.dataset.split === "methane");
+  if (ch4Btn && !rch4) ch4Btn.disabled = true;
+  if (!rtest) testBtn.disabled = true;               // validation sites are the default view
   for (const btn of splitBtns) btn.addEventListener("click", () => {
     for (const x of splitBtns) x.setAttribute("aria-checked", String(x === btn));
-    renderResults(btn.dataset.split === "test" ? rtest : res);
+    renderResults(btn.dataset.split === "test" ? rtest : btn.dataset.split === "methane" ? rch4 : res);
   });
   show(location.hash.slice(1) || "overview");
 })();

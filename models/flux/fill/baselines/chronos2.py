@@ -55,6 +55,9 @@ def runs(x: np.ndarray):
     return list(zip(e[::2], e[1::2]))
 
 
+BATCH_STEPS = 4_320       # forecast steps per batched call (90 days): about 2 GB of activations in bfloat16
+
+
 class Chronos2:
     name = "chronos2"
 
@@ -101,14 +104,13 @@ class Chronos2:
         fut.update(_time_cov(w.t[a:b]))
         return target, past, fut
 
-    def _forecast(self, w, mask, context, keys, a, b) -> Optional[np.ndarray]:
-        """(len(keys), Q, b - a) quantiles, forward or time-reversed (see module docstring)."""
+    def _input(self, w, mask, context, keys, a, b):
+        """The Chronos-2 input for one group over [a, b): forward (history before the block) when the history has at
+        least 48 values, else time-reversed (visible window values after the block); (None, "none") if neither."""
         T = w.values.shape[1]
         tgt, past, fut = self._series(w, mask, context, keys, a, b)
         if np.isfinite(tgt).sum(1).max() >= 48:
-            inp = {"target": tgt, "past_covariates": past, "future_covariates": fut}
-            return self.pipe.predict([inp], prediction_length=b - a, batch_size=self.bs)[0].cpu().numpy(), "forward"
-        # reversed: history = visible window values after the block (reversed), covariates reversed
+            return {"target": tgt, "past_covariates": past, "future_covariates": fut}, "forward"
         n_after = min(self.cl, T - b)
         if n_after < 48:
             return None, "none"
@@ -122,9 +124,15 @@ class Chronos2:
         pc.update({k: v[::-1].copy() for k, v in _time_cov(w.t[sl]).items()})
         fc = {k: np.where(mask[w.keys.index(k), a:b], np.nan, w.values[w.keys.index(k), a:b])[::-1].copy() for k in cov_keys}
         fc.update({k: v[::-1].copy() for k, v in _time_cov(w.t[a:b]).items()})
-        inp = {"target": np.ascontiguousarray(tg), "past_covariates": pc, "future_covariates": fc}
+        return {"target": np.ascontiguousarray(tg), "past_covariates": pc, "future_covariates": fc}, "reversed"
+
+    def _forecast(self, w, mask, context, keys, a, b) -> Optional[np.ndarray]:
+        """(len(keys), Q, b - a) quantiles, forward or time-reversed (see module docstring)."""
+        inp, how = self._input(w, mask, context, keys, a, b)
+        if inp is None:
+            return None, how
         q = self.pipe.predict([inp], prediction_length=b - a, batch_size=self.bs)[0].cpu().numpy()
-        return q[:, :, ::-1], "reversed"
+        return (q[:, :, ::-1] if how == "reversed" else q), how
 
     def predict(self, w, mask: np.ndarray, context: Dict) -> np.ndarray:
         out = np.full((self.n,) + w.values.shape, np.nan)
@@ -134,12 +142,25 @@ class Chronos2:
         rng = np.random.default_rng(seed_of(self.seed, w.site, str(w.start.date()), int(mask.any(0).sum())))
         # blocks: runs of steps where any tower row is hidden; within a block each row is filled where hidden
         for a, b in runs(mask[tower].any(0)):
-            groups = [[i for i in tower if w.keys[i] in FLUX]] + [[i] for i in tower if w.keys[i] not in FLUX]
-            for group in groups:
-                if not group:
-                    continue
+            groups = [g for g in [[i for i in tower if w.keys[i] in FLUX]] + [[i] for i in tower if w.keys[i] not in FLUX]
+                      if g]
+            # every group of the block in one batched call: the series are independent tasks, so this equals one
+            # call per group (up to bfloat16 rounding) at a fraction of the GPU time
+            built = [self._input(w, mask, context, [w.keys[i] for i in g], a, b) for g in groups]
+            qs = {}
+            for nt in sorted({len(groups[j]) for j, (inp, _) in enumerate(built) if inp is not None}):
+                todo = [j for j, (inp, _) in enumerate(built) if inp is not None and len(groups[j]) == nt]
+                per = max(1, BATCH_STEPS // max(b - a, 1))           # bounds GPU memory on long blocks
+                for c0 in range(0, len(todo), per):
+                    part = todo[c0:c0 + per]
+                    preds = self.pipe.predict([built[j][0] for j in part], prediction_length=b - a, batch_size=self.bs)
+                    qs.update({j: p.cpu().numpy() for j, p in zip(part, preds)})
+            for j, group in enumerate(groups):
                 keys = [w.keys[i] for i in group]
-                q, how = self._forecast(w, mask, context, keys, a, b)
+                how = built[j][1]
+                q = qs.get(j)
+                if q is not None and how == "reversed":
+                    q = q[:, :, ::-1]
                 self.log.append(dict(site=w.site, window=str(w.start.date()), a=int(a), b=int(b), keys=",".join(keys),
                                      direction=how))
                 if q is None:

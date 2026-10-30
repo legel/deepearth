@@ -627,6 +627,34 @@ def test_scale_anchor_same_weights_scales_by_memory_sd():
         assert torch.equal(pa[i], pb[i])
 
 
+def test_scale_anchor_fch4_scales_only_the_fch4_row():
+    """E33: same weights as the base; the FCH4 row's scales are multiplied by (mem_s + floor) where memory exists and
+    (1 + floor) where it does not; every other row, and locations, df and weights, unchanged."""
+    from data import VARS
+    from net import SCALE_FLOOR
+    from sampler import WindowSampler
+    base = dict(d=32, depth=2, heads=4, memory=True, mem_residual=True, gated_base=True, gate_scale=True, img_nll=True,
+                edge_continue=True)
+    torch.manual_seed(0); A = FluxFillNet(**base).eval()
+    torch.manual_seed(0); B = FluxFillNet(**base, scale_anchor_fch4=True).eval()
+    sa, sb = A.state_dict(), B.state_dict()
+    assert sa.keys() == sb.keys() and all(torch.equal(sa[k], sb[k]) for k in sa)
+    rec = synthetic_record(days=1500); st = stats_of(rec)
+    smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True)
+    hide = np.zeros((V_TAB, T_WIN), bool); hide[IS_TOWER, 2000:2100] = True
+    b = collate([make_example(rec, 400, st, hide, np.zeros(180, bool), None, smp.window_memory("XX-Syn", 400))])
+    b["mem_h"][:, :, :20] = False
+    with torch.no_grad():
+        pa, pb = A(b)[1], B(b)[1]
+    f = VARS.index("FCH4")
+    s = torch.where(b["mem_h"], b["mem_s"], torch.ones_like(b["mem_s"])) + SCALE_FLOOR
+    assert torch.allclose(pb[1][:, f], pa[1][:, f] * s[:, f, ..., None], rtol=1e-5)
+    other = [i for i in range(V_TAB) if i != f]
+    assert torch.equal(pa[1][:, other], pb[1][:, other])
+    for i in (0, 2, 3):
+        assert torch.equal(pa[i], pb[i])
+
+
 def test_year_anomaly_formula_and_no_leak():
     """E28: A_win is the mean of (visible z - memory mean) over the window's visible days at each half-hour; the
     memory anchor moves by c * A; hidden values never enter."""

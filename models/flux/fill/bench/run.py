@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Dict, Iterable, List
 
@@ -228,15 +229,24 @@ def run(methods, windows: List[Dict], tables: Dict[str, pd.DataFrame], regime: s
                 m.tz = sites[site].get("utc_offset", round(sites[site]["lon"] / 15))
             # A method may fill all masks of a window in one call (`predict_many`, for batched training); each
             # mask's prediction still sees only that mask's visible copy, so the protocol is unchanged.
+            # Wall-clock seconds of each mask's prediction (predict_s; for predict_many, the batch time split evenly
+            # over the masks), recorded on every score row of that mask: the method's inference cost on this machine.
+            t0 = time.perf_counter()
             if hasattr(m, "predict_many"):
                 outs = m.predict_many([(v, mk) for _, mk, v in items], context)
+                per = (time.perf_counter() - t0) / max(len(items), 1)
+                outs = iter(outs)
             else:
                 outs = (m.predict(v, mk, context) for _, mk, v in items)
-            for (name, mask, _), s in zip(items, outs):
+                per = None
+            for name, mask, _ in items:
+                t1 = time.perf_counter()
+                s = next(outs)
+                dt = per if per is not None else time.perf_counter() - t1
                 # Exact coverage for methods with a closed-form predictive CDF: the truth is handed over only after
                 # this mask's prediction has returned (and never with predict_many, whose last state is not per mask).
                 pit = m.pit(w.values) if hasattr(m, "pit") and not hasattr(m, "predict_many") else None
-                rows += score(m.name, regime, name, w, mask, s, pit)
+                rows += [dict(r, predict_s=dt) for r in score(m.name, regime, name, w, mask, s, pit)]
         if progress:
             print(f"{site} {start}: {len(rows)} rows", flush=True)
     return pd.DataFrame(rows)
@@ -293,13 +303,17 @@ def method_registry() -> Dict:
 def fluxfill_method():
     """FluxFill (models/flux/fill/model) as a runner method. Checkpoint from FLUXFILL_CKPT; FLUXFILL_MODE marginal (v0,
     exact coverage from its predictive CDF) or joint (v1); FLUXFILL_DEVICE (default cuda); FLUXFILL_SAMPLES (64);
-    FLUXFILL_NAME, the method name in the rows (default fluxfill, or fluxfill-v1 in joint mode)."""
+    FLUXFILL_NAME, the method name in the rows (default fluxfill, or fluxfill-v1 in joint mode); FLUXFILL_ADAPT_STEPS,
+    FLUXFILL_ADAPT_LR (E36 test-time site adaptation on the context years; default 0 steps, off)."""
     sys.path.insert(0, str(HERE.parent / "model"))
     from method import FluxFill
     mode = os.environ.get("FLUXFILL_MODE", "marginal")
     return FluxFill(os.environ["FLUXFILL_CKPT"], mode=mode, n_samples=int(os.environ.get("FLUXFILL_SAMPLES", "64")),
                     device=os.environ.get("FLUXFILL_DEVICE", "cuda"),
-                    name=os.environ.get("FLUXFILL_NAME", "fluxfill" if mode == "marginal" else "fluxfill-v1"))
+                    name=os.environ.get("FLUXFILL_NAME", "fluxfill" if mode == "marginal" else "fluxfill-v1"),
+                    adapt_steps=int(os.environ.get("FLUXFILL_ADAPT_STEPS", "0")),
+                    adapt_lr=float(os.environ.get("FLUXFILL_ADAPT_LR", "1e-4")),
+                    adapt_row_weight=dict(kv.split("=") for kv in os.environ.get("FLUXFILL_ADAPT_ROW_W", "").split(",") if kv))
 
 
 def main():

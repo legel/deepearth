@@ -54,4 +54,14 @@ FluxFill and its benchmark address each limit:
 
 ## Status
 
-In construction since 2026-10-26. Results appear here and on the dashboard once they are measured.
+In construction since 2026-10-26. Results, every experiment and its outcome are on the dashboard
+(deepearth.ai/fluxfill, Results and Methods tabs).
+
+- **FluxFill v3** (width 320, depth 10, 24,000 steps) is the last model scored on the frozen test release 0.2
+  (514 windows, 131 test towers): CRPS 4.4% below v2.
+- **FluxFill v4** is v3 plus site adaptation at inference (`docs/MODEL.md`, section 6b). On the 24 validation
+  windows it lowers CRPS by 13.0% over all rows (NEE 13.0%, LE 9.8%, H 8.4%, FCH4 7.9%) with 95% coverage kept,
+  at every validation tower. It is scored on the test release once its settings are fixed on validation.
+- **Methane validation.** `data/towers/split_v2.py` writes `towers/split_v2.csv` (test towers unchanged); it moves 13 methane training blocks to
+  validation so that validation methane towers (18) follow the test mix; `model/methane_windows.py` gives 102
+  methane validation windows. `FLUXFILL_SPLIT=split_v2.csv` selects it.

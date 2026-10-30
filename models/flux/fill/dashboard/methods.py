@@ -247,7 +247,59 @@ REGISTRY = {
     "v1d-local": ("E18", "Local mean diurnal course of the visible neighbouring days as the residual base, for NEE "
                          "at short gaps.", "Not adopted as is: NEE 1-day CRPS 13% lower, H and LE worse."),
     "v1e-gate": ("E20", "Learned gate between the local and the memory base, inside a 2-component Student-t "
-                        "mixture.", ""),
+                        "mixture.", "Adopted: validation -1.7% at 6,000 steps against v1-frozen-memres."),
+    "v1f-gatescale": ("E21", "Component widths scaled by the evidence the gate sees (visible days, distance to the "
+                             "nearest visible value).", "Adopted: closes the gate's under-coverage."),
+    "r0-final": ("E20, E21", "Full-length run of the gated base with gate scaling.", "Reference for E24."),
+    "r0-gatescale-allimg": ("E13", "Imagery at every site with a Clay store, full length.",
+                            "Paired measurement of the imagery loss at full scale."),
+    "v1g-edge": ("E24", "Edge continuation: the visible anomaly at each gap edge decays into the gap.",
+                 "Adopted."),
+    "v1g-edge-seed1": ("E24", "Second seed of v1g-edge, for the seed-noise band.", "Seed noise 1.1% at 2,000 steps."),
+    "ref-final": ("E24", "Full-length run of the E24 configuration.",
+                  "Validation 0.1711, flux 0.2469; scored once on test release 0.2."),
+    "ref-final-noimg": ("E13", "ref-final without imagery, full length.",
+                        "Validation level (+0.15%); fluxes 0.6% worse without imagery."),
+    "v1h-skew": ("E23", "Skewness of the site memory as a fourth memory channel.", "Not adopted."),
+    "v1j-skewflux": ("E23b", "Memory skewness on the flux rows only.", "Not adopted."),
+    "v1k-skewflux-p": ("E23b", "E23b with paired initialisation.", "Not adopted."),
+    "v1i-driver": ("E25", "Driver anomaly: the base shifts with the departure of visible drivers from their local "
+                          "course.", "Not adopted."),
+    "v1l-driver-p": ("E25", "E25 with paired initialisation.", "Not adopted: the 2,000-step gain was gone by 4,000."),
+    "v1m-scaleanchor-p": ("E27", "Component widths relative to the site-memory spread.",
+                          "Rejected: 0.2181 at 2,000 steps against a gate of 0.2057."),
+    "v1n-yearanom-p": ("E28", "Memory anchor plus this window's visible departure from the site's other years.",
+                       "Adopted on paired 4,000-step evidence (-1.4%); level with ref-final at full length (v2-final)."),
+    "v1o-ext-p": ("E30", "17 extra raw tower channels as maskable rows (30 to 47 rows).",
+                  "Stopped at 2,000 steps: original rows +11.7% (loss dilution)."),
+    "v1p-sinr-p": ("E29", "SINR place encoding (sin and cos of latitude and longitude) added to the site term.",
+                   "Adopted: flux -0.8% at 4,000 steps, 95% coverage 0.963 to 0.953."),
+    "v1r-speed-p": ("speed", "Compiled site memory, fused Adam and lazy synchronisation.",
+                    "Adopted: parity at 2,000 steps, 17 against 22 minutes per 2,000 steps."),
+    "v1s-ext-w25-p": ("E30b", "E30 with the extra rows weighted 0.25 in the loss.",
+                      "Stopped at 2,000 steps: original rows +2.2%."),
+    "v1t-ext-w0-p": ("E30c", "E30 with the extra rows as inputs only.", "Rejected: original rows +3.8% at 2,000 steps."),
+    "v2-final": ("v2", "Full-length run of E28 + E29 + speed flags (width 192, depth 6).",
+                 "FluxFill v2: validation 0.1710, flux 0.2468; test -0.5% against ref-final."),
+    "v2l-long30-p": ("E31", "Twice as many 90 to 180-day all-tower training blocks (--p-long 0.3).",
+                     "4,000 steps: -0.6% overall, 180 days level."),
+    "v2l-long30": ("E31", "E31 at full length.", "Stopped at 7,550 steps: +1.7% overall and +4.1% flux at 6,000."),
+    "model-d320-l10": ("model axis", "v2 configuration at width 320, depth 10.",
+                       "FluxFill v3: validation 0.1655 (-3.2%), flux 0.2387; test -4.4% against v2."),
+    "model-d384-l10": ("model axis", "v2 configuration at width 384, depth 10, batch 1.",
+                       "Stopped at 10,000 steps: +1.6%, +1.9%, +1.0% against v3 at 6,000, 8,000, 10,000."),
+    "v4-ctl": ("v4 control", "v2 configuration (width 192, depth 6) to 8,000 steps; the paired control of E32 to E34.",
+               "Validation 0.1795, FCH4 0.709 at 8,000 steps."),
+    "v4-e32": ("E32", "FCH4 loss weight 4 and FCH4 sites sampled 3 times as often.",
+               "Not adopted: FCH4 -12.6% but overall +1.2% and H +1.7% at 8,000 steps."),
+    "v4-e33": ("E33", "FCH4 widths scaled by the site memory spread.",
+               "Rejected: FCH4 -9.2% on training validation, +2.7% on the 26-window methane set."),
+    "v4-e34": ("E34", "Water table depth, two deeper soil temperatures and a second soil moisture as input rows.",
+               "Adopted: overall -2.9%, FCH4 -12.1% at 8,000 steps."),
+    "v4-e34-e32b": ("E32b", "E34 with FCH4 loss weight 2 and FCH4-site sampling 2.",
+                    "Rejected: overall +1.3%, FCH4 +11%."),
+    "v4-d320-e34": ("E34 at v3 size", "v3 network (width 320, depth 10) with the E34 input rows, 24,000 steps.",
+                    "Validation 0.1601 (-3.3% against v3), methane set FCH4 -7.3%, NEE +4.0%: not adopted as a whole."),
 }
 EVALUATIONS = [
     ("E5", "Validation scoring of v0b-flow step 5,000 against climatology.",
@@ -263,6 +315,12 @@ EVALUATIONS = [
                                               "error."),
     ("E17", "What climatology captures on NEE at long gaps.", "The deficit is the form of the marginal: location "
                                                               "drift, mean against median, and shape."),
+    ("E36", "Site adaptation at inference: before filling a window, fine-tune the v3 network on the site's own data "
+            "(the window's visible values under fresh training masks and the site's other years); the hidden values "
+            "are never seen and the weights reset before the next window.",
+     "Adopted as FluxFill v4. 300 steps on 24 validation windows: all rows -13.0% CRPS (NEE -13.0%, LE -9.8%, H -8.4%, "
+     "FCH4 -7.9%), every site and gap length better, 95% coverage kept. 26-window methane set: FCH4 -26%; against "
+     "XGBoost on matched cells FCH4 -23%, every gap length."),
 ]
 
 
@@ -309,9 +367,15 @@ def experiments(model_root: Path, counts: dict, notes_path: Path) -> dict:
             heads += " + flow matching"
         flags = []
         for k, lab in (("memory", "site memory"), ("mem_residual", "memory residual"), ("local_base", "local base"),
-                       ("gated_base", "gated base"), ("img_nll", "imagery NLL"), ("no_imagery", "no imagery")):
+                       ("gated_base", "gated base"), ("gate_scale", "gate scale"), ("edge_continue", "edge continuation"),
+                       ("year_anomaly", "year anomaly"), ("extra_channels", "extra channels"),
+                       ("img_nll", "imagery NLL"), ("no_imagery", "no imagery")):
             if c.get(k):
                 flags.append(lab)
+        if c.get("sinr_place", -1) >= 0:
+            flags.append("SINR place")
+        if c.get("p_long"):
+            flags.append(f"long blocks {c['p_long']:g}")
         if c.get("dropout"):
             flags.append(f"dropout {c['dropout']:g}")
         if c.get("site_drop"):
@@ -430,20 +494,31 @@ def fluxfill_card(model_root: Path, counts: dict) -> dict:
              ["steps", f"{c['steps']:,}; scored at step {sc['step']:,}"],
              ["v1 sampling", f"{rounds.group(1) if rounds else '?'} rounds, {flow_steps.group(1) if flow_steps else '?'} ODE "
                              f"steps per token, {samples.group(1) if samples else '?'} samples"]]
-    return dict(id="fluxfill", name="FluxFill v0 and v1", ref=["Li2024", "Lipman2023", "Chang2022"],
-                code="models/flux/fill/model (net.py, train.py, method.py)", version=f"run {sc['run']}, step {sc['step']:,}",
+    adapt = re.search(r"adapt_lr: float = ([\d.e-]+)", meth), re.search(r"adapt_batch: int = (\d+)", meth)
+    hyper.append(["site adaptation (v4)", f"300 steps per window, AdamW lr {adapt[0].group(1) if adapt[0] else '?'}, "
+                                          f"batch {adapt[1].group(1) if adapt[1] else '?'}, reset after each window"])
+    return dict(id="fluxfill", name="FluxFill v4", ref=["Li2024", "Lipman2023", "Chang2022"],
+                code="models/flux/fill/model (net.py, train.py, method.py)",
+                version=f"run {sc['run']}, step {sc['step']:,}, with site adaptation at inference",
                 cls=f"Transformer with factorised time and variable attention over day-tokens; {sc['n_params']:,} "
-                    "parameters. v0: Student-t per half-hour. v1: joint samples by masked generation with a "
-                    "flow-matching head.",
+                    "parameters. Per half-hour, a 2-component Student-t mixture anchored at a local diurnal course "
+                    "and at the site memory (with this window's year anomaly), mixed by a learned gate; SINR place "
+                    "encoding. v4 adds site adaptation at inference: before filling a window, the network is "
+                    "fine-tuned for 300 steps on the site's own data (the window's visible values under fresh "
+                    "training masks, and the site's other years), never on the hidden values, and reset afterwards. "
+                    "Scored from its marginals (exact coverage from the predictive CDF).",
                 hyper=hyper,
                 inputs="Every tower variable, ERA5 and ERA5-Land drivers, Sentinel-2 Clay CLS embeddings, the site "
                        "location and site memory; any of them may be hidden.",
                 training=f"{len(c.get('train_sites', []))} training sites of the frozen split, held-out years excluded; "
                          "selection on validation sites.",
-                uncertainty="v0: Student-t marginals, samples independent per half-hour. v1: joint samples over the "
-                            "window, so sums carry the dependence between half-hours.",
-                limits="v1 under-covers half-hourly values and feedback adds NEE error (E16); NEE at 1-day and at 90 to "
-                       "180-day gaps and FCH4 at sites without FCH4 history are open (E14, E17, E18).")
+                uncertainty="Student-t mixture marginals per half-hour, with widths scaled by the evidence near each "
+                            "gap. Samples are independent per half-hour, so window sums under-cover; the joint flow "
+                            "head (v1) carries the dependence between half-hours.",
+                limits="v4 is not yet scored on the test sites. Site adaptation adds about 40 s per window on one GPU "
+                       "(5.7 s per mask on average against 0.3 s for v3). FCH4 at US-YK2 (validation) is behind "
+                       "XGBoost on CRPS by 3%; NEE under mixed masks (M5) was level with climatology on test for v3; "
+                       "FCH4 at sites without FCH4 history remains open (E14).")
 
 
 def build(model_root: Path, counts: dict) -> dict:

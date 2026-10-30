@@ -38,6 +38,8 @@ class MaskConfig:
     p_reveal: float = 0.5
     p_fluxes_off: float = 0.0    # all flux rows hidden for the whole window, the rest as drawn (eddy-covariance
                                  # system down, meteorology up); 0 keeps the reference masks
+    p_long: float = 0.0          # block_all/mixed block length drawn uniform in 90 days to the window instead of
+                                 # log-uniform (more 90 to 180 d gaps, M2-90d/180d); 0 keeps the reference masks
 
 
 FAMILIES = ("block_all", "block_var", "short", "r3", "mixed")
@@ -61,7 +63,11 @@ def draw(rng: np.random.Generator, present: np.ndarray, cfg: MaskConfig = MaskCo
     p = np.array([cfg.p_block_all, cfg.p_block_var, cfg.p_short, cfg.p_r3, cfg.p_mixed])
     fam = FAMILIES[int(rng.choice(len(FAMILIES), p=p / p.sum()))]
     if fam in ("block_all", "mixed"):
-        hide[tower, _block(rng, T, _loguniform_int(rng, STEPS_PER_DAY, T))] = True
+        if cfg.p_long and rng.random() < cfg.p_long:
+            n = int(rng.integers(min(90 * STEPS_PER_DAY, T), T + 1))
+        else:
+            n = _loguniform_int(rng, STEPS_PER_DAY, T)
+        hide[tower, _block(rng, T, n)] = True
     if fam == "block_var":
         for v in tower:
             if rng.random() < 0.5:

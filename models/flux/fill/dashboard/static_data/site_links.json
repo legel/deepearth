@@ -1,0 +1,3186 @@
+{
+ "generated_utc": "2026-10-30T19:28Z",
+ "rule": "Order: the AmeriFlux site catalogue (api/v1/site_display/AmeriFlux; AmeriFlux site pages), then the ICOS Carbon\nPortal ecosystem stations (SPARQL, class cpmeta:ES; ICOS station pages), then the FLUXNET site pages\n(fluxnet.org/sites/siteinfo/<id>, kept only when the page has a site title). A site in none of them gets no link.",
+ "links": {
+  "AR-Bal": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/AR-Bal",
+   "source": "AmeriFlux"
+  },
+  "AR-CCa": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/AR-CCa",
+   "source": "AmeriFlux"
+  },
+  "AR-CCg": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/AR-CCg",
+   "source": "AmeriFlux"
+  },
+  "AR-TF1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/AR-TF1",
+   "source": "AmeriFlux"
+  },
+  "AR-TF2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/AR-TF2",
+   "source": "AmeriFlux"
+  },
+  "AT-Mmg": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_AT-Mmg",
+   "source": "ICOS"
+  },
+  "AT-Neu": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_AT-Neu",
+   "source": "ICOS"
+  },
+  "AT-Nsd": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_AT-Nsd",
+   "source": "ICOS"
+  },
+  "AT-PsM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_AT-PsM",
+   "source": "ICOS"
+  },
+  "AT-Zoe": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_AT-Zoe",
+   "source": "ICOS"
+  },
+  "BE-Bra": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BE-Bra",
+   "source": "ICOS"
+  },
+  "BE-Dor": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BE-Dor",
+   "source": "ICOS"
+  },
+  "BE-Lcr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BE-Lcr",
+   "source": "ICOS"
+  },
+  "BE-Lon": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BE-Lon",
+   "source": "ICOS"
+  },
+  "BE-Maa": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BE-Maa",
+   "source": "ICOS"
+  },
+  "BE-Vie": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BE-Vie",
+   "source": "ICOS"
+  },
+  "BJ-Bfg": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BJ-Bfg",
+   "source": "ICOS"
+  },
+  "BJ-Db1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BJ-Db1",
+   "source": "ICOS"
+  },
+  "BJ-Nhu": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BJ-Nhu",
+   "source": "ICOS"
+  },
+  "BR-CST": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-CST",
+   "source": "AmeriFlux"
+  },
+  "BR-ITA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-ITA",
+   "source": "AmeriFlux"
+  },
+  "BR-Ji3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-Ji3",
+   "source": "AmeriFlux"
+  },
+  "BR-Ma2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-Ma2",
+   "source": "AmeriFlux"
+  },
+  "BR-Ma3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-Ma3",
+   "source": "AmeriFlux"
+  },
+  "BR-Npw": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-Npw",
+   "source": "AmeriFlux"
+  },
+  "BR-SM1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-SM1",
+   "source": "AmeriFlux"
+  },
+  "BR-Sa1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-Sa1",
+   "source": "AmeriFlux"
+  },
+  "BR-Sa3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-Sa3",
+   "source": "AmeriFlux"
+  },
+  "BR-Xpw": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/BR-Xpw",
+   "source": "AmeriFlux"
+  },
+  "BW-Gum": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BW-Gum",
+   "source": "ICOS"
+  },
+  "BW-Nxr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_BW-Nxr",
+   "source": "ICOS"
+  },
+  "CA-ARB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-ARB",
+   "source": "AmeriFlux"
+  },
+  "CA-ARF": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-ARF",
+   "source": "AmeriFlux"
+  },
+  "CA-BOU": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-BOU",
+   "source": "AmeriFlux"
+  },
+  "CA-CF1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-CF1",
+   "source": "AmeriFlux"
+  },
+  "CA-CF2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-CF2",
+   "source": "AmeriFlux"
+  },
+  "CA-CF3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-CF3",
+   "source": "AmeriFlux"
+  },
+  "CA-Ca1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Ca1",
+   "source": "AmeriFlux"
+  },
+  "CA-Ca2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Ca2",
+   "source": "AmeriFlux"
+  },
+  "CA-Ca3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Ca3",
+   "source": "AmeriFlux"
+  },
+  "CA-Cbo": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Cbo",
+   "source": "AmeriFlux"
+  },
+  "CA-DB2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-DB2",
+   "source": "AmeriFlux"
+  },
+  "CA-DBB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-DBB",
+   "source": "AmeriFlux"
+  },
+  "CA-DSM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-DSM",
+   "source": "AmeriFlux"
+  },
+  "CA-EM1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-EM1",
+   "source": "AmeriFlux"
+  },
+  "CA-EM2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-EM2",
+   "source": "AmeriFlux"
+  },
+  "CA-Gro": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Gro",
+   "source": "AmeriFlux"
+  },
+  "CA-HPC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-HPC",
+   "source": "AmeriFlux"
+  },
+  "CA-KLP": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-KLP",
+   "source": "AmeriFlux"
+  },
+  "CA-LP1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-LP1",
+   "source": "AmeriFlux"
+  },
+  "CA-LU1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-LU1",
+   "source": "AmeriFlux"
+  },
+  "CA-LU2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-LU2",
+   "source": "AmeriFlux"
+  },
+  "CA-MA1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-MA1",
+   "source": "AmeriFlux"
+  },
+  "CA-MA2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-MA2",
+   "source": "AmeriFlux"
+  },
+  "CA-MA3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-MA3",
+   "source": "AmeriFlux"
+  },
+  "CA-Man": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Man",
+   "source": "AmeriFlux"
+  },
+  "CA-Mer": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Mer",
+   "source": "AmeriFlux"
+  },
+  "CA-Mtk": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Mtk",
+   "source": "AmeriFlux"
+  },
+  "CA-Na1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Na1",
+   "source": "AmeriFlux"
+  },
+  "CA-Ojp": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Ojp",
+   "source": "AmeriFlux"
+  },
+  "CA-PB1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-PB1",
+   "source": "AmeriFlux"
+  },
+  "CA-PB2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-PB2",
+   "source": "AmeriFlux"
+  },
+  "CA-Qc2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Qc2",
+   "source": "AmeriFlux"
+  },
+  "CA-Qfo": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-Qfo",
+   "source": "AmeriFlux"
+  },
+  "CA-RBM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-RBM",
+   "source": "AmeriFlux"
+  },
+  "CA-RSB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-RSB",
+   "source": "AmeriFlux"
+  },
+  "CA-SCB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-SCB",
+   "source": "AmeriFlux"
+  },
+  "CA-SCC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-SCC",
+   "source": "AmeriFlux"
+  },
+  "CA-SF1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-SF1",
+   "source": "AmeriFlux"
+  },
+  "CA-SF2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-SF2",
+   "source": "AmeriFlux"
+  },
+  "CA-SF3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-SF3",
+   "source": "AmeriFlux"
+  },
+  "CA-SJ2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-SJ2",
+   "source": "AmeriFlux"
+  },
+  "CA-SMC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-SMC",
+   "source": "AmeriFlux"
+  },
+  "CA-TP1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-TP1",
+   "source": "AmeriFlux"
+  },
+  "CA-TP2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-TP2",
+   "source": "AmeriFlux"
+  },
+  "CA-TP3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-TP3",
+   "source": "AmeriFlux"
+  },
+  "CA-TP4": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-TP4",
+   "source": "AmeriFlux"
+  },
+  "CA-TPA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-TPA",
+   "source": "AmeriFlux"
+  },
+  "CA-TPD": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-TPD",
+   "source": "AmeriFlux"
+  },
+  "CA-TVC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CA-TVC",
+   "source": "AmeriFlux"
+  },
+  "CD-Ygb": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CD-Ygb",
+   "source": "ICOS"
+  },
+  "CG-Tch": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CG-Tch",
+   "source": "ICOS"
+  },
+  "CH-Aws": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Aws",
+   "source": "ICOS"
+  },
+  "CH-BaK": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-BaK",
+   "source": "ICOS"
+  },
+  "CH-Cha": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Cha",
+   "source": "ICOS"
+  },
+  "CH-Crs": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Crs",
+   "source": "ICOS"
+  },
+  "CH-Dav": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Dav",
+   "source": "ICOS"
+  },
+  "CH-For": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-For",
+   "source": "ICOS"
+  },
+  "CH-Frk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Frk",
+   "source": "ICOS"
+  },
+  "CH-Fru": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Fru",
+   "source": "ICOS"
+  },
+  "CH-Lae": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Lae",
+   "source": "ICOS"
+  },
+  "CH-Oe1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Oe1",
+   "source": "ICOS"
+  },
+  "CH-Oe2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Oe2",
+   "source": "ICOS"
+  },
+  "CH-Oe3": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Oe3",
+   "source": "ICOS"
+  },
+  "CH-Rh1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Rh1",
+   "source": "ICOS"
+  },
+  "CH-Rh2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Rh2",
+   "source": "ICOS"
+  },
+  "CH-Rtb": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Rtb",
+   "source": "ICOS"
+  },
+  "CH-Tnk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CH-Tnk",
+   "source": "ICOS"
+  },
+  "CL-ACF": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CL-ACF",
+   "source": "AmeriFlux"
+  },
+  "CL-SDF": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CL-SDF",
+   "source": "AmeriFlux"
+  },
+  "CL-SDP": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CL-SDP",
+   "source": "AmeriFlux"
+  },
+  "CN-Aro": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Aro",
+   "source": "ICOS"
+  },
+  "CN-Ash": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Ash",
+   "source": "ICOS"
+  },
+  "CN-BeO": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-BeO",
+   "source": "ICOS"
+  },
+  "CN-DaW": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-DaW",
+   "source": "ICOS"
+  },
+  "CN-Dan": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Dan",
+   "source": "ICOS"
+  },
+  "CN-Dda": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Dda",
+   "source": "ICOS"
+  },
+  "CN-Din": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Din",
+   "source": "ICOS"
+  },
+  "CN-Dmn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Dmn",
+   "source": "ICOS"
+  },
+  "CN-Dsh": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Dsh",
+   "source": "ICOS"
+  },
+  "CN-Du2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Du2",
+   "source": "ICOS"
+  },
+  "CN-Dzo": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Dzo",
+   "source": "ICOS"
+  },
+  "CN-Erg": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Erg",
+   "source": "ICOS"
+  },
+  "CN-GuT": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-GuT",
+   "source": "ICOS"
+  },
+  "CN-Ha2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Ha2",
+   "source": "ICOS"
+  },
+  "CN-HaM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-HaM",
+   "source": "ICOS"
+  },
+  "CN-HaW": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-HaW",
+   "source": "ICOS"
+  },
+  "CN-HeD": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-HeD",
+   "source": "ICOS"
+  },
+  "CN-HeM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-HeM",
+   "source": "ICOS"
+  },
+  "CN-Huz": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Huz",
+   "source": "ICOS"
+  },
+  "CN-Jng": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Jng",
+   "source": "ICOS"
+  },
+  "CN-Jzh": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Jzh",
+   "source": "ICOS"
+  },
+  "CN-Lch": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Lch",
+   "source": "ICOS"
+  },
+  "CN-Lsh": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Lsh",
+   "source": "ICOS"
+  },
+  "CN-Mxn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Mxn",
+   "source": "ICOS"
+  },
+  "CN-Nmn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Nmn",
+   "source": "ICOS"
+  },
+  "CN-Qng": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Qng",
+   "source": "ICOS"
+  },
+  "CN-Sb1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Sb1",
+   "source": "ICOS"
+  },
+  "CN-Sb2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Sb2",
+   "source": "ICOS"
+  },
+  "CN-Sdq": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Sdq",
+   "source": "ICOS"
+  },
+  "CN-SnB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-SnB",
+   "source": "ICOS"
+  },
+  "CN-Wnb": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Wnb",
+   "source": "ICOS"
+  },
+  "CN-Xi2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Xi2",
+   "source": "ICOS"
+  },
+  "CN-YaS": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-YaS",
+   "source": "ICOS"
+  },
+  "CN-Yan": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Yan",
+   "source": "ICOS"
+  },
+  "CN-You": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-You",
+   "source": "ICOS"
+  },
+  "CN-Yuc": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Yuc",
+   "source": "ICOS"
+  },
+  "CN-Zha": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CN-Zha",
+   "source": "ICOS"
+  },
+  "CR-AqC": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CR-AqC",
+   "source": "ICOS"
+  },
+  "CR-Fsc": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/CR-Fsc",
+   "source": "AmeriFlux"
+  },
+  "CZ-BK1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CZ-BK1",
+   "source": "ICOS"
+  },
+  "CZ-BK2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CZ-BK2",
+   "source": "ICOS"
+  },
+  "CZ-KrP": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CZ-KrP",
+   "source": "ICOS"
+  },
+  "CZ-LnG": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CZ-LnG",
+   "source": "ICOS"
+  },
+  "CZ-Lnz": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CZ-Lnz",
+   "source": "ICOS"
+  },
+  "CZ-RAJ": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CZ-RAJ",
+   "source": "ICOS"
+  },
+  "CZ-Stn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CZ-Stn",
+   "source": "ICOS"
+  },
+  "CZ-wet": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_CZ-wet",
+   "source": "ICOS"
+  },
+  "DE-Akm": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Akm",
+   "source": "ICOS"
+  },
+  "DE-Amv": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Amv",
+   "source": "ICOS"
+  },
+  "DE-BeR": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-BeR",
+   "source": "ICOS"
+  },
+  "DE-Brs": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Brs",
+   "source": "ICOS"
+  },
+  "DE-Dgw": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Dgw",
+   "source": "ICOS"
+  },
+  "DE-Etn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Etn",
+   "source": "ICOS"
+  },
+  "DE-Fen": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Fen",
+   "source": "ICOS"
+  },
+  "DE-Geb": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Geb",
+   "source": "ICOS"
+  },
+  "DE-Gri": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Gri",
+   "source": "ICOS"
+  },
+  "DE-GsB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-GsB",
+   "source": "ICOS"
+  },
+  "DE-Gwg": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Gwg",
+   "source": "ICOS"
+  },
+  "DE-Hai": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Hai",
+   "source": "ICOS"
+  },
+  "DE-Har": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Har",
+   "source": "ICOS"
+  },
+  "DE-Hdn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Hdn",
+   "source": "ICOS"
+  },
+  "DE-HoH": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-HoH",
+   "source": "ICOS"
+  },
+  "DE-Hte": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Hte",
+   "source": "ICOS"
+  },
+  "DE-Hzd": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Hzd",
+   "source": "ICOS"
+  },
+  "DE-Kli": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Kli",
+   "source": "ICOS"
+  },
+  "DE-Lkb": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Lkb",
+   "source": "ICOS"
+  },
+  "DE-Lnf": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Lnf",
+   "source": "ICOS"
+  },
+  "DE-Msr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Msr",
+   "source": "ICOS"
+  },
+  "DE-Obe": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Obe",
+   "source": "ICOS"
+  },
+  "DE-Rns": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Rns",
+   "source": "ICOS"
+  },
+  "DE-RuC": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-RuC",
+   "source": "ICOS"
+  },
+  "DE-RuM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-RuM",
+   "source": "ICOS"
+  },
+  "DE-RuR": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-RuR",
+   "source": "ICOS"
+  },
+  "DE-RuS": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-RuS",
+   "source": "ICOS"
+  },
+  "DE-RuW": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-RuW",
+   "source": "ICOS"
+  },
+  "DE-SbM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-SbM",
+   "source": "ICOS"
+  },
+  "DE-Seh": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Seh",
+   "source": "ICOS"
+  },
+  "DE-SfN": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-SfN",
+   "source": "ICOS"
+  },
+  "DE-SfS": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-SfS",
+   "source": "ICOS"
+  },
+  "DE-Spw": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Spw",
+   "source": "ICOS"
+  },
+  "DE-Tha": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Tha",
+   "source": "ICOS"
+  },
+  "DE-Zrk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DE-Zrk",
+   "source": "ICOS"
+  },
+  "DK-Eng": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DK-Eng",
+   "source": "ICOS"
+  },
+  "DK-Fou": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DK-Fou",
+   "source": "ICOS"
+  },
+  "DK-Gds": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DK-Gds",
+   "source": "ICOS"
+  },
+  "DK-RCW": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DK-RCW",
+   "source": "ICOS"
+  },
+  "DK-Skj": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DK-Skj",
+   "source": "ICOS"
+  },
+  "DK-Sor": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DK-Sor",
+   "source": "ICOS"
+  },
+  "DK-Vng": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_DK-Vng",
+   "source": "ICOS"
+  },
+  "EE-Pts": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_EE-Pts",
+   "source": "ICOS"
+  },
+  "EE-Rng": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_EE-Rng",
+   "source": "ICOS"
+  },
+  "EE-Stg": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_EE-Stg",
+   "source": "ICOS"
+  },
+  "ES-Abr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Abr",
+   "source": "ICOS"
+  },
+  "ES-Agu": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Agu",
+   "source": "ICOS"
+  },
+  "ES-Amo": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Amo",
+   "source": "ICOS"
+  },
+  "ES-Cnd": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Cnd",
+   "source": "ICOS"
+  },
+  "ES-Crg": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Crg",
+   "source": "ICOS"
+  },
+  "ES-Dnn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Dnn",
+   "source": "ICOS"
+  },
+  "ES-FtD": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-FtD",
+   "source": "ICOS"
+  },
+  "ES-Gdn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Gdn",
+   "source": "ICOS"
+  },
+  "ES-HdD": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-HdD",
+   "source": "ICOS"
+  },
+  "ES-HeB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-HeB",
+   "source": "ICOS"
+  },
+  "ES-Hen": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Hen",
+   "source": "ICOS"
+  },
+  "ES-LJu": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-LJu",
+   "source": "ICOS"
+  },
+  "ES-LM1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-LM1",
+   "source": "ICOS"
+  },
+  "ES-LM2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-LM2",
+   "source": "ICOS"
+  },
+  "ES-LMa": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-LMa",
+   "source": "ICOS"
+  },
+  "ES-LgS": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-LgS",
+   "source": "ICOS"
+  },
+  "ES-Ln2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Ln2",
+   "source": "ICOS"
+  },
+  "ES-Mcd": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Mcd",
+   "source": "ICOS"
+  },
+  "ES-MtB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-MtB",
+   "source": "ICOS"
+  },
+  "ES-MtN": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-MtN",
+   "source": "ICOS"
+  },
+  "ES-Mzn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Mzn",
+   "source": "ICOS"
+  },
+  "ES-Pdu": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Pdu",
+   "source": "ICOS"
+  },
+  "ES-Pzb": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Pzb",
+   "source": "ICOS"
+  },
+  "ES-Srn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Srn",
+   "source": "ICOS"
+  },
+  "ES-TzM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-TzM",
+   "source": "ICOS"
+  },
+  "ES-VDA": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-VDA",
+   "source": "ICOS"
+  },
+  "ES-Yst": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ES-Yst",
+   "source": "ICOS"
+  },
+  "FI-Ant": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Ant",
+   "source": "ICOS"
+  },
+  "FI-Hyy": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Hyy",
+   "source": "ICOS"
+  },
+  "FI-Jok": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Jok",
+   "source": "ICOS"
+  },
+  "FI-Ken": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Ken",
+   "source": "ICOS"
+  },
+  "FI-Kmp": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Kmp",
+   "source": "ICOS"
+  },
+  "FI-Kvr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Kvr",
+   "source": "ICOS"
+  },
+  "FI-Let": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Let",
+   "source": "ICOS"
+  },
+  "FI-Lom": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Lom",
+   "source": "ICOS"
+  },
+  "FI-Nsv": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Nsv",
+   "source": "ICOS"
+  },
+  "FI-Pap": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Pap",
+   "source": "ICOS"
+  },
+  "FI-Qvd": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Qvd",
+   "source": "ICOS"
+  },
+  "FI-Rk2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Rk2",
+   "source": "ICOS"
+  },
+  "FI-Ruk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Ruk",
+   "source": "ICOS"
+  },
+  "FI-Sar": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Sar",
+   "source": "ICOS"
+  },
+  "FI-Si2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Si2",
+   "source": "ICOS"
+  },
+  "FI-Sii": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Sii",
+   "source": "ICOS"
+  },
+  "FI-Sod": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Sod",
+   "source": "ICOS"
+  },
+  "FI-Tvm": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Tvm",
+   "source": "ICOS"
+  },
+  "FI-Var": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FI-Var",
+   "source": "ICOS"
+  },
+  "FR-Aur": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Aur",
+   "source": "ICOS"
+  },
+  "FR-Bil": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Bil",
+   "source": "ICOS"
+  },
+  "FR-CLt": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-CLt",
+   "source": "ICOS"
+  },
+  "FR-EM2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-EM2",
+   "source": "ICOS"
+  },
+  "FR-FBn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-FBn",
+   "source": "ICOS"
+  },
+  "FR-Fon": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Fon",
+   "source": "ICOS"
+  },
+  "FR-Gri": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Gri",
+   "source": "ICOS"
+  },
+  "FR-Hes": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Hes",
+   "source": "ICOS"
+  },
+  "FR-LBr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-LBr",
+   "source": "ICOS"
+  },
+  "FR-LGt": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-LGt",
+   "source": "ICOS"
+  },
+  "FR-Lam": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Lam",
+   "source": "ICOS"
+  },
+  "FR-Lqu": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Lqu",
+   "source": "ICOS"
+  },
+  "FR-Lus": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Lus",
+   "source": "ICOS"
+  },
+  "FR-Mau": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Mau",
+   "source": "ICOS"
+  },
+  "FR-Mej": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Mej",
+   "source": "ICOS"
+  },
+  "FR-Nzn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Nzn",
+   "source": "ICOS"
+  },
+  "FR-Pue": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Pue",
+   "source": "ICOS"
+  },
+  "FR-Tou": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_FR-Tou",
+   "source": "ICOS"
+  },
+  "GF-Guy": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_GF-Guy",
+   "source": "ICOS"
+  },
+  "GH-Ank": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_GH-Ank",
+   "source": "ICOS"
+  },
+  "GL-Dsk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_GL-Dsk",
+   "source": "ICOS"
+  },
+  "GL-NuF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_GL-NuF",
+   "source": "ICOS"
+  },
+  "GL-ZaF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_GL-ZaF",
+   "source": "ICOS"
+  },
+  "GL-ZaH": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_GL-ZaH",
+   "source": "ICOS"
+  },
+  "GR-HeK": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_GR-HeK",
+   "source": "ICOS"
+  },
+  "GR-HeM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_GR-HeM",
+   "source": "ICOS"
+  },
+  "HK-MPM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_HK-MPM",
+   "source": "ICOS"
+  },
+  "ID-JOP": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ID-JOP",
+   "source": "ICOS"
+  },
+  "ID-PaB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ID-PaB",
+   "source": "ICOS"
+  },
+  "ID-PaD": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ID-PaD",
+   "source": "ICOS"
+  },
+  "ID-Pag": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ID-Pag",
+   "source": "ICOS"
+  },
+  "IE-CaC": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IE-CaC",
+   "source": "ICOS"
+  },
+  "IE-CaN": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IE-CaN",
+   "source": "ICOS"
+  },
+  "IE-Cra": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IE-Cra",
+   "source": "ICOS"
+  },
+  "IE-Gwr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IE-Gwr",
+   "source": "ICOS"
+  },
+  "IL-RmH": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IL-RmH",
+   "source": "ICOS"
+  },
+  "IL-Yat": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IL-Yat",
+   "source": "ICOS"
+  },
+  "IT-Arz": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Arz",
+   "source": "ICOS"
+  },
+  "IT-BCi": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-BCi",
+   "source": "ICOS"
+  },
+  "IT-BFt": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-BFt",
+   "source": "ICOS"
+  },
+  "IT-BsB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-BsB",
+   "source": "ICOS"
+  },
+  "IT-Bsn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Bsn",
+   "source": "ICOS"
+  },
+  "IT-CA1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-CA1",
+   "source": "ICOS"
+  },
+  "IT-CA2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-CA2",
+   "source": "ICOS"
+  },
+  "IT-CA3": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-CA3",
+   "source": "ICOS"
+  },
+  "IT-Cp2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Cp2",
+   "source": "ICOS"
+  },
+  "IT-Cpz": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Cpz",
+   "source": "ICOS"
+  },
+  "IT-Lav": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Lav",
+   "source": "ICOS"
+  },
+  "IT-Lsn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Lsn",
+   "source": "ICOS"
+  },
+  "IT-MBo": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-MBo",
+   "source": "ICOS"
+  },
+  "IT-MtM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-MtM",
+   "source": "ICOS"
+  },
+  "IT-MtP": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-MtP",
+   "source": "ICOS"
+  },
+  "IT-NiG": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-NiG",
+   "source": "ICOS"
+  },
+  "IT-Niv": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Niv",
+   "source": "ICOS"
+  },
+  "IT-Noe": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Noe",
+   "source": "ICOS"
+  },
+  "IT-OXm": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-OXm",
+   "source": "ICOS"
+  },
+  "IT-PCm": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-PCm",
+   "source": "ICOS"
+  },
+  "IT-PT1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-PT1",
+   "source": "ICOS"
+  },
+  "IT-Ren": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Ren",
+   "source": "ICOS"
+  },
+  "IT-Ro1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Ro1",
+   "source": "ICOS"
+  },
+  "IT-Ro2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Ro2",
+   "source": "ICOS"
+  },
+  "IT-SR2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-SR2",
+   "source": "ICOS"
+  },
+  "IT-SRo": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-SRo",
+   "source": "ICOS"
+  },
+  "IT-Sas": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Sas",
+   "source": "ICOS"
+  },
+  "IT-Tor": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-Tor",
+   "source": "ICOS"
+  },
+  "IT-TrF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_IT-TrF",
+   "source": "ICOS"
+  },
+  "JP-Api": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Api",
+   "source": "ICOS"
+  },
+  "JP-BBY": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-BBY",
+   "source": "ICOS"
+  },
+  "JP-Fhk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Fhk",
+   "source": "ICOS"
+  },
+  "JP-Fjy": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Fjy",
+   "source": "ICOS"
+  },
+  "JP-Fmt": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Fmt",
+   "source": "ICOS"
+  },
+  "JP-Hc2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Hc2",
+   "source": "ICOS"
+  },
+  "JP-Hc3": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Hc3",
+   "source": "ICOS"
+  },
+  "JP-KaP": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-KaP",
+   "source": "ICOS"
+  },
+  "JP-Khw": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Khw",
+   "source": "ICOS"
+  },
+  "JP-Kzw": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Kzw",
+   "source": "ICOS"
+  },
+  "JP-MBF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-MBF",
+   "source": "ICOS"
+  },
+  "JP-MMF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-MMF",
+   "source": "ICOS"
+  },
+  "JP-Mse": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Mse",
+   "source": "ICOS"
+  },
+  "JP-Nkm": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Nkm",
+   "source": "ICOS"
+  },
+  "JP-NsC": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-NsC",
+   "source": "ICOS"
+  },
+  "JP-NsM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-NsM",
+   "source": "ICOS"
+  },
+  "JP-Nuf": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Nuf",
+   "source": "ICOS"
+  },
+  "JP-Om2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Om2",
+   "source": "ICOS"
+  },
+  "JP-SMF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-SMF",
+   "source": "ICOS"
+  },
+  "JP-Sb1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Sb1",
+   "source": "ICOS"
+  },
+  "JP-Sb2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Sb2",
+   "source": "ICOS"
+  },
+  "JP-Shn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Shn",
+   "source": "ICOS"
+  },
+  "JP-Spp": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Spp",
+   "source": "ICOS"
+  },
+  "JP-Srk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Srk",
+   "source": "ICOS"
+  },
+  "JP-Ta2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Ta2",
+   "source": "ICOS"
+  },
+  "JP-Tak": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Tak",
+   "source": "ICOS"
+  },
+  "JP-Tef": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Tef",
+   "source": "ICOS"
+  },
+  "JP-Tgf": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Tgf",
+   "source": "ICOS"
+  },
+  "JP-Tkb": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Tkb",
+   "source": "ICOS"
+  },
+  "JP-Tmd": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Tmd",
+   "source": "ICOS"
+  },
+  "JP-Tmk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Tmk",
+   "source": "ICOS"
+  },
+  "JP-Toc": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Toc",
+   "source": "ICOS"
+  },
+  "JP-Yms": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Yms",
+   "source": "ICOS"
+  },
+  "JP-Ynf": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_JP-Ynf",
+   "source": "ICOS"
+  },
+  "KE-Aq1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KE-Aq1",
+   "source": "ICOS"
+  },
+  "KE-Aq2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KE-Aq2",
+   "source": "ICOS"
+  },
+  "KE-Chk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KE-Chk",
+   "source": "ICOS"
+  },
+  "KE-Kpt": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KE-Kpt",
+   "source": "ICOS"
+  },
+  "KE-Mkt": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KE-Mkt",
+   "source": "ICOS"
+  },
+  "KH-Kmp": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KH-Kmp",
+   "source": "ICOS"
+  },
+  "KR-AdC": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-AdC",
+   "source": "ICOS"
+  },
+  "KR-CRK": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-CRK",
+   "source": "ICOS"
+  },
+  "KR-CmF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-CmF",
+   "source": "ICOS"
+  },
+  "KR-GmP": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-GmP",
+   "source": "ICOS"
+  },
+  "KR-GmR": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-GmR",
+   "source": "ICOS"
+  },
+  "KR-GmS": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-GmS",
+   "source": "ICOS"
+  },
+  "KR-HPK": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-HPK",
+   "source": "ICOS"
+  },
+  "KR-HcM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-HcM",
+   "source": "ICOS"
+  },
+  "KR-Hnm": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-Hnm",
+   "source": "ICOS"
+  },
+  "KR-JjM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-JjM",
+   "source": "ICOS"
+  },
+  "KR-Kw1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-Kw1",
+   "source": "ICOS"
+  },
+  "KR-Kw2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-Kw2",
+   "source": "ICOS"
+  },
+  "KR-Nj1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-Nj1",
+   "source": "ICOS"
+  },
+  "KR-Nj2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-Nj2",
+   "source": "ICOS"
+  },
+  "KR-PcD": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-PcD",
+   "source": "ICOS"
+  },
+  "KR-ScC": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-ScC",
+   "source": "ICOS"
+  },
+  "KR-SmM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-SmM",
+   "source": "ICOS"
+  },
+  "KR-TwB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-TwB",
+   "source": "ICOS"
+  },
+  "KR-TwC": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-TwC",
+   "source": "ICOS"
+  },
+  "KR-UAO": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-UAO",
+   "source": "ICOS"
+  },
+  "KR-WdE": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_KR-WdE",
+   "source": "ICOS"
+  },
+  "ML-Kem": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ML-Kem",
+   "source": "ICOS"
+  },
+  "MN-Hst": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_MN-Hst",
+   "source": "ICOS"
+  },
+  "MN-Kbu": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_MN-Kbu",
+   "source": "ICOS"
+  },
+  "MN-Nkh": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_MN-Nkh",
+   "source": "ICOS"
+  },
+  "MN-Udg": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_MN-Udg",
+   "source": "ICOS"
+  },
+  "MX-Aog": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/MX-Aog",
+   "source": "AmeriFlux"
+  },
+  "MX-PMm": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/MX-PMm",
+   "source": "AmeriFlux"
+  },
+  "MX-Tes": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/MX-Tes",
+   "source": "AmeriFlux"
+  },
+  "MY-LHP": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_MY-LHP",
+   "source": "ICOS"
+  },
+  "NL-Hrw": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_NL-Hrw",
+   "source": "ICOS"
+  },
+  "NL-Loo": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_NL-Loo",
+   "source": "ICOS"
+  },
+  "NL-Vkp": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_NL-Vkp",
+   "source": "ICOS"
+  },
+  "NO-And": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_NO-And",
+   "source": "ICOS"
+  },
+  "NO-Fns": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_NO-Fns",
+   "source": "ICOS"
+  },
+  "NO-Hur": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_NO-Hur",
+   "source": "ICOS"
+  },
+  "NO-Ikr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_NO-Ikr",
+   "source": "ICOS"
+  },
+  "PA-SPn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_PA-SPn",
+   "source": "ICOS"
+  },
+  "PA-SPs": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_PA-SPs",
+   "source": "ICOS"
+  },
+  "PE-QFR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/PE-QFR",
+   "source": "AmeriFlux"
+  },
+  "PR-xGU": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/PR-xGU",
+   "source": "AmeriFlux"
+  },
+  "PR-xLA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/PR-xLA",
+   "source": "AmeriFlux"
+  },
+  "RU-Ch2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Ch2",
+   "source": "ICOS"
+  },
+  "RU-Che": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Che",
+   "source": "ICOS"
+  },
+  "RU-Ege": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Ege",
+   "source": "ICOS"
+  },
+  "RU-Fy2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Fy2",
+   "source": "ICOS"
+  },
+  "RU-Fy3": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Fy3",
+   "source": "ICOS"
+  },
+  "RU-Fy4": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Fy4",
+   "source": "ICOS"
+  },
+  "RU-Fyo": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Fyo",
+   "source": "ICOS"
+  },
+  "RU-Ha1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Ha1",
+   "source": "ICOS"
+  },
+  "RU-NeB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-NeB",
+   "source": "ICOS"
+  },
+  "RU-NeC": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-NeC",
+   "source": "ICOS"
+  },
+  "RU-NeF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-NeF",
+   "source": "ICOS"
+  },
+  "RU-Sk2": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Sk2",
+   "source": "ICOS"
+  },
+  "RU-SkP": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-SkP",
+   "source": "ICOS"
+  },
+  "RU-Tur": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_RU-Tur",
+   "source": "ICOS"
+  },
+  "SD-Dem": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SD-Dem",
+   "source": "ICOS"
+  },
+  "SE-Deg": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Deg",
+   "source": "ICOS"
+  },
+  "SE-HfM": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-HfM",
+   "source": "ICOS"
+  },
+  "SE-Hmr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Hmr",
+   "source": "ICOS"
+  },
+  "SE-Htm": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Htm",
+   "source": "ICOS"
+  },
+  "SE-Myc": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Myc",
+   "source": "ICOS"
+  },
+  "SE-Nor": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Nor",
+   "source": "ICOS"
+  },
+  "SE-Oes": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Oes",
+   "source": "ICOS"
+  },
+  "SE-Ros": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Ros",
+   "source": "ICOS"
+  },
+  "SE-Srj": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Srj",
+   "source": "ICOS"
+  },
+  "SE-St1": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-St1",
+   "source": "ICOS"
+  },
+  "SE-Sto": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Sto",
+   "source": "ICOS"
+  },
+  "SE-Svb": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Svb",
+   "source": "ICOS"
+  },
+  "SE-Trb": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SE-Trb",
+   "source": "ICOS"
+  },
+  "SJ-Adv": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SJ-Adv",
+   "source": "ICOS"
+  },
+  "SN-Dhr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SN-Dhr",
+   "source": "ICOS"
+  },
+  "SN-Nkr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_SN-Nkr",
+   "source": "ICOS"
+  },
+  "TH-Kog": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_TH-Kog",
+   "source": "ICOS"
+  },
+  "TH-Mae": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_TH-Mae",
+   "source": "ICOS"
+  },
+  "UK-AMo": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-AMo",
+   "source": "ICOS"
+  },
+  "UK-Ags": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-Ags",
+   "source": "ICOS"
+  },
+  "UK-BnB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-BnB",
+   "source": "ICOS"
+  },
+  "UK-CCr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-CCr",
+   "source": "ICOS"
+  },
+  "UK-Cvn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-Cvn",
+   "source": "ICOS"
+  },
+  "UK-GaB": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-GaB",
+   "source": "ICOS"
+  },
+  "UK-Gnn": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-Gnn",
+   "source": "ICOS"
+  },
+  "UK-Gwr": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-Gwr",
+   "source": "ICOS"
+  },
+  "UK-HgF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-HgF",
+   "source": "ICOS"
+  },
+  "UK-HpF": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_UK-HpF",
+   "source": "ICOS"
+  },
+  "US-A03": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-A03",
+   "source": "AmeriFlux"
+  },
+  "US-A10": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-A10",
+   "source": "AmeriFlux"
+  },
+  "US-A32": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-A32",
+   "source": "AmeriFlux"
+  },
+  "US-A37": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-A37",
+   "source": "AmeriFlux"
+  },
+  "US-A39": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-A39",
+   "source": "AmeriFlux"
+  },
+  "US-A74": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-A74",
+   "source": "AmeriFlux"
+  },
+  "US-ABa": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ABa",
+   "source": "AmeriFlux"
+  },
+  "US-ABb": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ABb",
+   "source": "AmeriFlux"
+  },
+  "US-ABc": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ABc",
+   "source": "AmeriFlux"
+  },
+  "US-ABd": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ABd",
+   "source": "AmeriFlux"
+  },
+  "US-ABe": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ABe",
+   "source": "AmeriFlux"
+  },
+  "US-ADR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ADR",
+   "source": "AmeriFlux"
+  },
+  "US-ALQ": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ALQ",
+   "source": "AmeriFlux"
+  },
+  "US-AMS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-AMS",
+   "source": "AmeriFlux"
+  },
+  "US-AR1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-AR1",
+   "source": "AmeriFlux"
+  },
+  "US-AR2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-AR2",
+   "source": "AmeriFlux"
+  },
+  "US-ARM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ARM",
+   "source": "AmeriFlux"
+  },
+  "US-ARb": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ARb",
+   "source": "AmeriFlux"
+  },
+  "US-ARc": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ARc",
+   "source": "AmeriFlux"
+  },
+  "US-ASH": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ASH",
+   "source": "AmeriFlux"
+  },
+  "US-ASM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ASM",
+   "source": "AmeriFlux"
+  },
+  "US-Act": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Act",
+   "source": "AmeriFlux"
+  },
+  "US-Akn": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Akn",
+   "source": "AmeriFlux"
+  },
+  "US-Atq": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Atq",
+   "source": "AmeriFlux"
+  },
+  "US-Aud": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Aud",
+   "source": "AmeriFlux"
+  },
+  "US-BRG": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-BRG",
+   "source": "AmeriFlux"
+  },
+  "US-BZB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-BZB",
+   "source": "AmeriFlux"
+  },
+  "US-BZF": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-BZF",
+   "source": "AmeriFlux"
+  },
+  "US-BZS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-BZS",
+   "source": "AmeriFlux"
+  },
+  "US-BZo": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-BZo",
+   "source": "AmeriFlux"
+  },
+  "US-Bar": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Bar",
+   "source": "AmeriFlux"
+  },
+  "US-Beo": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Beo",
+   "source": "AmeriFlux"
+  },
+  "US-Bes": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Bes",
+   "source": "AmeriFlux"
+  },
+  "US-Bi1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Bi1",
+   "source": "AmeriFlux"
+  },
+  "US-Bi2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Bi2",
+   "source": "AmeriFlux"
+  },
+  "US-CAK": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CAK",
+   "source": "AmeriFlux"
+  },
+  "US-CF1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CF1",
+   "source": "AmeriFlux"
+  },
+  "US-CF2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CF2",
+   "source": "AmeriFlux"
+  },
+  "US-CF3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CF3",
+   "source": "AmeriFlux"
+  },
+  "US-CF4": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CF4",
+   "source": "AmeriFlux"
+  },
+  "US-CGG": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CGG",
+   "source": "AmeriFlux"
+  },
+  "US-CLF": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CLF",
+   "source": "AmeriFlux"
+  },
+  "US-CMW": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CMW",
+   "source": "AmeriFlux"
+  },
+  "US-CRK": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CRK",
+   "source": "AmeriFlux"
+  },
+  "US-CRT": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CRT",
+   "source": "AmeriFlux"
+  },
+  "US-CS1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CS1",
+   "source": "AmeriFlux"
+  },
+  "US-CS2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CS2",
+   "source": "AmeriFlux"
+  },
+  "US-CS3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CS3",
+   "source": "AmeriFlux"
+  },
+  "US-CS4": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CS4",
+   "source": "AmeriFlux"
+  },
+  "US-CS5": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CS5",
+   "source": "AmeriFlux"
+  },
+  "US-CS6": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CS6",
+   "source": "AmeriFlux"
+  },
+  "US-CS8": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CS8",
+   "source": "AmeriFlux"
+  },
+  "US-CdM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-CdM",
+   "source": "AmeriFlux"
+  },
+  "US-Ced": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ced",
+   "source": "AmeriFlux"
+  },
+  "US-ChR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ChR",
+   "source": "AmeriFlux"
+  },
+  "US-Cms": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Cms",
+   "source": "AmeriFlux"
+  },
+  "US-Cop": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Cop",
+   "source": "AmeriFlux"
+  },
+  "US-Cst": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Cst",
+   "source": "AmeriFlux"
+  },
+  "US-Cwt": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Cwt",
+   "source": "AmeriFlux"
+  },
+  "US-DBk": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-DBk",
+   "source": "AmeriFlux"
+  },
+  "US-DFC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-DFC",
+   "source": "AmeriFlux"
+  },
+  "US-DFK": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-DFK",
+   "source": "AmeriFlux"
+  },
+  "US-DPW": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-DPW",
+   "source": "AmeriFlux"
+  },
+  "US-DS1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-DS1",
+   "source": "AmeriFlux"
+  },
+  "US-DS2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-DS2",
+   "source": "AmeriFlux"
+  },
+  "US-DS3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-DS3",
+   "source": "AmeriFlux"
+  },
+  "US-Dix": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Dix",
+   "source": "AmeriFlux"
+  },
+  "US-Dk1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Dk1",
+   "source": "AmeriFlux"
+  },
+  "US-Dk2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Dk2",
+   "source": "AmeriFlux"
+  },
+  "US-Dk3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Dk3",
+   "source": "AmeriFlux"
+  },
+  "US-Dmg": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Dmg",
+   "source": "AmeriFlux"
+  },
+  "US-EA4": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-EA4",
+   "source": "AmeriFlux"
+  },
+  "US-EA5": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-EA5",
+   "source": "AmeriFlux"
+  },
+  "US-EA6": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-EA6",
+   "source": "AmeriFlux"
+  },
+  "US-EDN": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-EDN",
+   "source": "AmeriFlux"
+  },
+  "US-EKH": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-EKH",
+   "source": "AmeriFlux"
+  },
+  "US-EKN": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-EKN",
+   "source": "AmeriFlux"
+  },
+  "US-EKP": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-EKP",
+   "source": "AmeriFlux"
+  },
+  "US-EML": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-EML",
+   "source": "AmeriFlux"
+  },
+  "US-Elm": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Elm",
+   "source": "AmeriFlux"
+  },
+  "US-Esm": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Esm",
+   "source": "AmeriFlux"
+  },
+  "US-EvM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-EvM",
+   "source": "AmeriFlux"
+  },
+  "US-Fcr": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Fcr",
+   "source": "AmeriFlux"
+  },
+  "US-Fmf": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Fmf",
+   "source": "AmeriFlux"
+  },
+  "US-Fo1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Fo1",
+   "source": "AmeriFlux"
+  },
+  "US-Fo2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Fo2",
+   "source": "AmeriFlux"
+  },
+  "US-Fuf": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Fuf",
+   "source": "AmeriFlux"
+  },
+  "US-Fwf": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Fwf",
+   "source": "AmeriFlux"
+  },
+  "US-GLE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-GLE",
+   "source": "AmeriFlux"
+  },
+  "US-HB1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-HB1",
+   "source": "AmeriFlux"
+  },
+  "US-HB2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-HB2",
+   "source": "AmeriFlux"
+  },
+  "US-HB3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-HB3",
+   "source": "AmeriFlux"
+  },
+  "US-HB4": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-HB4",
+   "source": "AmeriFlux"
+  },
+  "US-HBK": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-HBK",
+   "source": "AmeriFlux"
+  },
+  "US-HRA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-HRA",
+   "source": "AmeriFlux"
+  },
+  "US-HRC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-HRC",
+   "source": "AmeriFlux"
+  },
+  "US-HVs": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-HVs",
+   "source": "AmeriFlux"
+  },
+  "US-HWB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-HWB",
+   "source": "AmeriFlux"
+  },
+  "US-Ha1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ha1",
+   "source": "AmeriFlux"
+  },
+  "US-Hn2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Hn2",
+   "source": "AmeriFlux"
+  },
+  "US-Hn3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Hn3",
+   "source": "AmeriFlux"
+  },
+  "US-Ho1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ho1",
+   "source": "AmeriFlux"
+  },
+  "US-Ho2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ho2",
+   "source": "AmeriFlux"
+  },
+  "US-Ho3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ho3",
+   "source": "AmeriFlux"
+  },
+  "US-Hsm": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Hsm",
+   "source": "AmeriFlux"
+  },
+  "US-IAB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-IAB",
+   "source": "AmeriFlux"
+  },
+  "US-IAC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-IAC",
+   "source": "AmeriFlux"
+  },
+  "US-IAM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-IAM",
+   "source": "AmeriFlux"
+  },
+  "US-ICh": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ICh",
+   "source": "AmeriFlux"
+  },
+  "US-ICs": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ICs",
+   "source": "AmeriFlux"
+  },
+  "US-ICt": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ICt",
+   "source": "AmeriFlux"
+  },
+  "US-Ivo": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ivo",
+   "source": "AmeriFlux"
+  },
+  "US-JRn": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-JRn",
+   "source": "AmeriFlux"
+  },
+  "US-Jo1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Jo1",
+   "source": "AmeriFlux"
+  },
+  "US-Jo2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Jo2",
+   "source": "AmeriFlux"
+  },
+  "US-KFS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-KFS",
+   "source": "AmeriFlux"
+  },
+  "US-KLS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-KLS",
+   "source": "AmeriFlux"
+  },
+  "US-KPL": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-KPL",
+   "source": "AmeriFlux"
+  },
+  "US-KS1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-KS1",
+   "source": "AmeriFlux"
+  },
+  "US-KS2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-KS2",
+   "source": "AmeriFlux"
+  },
+  "US-KS3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-KS3",
+   "source": "AmeriFlux"
+  },
+  "US-Kon": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Kon",
+   "source": "AmeriFlux"
+  },
+  "US-LA1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-LA1",
+   "source": "AmeriFlux"
+  },
+  "US-LA2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-LA2",
+   "source": "AmeriFlux"
+  },
+  "US-LA3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-LA3",
+   "source": "AmeriFlux"
+  },
+  "US-LS1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-LS1",
+   "source": "AmeriFlux"
+  },
+  "US-LS2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-LS2",
+   "source": "AmeriFlux"
+  },
+  "US-Lin": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Lin",
+   "source": "AmeriFlux"
+  },
+  "US-Los": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Los",
+   "source": "AmeriFlux"
+  },
+  "US-MAC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MAC",
+   "source": "AmeriFlux"
+  },
+  "US-MBP": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MBP",
+   "source": "AmeriFlux"
+  },
+  "US-MEF": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MEF",
+   "source": "AmeriFlux"
+  },
+  "US-MMS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MMS",
+   "source": "AmeriFlux"
+  },
+  "US-MN1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MN1",
+   "source": "AmeriFlux"
+  },
+  "US-MN2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MN2",
+   "source": "AmeriFlux"
+  },
+  "US-MN3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MN3",
+   "source": "AmeriFlux"
+  },
+  "US-MOz": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MOz",
+   "source": "AmeriFlux"
+  },
+  "US-MRM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MRM",
+   "source": "AmeriFlux"
+  },
+  "US-MZA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MZA",
+   "source": "AmeriFlux"
+  },
+  "US-Me1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Me1",
+   "source": "AmeriFlux"
+  },
+  "US-Me3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Me3",
+   "source": "AmeriFlux"
+  },
+  "US-Me5": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Me5",
+   "source": "AmeriFlux"
+  },
+  "US-Me6": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Me6",
+   "source": "AmeriFlux"
+  },
+  "US-Me7": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Me7",
+   "source": "AmeriFlux"
+  },
+  "US-Mo1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Mo1",
+   "source": "AmeriFlux"
+  },
+  "US-Mo2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Mo2",
+   "source": "AmeriFlux"
+  },
+  "US-Mo3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Mo3",
+   "source": "AmeriFlux"
+  },
+  "US-Mpj": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Mpj",
+   "source": "AmeriFlux"
+  },
+  "US-MtB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-MtB",
+   "source": "AmeriFlux"
+  },
+  "US-Myb": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Myb",
+   "source": "AmeriFlux"
+  },
+  "US-NC1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NC1",
+   "source": "AmeriFlux"
+  },
+  "US-NC2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NC2",
+   "source": "AmeriFlux"
+  },
+  "US-NC3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NC3",
+   "source": "AmeriFlux"
+  },
+  "US-NC4": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NC4",
+   "source": "AmeriFlux"
+  },
+  "US-NC5": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NC5",
+   "source": "AmeriFlux"
+  },
+  "US-NGB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NGB",
+   "source": "AmeriFlux"
+  },
+  "US-NGC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NGC",
+   "source": "AmeriFlux"
+  },
+  "US-NR1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NR1",
+   "source": "AmeriFlux"
+  },
+  "US-NR3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NR3",
+   "source": "AmeriFlux"
+  },
+  "US-NSa": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NSa",
+   "source": "AmeriFlux"
+  },
+  "US-NSb": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-NSb",
+   "source": "AmeriFlux"
+  },
+  "US-Ne1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ne1",
+   "source": "AmeriFlux"
+  },
+  "US-Ne2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ne2",
+   "source": "AmeriFlux"
+  },
+  "US-Ne3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ne3",
+   "source": "AmeriFlux"
+  },
+  "US-ONA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ONA",
+   "source": "AmeriFlux"
+  },
+  "US-OPE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-OPE",
+   "source": "AmeriFlux"
+  },
+  "US-ORv": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ORv",
+   "source": "AmeriFlux"
+  },
+  "US-OWC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-OWC",
+   "source": "AmeriFlux"
+  },
+  "US-Oho": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Oho",
+   "source": "AmeriFlux"
+  },
+  "US-PAS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PAS",
+   "source": "AmeriFlux"
+  },
+  "US-PFL": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFL",
+   "source": "AmeriFlux"
+  },
+  "US-PFa": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFa",
+   "source": "AmeriFlux"
+  },
+  "US-PFb": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFb",
+   "source": "AmeriFlux"
+  },
+  "US-PFc": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFc",
+   "source": "AmeriFlux"
+  },
+  "US-PFd": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFd",
+   "source": "AmeriFlux"
+  },
+  "US-PFf": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFf",
+   "source": "AmeriFlux"
+  },
+  "US-PFg": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFg",
+   "source": "AmeriFlux"
+  },
+  "US-PFh": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFh",
+   "source": "AmeriFlux"
+  },
+  "US-PFi": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFi",
+   "source": "AmeriFlux"
+  },
+  "US-PFj": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFj",
+   "source": "AmeriFlux"
+  },
+  "US-PFk": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFk",
+   "source": "AmeriFlux"
+  },
+  "US-PFm": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFm",
+   "source": "AmeriFlux"
+  },
+  "US-PFn": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFn",
+   "source": "AmeriFlux"
+  },
+  "US-PFp": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFp",
+   "source": "AmeriFlux"
+  },
+  "US-PFq": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFq",
+   "source": "AmeriFlux"
+  },
+  "US-PFr": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFr",
+   "source": "AmeriFlux"
+  },
+  "US-PFt": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PFt",
+   "source": "AmeriFlux"
+  },
+  "US-PLo": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PLo",
+   "source": "AmeriFlux"
+  },
+  "US-PSH": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PSH",
+   "source": "AmeriFlux"
+  },
+  "US-PSL": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-PSL",
+   "source": "AmeriFlux"
+  },
+  "US-Prr": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Prr",
+   "source": "AmeriFlux"
+  },
+  "US-RC1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RC1",
+   "source": "AmeriFlux"
+  },
+  "US-RC2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RC2",
+   "source": "AmeriFlux"
+  },
+  "US-RC3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RC3",
+   "source": "AmeriFlux"
+  },
+  "US-RC4": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RC4",
+   "source": "AmeriFlux"
+  },
+  "US-RC5": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RC5",
+   "source": "AmeriFlux"
+  },
+  "US-RGA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RGA",
+   "source": "AmeriFlux"
+  },
+  "US-RGB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RGB",
+   "source": "AmeriFlux"
+  },
+  "US-RGF": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RGF",
+   "source": "AmeriFlux"
+  },
+  "US-RGW": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RGW",
+   "source": "AmeriFlux"
+  },
+  "US-RGo": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RGo",
+   "source": "AmeriFlux"
+  },
+  "US-RRC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-RRC",
+   "source": "AmeriFlux"
+  },
+  "US-Rls": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Rls",
+   "source": "AmeriFlux"
+  },
+  "US-Rms": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Rms",
+   "source": "AmeriFlux"
+  },
+  "US-Ro1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ro1",
+   "source": "AmeriFlux"
+  },
+  "US-Ro2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ro2",
+   "source": "AmeriFlux"
+  },
+  "US-Ro3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ro3",
+   "source": "AmeriFlux"
+  },
+  "US-Ro4": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ro4",
+   "source": "AmeriFlux"
+  },
+  "US-Ro5": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ro5",
+   "source": "AmeriFlux"
+  },
+  "US-Ro6": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ro6",
+   "source": "AmeriFlux"
+  },
+  "US-Rpf": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Rpf",
+   "source": "AmeriFlux"
+  },
+  "US-Rwe": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Rwe",
+   "source": "AmeriFlux"
+  },
+  "US-Rwf": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Rwf",
+   "source": "AmeriFlux"
+  },
+  "US-Rws": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Rws",
+   "source": "AmeriFlux"
+  },
+  "US-SD1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-SD1",
+   "source": "AmeriFlux"
+  },
+  "US-SD2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-SD2",
+   "source": "AmeriFlux"
+  },
+  "US-SHC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-SHC",
+   "source": "AmeriFlux"
+  },
+  "US-SP1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-SP1",
+   "source": "AmeriFlux"
+  },
+  "US-SRC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-SRC",
+   "source": "AmeriFlux"
+  },
+  "US-SRG": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-SRG",
+   "source": "AmeriFlux"
+  },
+  "US-SRM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-SRM",
+   "source": "AmeriFlux"
+  },
+  "US-SRS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-SRS",
+   "source": "AmeriFlux"
+  },
+  "US-SSH": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-SSH",
+   "source": "AmeriFlux"
+  },
+  "US-Sag": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Sag",
+   "source": "AmeriFlux"
+  },
+  "US-Seg": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Seg",
+   "source": "AmeriFlux"
+  },
+  "US-Ses": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ses",
+   "source": "AmeriFlux"
+  },
+  "US-Slt": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Slt",
+   "source": "AmeriFlux"
+  },
+  "US-Snd": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Snd",
+   "source": "AmeriFlux"
+  },
+  "US-Sne": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Sne",
+   "source": "AmeriFlux"
+  },
+  "US-Snf": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Snf",
+   "source": "AmeriFlux"
+  },
+  "US-Srr": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Srr",
+   "source": "AmeriFlux"
+  },
+  "US-StJ": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-StJ",
+   "source": "AmeriFlux"
+  },
+  "US-Sta": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Sta",
+   "source": "AmeriFlux"
+  },
+  "US-Syv": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Syv",
+   "source": "AmeriFlux"
+  },
+  "US-TKs": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-TKs",
+   "source": "AmeriFlux"
+  },
+  "US-TLR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-TLR",
+   "source": "AmeriFlux"
+  },
+  "US-TaS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-TaS",
+   "source": "AmeriFlux"
+  },
+  "US-Ton": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Ton",
+   "source": "AmeriFlux"
+  },
+  "US-TrB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-TrB",
+   "source": "AmeriFlux"
+  },
+  "US-TrS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-TrS",
+   "source": "AmeriFlux"
+  },
+  "US-Tur": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Tur",
+   "source": "AmeriFlux"
+  },
+  "US-Tw1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Tw1",
+   "source": "AmeriFlux"
+  },
+  "US-Tw2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Tw2",
+   "source": "AmeriFlux"
+  },
+  "US-Tw3": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Tw3",
+   "source": "AmeriFlux"
+  },
+  "US-Tw4": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Tw4",
+   "source": "AmeriFlux"
+  },
+  "US-Tw5": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Tw5",
+   "source": "AmeriFlux"
+  },
+  "US-Twt": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Twt",
+   "source": "AmeriFlux"
+  },
+  "US-UC1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UC1",
+   "source": "AmeriFlux"
+  },
+  "US-UC2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UC2",
+   "source": "AmeriFlux"
+  },
+  "US-UMd": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UMd",
+   "source": "AmeriFlux"
+  },
+  "US-UTB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UTB",
+   "source": "AmeriFlux"
+  },
+  "US-UTD": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UTD",
+   "source": "AmeriFlux"
+  },
+  "US-UTE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UTE",
+   "source": "AmeriFlux"
+  },
+  "US-UTJ": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UTJ",
+   "source": "AmeriFlux"
+  },
+  "US-UTL": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UTL",
+   "source": "AmeriFlux"
+  },
+  "US-UTM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UTM",
+   "source": "AmeriFlux"
+  },
+  "US-UTP": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UTP",
+   "source": "AmeriFlux"
+  },
+  "US-UTV": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UTV",
+   "source": "AmeriFlux"
+  },
+  "US-UTW": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UTW",
+   "source": "AmeriFlux"
+  },
+  "US-Uaf": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Uaf",
+   "source": "AmeriFlux"
+  },
+  "US-UiA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UiA",
+   "source": "AmeriFlux"
+  },
+  "US-UiB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UiB",
+   "source": "AmeriFlux"
+  },
+  "US-UiC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UiC",
+   "source": "AmeriFlux"
+  },
+  "US-UiD": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UiD",
+   "source": "AmeriFlux"
+  },
+  "US-UiE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UiE",
+   "source": "AmeriFlux"
+  },
+  "US-UiF": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UiF",
+   "source": "AmeriFlux"
+  },
+  "US-UiG": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-UiG",
+   "source": "AmeriFlux"
+  },
+  "US-VT1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-VT1",
+   "source": "AmeriFlux"
+  },
+  "US-VT2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-VT2",
+   "source": "AmeriFlux"
+  },
+  "US-Var": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Var",
+   "source": "AmeriFlux"
+  },
+  "US-Vcm": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Vcm",
+   "source": "AmeriFlux"
+  },
+  "US-Vcp": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Vcp",
+   "source": "AmeriFlux"
+  },
+  "US-WCr": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-WCr",
+   "source": "AmeriFlux"
+  },
+  "US-WPT": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-WPT",
+   "source": "AmeriFlux"
+  },
+  "US-WT1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-WT1",
+   "source": "AmeriFlux"
+  },
+  "US-Whs": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Whs",
+   "source": "AmeriFlux"
+  },
+  "US-Wjs": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Wjs",
+   "source": "AmeriFlux"
+  },
+  "US-Wkg": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-Wkg",
+   "source": "AmeriFlux"
+  },
+  "US-YK1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-YK1",
+   "source": "AmeriFlux"
+  },
+  "US-YK2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-YK2",
+   "source": "AmeriFlux"
+  },
+  "US-ZF1": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ZF1",
+   "source": "AmeriFlux"
+  },
+  "US-ZF2": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-ZF2",
+   "source": "AmeriFlux"
+  },
+  "US-xAB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xAB",
+   "source": "AmeriFlux"
+  },
+  "US-xAE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xAE",
+   "source": "AmeriFlux"
+  },
+  "US-xBA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xBA",
+   "source": "AmeriFlux"
+  },
+  "US-xBL": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xBL",
+   "source": "AmeriFlux"
+  },
+  "US-xBN": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xBN",
+   "source": "AmeriFlux"
+  },
+  "US-xBR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xBR",
+   "source": "AmeriFlux"
+  },
+  "US-xCL": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xCL",
+   "source": "AmeriFlux"
+  },
+  "US-xCP": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xCP",
+   "source": "AmeriFlux"
+  },
+  "US-xDC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xDC",
+   "source": "AmeriFlux"
+  },
+  "US-xDJ": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xDJ",
+   "source": "AmeriFlux"
+  },
+  "US-xDL": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xDL",
+   "source": "AmeriFlux"
+  },
+  "US-xDS": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xDS",
+   "source": "AmeriFlux"
+  },
+  "US-xGR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xGR",
+   "source": "AmeriFlux"
+  },
+  "US-xHA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xHA",
+   "source": "AmeriFlux"
+  },
+  "US-xHE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xHE",
+   "source": "AmeriFlux"
+  },
+  "US-xJE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xJE",
+   "source": "AmeriFlux"
+  },
+  "US-xJR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xJR",
+   "source": "AmeriFlux"
+  },
+  "US-xKA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xKA",
+   "source": "AmeriFlux"
+  },
+  "US-xKZ": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xKZ",
+   "source": "AmeriFlux"
+  },
+  "US-xLE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xLE",
+   "source": "AmeriFlux"
+  },
+  "US-xMB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xMB",
+   "source": "AmeriFlux"
+  },
+  "US-xML": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xML",
+   "source": "AmeriFlux"
+  },
+  "US-xNG": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xNG",
+   "source": "AmeriFlux"
+  },
+  "US-xNQ": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xNQ",
+   "source": "AmeriFlux"
+  },
+  "US-xNW": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xNW",
+   "source": "AmeriFlux"
+  },
+  "US-xPU": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xPU",
+   "source": "AmeriFlux"
+  },
+  "US-xRM": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xRM",
+   "source": "AmeriFlux"
+  },
+  "US-xRN": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xRN",
+   "source": "AmeriFlux"
+  },
+  "US-xSB": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xSB",
+   "source": "AmeriFlux"
+  },
+  "US-xSC": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xSC",
+   "source": "AmeriFlux"
+  },
+  "US-xSE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xSE",
+   "source": "AmeriFlux"
+  },
+  "US-xSJ": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xSJ",
+   "source": "AmeriFlux"
+  },
+  "US-xSL": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xSL",
+   "source": "AmeriFlux"
+  },
+  "US-xSP": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xSP",
+   "source": "AmeriFlux"
+  },
+  "US-xSR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xSR",
+   "source": "AmeriFlux"
+  },
+  "US-xST": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xST",
+   "source": "AmeriFlux"
+  },
+  "US-xTA": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xTA",
+   "source": "AmeriFlux"
+  },
+  "US-xTE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xTE",
+   "source": "AmeriFlux"
+  },
+  "US-xTL": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xTL",
+   "source": "AmeriFlux"
+  },
+  "US-xTR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xTR",
+   "source": "AmeriFlux"
+  },
+  "US-xUK": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xUK",
+   "source": "AmeriFlux"
+  },
+  "US-xUN": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xUN",
+   "source": "AmeriFlux"
+  },
+  "US-xWD": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xWD",
+   "source": "AmeriFlux"
+  },
+  "US-xWR": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xWR",
+   "source": "AmeriFlux"
+  },
+  "US-xYE": {
+   "url": "https://ameriflux.lbl.gov/sites/siteinfo/US-xYE",
+   "source": "AmeriFlux"
+  },
+  "VU-Coc": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_VU-Coc",
+   "source": "ICOS"
+  },
+  "ZA-BfK": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ZA-BfK",
+   "source": "ICOS"
+  },
+  "ZA-BfS": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ZA-BfS",
+   "source": "ICOS"
+  },
+  "ZA-Jks": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ZA-Jks",
+   "source": "ICOS"
+  },
+  "ZA-Spk": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ZA-Spk",
+   "source": "ICOS"
+  },
+  "ZA-Uby": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ZA-Uby",
+   "source": "ICOS"
+  },
+  "ZM-Mon": {
+   "url": "https://meta.icos-cp.eu/resources/stations/ES_ZM-Mon",
+   "source": "ICOS"
+  },
+  "AU-ASM": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-ASM",
+   "source": "FLUXNET"
+  },
+  "AU-Ade": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Ade",
+   "source": "FLUXNET"
+  },
+  "AU-Cpr": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Cpr",
+   "source": "FLUXNET"
+  },
+  "AU-Cum": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Cum",
+   "source": "FLUXNET"
+  },
+  "AU-DaP": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-DaP",
+   "source": "FLUXNET"
+  },
+  "AU-DaS": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-DaS",
+   "source": "FLUXNET"
+  },
+  "AU-Dry": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Dry",
+   "source": "FLUXNET"
+  },
+  "AU-Emr": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Emr",
+   "source": "FLUXNET"
+  },
+  "AU-Fog": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Fog",
+   "source": "FLUXNET"
+  },
+  "AU-Gin": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Gin",
+   "source": "FLUXNET"
+  },
+  "AU-How": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-How",
+   "source": "FLUXNET"
+  },
+  "AU-Lox": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Lox",
+   "source": "FLUXNET"
+  },
+  "AU-RDF": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-RDF",
+   "source": "FLUXNET"
+  },
+  "AU-Rig": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Rig",
+   "source": "FLUXNET"
+  },
+  "AU-Rob": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Rob",
+   "source": "FLUXNET"
+  },
+  "AU-Stp": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Stp",
+   "source": "FLUXNET"
+  },
+  "AU-TTE": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-TTE",
+   "source": "FLUXNET"
+  },
+  "AU-Tum": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Tum",
+   "source": "FLUXNET"
+  },
+  "AU-Wac": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Wac",
+   "source": "FLUXNET"
+  },
+  "AU-Whr": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Whr",
+   "source": "FLUXNET"
+  },
+  "AU-Wom": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Wom",
+   "source": "FLUXNET"
+  },
+  "AU-Ync": {
+   "url": "https://fluxnet.org/sites/siteinfo/AU-Ync",
+   "source": "FLUXNET"
+  },
+  "CN-Hgu": {
+   "url": "https://fluxnet.org/sites/siteinfo/CN-Hgu",
+   "source": "FLUXNET"
+  },
+  "IT-Cas": {
+   "url": "https://fluxnet.org/sites/siteinfo/IT-Cas",
+   "source": "FLUXNET"
+  },
+  "JP-SwL": {
+   "url": "https://fluxnet.org/sites/siteinfo/JP-SwL",
+   "source": "FLUXNET"
+  },
+  "MY-MLM": {
+   "url": "https://fluxnet.org/sites/siteinfo/MY-MLM",
+   "source": "FLUXNET"
+  },
+  "NL-Hor": {
+   "url": "https://fluxnet.org/sites/siteinfo/NL-Hor",
+   "source": "FLUXNET"
+  },
+  "NZ-Kop": {
+   "url": "https://fluxnet.org/sites/siteinfo/NZ-Kop",
+   "source": "FLUXNET"
+  },
+  "PH-RiF": {
+   "url": "https://fluxnet.org/sites/siteinfo/PH-RiF",
+   "source": "FLUXNET"
+  },
+  "RU-Cok": {
+   "url": "https://fluxnet.org/sites/siteinfo/RU-Cok",
+   "source": "FLUXNET"
+  },
+  "UK-LBT": {
+   "url": "https://fluxnet.org/sites/siteinfo/UK-LBT",
+   "source": "FLUXNET"
+  }
+ }
+}

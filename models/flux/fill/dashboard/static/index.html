@@ -86,6 +86,7 @@
   <p>A window is 180 days of one site at half-hourly resolution. Only measured values are ever scored. Test sites,
   held-out years and masks are fixed before any model is fitted. Specification:
   <a href="https://github.com/legel/deepearth/blob/main/models/flux/fill/docs/BENCHMARK.md">BENCHMARK.md</a>.</p>
+  <div id="bm-data"></div>
   <h3>Regimes</h3>
   <table><tbody>
     <tr><th>R1</th><td>Gap inside a record at a test site: the window's unmasked observations are visible.</td></tr>
@@ -130,8 +131,8 @@
   </div>
   <div class="controls">
     <div class="seg" role="radiogroup" aria-label="Site split" id="w-split">
-      <button role="radio" data-split="test" aria-checked="true">Test towers</button>
-      <button role="radio" data-split="validation" aria-checked="false">Validation towers</button>
+      <button role="radio" data-split="validation" aria-checked="true">Validation towers</button>
+      <button role="radio" data-split="test" aria-checked="false">Test towers</button>
     </div>
     <label>Tower<select id="w-site"></select></label>
     <label>Window<select id="w-win"></select></label>
@@ -148,6 +149,7 @@
   <div class="controls"><div class="seg" role="radiogroup" aria-label="Site split" id="r-split">
     <button role="radio" data-split="validation" aria-checked="true">Validation sites</button>
     <button role="radio" data-split="test" aria-checked="false">Test sites</button>
+    <button role="radio" data-split="methane" aria-checked="false">Methane sites</button>
   </div></div>
   <p class="scope" id="r-scope"></p>
   <div id="r-findings"></div>
@@ -188,6 +190,7 @@
 
 <footer class="foot">&copy; 2026 Ecological Intelligence, Inc.</footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="benchmark.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
