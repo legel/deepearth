@@ -1,5 +1,7 @@
 """Unit tests of FluxFill tokens, masks, heads and the no-leak property, on a synthetic site."""
 
+import math
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -213,6 +215,27 @@ def test_memory_excludes_window_years_and_matches_bench_path():
     m3 = memory_from_table(ctx, rec.t0, st, rec.t0 + pd.Timedelta(days=d))
     for a, b in zip(m1, m3):
         assert np.allclose(a.astype(np.float32), b, atol=2e-3)
+
+
+def test_window_memory_direct_equals_cached_tables():
+    """The compiled direct memory (sampler fast_memory) equals the cached day-of-year tables: windows across year
+    boundaries, a leap year, a never-used (held-out) year and windows inside it."""
+    from sampler import WindowSampler
+    rec = synthetic_record(days=1500)            # 2016 (leap) .. 2020-02
+    rec.heldout_year = 2018
+    st = stats_of(rec)
+    a = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True)
+    a._mem["XX-Syn"] = __import__("memory").SiteMemory(rec, [2018])
+    b = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True, fast_memory=True)
+    b._mem["XX-Syn"] = a._mem["XX-Syn"]
+    n_diff = n_tot = 0
+    for d in (0, 1, 200, 280, 330, 365, 366, 600, 731, 800, 1000, 1300):
+        x, y = a.window_memory("XX-Syn", d), b.window_memory("XX-Syn", d)
+        assert (x[2] == y[2]).all()
+        for u, v in zip(x[:2], y[:2]):
+            assert np.allclose(u, v, rtol=1e-3, atol=1e-6)        # at most one float16 unit
+            n_diff += int((u != v).sum()); n_tot += u.size
+    assert n_diff <= 1e-4 * n_tot
 
 
 def test_memory_mean_is_climatology_pool_mean():
@@ -557,7 +580,8 @@ def test_memory_skew_fluxes_only_ignores_other_rows():
 
 
 @pytest.mark.parametrize("option", [dict(driver_anomaly=True), dict(memory_skew=True), dict(memory_skew_fluxes_only=True),
-                                    dict(driver_anomaly=True, memory_skew_fluxes_only=True)])
+                                    dict(driver_anomaly=True, memory_skew_fluxes_only=True), dict(year_anomaly=True),
+                                    dict(sinr_place=0), dict(sinr_place=4)])
 def test_option_arms_start_from_the_base_weights(option):
     """An A/B arm with an option has exactly the base model's initial weights (and output) at the same seed."""
     base = dict(d=32, depth=2, heads=4, memory=True, mem_residual=True, gated_base=True, gate_scale=True, img_nll=True,
@@ -567,7 +591,8 @@ def test_option_arms_start_from_the_base_weights(option):
     sa, sb = A.state_dict(), B.state_dict()
     assert all(torch.equal(sa[k], sb[k]) for k in sa)                      # every base tensor equal
     extra = [k for k in sb if k not in sa]
-    assert extra and all(torch.count_nonzero(sb[k]) == 0 for k in extra)   # option parameters start at zero
+    zeroed = [k for k in extra if not k.startswith("place.") or k.startswith("place.out.")]   # SINR: output layer
+    assert extra and zeroed and all(torch.count_nonzero(sb[k]) == 0 for k in zeroed)   # option output starts at zero
     rec = synthetic_record(days=1500); st = stats_of(rec)
     from sampler import WindowSampler
     smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True, memory_skew=True)
@@ -576,3 +601,177 @@ def test_option_arms_start_from_the_base_weights(option):
     with torch.no_grad():
         for x, y in zip(A(b)[1], B(b)[1]):
             assert torch.allclose(x, y, atol=1e-6)
+
+
+def test_scale_anchor_same_weights_scales_by_memory_sd():
+    """E27: the arm has the base weights (no parameters); scales are the base scales times (mem_s + floor) where
+    memory exists and (1 + floor) where it does not; locations, df and weights unchanged."""
+    from net import SCALE_FLOOR
+    from sampler import WindowSampler
+    base = dict(d=32, depth=2, heads=4, memory=True, mem_residual=True, gated_base=True, gate_scale=True, img_nll=True,
+                edge_continue=True)
+    torch.manual_seed(0); A = FluxFillNet(**base).eval()
+    torch.manual_seed(0); B = FluxFillNet(**base, scale_anchor=True).eval()
+    sa, sb = A.state_dict(), B.state_dict()
+    assert sa.keys() == sb.keys() and all(torch.equal(sa[k], sb[k]) for k in sa)
+    rec = synthetic_record(days=1500); st = stats_of(rec)
+    smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True)
+    hide = np.zeros((V_TAB, T_WIN), bool); hide[IS_TOWER, 2000:2100] = True
+    b = collate([make_example(rec, 400, st, hide, np.zeros(180, bool), None, smp.window_memory("XX-Syn", 400))])
+    b["mem_h"][:, :, :20] = False                                          # some days without memory
+    with torch.no_grad():
+        pa, pb = A(b)[1], B(b)[1]
+    s = torch.where(b["mem_h"], b["mem_s"], torch.ones_like(b["mem_s"])) + SCALE_FLOOR
+    assert torch.allclose(pb[1], pa[1] * s[..., None], rtol=1e-5)
+    for i in (0, 2, 3):
+        assert torch.equal(pa[i], pb[i])
+
+
+def test_scale_anchor_fch4_scales_only_the_fch4_row():
+    """E33: same weights as the base; the FCH4 row's scales are multiplied by (mem_s + floor) where memory exists and
+    (1 + floor) where it does not; every other row, and locations, df and weights, unchanged."""
+    from data import VARS
+    from net import SCALE_FLOOR
+    from sampler import WindowSampler
+    base = dict(d=32, depth=2, heads=4, memory=True, mem_residual=True, gated_base=True, gate_scale=True, img_nll=True,
+                edge_continue=True)
+    torch.manual_seed(0); A = FluxFillNet(**base).eval()
+    torch.manual_seed(0); B = FluxFillNet(**base, scale_anchor_fch4=True).eval()
+    sa, sb = A.state_dict(), B.state_dict()
+    assert sa.keys() == sb.keys() and all(torch.equal(sa[k], sb[k]) for k in sa)
+    rec = synthetic_record(days=1500); st = stats_of(rec)
+    smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True)
+    hide = np.zeros((V_TAB, T_WIN), bool); hide[IS_TOWER, 2000:2100] = True
+    b = collate([make_example(rec, 400, st, hide, np.zeros(180, bool), None, smp.window_memory("XX-Syn", 400))])
+    b["mem_h"][:, :, :20] = False
+    with torch.no_grad():
+        pa, pb = A(b)[1], B(b)[1]
+    f = VARS.index("FCH4")
+    s = torch.where(b["mem_h"], b["mem_s"], torch.ones_like(b["mem_s"])) + SCALE_FLOOR
+    assert torch.allclose(pb[1][:, f], pa[1][:, f] * s[:, f, ..., None], rtol=1e-5)
+    other = [i for i in range(V_TAB) if i != f]
+    assert torch.equal(pa[1][:, other], pb[1][:, other])
+    for i in (0, 2, 3):
+        assert torch.equal(pa[i], pb[i])
+
+
+def test_year_anomaly_formula_and_no_leak():
+    """E28: A_win is the mean of (visible z - memory mean) over the window's visible days at each half-hour; the
+    memory anchor moves by c * A; hidden values never enter."""
+    from net import year_anomalies
+    from sampler import WindowSampler
+    base = dict(d=32, depth=2, heads=4, memory=True, mem_residual=True, gated_base=True, gate_scale=True, img_nll=True,
+                edge_continue=True)
+    rec = synthetic_record(days=1500); st = stats_of(rec)
+    smp = WindowSampler({"XX-Syn": rec}, ["XX-Syn"], st, {}, train=False, memory=True)
+    hide = np.zeros((V_TAB, T_WIN), bool); hide[IS_TOWER, 2000:4000] = True
+    b = collate([make_example(rec, 400, st, hide, np.zeros(180, bool), None, smp.window_memory("XX-Syn", 400))])
+    an, ok = year_anomalies(b["z"], b["obs"], b["mem_m"], b["mem_h"])
+    o = (b["obs"] & b["mem_h"]).float()
+    ref = ((b["z"] - b["mem_m"]) * o).sum(2, keepdim=True) / o.sum(2, keepdim=True).clamp_min(1)
+    assert torch.allclose(an[1], ref.expand_as(an[1]), atol=1e-5)
+    torch.manual_seed(0); A = FluxFillNet(**base).eval()
+    torch.manual_seed(0); B = FluxFillNet(**base, year_anomaly=True).eval()
+    B.load_state_dict(A.state_dict(), strict=False)
+    with torch.no_grad():
+        B.yanom_coef.fill_(0.5)
+        pa, pb = A(b)[1], B(b)[1]
+        shift = torch.where(b["mem_h"], 0.5 * (an[0] + an[1]), torch.zeros_like(an[0]))
+        assert torch.allclose(pb[0][..., 1], pa[0][..., 1] + shift, atol=1e-4)      # the memory component
+        b2 = {k: (v.clone() if torch.is_tensor(v) else v) for k, v in b.items()}
+        b2["tgt"] = b2["tgt"] + 5.0 * b2["tmask"].float()                          # hidden truth changed
+        b2["z"] = torch.where(b2["obs"], b2["z"], b2["z"] + 3.0)                     # values behind the mask changed
+        for x, y in zip(B(b)[1], B(b2)[1]):
+            assert torch.allclose(x, y, atol=1e-5)
+
+
+def test_sinr_place_encoding_learns_and_unknown_location():
+    """E29: SINR input at n_freq = 0 is sin/cos of longitude and latitude (as the habitat model's SinrPlace) plus
+    elevation; hidden layers keep a random initialisation (so the zero output layer receives a gradient); an
+    all-zero site (unknown location) gives zero; replace mode drops site_in."""
+    from net import SinrPlace
+    from data import site_features
+    p = SinrPlace(8, n_freq=2)
+    s = torch.from_numpy(np.stack([site_features(45.0, -100.0, 300.0), site_features(-33.0, 151.0, np.nan),
+                                   np.zeros(4, np.float32)]))
+    e = p.encode(s)
+    assert e.shape == (3, 1 + 4 * 3)
+    lat, lon = math.radians(45.0), math.radians(-100.0)
+    assert torch.allclose(e[0, 1:5], torch.tensor([math.sin(lon), math.cos(lon), math.sin(2 * lat), math.cos(2 * lat)]),
+                          atol=1e-5)                                    # sin(pi lon / 180), sin(pi lat / 90)
+    assert torch.allclose(e[0, 5:7], torch.tensor([math.sin(2 * lon), math.cos(2 * lon)]), atol=1e-5)
+    assert abs(float(e[0, 0]) - 0.3) < 1e-6
+    out = p(s)
+    assert torch.count_nonzero(out) == 0
+    (p(s)[:2] * torch.randn(2, 8)).sum().backward()
+    assert torch.count_nonzero(p.out.weight.grad) > 0                      # learns from the zero start
+    with torch.no_grad():
+        p.out.bias.fill_(1.0)
+    assert torch.count_nonzero(p(s)[2]) == 0                               # unknown location: zero
+    base = dict(d=32, depth=1, heads=4, memory=True, mem_residual=True, gated_base=True)
+    torch.manual_seed(0); A = FluxFillNet(**base)
+    torch.manual_seed(0); R = FluxFillNet(**base, sinr_place=0, sinr_replace=True)
+    assert all(torch.equal(A.state_dict()[k], v) for k, v in R.state_dict().items() if k in A.state_dict())
+    assert R.sinr_replace and not A.sinr_replace
+
+
+def test_fluxes_off_mask_option():
+    from data import IS_FLUX
+    present = np.ones(V_TAB, bool)
+    r1, r2 = np.random.default_rng(3), np.random.default_rng(3)
+    for _ in range(50):                                                       # default: the same draws as before
+        a = masking.draw(r1, present); b = masking.draw(r2, present, masking.MaskConfig(p_fluxes_off=0.0))
+        assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]) and a[2] == b[2]
+    rng = np.random.default_rng(4)
+    cfg = masking.MaskConfig(p_fluxes_off=1.0, p_drop_met=0.0)
+    seen_met_visible = False
+    for _ in range(100):
+        hide, _, fam = masking.draw(rng, present, cfg)
+        assert hide[IS_FLUX].all()                                            # every flux row, whole window
+        seen_met_visible |= not hide[IS_TOWER_MET].all()
+    assert seen_met_visible
+
+
+def test_extended_channels_pair_with_base_weights(tmp_path):
+    """E30: with FLUXFILL_CHANNELS=extended (a separate process: the row layout is fixed at import), the network has
+    the base model's weights in every base tensor at the same seed, a zero table for the extra rows, and runs on an
+    example with the extra rows."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    here = Path(__file__).resolve().parents[1]
+    base = dict(d=32, depth=2, heads=4, memory=True, mem_residual=True, gated_base=True, gate_scale=True, img_nll=True,
+                edge_continue=True)
+    code = f"""
+import sys, numpy as np, torch
+sys.path.insert(0, {str(here)!r}); sys.path.insert(0, {str(here / 'tests')!r})
+import data
+assert data.CHANNELS == "extended" and data.V_TAB == data.V_BASE + len(data.EXTRA_VARS) and data.IS_TOWER[data.V_BASE:].all()
+from net import FluxFillNet
+from sampler import collate, make_example
+from test_model import synthetic_record, stats_of
+torch.manual_seed(0); net = FluxFillNet(**{base!r}).eval()
+torch.save(net.state_dict(), {str(tmp_path / 'ext.pt')!r})
+assert torch.count_nonzero(net.extra_emb.weight) == 0
+rec = synthetic_record(days=400); st = stats_of(rec)
+hide = np.zeros((data.V_TAB, data.T_WIN), bool); hide[data.IS_TOWER, 2000:2100] = True
+b = collate([make_example(rec, 10, st, hide, np.zeros(180, bool), None, None)])
+with torch.no_grad():
+    h, p = net(b)
+assert h.shape[1] == data.V_TAB + 1 and torch.isfinite(p[0]).all()
+print("OK")
+"""
+    r = subprocess.run([sys.executable, "-c", code], env={**os.environ, "FLUXFILL_CHANNELS": "extended",
+                       "CUDA_VISIBLE_DEVICES": ""}, capture_output=True, text=True, cwd=str(here))
+    assert r.returncode == 0 and "OK" in r.stdout, r.stderr[-2000:]
+    ext = torch.load(tmp_path / "ext.pt", weights_only=True)
+    torch.manual_seed(0)
+    A = FluxFillNet(**base)
+    sa = A.state_dict()
+    for k, v in sa.items():
+        if v.shape == ext[k].shape:
+            assert torch.equal(v, ext[k]), k
+        else:                                   # per-variable zero-initialised vectors grow with the row count
+            assert k in ("edge_logit",) and torch.count_nonzero(ext[k]) == 0, k
+    assert set(ext) - set(sa) == {"extra_emb.weight"}

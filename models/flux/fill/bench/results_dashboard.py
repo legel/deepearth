@@ -30,17 +30,21 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ORDER = ["M2-1d", "M2-7d", "M2-30d", "M2-90d", "M2-180d", "M3", "M4-no-reanalysis+M2-30d"]
+ORDER = ["M1", "M2-2h", "M2-6h", "M2-1d", "M2-7d", "M2-30d", "M2-90d", "M2-180d", "M3", "M4-no-reanalysis+M2-30d", "M5"]
 METHOD_ORDER = ["climatology", "mds", "irvin_rf", "vekuri_de", "liu_xgb", "saits", "csdi", "chronos2", "fluxfill-v0",
-                "fluxfill-v1"]
+                "fluxfill-v1", "fluxfill-ref", "fluxfill", "fluxfill-adapt"]
 LABEL = {"climatology": "climatology", "mds": "MDS (REddyProc)", "irvin_rf": "RF ensemble (Irvin 2021)",
          "vekuri_de": "deep ensemble (Vekuri 2025)", "liu_xgb": "XGBoost (Liu 2025)",
          "saits": "SAITS + residual Gaussian", "csdi": "CSDI", "chronos2": "Chronos-2 zero-shot",
-         "fluxfill-v0": "FluxFill v0 (Student-t marginals)", "fluxfill-v1": "FluxFill v1 (joint, masked generation)"}
+         "fluxfill-v0": "FluxFill v0 (Student-t marginals)", "fluxfill-v1": "FluxFill v1 (joint, masked generation)",
+         "fluxfill-ref": "FluxFill v2 (width 192, depth 6)",
+         "fluxfill": "FluxFill v3 (v2 configuration at width 320, depth 10)",
+         "fluxfill-adapt": "FluxFill v4 (current: v3 + site adaptation, 300 steps on the site's own data before filling)"}
 SHORT = {"climatology": "climatology", "mds": "MDS", "irvin_rf": "the RF ensemble", "vekuri_de": "the deep ensemble",
          "liu_xgb": "XGBoost", "saits": "SAITS", "csdi": "CSDI", "chronos2": "Chronos-2", "fluxfill-v0": "FluxFill v0",
-         "fluxfill-v1": "FluxFill v1"}
-OURS = ("fluxfill-v0", "fluxfill-v1")
+         "fluxfill-v1": "FluxFill v1", "fluxfill-ref": "FluxFill v2", "fluxfill": "FluxFill v3",
+         "fluxfill-adapt": "FluxFill v4"}
+OURS = ("fluxfill-v0", "fluxfill-v1", "fluxfill-ref", "fluxfill", "fluxfill-adapt")
 FLUXES = ("NEE", "LE", "H", "FCH4")
 UNITS = {"NEE": "µmol m⁻² s⁻¹", "LE": "W m⁻²", "H": "W m⁻²", "FCH4": "nmol m⁻² s⁻¹"}
 NAMES = {"NEE": "net ecosystem exchange of CO₂", "LE": "latent heat flux", "H": "sensible heat flux",
@@ -152,9 +156,11 @@ def with_truth(d: pd.DataFrame, truth: pd.DataFrame) -> pd.DataFrame:
 def gap_label(f: str) -> str:
     if f.startswith("M2-") and f.endswith("d"):
         return f"{f[3:-1]} d"
+    if f.startswith("M2-") and f.endswith("h"):
+        return f"{f[3:-1]} h"
     if f.startswith("M4-no-reanalysis+M2-"):
         return f"{f.split('M2-')[1][:-1]} d, no reanalysis"
-    return f
+    return {"M1": "short gaps (M1)", "M3": "real outages (M3)", "M5": "mixed per-variable (M5)"}.get(f, f)
 
 
 def days_phrase(fams) -> str:
@@ -197,6 +203,21 @@ def best_index(vals, metric: str):
     if m["better"] == "zero":
         return int(np.nanargmin(np.abs(arr)))
     return int(np.nanargmin(np.abs(arr - m["nominal"])))
+
+
+def best_indices(vals, metric: str):
+    """Every index whose value, rounded as displayed (fmtv), ties the best under the metric's direction."""
+    m = METRICS[metric]
+    shown = []
+    for v in vals:
+        t = fmtv(v, metric) if v is not None else "n/a"
+        shown.append(np.nan if t == "n/a" else float(t.replace(",", "").rstrip("%")))
+    arr = np.array(shown, float)
+    if np.isnan(arr).all():
+        return []
+    score = {"lower": arr, "higher": -arr, "zero": np.abs(arr)}.get(m["better"], np.abs(arr - m.get("nominal", 0.0)))
+    top = np.nanmin(score)
+    return [int(i) for i in np.flatnonzero(np.isclose(score, top, rtol=0, atol=1e-9))]
 
 
 def verb(metric: str) -> str:
@@ -297,6 +318,8 @@ def table_from(g, methods, metric: str, units: str, title: str, what: str, note:
         rows.append({"method": m, "label": LABEL.get(m, m), "ours": m in OURS, "cells": cells})
     best = [best_index([vals[i][j] if m in g["compared"][j] else None for i, m in enumerate(methods)], metric)
             for j in range(len(cols))]
+    best_all = [best_indices([vals[i][j] if m in g["compared"][j] else None for i, m in enumerate(methods)], metric)
+                for j in range(len(cols))]
     mm = METRICS[metric]
     u = units if mm["units"] == "unit" else (units + "²" if mm["units"] == "unit²" else
                                             {"share": "share of values", "%": "%", "none": "no unit"}[mm["units"]])
@@ -304,7 +327,7 @@ def table_from(g, methods, metric: str, units: str, title: str, what: str, note:
             "units": u, "kind": kind_label,
             "columns": [{"id": f, "label": gap_label(f), "n": g["n"][j], "cells": g["cells"][j],
                          "windows": g["windows"][j]} for j, f in enumerate(cols)],
-            "rows": rows, "best": best, "note": note}
+            "rows": rows, "best": best, "best_all": best_all, "note": note}
 
 
 def summary_table(d, v, flux, methods, units):
@@ -322,6 +345,7 @@ def summary_table(d, v, flux, methods, units):
         rows.append({"method": m, "label": LABEL.get(m, m), "ours": m in OURS,
                      "cells": [{"v": p.get(k, float("nan"))} for k in SUMMARY_METRICS]})
     best = [best_index([vals[m].get(k) for m in methods], k) for k in SUMMARY_METRICS]
+    best_all = [best_indices([vals[m].get(k) for m in methods], k) for k in SUMMARY_METRICS]
     nw = len({(c[0], c[1]) for c in cells})
     ns = len({c[0] for c in cells})
     if cells and best[0] is not None:
@@ -338,7 +362,8 @@ def summary_table(d, v, flux, methods, units):
         head = f"No cell of {flux} is filled completely by all {len(methods)} methods."
     return {"flux": flux, "title": f"{flux}: every metric on the cells all methods fill",
             "headline": head, "units": units, "n": n, "cells": len(cells), "windows": nw, "sites": ns,
-            "families": fams, "metrics": SUMMARY_METRICS, "rows": rows, "best": best}, vals, cells
+            "families": fams, "metrics": SUMMARY_METRICS, "rows": rows, "best": best,
+            "best_all": best_all}, vals, cells
 
 
 def fill_table(v, flux, methods, fams):
@@ -374,14 +399,14 @@ def findings(summ, gaps, sums, methods, scope):
             by.setdefault(b, []).append(f"{flux} ({fmtv(vals[b]['crps'], 'crps')} {t['units']}, {t['n']:,} values)")
     if by:
         t0 = next(iter(S.values()))[0]
-        fams = sorted({f for t, _ in S.values() for f in t["families"]}, key=ORDER.index)
+        fams = sorted({f for t, _ in S.values() for f in t["families"]}, key=lambda f: ORDER.index(f) if f in ORDER else 99)
         parts = [f"{SHORT[m]} has the lowest CRPS for {join(v)}" for m, v in
                  sorted(by.items(), key=lambda kv: -len(kv[1]))]
         out.append({"head": "Lowest CRPS on identical values.",
                     "text": cap("; ".join(parts)) + ".",
                     "data": f"Cells (window × gap × variable) that all {len(methods)} methods fill completely: gaps of "
-                            f"{days_phrase(fams)}; {scope['windows']} validation windows at {scope['sites']} "
-                            f"validation sites, mask family M2, regime R1."})
+                            f"{days_phrase(fams)}; {scope['windows']} {scope['split']} windows at {scope['sites']} "
+                            f"{scope['split']} sites, regime {', '.join(scope.get('regimes', ['R1']))}."})
     # 2. winners by gap length
     segs = []
     for flux in FLUXES:

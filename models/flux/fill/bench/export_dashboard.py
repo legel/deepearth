@@ -1,8 +1,12 @@
 """Export benchmark windows, masks and method predictions as compact JSON for the dashboard's Windows tab.
 
-Usage: python export_dashboard.py <site_table.parquet> <site> <window_start> <out_dir> [--method climatology]
-Values are rounded to 4 significant figures. Predictions are stored per masked span only (`a` = first index):
-{"a", "mean", "q025", "q10", "q90", "q975"}; the page expands them onto the window.
+Usage: python export_dashboard.py <site_table.parquet> <site> <window_start> <out_dir> --split validation|test
+           [--masks M1 M2-6h M2-1d M2-7d M2-30d M2-90d M4-no-reanalysis+M2-30d M5] [--methods climatology mds fluxfill]
+The masks are those of the benchmark (run.masks_for, the same seeds as the release). Every method reads the window
+with the hidden values set to NaN and the site's other years as context (regime R1); the window's own years are never
+in the context. Values are rounded to 4 significant figures. Predictions are stored per masked span only (`a` = first
+index): {"a", "mean", "q025", "q10", "q90", "q975"}; the page expands them onto the window. fluxfill reads its
+checkpoint from FLUXFILL_CKPT (run.fluxfill_method).
 """
 
 import argparse
@@ -17,10 +21,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "baselines"))
 
-import climatology  # noqa: E402
-from run import Climatology  # noqa: E402
 from windows import Window  # noqa: E402
-from masks import contiguous_block, seed_for, STEPS_PER_DAY  # noqa: E402
 from metrics import coverage_samples, crps_samples  # noqa: E402
 from windows import LABELS, UNITS, load_window, lst_index  # noqa: E402
 
@@ -36,16 +37,38 @@ def spans(row_mask: np.ndarray):
     return [[int(a), int(b)] for a, b in zip(e[::2], e[1::2])]
 
 
+MASK_LABELS = {"M1": "M1: short gaps in the fluxes (distribution of real gaps, Irvin et al. 2021)",
+               "M2-2h": "M2: 2 h, all tower channels", "M2-6h": "M2: 6 h, all tower channels",
+               "M2-1d": "M2: 1 d, all tower channels", "M2-7d": "M2: 7 d, all tower channels",
+               "M2-30d": "M2: 30 d, all tower channels", "M2-90d": "M2: 90 d, all tower channels",
+               "M2-180d": "M2: 180 d, all tower channels (whole window)",
+               "M3": "M3: a real outage transplanted from another tower",
+               "M4-no-reanalysis+M2-30d": "M4: reanalysis rows removed, plus 30 d of all tower channels",
+               "M5": "M5: mixed per-variable blocks, plus one whole modality hidden"}
+MODALITY_LABELS = {"tower_met": "tower meteorology", "reanalysis": "reanalysis", "fluxes": "all fluxes"}
+FAMILY_OF = {"M2-2h": "M2-sub", "M2-6h": "M2-sub", "M2-1d": "M2", "M2-7d": "M2", "M2-30d": "M2", "M2-90d": "M2",
+             "M2-180d": "M2", "M4-no-reanalysis+M2-30d": "M4-reanalysis"}
+DEFAULT_MASKS = ("M1", "M2-6h", "M2-1d", "M2-7d", "M2-30d", "M2-90d", "M4-no-reanalysis+M2-30d", "M5")
+
+
+def mask_label(name: str, w: Window) -> str:
+    lab = MASK_LABELS.get(name, name)
+    if name == "M5" and w.meta.get("M5_modality"):
+        lab += f" ({MODALITY_LABELS.get(w.meta['M5_modality'], w.meta['M5_modality'])})"
+    return lab
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("table"); ap.add_argument("site"); ap.add_argument("start"); ap.add_argument("out")
-    ap.add_argument("--days", type=int, nargs="+", default=[7, 30])
+    ap.add_argument("--split", required=True, choices=["validation", "test"])
+    ap.add_argument("--masks", nargs="+", default=list(DEFAULT_MASKS))
     ap.add_argument("--note", default="")
-    ap.add_argument("--methods", nargs="+", default=["climatology", "mds"])
+    ap.add_argument("--methods", nargs="+", default=["climatology", "mds", "fluxfill"])
     ap.add_argument("--lat", type=float, default=0.0); ap.add_argument("--lon", type=float, default=0.0)
     a = ap.parse_args()
+    from run import masks_for, method_registry
     tab = pd.read_parquet(a.table)
-    from run import method_registry
     registry = method_registry()
     methods = []
     for mname in a.methods:
@@ -55,32 +78,38 @@ def main():
         else:
             methods.append(registry[mname]())
     w = load_window(tab, a.site, a.start)
-    tower = w.rows("tower")
-    V, T = w.values.shape
-    out = {"site": w.site, "start": str(w.start.date()), "end": str((w.t[-1]).date()),
+    fams = {FAMILY_OF.get(n, n) for n in a.masks}
+    masks = {}
+    for fam in fams:
+        try:
+            masks.update({n: m for n, m in masks_for(w, [fam]).items() if n in a.masks})
+        except FileNotFoundError as e:      # M1 record masks exist for the release sites only
+            print(f"{a.site} {a.start}: {fam} skipped ({e})", flush=True)
+    out = {"site": w.site, "start": str(w.start.date()), "end": str((w.t[-1]).date()), "split": a.split,
            "t": [x.strftime("%Y-%m-%d %H:%M") for x in w.t],
            "day_labels": [(w.start + pd.Timedelta(days=d)).strftime("%d %b") for d in range(181)],
-           "variables": [], "masks": {}, "predictions": {}, "scores": {}, "note": a.note}
+           "variables": [], "masks": {}, "predictions": {}, "scores": {}, "note": a.note,
+           "context_years": sorted({int(y) for y in lst_index(tab).year.unique()} - set(range(w.t[0].year, w.t[-1].year + 1)))}
     for i, k in enumerate(w.keys):
         base = k.replace("ERA5_", "")
         out["variables"].append({"key": k, "label": LABELS.get(base, base) + (" (ERA5)" if k.startswith("ERA5_") else ""),
                                  "units": UNITS.get(base, ""), "provenance": w.provenance[i], "values": r4(w.values[i])})
-    for days in a.days:
-        name = f"M2 {days} d, all tower channels"
-        # The block hides every tower channel for its whole length (as an outage does); it is shaded and filled in
-        # full, and only its measured values are scored.
-        m = contiguous_block(tower, V, T, days, np.random.default_rng(seed_for(a.site, a.start, "M2", days)))
-        out["masks"][name] = {w.keys[i]: spans(m[i]) for i in tower if (m[i] & w.measured[i]).any()}
-        visible = Window(w.site, w.start, w.t, w.keys, np.where(m, np.nan, w.values), w.measured & ~m, w.provenance)
-        idx = lst_index(tab)
-        years = list(range(w.t[0].year, w.t[-1].year + 1))
-        ctx = {"table": tab[~idx.year.isin(years)], "index": idx[~idx.year.isin(years)]}
+    idx = lst_index(tab)
+    years = list(range(w.t[0].year, w.t[-1].year + 1))
+    ctx = {"table": tab[~idx.year.isin(years)], "index": idx[~idx.year.isin(years)]}
+    for mkey in a.masks:
+        if mkey not in masks:
+            continue
+        m = masks[mkey]
+        name = mask_label(mkey, w)
+        # A hidden span is shaded and filled in full; only its measured values are scored.
+        out["masks"][name] = {w.keys[i]: spans(m[i]) for i in range(len(w.keys)) if m[i].any()}
+        visible = Window(w.site, w.start, w.t, w.keys, np.where(m, np.nan, w.values), w.measured & ~m, w.provenance, w.meta)
+        rows = [i for i in range(len(w.keys)) if (m[i] & w.measured[i]).any()]
         for meth in methods:
             s_all = meth.predict(visible, m, ctx)
             preds, scores = {}, {}
-            for i in tower:
-                if not (m[i] & w.measured[i]).any():
-                    continue
+            for i in rows:
                 k, s = w.keys[i], s_all[:, i]
                 if not np.isfinite(s[:, m[i]]).any():
                     scores[k] = {"filled": 0.0}
@@ -104,15 +133,16 @@ def main():
                                  "filled": round(float(hid.sum() / tgt.sum()), 3)}
             out["predictions"].setdefault(meth.name, {})[name] = preds
             out["scores"].setdefault(meth.name, {})[name] = scores
+        print(f"{a.site} {a.start} {name}: done", flush=True)
     od = Path(a.out); od.mkdir(parents=True, exist_ok=True)
     fn = f"{a.site}_{out['start']}.json"
     (od / fn).write_text(json.dumps(out, separators=(",", ":")))
     idx_path = od / "index.json"
-    idx = json.loads(idx_path.read_text()) if idx_path.exists() else {"windows": []}
-    idx["windows"] = [x for x in idx["windows"] if x["file"] != fn] + [
-        {"site": a.site, "start": out["start"], "end": out["end"], "file": fn, "masks": list(out["masks"]),
-         "methods": list(out["predictions"])}]
-    idx_path.write_text(json.dumps(idx, indent=1))
+    ix = json.loads(idx_path.read_text()) if idx_path.exists() else {"windows": []}
+    ix["windows"] = [x for x in ix["windows"] if x["file"] != fn] + [
+        {"site": a.site, "start": out["start"], "end": out["end"], "split": a.split, "file": fn,
+         "masks": list(out["masks"]), "methods": list(out["predictions"])}]
+    idx_path.write_text(json.dumps(ix, indent=1))
     print(f"wrote {od / fn} ({(od / fn).stat().st_size / 1e6:.2f} MB), {len(w.keys)} variables")
 
 

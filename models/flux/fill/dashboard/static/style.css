@@ -200,3 +200,18 @@ ol.refs li:target { background: var(--wash); }
   .panel .lab-v { font-size: 15px; }
   .panel .tiny { font-size: 12px; }
 }
+
+.w-legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 0.85rem; margin: 10px 0 14px; color: var(--body); }
+.w-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.w-info { border-left: 3px solid var(--accent); padding: 8px 12px; margin: 12px 0; font-size: 0.88rem; background: var(--raised); }
+.w-info p { margin: 4px 0; }
+.split-tag { display: inline-block; font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 7px; border: 1px solid var(--ink); margin-right: 6px; }
+.bm-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0; font-size: 0.82rem; color: var(--body); }
+.bm-legend i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; border-radius: 2px; }
+.bm-t { font-size: 11.5px; fill: var(--body); }
+.bm-t.q { fill: var(--quiet); }
+.bm-grid { stroke: var(--hair); stroke-width: 1; }
+.bm-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.bm-table td { white-space: nowrap; }
+.bm-bar { display: inline-block; height: 10px; margin-right: 8px; background: var(--series-1); border-radius: 0 3px 3px 0; vertical-align: -1px; max-width: 160px; }
+.sub-title { font-size: 0.86rem; color: var(--body); margin: 4px 0; }

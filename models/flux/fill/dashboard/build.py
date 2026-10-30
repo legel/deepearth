@@ -30,6 +30,8 @@ def sites_json(root: Path) -> dict:
         with split_path.open() as f:
             for r in csv.DictReader(f):
                 split[r["site_id"]] = {"val": "validation"}.get(r.get("split", ""), r.get("split", ""))
+    lf = HERE / "static_data" / "site_links.json"           # site pages (site_links.py)
+    links = json.loads(lf.read_text())["links"] if lf.exists() else {}
     out = []
     with path.open() as f:
         for r in csv.DictReader(f):
@@ -42,7 +44,7 @@ def sites_json(root: Path) -> dict:
                         "network": r.get("source_network") or r.get("data_hub", ""),
                         "years": r.get("shuttle_years", ""),
                         "ch4": truthy(r.get("in_fluxnet_ch4", "")) or truthy(r.get("in_amf_base_fch4", "")),
-                        "split": split.get(r["site_id"], "")})
+                        "split": split.get(r["site_id"], ""), **links.get(r["site_id"], {})})
     return {"sites": out}
 
 
@@ -191,6 +193,13 @@ def main() -> None:
         shutil.copy2(src, data / "results.json")
         (data / "results.json.gz").write_bytes(gzip.compress(src.read_bytes(), 9))
         results = json.loads(src.read_text())
+    import benchmark_data
+    (data / "benchmark.json").write_text(json.dumps(benchmark_data.build(root), separators=(",", ":")))
+    for name in ("results_test.json", "results_ch4.json"):          # test sites; methane validation windows
+        src_x = root / "bench" / "dashboard" / name
+        if src_x.exists():
+            shutil.copy2(src_x, data / name)
+            (data / f"{name}.gz").write_bytes(gzip.compress(src_x.read_bytes(), 9))
     scaling = root / "model" / "scaling" / "scaling.json"
     if scaling.exists():
         shutil.copy2(scaling, data / "scaling.json")

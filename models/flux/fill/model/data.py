@@ -16,6 +16,7 @@ Sources: the final tables `towers/hh/<SITE>.parquet` once they exist, else the i
 
 import hashlib
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,17 +29,31 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "bench"))
 
 from masks import STEPS_PER_DAY, WINDOW_DAYS  # noqa: E402
-from windows import REANALYSIS_VARS, TOWER_VARS, lst_index  # noqa: E402
+from windows import EXTRA_TOWER_VARS, REANALYSIS_VARS, TOWER_VARS, lst_index, with_extra_columns  # noqa: E402
 
 TOWERS = Path("/home/photon/4tb/fluxfill/towers")
 DRIVERS = Path("/home/photon/4tb/fluxfill/drivers")
 LAND_SOURCE = ("TA", "VPD", "SWC_1", "SWC_2", "TS_1", "TS_2", "D_SNOW", "PA")
 LAND_VARS = tuple(f"LAND_{v}" for v in LAND_SOURCE)
-VARS: Tuple[str, ...] = tuple(TOWER_VARS) + tuple(REANALYSIS_VARS) + LAND_VARS
+# Channel set (E30): "base" (the rows above) or "extended" (plus windows.EXTRA_TOWER_VARS, further measured tower
+# channels, appended after the land rows). Chosen per process before this module is imported, by the environment
+# variable FLUXFILL_CHANNELS (train.py sets it from --extra-channels; a checkpoint records its set and method.py
+# refuses a mismatch), because the row layout is fixed for the whole process.
+CHANNELS = os.environ.get("FLUXFILL_CHANNELS", "base")
+assert CHANNELS in ("base", "extended", "methane"), f"FLUXFILL_CHANNELS must be base, extended or methane, not {CHANNELS}"
+# "methane" (E34): only the measured channels that control methane production and transport: water-table depth,
+# soil temperature and soil water below the first layer.
+METHANE_VARS = ("WTD", "TS_2", "TS_3", "SWC_2")
+EXTRA_VARS: Tuple[str, ...] = (tuple(EXTRA_TOWER_VARS) if CHANNELS == "extended" else
+                               METHANE_VARS if CHANNELS == "methane" else ())
+V_BASE = len(TOWER_VARS) + len(REANALYSIS_VARS) + len(LAND_VARS)
+VARS: Tuple[str, ...] = tuple(TOWER_VARS) + tuple(REANALYSIS_VARS) + LAND_VARS + EXTRA_VARS
 V_TAB = len(VARS)
 FLUX_VARS = ("NEE", "LE", "H", "FCH4")
 PROVENANCE = {"tower": 0, "reanalysis": 1, "reanalysis-land": 2, "imagery": 3}
-PROV_OF_VAR = np.array([0] * len(TOWER_VARS) + [1] * len(REANALYSIS_VARS) + [2] * len(LAND_VARS), np.int64)
+PROV_OF_VAR = np.array([0] * len(TOWER_VARS) + [1] * len(REANALYSIS_VARS) + [2] * len(LAND_VARS) + [0] * len(EXTRA_VARS),
+                       np.int64)
+IS_EXTRA = np.arange(V_TAB) >= V_BASE
 IS_LAND = PROV_OF_VAR == 2
 IS_FLUX = np.array([v in FLUX_VARS for v in VARS])
 IS_TOWER = PROV_OF_VAR == 0
@@ -64,13 +79,15 @@ def provisional_is_val(site: str) -> bool:
 def load_split(sites: Sequence[str], root: Path = TOWERS) -> Tuple[Dict[str, str], str]:
     """{site: 'train' | 'val'} and the split's name. Test sites of the frozen split are dropped here, so no code
     downstream can read them."""
-    f = root / "split.csv"
+    # FLUXFILL_SPLIT selects another split file with the same test sites (split_v2.csv: 13 more methane validation
+    # sites); the frozen split.csv itself is never changed (the test release manifest records its checksum).
+    f = root / os.environ.get("FLUXFILL_SPLIT", "split.csv")
     if f.exists():
         s = pd.read_csv(f)
         col = "site_id" if "site_id" in s else s.columns[0]
         scol = "split" if "split" in s else [c for c in s.columns if c != col][0]
         m = dict(zip(s[col].astype(str), s[scol].astype(str)))
-        return {k: m[k] for k in sites if m.get(k) in ("train", "val")}, "frozen"
+        return {k: m[k] for k in sites if m.get(k) in ("train", "val")}, "frozen" if f.name == "split.csv" else f.stem
     return {k: ("val" if provisional_is_val(k) else "train") for k in sites}, "provisional"
 
 
@@ -169,6 +186,8 @@ def land_matrix(site: str, t: pd.DatetimeIndex, utc_offset_h: float) -> np.ndarr
 def record_from_table(tab: pd.DataFrame, site: str, sites_meta: Optional[pd.DataFrame] = None,
                       land: bool = True) -> SiteRecord:
     """A SiteRecord from a per-site table (final or interim format) on its own day-aligned grid."""
+    if EXTRA_VARS:                                 # wind direction as sine and cosine rows (E30)
+        tab = with_extra_columns(tab)
     idx = lst_index(tab)
     t0 = idx.min().normalize()
     t1 = idx.max().normalize() + pd.Timedelta(days=1)
@@ -195,7 +214,8 @@ def record_from_table(tab: pd.DataFrame, site: str, sites_meta: Optional[pd.Data
 
 
 def load_record(path: Path, sites_meta: Optional[pd.DataFrame] = None) -> SiteRecord:
-    cols = ["t_lst", "time_lst", "t_utc", "time_utc"] + [c for v in VARS for c in (v, f"{v}_flag")]
+    src = [v for v in VARS if not v.startswith("WD_")] + (["WD"] if "WD_SIN" in VARS else [])
+    cols = ["t_lst", "time_lst", "t_utc", "time_utc"] + [c for v in src for c in (v, f"{v}_flag")]
     import pyarrow.parquet as pq
     have = set(pq.ParquetFile(path).schema.names)
     tab = pd.read_parquet(path, columns=[c for c in cols if c in have])
@@ -257,7 +277,9 @@ class Stats:
 
     @staticmethod
     def from_dict(d):
-        assert tuple(d["vars"]) == VARS, "variable list changed"
+        assert tuple(d["vars"]) == VARS, (
+            f"variable list changed: the checkpoint has {len(d['vars'])} rows, this process {len(VARS)} "
+            f"(FLUXFILL_CHANNELS={CHANNELS}; a checkpoint trained with --extra-channels needs FLUXFILL_CHANNELS=extended)")
         return Stats(np.array(d["mean"], np.float64), np.array(d["std"], np.float64))
 
 

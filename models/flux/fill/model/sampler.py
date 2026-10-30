@@ -63,8 +63,10 @@ class WindowSampler:
 
     def __init__(self, records: Dict[str, SiteRecord], sites, stats: Stats, imagery: Dict[str, SiteImagery],
                  train: bool, cfg: masking.MaskConfig = masking.MaskConfig(), site_weights: Optional[Dict] = None,
-                 memory: bool = False, p_drop_mem: float = 0.2, memory_skew: bool = False):
+                 memory: bool = False, p_drop_mem: float = 0.2, memory_skew: bool = False,
+                 fast_memory: bool = False):
         self.records, self.stats, self.imagery, self.cfg = records, stats, imagery, cfg
+        self.fast_memory = fast_memory          # memory.window_memory_direct: no per-(site, years) table cache
         self.memory, self.p_drop_mem, self.memory_skew = memory, p_drop_mem, memory_skew
         self._mem, self._cache = {}, {}
         self.starts = {s: valid_starts(records[s], exclude_heldout=train) for s in sites if s in records}
@@ -98,6 +100,9 @@ class WindowSampler:
             self._mem[s] = SiteMemory(rec, [rec.heldout_year] if rec.heldout_year is not None else [])
         sm = self._mem[s]
         start = rec.t0 + pd.Timedelta(days=d)
+        if self.fast_memory:
+            from memory import window_memory_direct
+            return window_memory_direct(sm, start, self.stats)
         years = tuple(range(start.year, (start + pd.Timedelta(days=WINDOW_DAYS - 1)).year + 1))
         key = (s, years)
         if key not in self._cache:

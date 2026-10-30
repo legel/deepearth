@@ -23,9 +23,12 @@ import torch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+if "--extra-channels" in sys.argv or "--methane-channels" in sys.argv:   # E30, E34: row layout fixed at import
+    import os
+    os.environ["FLUXFILL_CHANNELS"] = "extended" if "--extra-channels" in sys.argv else "methane"
 
 import masking  # noqa: E402
-from data import (scaling_order, IS_TOWER, STEPS_PER_DAY, T_WIN, V_TAB, VARS, fit_stats, heldout_year, load_records, load_split,  # noqa: E402
+from data import (CHANNELS, V_BASE, scaling_order, IS_TOWER, STEPS_PER_DAY, T_WIN, V_TAB, VARS, fit_stats, heldout_year, load_records, load_split,  # noqa: E402
                   table_dir, valid_starts, window_values)
 from imagery import load_imagery  # noqa: E402
 from net import FluxFillNet, imagery_scores, marginal_mean, marginal_nll, mixture_cdf, sample_marginal_params  # noqa: E402
@@ -159,10 +162,15 @@ def evaluate_imagery(net, exs, device) -> dict:
     return {k: float(np.average(v, weights=w)) for k, v in tot.items()} | {"val_img_days": int(w.sum())}
 
 
-def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048):
-    h, params = net(b)
+def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, fwd=None, row_w=None):
+    """row_w: optional (V_TAB,) loss weight per row (E30b, --extra-weight); None weighs every hidden cell equally."""
+    h, params = (net if fwd is None else fwd)(b)          # fwd: the compiled forward (--compile), same module and weights
     tm = b["tmask"]
-    nll = marginal_nll(b["tgt"], params)[tm].mean()
+    if row_w is None:
+        nll = marginal_nll(b["tgt"], params)[tm].mean()
+    else:
+        wt = row_w.view(1, -1, *([1] * (tm.dim() - 2))).expand_as(tm)[tm]
+        nll = (marginal_nll(b["tgt"], params)[tm] * wt).sum() / wt.sum().clamp_min(1e-6)
     out = {"nll": nll}
     total = nll
     if b["img_tgt"].any():
@@ -179,7 +187,7 @@ def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048):
         bi, vi, di = idx.unbind(1)
         cond = h[bi, vi, di]
         x1 = b["tgt"][bi, vi, di] - net.offset(b)[bi, vi, di]          # residual from site memory (mem_residual)
-        out["flow"] = net.head_flow.loss(cond, x1, tm[bi, vi, di].float(), b["z"][bi, vi, di],
+        out["flow"] = net.head_flow.loss(cond, x1, tm[bi, vi, di].float() * (1.0 if row_w is None else row_w[vi][:, None]), b["z"][bi, vi, di],
                                          b["obs"][bi, vi, di].float())
         total = total + out["flow"]
     out["total"] = total
@@ -221,10 +229,18 @@ def evaluate(net, exs, device, use_flow: bool, batch: int = 4):
                 cov = (pit >= 0.025) & (pit <= 0.975)             # exact coverage from the mixture CDF
             vi = np.nonzero(tm)[0]
             flux = np.isin(vi, [VARS.index(v) for v in ("NEE", "LE", "H", "FCH4")])
+            base = vi < V_BASE                                   # the rows of the base channel set (E30 pairing)
             rows.append(dict(id="|".join(map(str, e.get("_id", ("", "", "")))), fam=e["family"], n=int(tm.sum()),
                              n_flux=int(flux.sum()), crps=float(crps.mean()), mae=float(np.abs(mu - y).mean()),
                              cov95=float(cov.mean()), crps_flux=float(crps[flux].mean()) if flux.any() else np.nan,
-                             nll=float(L["nll"])))
+                             nll=float(L["nll"]), n_base=int(base.sum()),
+                             crps_base=float(crps[base].mean()) if base.any() else np.nan,
+                             cov95_base=float(cov[base].mean()) if base.any() else np.nan,
+                             n_extra=int((~base).sum()),
+                             crps_extra=float(crps[~base].mean()) if (~base).any() else np.nan,
+                             **{f"crps_{fv}": float(crps[vi == VARS.index(fv)].mean()) if (vi == VARS.index(fv)).any()
+                                else np.nan for fv in ("NEE", "LE", "H", "FCH4")},
+                             **{f"n_{fv}": int((vi == VARS.index(fv)).sum()) for fv in ("NEE", "LE", "H", "FCH4")}))
             recs.append((e, mean_j, lo_j, hi_j))
         if use_flow and "flow" in L:
             flows.append(float(L["flow"]))
@@ -236,6 +252,16 @@ def evaluate(net, exs, device, use_flow: bool, batch: int = 4):
             "val_nll": float(np.average(df_.nll, weights=w))}
     if flows:
         summ["val_flow"] = float(np.mean(flows))
+    for fv in ("NEE", "LE", "H", "FCH4"):
+        okf = df_[f"n_{fv}"] > 0
+        if okf.any():
+            summ[f"val_crps_{fv}"] = float(np.average(df_[f"crps_{fv}"][okf], weights=df_[f"n_{fv}"][okf]))
+    ok = df_.n_base > 0
+    summ["val_crps_base"] = float(np.average(df_.crps_base[ok], weights=df_.n_base[ok]))   # = val_crps without E30
+    summ["val_cov95_base"] = float(np.average(df_.cov95_base[ok], weights=df_.n_base[ok]))
+    if (df_.n_extra > 0).any():
+        ok = df_.n_extra > 0
+        summ["val_crps_extra"] = float(np.average(df_.crps_extra[ok], weights=df_.n_extra[ok]))
     for fam, g in df_.groupby("fam"):
         summ[f"crps_{fam}"] = float(np.average(g.crps, weights=g.n))
         summ[f"cov95_{fam}"] = float(np.average(g.cov95, weights=g.n))
@@ -320,9 +346,35 @@ def main():
                     help="E21: the gate's evidence features also scale each component's spread (with --gated-base)")
     ap.add_argument("--driver-anomaly", action="store_true",
                     help="E25: both anchors follow the ERA5 SW_IN, TA, VPD anomalies with per-token learned slopes")
+    ap.add_argument("--p-long", type=float, default=0.0,
+                    help="share of all-tower blocks drawn 90 days to the full window (long-gap training)")
+    ap.add_argument("--p-fluxes-off", type=float, default=0.0,
+                    help="probability of a training mask that hides every flux row for the whole window")
     ap.add_argument("--memory-skew-fluxes", action="store_true",
                     help="E23b: site-memory skewness for the flux rows only (NEE, LE, H, FCH4)")
     ap.add_argument("--memory-skew", action="store_true", help="E23: site-memory skewness as a fourth memory channel")
+    ap.add_argument("--gate-at", type=int, default=0, help="A/B early stop: at this evaluation step ...")
+    ap.add_argument("--gate-max", type=float, default=0.0, help="... exit (code 3) if the gate metric exceeds this")
+    ap.add_argument("--gate-metric", default="val_crps", help="val_crps_base for an arm with extra channels (E30)")
+    ap.add_argument("--extra-weight", type=float, default=1.0,
+                    help="E30b: loss weight of the extra-channel rows relative to the base rows (1 = every hidden cell equal)")
+    ap.add_argument("--methane-channels", action="store_true",
+                    help="E34: data.METHANE_VARS (WTD, TS_2, TS_3, SWC_2) as extra rows; with --extra-weight 0, inputs only")
+    ap.add_argument("--row-weight", nargs="*", default=[], metavar="VAR=W",
+                    help="E32: per-variable loss weight, e.g. FCH4=4 (NLL and flow; evaluation unweighted)")
+    ap.add_argument("--ch4-site-boost", type=float, default=1.0,
+                    help="E32: sampling weight multiplier for training sites that measure FCH4")
+    ap.add_argument("--scale-anchor-fch4", action="store_true",
+                    help="E33: FCH4 component widths relative to the site-memory spread (net.scale_anchor_fch4)")
+    ap.add_argument("--extra-channels", action="store_true",
+                    help="E30: the extended channel set (data.EXTRA_VARS, further measured tower channels)")
+    ap.add_argument("--sinr-place", type=int, default=-1,
+                    help="E29: SINR location encoder with this many frequency octaves (0: SINR's sin/cos input; -1 off)")
+    ap.add_argument("--sinr-replace", action="store_true", help="E29: the SINR encoder replaces site_in")
+    ap.add_argument("--year-anomaly", action="store_true",
+                    help="E28: memory anchor plus this window's departure from the other years (net.year_anomaly)")
+    ap.add_argument("--scale-anchor", action="store_true",
+                    help="E27: component scales relative to the site-memory standard deviation (net.scale_anchor)")
     ap.add_argument("--edge-continue", action="store_true",
                     help="E24: local anchor continues the nearest visible anomaly with a learned per-variable decay")
     ap.add_argument("--components", type=int, default=1, help="Student-t mixture components per half-hour (1: v0)")
@@ -330,15 +382,22 @@ def main():
     ap.add_argument("--no-imagery", action="store_true")
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--max-sites", type=int, default=0)
+    ap.add_argument("--device", default="cuda", help="cpu for smoke tests (bf16 autocast is then off)")
     ap.add_argument("--n-train-sites", type=int, default=0, help="data-scaling: first n sites of data.scaling_order")
     ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--fused-adam", action="store_true", help="AdamW with the fused CUDA kernel (same update rule)")
+    ap.add_argument("--compile", action="store_true", help="torch.compile of the network forward (training steps)")
+    ap.add_argument("--lazy-sync", action="store_true",
+                    help="no per-step GPU-to-CPU reads of the losses; summed on the GPU and read every 50 steps")
+    ap.add_argument("--fast-memory", action="store_true",
+                    help="training windows' site memory by memory.window_memory_direct (compiled, no table cache)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", default="")
     a = ap.parse_args()
     torch.manual_seed(a.seed)
     out = OUT / a.name
     out.mkdir(parents=True, exist_ok=True)
-    device = torch.device("cuda")
+    device = torch.device(a.device)
     t0 = time.time()
     records, train, val, split_name, stats, imagery = setup(a)
     print(f"split {split_name}: {len(train)} train, {len(val)} val sites; {len(records)} loaded; imagery at "
@@ -346,20 +405,32 @@ def main():
     vex = val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
     vimg = imagery_val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
     print(f"imagery validation: {len(vimg)} windows at {sorted({e['_id'][0] for e in vimg})}", flush=True)
-    cfg = dict(vars(a), split=split_name, train_sites=train, val_sites=val, stats=stats.to_dict(),
+    cfg = dict(vars(a), channels=CHANNELS, split=split_name, train_sites=train, val_sites=val, stats=stats.to_dict(),
                imagery_sites_used=sorted(imagery))
     (out / "config.json").write_text(json.dumps(cfg, indent=1, default=str))
     net = FluxFillNet(d=a.d, depth=a.depth, heads=a.heads, dropout=a.dropout, use_imagery=not a.no_imagery,
                       memory=a.memory, mem_residual=a.mem_residual, img_nll=a.img_nll,
                       components=a.components, local_base=a.local_base, gated_base=a.gated_base,
                       gate_scale=a.gate_scale, edge_continue=a.edge_continue, memory_skew=a.memory_skew,
-                      driver_anomaly=a.driver_anomaly, memory_skew_fluxes_only=a.memory_skew_fluxes).to(device)
+                      driver_anomaly=a.driver_anomaly, memory_skew_fluxes_only=a.memory_skew_fluxes,
+                      scale_anchor=a.scale_anchor, year_anomaly=a.year_anomaly, sinr_place=a.sinr_place,
+                      sinr_replace=a.sinr_replace, scale_anchor_fch4=a.scale_anchor_fch4).to(device)
     n_params = sum(p.numel() for p in net.parameters())
     print(f"params {n_params / 1e6:.2f} M", flush=True)
     cfg["n_params"] = int(n_params)
     cfg["tokens_per_step"] = int(a.batch * a.accum * (V_TAB + 1) * 180)        # day-tokens per optimiser step
     (out / "config.json").write_text(json.dumps(cfg, indent=1, default=str))
-    opt = torch.optim.AdamW(net.parameters(), lr=a.lr, weight_decay=0.05, betas=(0.9, 0.98))
+    opt = torch.optim.AdamW(net.parameters(), lr=a.lr, weight_decay=0.05, betas=(0.9, 0.98),
+                            **({"fused": True} if a.fused_adam else {}))
+    fwd = torch.compile(net, dynamic=False) if a.compile else None
+    row_w = None
+    if a.extra_weight != 1.0 or a.row_weight:
+        from data import IS_EXTRA
+        w_np = np.where(IS_EXTRA, a.extra_weight, 1.0)
+        for kv in a.row_weight:
+            k, v = kv.split("=")
+            w_np[VARS.index(k)] = float(v)
+        row_w = torch.from_numpy(w_np).float().to(device)
     step0 = 0
     if a.resume:
         ck = torch.load(a.resume, map_location=device)
@@ -380,8 +451,16 @@ def main():
     else:
         sw = site_weights()
         print(f"site weights: {'weights.parquet' if sw else 'uniform'}", flush=True)
+        if a.ch4_site_boost != 1.0:
+            fi = VARS.index("FCH4")
+            ch4 = [s_ for s_ in train if np.isfinite(records[s_].values[fi]).any()]
+            sw = dict(sw or {})
+            for s_ in ch4:
+                sw[s_] = sw.get(s_, 1.0) * a.ch4_site_boost
+            print(f"FCH4 site boost x{a.ch4_site_boost:g} at {len(ch4)} of {len(train)} training sites", flush=True)
         smp = WindowSampler(records, train, stats, imagery, train=True, site_weights=sw, memory=a.memory,
-                            memory_skew=a.memory_skew or a.memory_skew_fluxes)
+                            cfg=masking.MaskConfig(p_fluxes_off=a.p_fluxes_off, p_long=a.p_long),
+                            memory_skew=a.memory_skew or a.memory_skew_fluxes, fast_memory=a.fast_memory)
         dl = torch.utils.data.DataLoader(Stream(smp, a.batch, a.seed), batch_size=None, num_workers=a.workers,
                                          persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None)
         it = (({k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in b.items()}) for b in dl)
@@ -413,8 +492,8 @@ def main():
                 keep = (torch.rand(b["site"].shape[0], 1, device=device) >= a.site_drop).float()
                 b["site"] = b["site"] * keep
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                L = losses(net, b, a.flow)
-            if not torch.isfinite(L["total"]):
+                L = losses(net, b, a.flow, fwd=fwd, row_w=row_w)
+            if not a.lazy_sync and not torch.isfinite(L["total"]):
                 stop = True
                 break
             (L["total"] / a.accum).backward()
@@ -424,14 +503,19 @@ def main():
             break
         gn = torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
         opt.step()
-        for k, v in L.items():
-            acc[k] = acc.get(k, 0.0) + float(v)
-        acc["gn"] = acc.get("gn", 0.0) + float(gn)
+        for k, v in L.items():     # --lazy-sync: summed on the GPU, read (and checked for NaN) every 50 steps
+            acc[k] = acc.get(k, 0.0) + (v.detach().float() if a.lazy_sync else float(v))
+        acc["gn"] = acc.get("gn", 0.0) + (gn.detach().float() if a.lazy_sync else float(gn))
         acc["n"] = acc.get("n", 0) + 1
         if step % 50 == 0:
             n = acc.pop("n")
+            acc = {k: float(v) for k, v in acc.items()}
+            if a.lazy_sync and not math.isfinite(acc["total"]):
+                print(f"non-finite loss in steps {step - 49}..{step}; stopping", flush=True)
+                log.write(json.dumps({"step": step, "event": "nan"}) + "\n"); log.flush()
+                break
             rec = {"step": step, "lr": float(f"{lr:.3e}"), "s_per_step": (time.time() - tl) / 50, **{k: v / n for k, v in acc.items()},
-                   "mem_gb": torch.cuda.max_memory_allocated() / 1e9}
+                   "mem_gb": torch.cuda.max_memory_allocated() / 1e9 if device.type == "cuda" else 0.0}
             tl = time.time(); acc = {}
             print(json.dumps({k: (v if k == "lr" else round(v, 4) if isinstance(v, float) else v)
                               for k, v in rec.items()}), flush=True)        # lr unrounded (it is 3e-5 at the end)
@@ -457,6 +541,12 @@ def main():
                 best = score
                 torch.save({"model": net.state_dict(), "step": step, "config": cfg}, out / "best.pt")
             torch.save({"model": net.state_dict(), "step": step, "config": cfg}, out / f"step{step:06d}.pt")
+            gs = summ.get(a.gate_metric, score)
+            if a.gate_at and step == a.gate_at and gs > a.gate_max:   # early stop of an A/B arm (seed band)
+                print(f"gate stop at step {step}: {a.gate_metric} {gs:.5f} > {a.gate_max:.5f}", flush=True)
+                log.write(json.dumps({"step": step, "event": "gate_stop", a.gate_metric: gs, "gate_max": a.gate_max}) + "\n")
+                log.close()
+                sys.exit(3)
         if a.stop_at and step >= a.stop_at:
             print(f"stopped at step {step} (--stop-at)", flush=True)
             break

@@ -1,6 +1,6 @@
 # FluxFill-Bench: specification
 
-Version 0.1, 2026-10-26. This file specifies the benchmark. The masks, splits and metrics are frozen before any
+Version 0.2, 2026-10-28 (0.1: 2026-10-26). This file specifies the benchmark. The masks, splits and metrics are frozen before any
 model is fitted, and every change after that gets a new version number.
 
 ## 1. Purpose
@@ -62,8 +62,10 @@ Masks apply only where the truth is measured. Each family is drawn with a fixed 
 |---|---|
 | M1 distribution-matched | artificial gaps whose lengths, merged with real gaps, reproduce the site's observed gap-length distribution (Irvin et al. 2021); for continuity with published numbers |
 | M2 contiguous blocks | one block per window of length 1 d, 7 d, 30 d, 90 d or 180 d, placed with uniform start over the window; every season covered |
+| M2 sub-daily blocks | one block of 2 h or 6 h on all tower channels, uniform start (release 0.2) |
 | M3 transplanted outages | the real joint missingness pattern of all tower channels from another site-year, applied to this window |
 | M4 modality dropout | one modality fully removed for the whole window: tower meteorology, reanalysis, or Sentinel-2 |
+| M5 mixed | an independent block per tower and reanalysis variable, each with its own placement and a log-uniform length from one half-hour to 90 days, plus one whole modality hidden for the window (tower meteorology, reanalysis or all fluxes, chosen by the seed) (release 0.2) |
 
 M2 and M3 apply to all tower channels together by default: a station outage removes fluxes and meteorology at
 once. A per-variable variant of M2 is scored separately.
@@ -116,7 +118,9 @@ validation sites only.
 
 1. Test sites, held-out years and masks are fixed before fitting, and the files are hashed in
    `bench/release/MANIFEST.json`. Release 0.1 (2026-10-27) holds 514 test windows at 131 of the 136 test sites (5 have no
-   usable window starting in 2015 or later), mask families M2, M3 and M4, built by `bench/freeze.py`.
+   usable window starting in 2015 or later), mask families M2, M3 and M4, built by `bench/freeze.py`. Release 0.2
+   (2026-10-28, `bench/release/0.2/`) keeps the same windows and adds M1, the sub-daily M2 blocks and M5 (M1 excludes CN-You, where the released Irvin et al. sampler cannot reach its 10% evaluation fraction on a record with 17% measured NEE; the manifest lists exclusions); it was frozen
+   before any FluxFill model was scored on test sites.
 2. No method may be tuned, calibrated or checkpoint-selected on test sites or on the held-out years.
 3. Every reported number names its regime, mask family, gap class, variable and the number of values it rests on.
 4. Every data transformation is recorded with its source, version and checksum.

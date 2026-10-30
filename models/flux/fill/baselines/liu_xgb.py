@@ -124,7 +124,10 @@ class LiuXGB:
 
     def clay(self, site: str, table: pd.DataFrame) -> Optional[ClayPCs]:
         if site not in self._clay:
-            c = ClayPCs(site, utc_offset(table)) if self.use_clay else None
+            off = utc_offset(table)
+            if not np.isfinite(off):                  # no time columns to read it from: the runner's site offset
+                off = float(getattr(self, "tz", 0.0) or 0.0)
+            c = ClayPCs(site, off) if self.use_clay else None
             self._clay[site] = c if (c is not None and c.ok) else None
             if self._clay[site] is not None:
                 CLAY_SITES[site] = self._clay[site].n

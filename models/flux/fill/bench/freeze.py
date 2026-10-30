@@ -24,8 +24,11 @@ sys.path.insert(0, str(HERE))
 
 from run import masks_for  # noqa: E402
 from windows import load_window  # noqa: E402
+from irvin_gaps import m1_excluded  # noqa: E402
 
-FAMILIES = ("M2", "M3", "M4-reanalysis")
+FAMILIES = ("M1", "M2", "M2-sub", "M3", "M4-reanalysis", "M5")
+VERSION = "0.2"
+"""Release 0.1 (2026-10-27) held M2, M3 and M4-reanalysis; 0.2 adds M1, the sub-daily M2 blocks and M5."""
 SEASON = {12: "DJF", 1: "DJF", 2: "DJF", 3: "MAM", 4: "MAM", 5: "MAM", 6: "JJA", 7: "JJA", 8: "JJA",
           9: "SON", 10: "SON", 11: "SON"}
 
@@ -62,9 +65,9 @@ def main():
         specs.append({"site": r.site_id, "start": start, "table": str(f), "season": r.season})
     wl = json.dumps(specs, indent=1).encode()
     (out / "windows_test.json").write_bytes(wl)
-    manifest = {"version": "0.1", "split_sha256": sha((towers / "split.csv").read_bytes()),
+    manifest = {"version": VERSION, "split_sha256": sha((towers / "split.csv").read_bytes()),
                 "windows_sha256": sha(wl), "families": FAMILIES, "n_windows": len(specs),
-                "n_sites": len({s["site"] for s in specs}), "masks": masks}
+                "n_sites": len({s["site"] for s in specs}), "m1_excluded": m1_excluded(), "masks": masks}
     (out / "MANIFEST.json").write_text(json.dumps(manifest, indent=1))
     print(f"froze {len(specs)} test windows at {manifest['n_sites']} test sites; manifest {out / 'MANIFEST.json'}")
 
