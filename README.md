@@ -10,9 +10,11 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 ![Earth4D space-time encoder](docs/earth4d.png) 
 
 ## Exciting News:
+- _October 31, 2026_  
+  **State-of-the-art climate simulation.** DeepEarth has exceeded all published models for masked carbon, water, wind, and temperature reconstruction across global flux towers. See [_report_](https://deepearth.ai/fluxfill/#report).
 
 - _October 5, 2026_  
-  **Native plant habitat.** Species distribution models for the 16,942 vascular plant species native to the contiguous United States at 240 m, fitted jointly with a phylogenetic prior and extending [Daru (2024, PNAS)](https://doi.org/10.1073/pnas.2319989121); higher accuracy than Daru's published maps for 84 % of species on independent plots. See [_code_](models/habitat/plant).
+  **#1 model of native plant habitats.** DeepEarth has exceeded all published models for predicting distributions of all native plant species across the United States. See [_report_](https://deepearth.ai/native-habitats/).
 
 - _July 16, 2026_  
   **NASA award.** [NASA's Commercial Satellite Data Acquisition](https://science.nasa.gov/earth-science/csda/) has awarded DeepEarth investigators at UC Berkeley 5 million km**2 of [Planet](https://www.planet.com/) data, approximately $200,000 in value.
