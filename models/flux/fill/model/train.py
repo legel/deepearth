@@ -162,11 +162,19 @@ def evaluate_imagery(net, exs, device) -> dict:
     return {k: float(np.average(v, weights=w)) for k, v in tot.items()} | {"val_img_days": int(w.sum())}
 
 
-def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, fwd=None, row_w=None):
-    """row_w: optional (V_TAB,) loss weight per row (E30b, --extra-weight); None weighs every hidden cell equally."""
+def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, fwd=None, row_w=None, var_mean=False):
+    """row_w: optional (V_TAB,) loss weight per row (E30b, --extra-weight); None weighs every hidden cell equally.
+    var_mean (E46): mean NLL per variable, then the mean across variables with hidden values in the batch, as 4M does
+    across modalities. Without it a variable counts by its number of cells: FCH4 is 0.4% of tower values, NEE 3.3%."""
     h, params = (net if fwd is None else fwd)(b)          # fwd: the compiled forward (--compile), same module and weights
     tm = b["tmask"]
-    if row_w is None:
+    if var_mean:
+        cells = marginal_nll(b["tgt"], params) * tm
+        axes = (0, *range(2, tm.dim()))
+        count = tm.sum(axes)
+        seen = count > 0
+        nll = (cells.sum(axes)[seen] / count[seen]).mean()
+    elif row_w is None:
         nll = marginal_nll(b["tgt"], params)[tm].mean()
     else:
         wt = row_w.view(1, -1, *([1] * (tm.dim() - 2))).expand_as(tm)[tm]
@@ -324,6 +332,7 @@ def main():
     ap.add_argument("--n-overfit", type=int, default=2)
     ap.add_argument("--steps", type=int, default=20000, help="length of the learning-rate schedule")
     ap.add_argument("--stop-at", type=int, default=0, help="stop after this step (checkpoint written), schedule kept")
+    ap.add_argument("--var-mean", action="store_true", help="E46: mean NLL per variable, then across variables")
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--accum", type=int, default=1, help="micro-batches per optimiser step (batch = batch x accum)")
     ap.add_argument("--lr", type=float, default=3e-4)
@@ -495,7 +504,7 @@ def main():
                 keep = (torch.rand(b["site"].shape[0], 1, device=device) >= a.site_drop).float()
                 b["site"] = b["site"] * keep
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                L = losses(net, b, a.flow, fwd=fwd, row_w=row_w)
+                L = losses(net, b, a.flow, fwd=fwd, row_w=row_w, var_mean=a.var_mean)
             if not a.lazy_sync and not torch.isfinite(L["total"]):
                 stop = True
                 break

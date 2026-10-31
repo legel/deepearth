@@ -802,6 +802,20 @@ def test_copula_keeps_marginals_and_correlates_in_time():
     assert np.corrcoef(z[:, 10], z[:, 11])[0, 1] > 0.6
 
 
+def test_var_mean_weighs_variables_equally():
+    """Per-variable mean: a variable's weight does not depend on how many of its cells are hidden."""
+    tm = torch.zeros(1, 3, 4, 2, dtype=torch.bool)
+    tm[0, 0] = True                                          # 8 cells of variable 0, 1 cell of variable 1, none of 2
+    tm[0, 1, 0, 0] = True
+    cells = torch.zeros(1, 3, 4, 2)
+    cells[0, 0] = 1.0
+    cells[0, 1, 0, 0] = 5.0
+    masked, axes = cells * tm, (0, 2, 3)
+    count = tm.sum(axes)
+    seen = count > 0
+    assert (masked.sum(axes)[seen] / count[seen]).mean().item() == pytest.approx(3.0)
+
+
 def test_adaptation_is_redone_for_every_set_of_visible_values():
     """Weights adapted under one mask must not fill another: values hidden by the second were visible to the first."""
     from types import SimpleNamespace
