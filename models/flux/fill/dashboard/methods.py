@@ -315,12 +315,6 @@ EVALUATIONS = [
                                               "error."),
     ("E17", "What climatology captures on NEE at long gaps.", "The deficit is the form of the marginal: location "
                                                               "drift, mean against median, and shape."),
-    ("E36", "Site adaptation at inference: before filling a window, fine-tune the v3 network on the site's own data "
-            "(the window's visible values under fresh training masks and the site's other years); the hidden values "
-            "are never seen and the weights reset before the next window.",
-     "Adopted. 300 steps on 24 validation windows: all rows -13.0% CRPS (NEE -13.0%, LE -9.8%, H -8.4%, "
-     "FCH4 -7.9%), every site and gap length better, 95% coverage kept. 26-window methane set: FCH4 -26%; against "
-     "XGBoost on matched cells FCH4 -23%, every gap length."),
 ]
 
 
@@ -494,18 +488,13 @@ def fluxfill_card(model_root: Path, counts: dict) -> dict:
              ["steps", f"{c['steps']:,}; scored at step {sc['step']:,}"],
              ["v1 sampling", f"{rounds.group(1) if rounds else '?'} rounds, {flow_steps.group(1) if flow_steps else '?'} ODE "
                              f"steps per token, {samples.group(1) if samples else '?'} samples"]]
-    adapt = re.search(r"adapt_lr: float = ([\d.e-]+)", meth), re.search(r"adapt_batch: int = (\d+)", meth)
-    hyper.append(["site adaptation", f"300 steps per window, AdamW lr {adapt[0].group(1) if adapt[0] else '?'}, "
-                                          f"batch {adapt[1].group(1) if adapt[1] else '?'}, FCH4 loss weight 4, reset after each window"])
     return dict(id="fluxfill", name="FluxFill", ref=["Li2024", "Lipman2023", "Chang2022"],
                 code="models/flux/fill/model (net.py, train.py, method.py)",
-                version=f"run {sc['run']}, step {sc['step']:,}, with site adaptation at inference",
+                version=f"run {sc['run']}, step {sc['step']:,}",
                 cls=f"Transformer with factorised time and variable attention over day-tokens; {sc['n_params']:,} "
                     "parameters. Per half-hour, a 2-component Student-t mixture anchored at a local diurnal course "
                     "and at the site memory (with this window's year anomaly), mixed by a learned gate; SINR place "
-                    "encoding. Site adaptation at inference: before filling a window, the network is "
-                    "fine-tuned for 300 steps on the site's own data (the window's visible values under fresh "
-                    "training masks, and the site's other years), never on the hidden values, and reset afterwards. "
+                    "encoding. "
                     "Scored from its marginals (exact coverage from the predictive CDF).",
                 hyper=hyper,
                 inputs="Every tower variable, ERA5 and ERA5-Land drivers, Sentinel-2 Clay CLS embeddings, the site "
@@ -515,8 +504,7 @@ def fluxfill_card(model_root: Path, counts: dict) -> dict:
                 uncertainty="Student-t mixture marginals per half-hour, with widths scaled by the evidence near each "
                             "gap. Samples are independent per half-hour, so window sums under-cover; the joint flow "
                             "head (v1) carries the dependence between half-hours.",
-                limits="Site adaptation is not yet scored on the test sites. It adds about 40 s per window on one GPU "
-                       "(5.7 s per mask on average against 0.3 s without it). On FCH4 at validation towers, RMSE, R² "
+                limits="On FCH4 at validation towers, RMSE, R² "
                        "and bias are not yet best against every baseline; NEE under mixed masks (M5) was level with "
                        "climatology on test; FCH4 at sites without FCH4 history remains open (E14).")
 

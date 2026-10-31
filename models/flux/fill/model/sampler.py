@@ -17,9 +17,10 @@ import pandas as pd
 import torch
 
 import masking
-from data import (STEPS_PER_DAY, V_TAB, WINDOW_DAYS, SiteRecord, Stats, doy_features, site_features,
+from data import (STEPS_PER_DAY, V_TAB, WINDOW_DAYS, SiteRecord, Stats, doy_features, site_features, time_features,
                   valid_starts, window_tokens, window_values)
 from imagery import N_META, SiteImagery, window_imagery
+from solar import sun_features
 
 
 def make_example(rec: SiteRecord, start_day: int, stats: Stats, hide: np.ndarray, img_hide: np.ndarray,
@@ -41,6 +42,7 @@ def make_example(rec: SiteRecord, start_day: int, stats: Stats, hide: np.ndarray
         "img_obs": img_obs, "img_tgt_cls": cls, "img_tgt": has & img_hide,
         "img_present": np.array(img is not None and has.any() and not img_drop),
         "doy": doy_features(start), "site": site_features(rec.lat, rec.lon, rec.elev),
+        "time": time_features(start), "sun": sun_features(start, WINDOW_DAYS, rec.lat, rec.lon, rec.utc_offset_h),
         **mem_arrays(mem),
     }
 

@@ -1,16 +1,6 @@
 [
  {
   "date": "2026-10-30",
-  "title": "Correction: site adaptation.",
-  "text": "Scores of FluxFill with site adaptation were inflated by a leak: weights adapted under one mask were reused for other masks of the same window. The bug is fixed and the scores are being recomputed."
- },
- {
-  "date": "2026-10-30",
-  "title": "Site adaptation.",
-  "text": "Before filling a window, FluxFill is fine-tuned for 300 steps on the window's visible values and on 180-day windows from the tower's other years; hidden values are never used. The weights are reset after the window. Its scores are being recomputed after the correction above."
- },
- {
-  "date": "2026-10-30",
   "title": "Methane validation towers.",
   "text": "13 spatial blocks of training towers (21 towers, 13 measuring methane) moved to validation, drawn to match the ecosystem mix of the methane test towers. Methane towers are now 82 training, 18 validation and 21 test; the test towers are unchanged. Validation gains 102 methane windows. A model trained on this split is in training."
  },

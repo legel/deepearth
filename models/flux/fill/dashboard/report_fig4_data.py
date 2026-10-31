@@ -4,8 +4,8 @@ channels), at four gap lengths.
 Selection rule, fixed before any fill is seen: among the release-0.2 test windows, for each slot of the plan below,
 the window with the largest measured share of hidden half-hours in NEE, LE and H (each at least 0.5), at a tower not
 yet chosen, preferring a vegetation class not yet chosen; the first four slots also require measured FCH4 (share at
-least 0.3). The masks are the benchmark's (run.masks_for, release seeds). FluxFill runs as scored: FLUXFILL_CKPT, 300
-steps of site adaptation, 64 samples coupled in time by the temporal copula (FLUXFILL_COPULA).
+least 0.3). The masks are the benchmark's (run.masks_for, release seeds). FluxFill runs as scored: FLUXFILL_CKPT, 64
+samples coupled in time by the temporal copula (FLUXFILL_COPULA).
 
 Output: bench/dashboard/report/fig4/<site>_<start>_<mask>.npz with the flux rows' values, the hidden span, and the
 half-hourly and daily-mean mean and 95% interval of the samples. Run in the fluxfill-clay environment on one GPU.

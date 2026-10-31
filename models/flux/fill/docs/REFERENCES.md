@@ -138,3 +138,18 @@ version, commit, access date and checksum of what it used.
 - Loshchilov, I. and Hutter, F. (2019). Decoupled weight decay regularization. *ICLR*. arXiv:1711.05101
 - Cole, E. et al. (2023). Spatial implicit neural representations for global-scale species mapping. *ICML*.
   arXiv:2306.02564
+
+## Sources of the component study (model/recipe.py)
+
+Each option follows upstream code read at these commits; numerical parity with the upstream function was checked for each module marked (parity).
+
+- Mizrahi2023: Mizrahi, Bachmann et al. 2023, 4M: Massively Multimodal Masked Modeling, NeurIPS, arXiv:2312.06647. Per-modality loss: apple/ml-4m, fourm/models/fm.py.
+- Liang2024: Liang et al. 2024, Mixture-of-Transformers, arXiv:2411.04996. Code form: Deng et al. 2025, BAGEL, arXiv:2505.14683, ByteDance-Seed/Bagel, modeling/bagel/qwen2_navit.py.
+- Timestral2026: Mistral AI 2026, Timestral, mistralai/timestral commit a534bdbd24, src/timestral/layers.py, model.py, scaler.py, Apache-2.0; block schedule and knots from the Timestral-28M config.json. monotone_quantiles, RMSNorm, FusedSwiGLU, ResidualBlock (parity). The repository is inference only, so the pinball loss of the quantile head is our assumption.
+- Alet2025: Alet et al. 2025, Skillful joint probabilistic weather forecasting from marginals, arXiv:2506.10772. google-deepmind/graphcast commit f2f2c5117d, weathernext/weathernext2/fgn.py, weathernext/utils/dense.py, Apache-2.0. Fair CRPS of two members (parity with the formula).
+- Solar geometry: same commit, weathernext/utils/solar_radiation.py (parity to 3e-8, upstream source run on numpy).
+- Gorishniy2022: Gorishniy, Rubachev, Babenko 2022, On embeddings for numerical features in tabular deep learning, NeurIPS, arXiv:2203.05556. yandex-research/rtdl-num-embeddings commit a8fc25025c (parity).
+- Szwarcman2024: Szwarcman et al. 2024, Prithvi-EO-2.0, arXiv:2412.02732. IBM/terratorch commit 89a3ed13d7, terratorch/models/backbones/prithvi_mae.py (parity).
+- Karras2024: Karras et al. 2024, Analyzing and improving the training dynamics of diffusion models, CVPR, arXiv:2312.02696. NVlabs/edm2 commit 4bf8162f60, training/phema.py (parity).
+- Cole2023: elijahcole/sinr commit 594040c0ca, utils.py, models.py. Upstream's residual layer has dropout that our port omits.
+- Hidden-value and mask-order gate (bench/leak_check.py), utilisation (model/utilisation.py): Wang, Tran, Feiszli 2020, arXiv:1905.12681; Wu et al. 2022, arXiv:2202.05306.

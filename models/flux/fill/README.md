@@ -60,10 +60,6 @@ In construction since 2026-10-26. Results, every experiment and its outcome are 
 - **Test scores.** The model last scored on the frozen test release 0.2 (514 windows, 131 test towers) has width
   320, depth 10 and 24,000 training steps. Its CRPS is 15.5% (NEE), 20.3% (LE), 21.9% (H) and 2.6% (FCH4) below the
   established method with the lowest CRPS, on the values every method fills.
-- **Site adaptation.** Before filling a window, FluxFill is fine-tuned for 300 steps on the window's visible values
-  and the tower's other years, then reset (`docs/MODEL.md`, section 6b). In the tests that set these values, it
-  lowered CRPS on all hidden values of the 24 validation windows by 13.0%, with no tower worse. It is scored on
-  the test release once its settings are fixed on validation.
 - **Methane validation.** `data/towers/split_v2.py` writes `towers/split_v2.csv` (test towers unchanged). It moves
   13 training blocks (21 towers, 13 measuring methane) to validation, so that the 18 validation methane towers follow
   the ecosystem mix of the test methane towers; `model/methane_windows.py` gives 102

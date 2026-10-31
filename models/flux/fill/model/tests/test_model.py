@@ -814,31 +814,6 @@ def test_var_mean_weighs_variables_equally():
     assert ((masked.sum(axes) / tm.sum(axes).clamp_min(1)).sum() / 3).item() == pytest.approx(2.0)
 
 
-def test_adaptation_is_redone_for_every_set_of_visible_values():
-    """Weights adapted under one mask must not fill another: values hidden by the second were visible to the first."""
-    from types import SimpleNamespace
-    from method import FluxFill
-
-    class Restarted(Exception):
-        pass
-
-    def restart(_):
-        raise Restarted
-    f = FluxFill.__new__(FluxFill)
-    f.net, f._base = SimpleNamespace(load_state_dict=restart), {}
-    w = SimpleNamespace(site="XX-Xxx", start=pd.Timestamp("2020-01-01"))
-    obs = np.ones((4, 180, 48), bool)
-    first = {"obs": obs, "img_obs": np.ones(180, bool)}
-    hidden = obs.copy(); hidden[:, 30:60] = False
-    second = {"obs": hidden, "img_obs": np.ones(180, bool)}
-    fewer_images = {"obs": obs, "img_obs": np.arange(180) > 90}
-    f._adapted = FluxFill.adapt_key(w, first)
-    f.adapt(w, first, {})                                    # the same visible values: weights are reused
-    for other in (second, fewer_images):
-        with pytest.raises(Restarted):
-            f.adapt(w, other, {})
-
-
 def test_copula_layout_of_the_head():
     """sample_copula takes the head parameters as predict stores them, (V, T, C) with T = 8640, and returns (S, V, T)."""
     from method import FluxFill

@@ -32,7 +32,7 @@ import pandas as pd
 
 ORDER = ["M1", "M2-2h", "M2-6h", "M2-1d", "M2-7d", "M2-30d", "M2-90d", "M2-180d", "M3", "M4-no-reanalysis+M2-30d", "M5"]
 METHOD_ORDER = ["climatology", "mds", "irvin_rf", "vekuri_de", "liu_xgb", "saits", "csdi", "chronos2", "fluxfill-v0",
-                "fluxfill-v1", "fluxfill-ref", "fluxfill", "fluxfill-adapt"]
+                "fluxfill-v1", "fluxfill-ref", "fluxfill"]
 LABEL = {"climatology": "climatology", "mds": "MDS (REddyProc)", "irvin_rf": "RF ensemble (Irvin 2021)",
          "vekuri_de": "deep ensemble (Vekuri 2025)", "liu_xgb": "XGBoost (Liu 2025)",
          "saits": "SAITS + residual Gaussian", "csdi": "CSDI", "chronos2": "Chronos-2 zero-shot",
@@ -42,7 +42,7 @@ LABEL = {"climatology": "climatology", "mds": "MDS (REddyProc)", "irvin_rf": "RF
 SHORT = {"climatology": "climatology", "mds": "MDS", "irvin_rf": "the RF ensemble", "vekuri_de": "the deep ensemble",
          "liu_xgb": "XGBoost", "saits": "SAITS", "csdi": "CSDI", "chronos2": "Chronos-2", "fluxfill-v0": "FluxFill v0",
          "fluxfill-v1": "FluxFill v1", "fluxfill-ref": "FluxFill v2", "fluxfill": "FluxFill"}
-OURS = ("fluxfill-v0", "fluxfill-v1", "fluxfill-ref", "fluxfill", "fluxfill-adapt")
+OURS = ("fluxfill-v0", "fluxfill-v1", "fluxfill-ref", "fluxfill")
 FLUXES = ("NEE", "LE", "H", "FCH4")
 UNITS = {"NEE": "µmol m⁻² s⁻¹", "LE": "W m⁻²", "H": "W m⁻²", "FCH4": "nmol m⁻² s⁻¹"}
 NAMES = {"NEE": "net ecosystem exchange of CO₂", "LE": "latent heat flux", "H": "sensible heat flux",

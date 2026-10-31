@@ -11,6 +11,7 @@ checkpoints (by validation CRPS). Training stops on a non-finite loss.
 """
 
 import argparse
+import copy
 import json
 import math
 import sys
@@ -32,6 +33,7 @@ from data import (CHANNELS, V_BASE, scaling_order, IS_TOWER, STEPS_PER_DAY, T_WI
                   table_dir, valid_starts, window_values)
 from imagery import load_imagery  # noqa: E402
 from net import FluxFillNet, imagery_scores, marginal_mean, marginal_nll, mixture_cdf, sample_marginal_params  # noqa: E402
+from recipe import add_arguments, net_kwargs  # noqa: E402
 from sampler import Stream, WindowSampler, collate, make_example  # noqa: E402
 
 sys.path.insert(0, str(HERE.parent / "bench"))
@@ -55,6 +57,7 @@ def setup(args):
         if s in records:
             records[s].heldout_year = heldout_year(records[s])
     stats = fit_stats(records, [s for s in train if s in records])
+    stats.asinh = args.asinh
     imagery = {}
     allowed = None if args.imagery_sites in ("", "all") else set(args.imagery_sites.split(","))
     for s, r in records.items():
@@ -64,6 +67,27 @@ def setup(args):
         if im is not None:
             imagery[s] = im
     return records, train, val, split_name, stats, imagery
+
+
+class PowerFunctionEMA:
+    """EDM2 training/phema.py: an average of the weights with beta = (1 - t_delta / t_next) ** (gamma + 1), t the images
+    (here windows) seen; gamma from the relative standard deviation by std_to_exp. Buffers are copied by `.get`."""
+
+    def __init__(self, net, std: float):
+        self.net, self.ema = net, copy.deepcopy(net)
+        self.exp = float(np.roots([1, 7, 16 - std ** -2, 12 - std ** -2]).real.max())
+
+    @torch.no_grad()
+    def update(self, t_next: int, t_delta: int):
+        beta = (1 - t_delta / t_next) ** (self.exp + 1)
+        for p_net, p_ema in zip(self.net.parameters(), self.ema.parameters()):
+            p_ema.lerp_(p_net, 1 - beta)
+
+    @torch.no_grad()
+    def get(self):
+        for p_net, p_ema in zip(self.net.buffers(), self.ema.buffers()):
+            p_ema.copy_(p_net)
+        return self.ema
 
 
 def site_weights():
@@ -168,15 +192,20 @@ def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, 
     4M (ml-4m fourm/models/fm.py). Without it a variable counts by its number of cells: FCH4 is 0.4% of tower values, NEE 3.3%."""
     h, params = (net if fwd is None else fwd)(b)          # fwd: the compiled forward (--compile), same module and weights
     tm = b["tmask"]
+    if net.fgn:                # fair CRPS of two members (WeatherNext fgn.crps_loss, unbiased, n = 2); fresh noise each
+        x1, x2 = params[0], (net if fwd is None else fwd)(b)[1][0]
+        per_cell = 0.5 * ((x1 - b["tgt"]).abs() + (x2 - b["tgt"]).abs()) - 0.5 * (x1 - x2).abs()
+    else:
+        per_cell = marginal_nll(b["tgt"], params)
     if var_mean:
-        cells = marginal_nll(b["tgt"], params) * tm
+        cells = per_cell * tm
         axes = (0, *range(2, tm.dim()))
         nll = (cells.sum(axes) / tm.sum(axes).clamp_min(1)).sum() / V_TAB        # 4M, fm.py: sum(mod_loss) / len(mod_loss)
     elif row_w is None:
-        nll = marginal_nll(b["tgt"], params)[tm].mean()
+        nll = per_cell[tm].mean()
     else:
         wt = row_w.view(1, -1, *([1] * (tm.dim() - 2))).expand_as(tm)[tm]
-        nll = (marginal_nll(b["tgt"], params)[tm] * wt).sum() / wt.sum().clamp_min(1e-6)
+        nll = (per_cell[tm] * wt).sum() / wt.sum().clamp_min(1e-6)
     out = {"nll": nll}
     total = nll
     if b["img_tgt"].any():
@@ -201,8 +230,10 @@ def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, 
 
 
 @torch.no_grad()
-def evaluate(net, exs, device, use_flow: bool, batch: int = 4):
+def evaluate(net, exs, device, use_flow: bool, batch: int = 4, asinh: bool = False):
+    """Scores on hidden values. With --asinh they are computed on the standardised values, so arms stay comparable."""
     from scipy import stats as sst
+    undo = (lambda u: np.sinh(np.clip(u, -30, 30))) if asinh else (lambda u: u)
     net.eval()
     rows, recs, flows = [], [], []
     for i in range(0, len(exs), batch):
@@ -211,14 +242,18 @@ def evaluate(net, exs, device, use_flow: bool, batch: int = 4):
         with torch.autocast("cuda", dtype=torch.bfloat16):
             L = losses(net, b, use_flow)
             _, params = net(b)
-            mean_all = marginal_mean(params).float()
-            if len(params) == 4:                      # mixture: scores and intervals from 64 draws
-                draws = sample_marginal_params(params, 64).float()
+            if net.fgn:                               # 16 members, one forward pass each
+                draws = torch.stack([net(b)[1][0] for _ in range(16)]).float()
+                mean_all = draws.mean(0)
+            else:
+                mean_all = marginal_mean(params).float()
+                if len(params) != 3:                  # mixture or quantiles: scores and intervals from 64 draws
+                    draws = sample_marginal_params(params, 64).float()
         for j, e in enumerate(chunk):
             tm = e["tmask"]
-            y = e["tgt"][tm]
+            y = undo(e["tgt"][tm])
             mean_j = mean_all[j].cpu().numpy()
-            if len(params) == 3:
+            if len(params) == 3 and not net.fgn:
                 mu, sg, nu = (u[j].float().cpu().numpy()[tm] for u in params)
                 crps = crps_student_t(mu, sg, nu, y)
                 q = sst.t.ppf(0.975, nu)
@@ -228,11 +263,14 @@ def evaluate(net, exs, device, use_flow: bool, batch: int = 4):
                 lo_j, hi_j = full[0] - half, full[0] + half
             else:
                 dj = draws[:, j].cpu().numpy()
-                mu = mean_j[tm]
-                crps = crps_samples(dj[:, tm], y)                 # fair CRPS estimator from 64 draws
+                mu = undo(mean_j[tm])
+                crps = crps_samples(undo(dj[:, tm]), y)           # fair CRPS estimator from the draws
                 lo_j, hi_j = np.quantile(dj, [0.025, 0.975], axis=0)   # for the reconstruction figure only
-                pit = mixture_cdf([u[j].float().cpu().numpy()[tm] for u in params], y)
-                cov = (pit >= 0.025) & (pit <= 0.975)             # exact coverage from the mixture CDF
+                if net.fgn:
+                    cov = (y >= undo(lo_j[tm])) & (y <= undo(hi_j[tm]))
+                else:
+                    pit = mixture_cdf([u[j].float().cpu().numpy()[tm] for u in params], e["tgt"][tm])
+                    cov = (pit >= 0.025) & (pit <= 0.975)         # exact coverage from the predictive CDF
             vi = np.nonzero(tm)[0]
             flux = np.isin(vi, [VARS.index(v) for v in ("NEE", "LE", "H", "FCH4")])
             base = vi < V_BASE                                   # the rows of the base channel set (E30 pairing)
@@ -330,7 +368,7 @@ def main():
     ap.add_argument("--n-overfit", type=int, default=2)
     ap.add_argument("--steps", type=int, default=20000, help="length of the learning-rate schedule")
     ap.add_argument("--stop-at", type=int, default=0, help="stop after this step (checkpoint written), schedule kept")
-    ap.add_argument("--var-mean", action="store_true", help="E46: mean NLL per variable, then across variables")
+    add_arguments(ap)                                                   # the options of recipe.OPTIONS
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--accum", type=int, default=1, help="micro-batches per optimiser step (batch = batch x accum)")
     ap.add_argument("--lr", type=float, default=3e-4)
@@ -417,14 +455,7 @@ def main():
     cfg = dict(vars(a), channels=CHANNELS, split=split_name, train_sites=train, val_sites=val, stats=stats.to_dict(),
                imagery_sites_used=sorted(imagery))
     (out / "config.json").write_text(json.dumps(cfg, indent=1, default=str))
-    net = FluxFillNet(d=a.d, depth=a.depth, heads=a.heads, dropout=a.dropout, use_imagery=not a.no_imagery,
-                      flow_width=a.flow_width, flow_depth=a.flow_depth,
-                      memory=a.memory, mem_residual=a.mem_residual, img_nll=a.img_nll,
-                      components=a.components, local_base=a.local_base, gated_base=a.gated_base,
-                      gate_scale=a.gate_scale, edge_continue=a.edge_continue, memory_skew=a.memory_skew,
-                      driver_anomaly=a.driver_anomaly, memory_skew_fluxes_only=a.memory_skew_fluxes,
-                      scale_anchor=a.scale_anchor, year_anomaly=a.year_anomaly, sinr_place=a.sinr_place,
-                      sinr_replace=a.sinr_replace, scale_anchor_fch4=a.scale_anchor_fch4).to(device)
+    net = FluxFillNet(**net_kwargs(vars(a))).to(device)
     n_params = sum(p.numel() for p in net.parameters())
     print(f"params {n_params / 1e6:.2f} M", flush=True)
     cfg["n_params"] = int(n_params)
@@ -433,6 +464,7 @@ def main():
     opt = torch.optim.AdamW(net.parameters(), lr=a.lr, weight_decay=0.05, betas=(0.9, 0.98),
                             **({"fused": True} if a.fused_adam else {}))
     fwd = torch.compile(net, dynamic=False) if a.compile else None
+    ema = PowerFunctionEMA(net, a.ema_std) if a.ema_std > 0 else None
     row_w = None
     if a.extra_weight != 1.0 or a.row_weight:
         from data import IS_EXTRA
@@ -513,6 +545,8 @@ def main():
             break
         gn = torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
         opt.step()
+        if ema is not None:
+            ema.update(step * a.batch * a.accum, a.batch * a.accum)
         for k, v in L.items():     # --lazy-sync: summed on the GPU, read (and checked for NaN) every 50 steps
             acc[k] = acc.get(k, 0.0) + (v.detach().float() if a.lazy_sync else float(v))
         acc["gn"] = acc.get("gn", 0.0) + (gn.detach().float() if a.lazy_sync else float(gn))
@@ -531,9 +565,10 @@ def main():
                               for k, v in rec.items()}), flush=True)        # lr unrounded (it is 3e-5 at the end)
             log.write(json.dumps(rec) + "\n"); log.flush()
         if step % a.eval_every == 0 or step == a.steps or step == a.stop_at:
-            summ, recs = evaluate(net, vex_use if a.mode == "overfit" else vex, device, a.flow)
+            scored = net if ema is None else ema.get()
+            summ, recs = evaluate(scored, vex_use if a.mode == "overfit" else vex, device, a.flow, asinh=a.asinh)
             if a.mode != "overfit":
-                summ.update(evaluate_imagery(net, vimg, device))
+                summ.update(evaluate_imagery(scored, vimg, device))
             per_window = summ.pop("_windows", [])
             if a.mode != "overfit":      # per-window scores for bootstrap uncertainty (scaling fits)
                 (out / "val_windows").mkdir(exist_ok=True)
@@ -549,8 +584,8 @@ def main():
             score = summ.get("val_crps", summ.get("fit_crps"))
             if score < best:
                 best = score
-                torch.save({"model": net.state_dict(), "step": step, "config": cfg}, out / "best.pt")
-            torch.save({"model": net.state_dict(), "step": step, "config": cfg}, out / f"step{step:06d}.pt")
+                torch.save({"model": scored.state_dict(), "step": step, "config": cfg}, out / "best.pt")
+            torch.save({"model": scored.state_dict(), "step": step, "config": cfg}, out / f"step{step:06d}.pt")
             gs = summ.get(a.gate_metric, score)
             if a.gate_at and step == a.gate_at and gs > a.gate_max:   # early stop of an A/B arm (seed band)
                 print(f"gate stop at step {step}: {a.gate_metric} {gs:.5f} > {a.gate_max:.5f}", flush=True)
