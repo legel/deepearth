@@ -158,7 +158,7 @@ def overview_abstract(root: Path, res: list, train_towers: int) -> str:
         "It has the lowest score for NEE, LE and H at every gap length from 1 to 180 days.",
         (f"On {v['n']['windows']} validation windows, a temporal copula raises the 95% coverage of 30-day sums from {cop.group(1)} to "
          f"{cop.group(2)}; other methods reach 0.15 to 0.45." if cop else ""),
-        "Chronos-2 and XGBoost lead at the shortest gaps. On FCH4, Chronos-2 and the per-tower random forest ensemble lead at most gap "
+        "Chronos-2 and XGBoost lead at the shortest gaps, and the per-tower deep ensemble leads on mixed per-variable gaps for NEE, LE and H. On FCH4, Chronos-2 and the per-tower random forest ensemble lead at most gap "
         f"lengths, and the random forest ensemble is {abs(v['FCH4']['pct']):.1f}% lower at validation towers.",
         "These test scores are from the network trained for 24,000 steps; the final model is scored once at the end of the component study."])
 
