@@ -229,20 +229,23 @@ gain.
 One change at a time against a control of the same seed, width 192, depth 6, 8,000 steps, 60 validation windows
 ([`recipe.py`](model/recipe.py), [`ablate.py`](model/ablate.py)). Each technique is added in its published form, from
 the published code where it exists, behind its own flag. Percentages are changes in validation CRPS, averaged over the
-seeds shown, and in 95 % coverage. 16 of 34 components have run. The two control seeds differ by
+seeds shown, and in 95 % coverage. 19 of 34 components have run. The two control seeds differ by
 0.8 % on overall CRPS, and FCH4 moves from 0.60 to 0.88 within a run, so a row counts only when it holds on a second
 seed.
 
-| added to the control | seeds | CRPS, all | NEE | LE | H | FCH4 | 95 % cov. | decision |
+| change to the control | seeds | CRPS, all | NEE | LE | H | FCH4 | 95 % cov. | decision |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | second control seed (noise) | | +0.8 % | −1.0 % | −0.8 % | −0.1 % | −0.4 % | +1.3 % | |
+| Without: Site memory | 1 | +15.3 % | +20.6 % | +6.7 % | +16.1 % | −19.1 % | −0.7 % | Kept; FCH4 without memory under test |
+| Without: Sentinel-2 / Clay | 1 | 0.0 % | −0.2 % | −0.1 % | +0.1 % | −10.4 % | −0.1 % | One seed; no effect at this size |
+| Without: Location (site features) | 1 | −0.2 % | −0.2 % | +0.4 % | +0.4 % | +5.6 % | −0.2 % | One seed; no effect |
 | Per-variable loss (4M) | 2 | −0.4 % | −0.2 % | −0.3 % | −0.1 % | −16.0 % | +0.1 % | Adopted |
 | Per-modality MLPs (MoT) | 2 | −0.4 % | 0.0 % | −0.5 % | −1.1 % | −3.6 % | −0.1 % | No gain |
 | Per-modality weights (MoT) | 2 | −1.3 % | −1.1 % | −1.7 % | −0.7 % | +10.7 % | −0.5 % | Adopted in the combination; alone FCH4 differs by seed |
 | Attention gate (Timestral) | 2 | −1.5 % | +0.2 % | −0.8 % | −0.7 % | −9.5 % | −0.2 % | Adopted |
 | Partial RoPE (Timestral) | 1 | +0.1 % | +0.5 % | −0.1 % | +0.6 % | +3.9 % | −0.3 % | No gain |
 | RMSNorm (Timestral) | 1 | +0.2 % | +0.1 % | +0.8 % | −0.2 % | −10.1 % | 0.0 % | No gain |
-| SwiGLU (Timestral) | 1 | −2.8 % | −0.8 % | −2.1 % | −2.4 % | −6.0 % | +0.2 % | Second seed queued |
+| SwiGLU (Timestral) | 2 | −3.1 % | −0.6 % | −1.5 % | −2.3 % | −3.5 % | +0.3 % | Adopted |
 | Time-heavy schedule (Timestral) | 1 | +1.2 % | −0.4 % | +0.3 % | +0.7 % | −3.9 % | +0.2 % | No gain |
 | Quantile head (Timestral) | 1 | −2.3 % | −0.5 % | −2.5 % | −2.1 % | −19.9 % | +0.2 % | Second seed queued |
 | Asinh scaling (Timestral) | 1 | +3.4 % | +5.1 % | +1.3 % | +2.4 % | −5.1 % | −0.4 % | Rejected |
