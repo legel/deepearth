@@ -50,11 +50,59 @@ $("#theme").addEventListener("click", () => {
 try { const th = localStorage.getItem("fluxfill-theme"); if (th) document.documentElement.setAttribute("data-theme", th); } catch (e) { /* none */ }
 
 // ---------- overview ----------
+const OV_FLUX = ["NEE", "LE", "H", "FCH4"];
+const OV_VIEWS = [["Validation sites", "Validation", "--series-3"], ["Test sites", "Test", "--series-2"]];
+const METRIC_LABEL = { crps: "CRPS", cov95: "95% coverage", mae: "MAE", rmse: "RMSE", mse: "MSE", bias: "bias", r2: "R²", wape: "WAPE" };
 function renderStatus(st) {
   if (!st) { $("#status-tiles").innerHTML = '<div class="tile"><div class="l">Status not available</div></div>'; return; }
-  const tiles = st.tiles.map((t) => `<div class="tile"><div class="v">${fmt(t.value)}</div><div class="l">${t.label}</div></div>`);
-  $("#status-tiles").innerHTML = tiles.join("");
+  const groups = [...new Set(st.tiles.map((t) => t.group || ""))];
+  $("#status-tiles").innerHTML = groups.map((g) => { const ts = st.tiles.filter((t) => (t.group || "") === g); return `${g ? `<div class="tile-group">${esc(g)}</div>` : ""}<div class="grid cols-${ts.length % 3 === 0 ? 3 : 4}">${ts.map((t) =>
+    `<div class="tile"><div class="v">${typeof t.value === "string" ? esc(t.value) : fmt(t.value)}</div><div class="l">${esc(t.label)}</div></div>`).join("")}</div>`; }).join("");
   $("#status-time").textContent = `Built ${st.built_utc} UTC. ${st.note || ""}`;
+  $("#ov-updates").innerHTML = (st.updates || []).map((u) =>
+    `<li><span class="ov-date">${esc(u.date)}</span><div><strong>${esc(u.title)}</strong> ${esc(u.text)}</div></li>`).join("");
+  const res = st.results || [];
+  if (!res.length) return;
+  $("#ov-chart").innerHTML = ovChart(res);
+  const cell = (f) => !f ? "<td>–</td>" : `<td class="num"><b>${f.pct > 0 ? "+" : "−"}${fmt(Math.abs(f.pct), 1)}%</b><span class="sub">${fmtMetric(f.ours_crps, "crps")} against ${fmtMetric(f.base_crps, "crps")} (${esc(f.base)})</span><span class="sub">best on ${f.best_metrics} of ${f.metrics} metrics</span><span class="sub">${fmtInt(f.n)} values</span></td>`;
+  $("#ov-results").innerHTML = `<div class="table-wrap"><table class="ov-table"><thead><tr><th>Towers</th>${OV_FLUX.map((k) => `<th class="num">${k}</th>`).join("")}</tr></thead><tbody>
+    ${res.map((r) => `<tr><th scope="row">${esc(r.view)}<span class="sub">${r.windows} windows, ${r.sites} towers</span></th>${OV_FLUX.map((k) => cell(r.fluxes.find((f) => f.flux === k))).join("")}</tr>`).join("")}
+  </tbody></table></div>`;
+  const lost = res.map((r) => ({ view: r.view, items: r.fluxes.flatMap((f) => (f.lost || []).map((l) => ({ flux: f.flux, ...l }))) })).filter((r) => r.items.length);
+  $("#ov-open").innerHTML = !lost.length ? "" : `<h3>Metrics led by an established method</h3><p class="note">95% coverage is best at 0.95 and bias at 0.</p>${lost.map((r) =>
+    `<p class="sub-title">${esc(r.view)}</p><ul class="ov-lost">${r.items.map((l) =>
+    `<li><strong>${esc(l.flux)} ${esc(METRIC_LABEL[l.metric] || l.metric)}</strong>: FluxFill ${fmtMetric(l.ours, l.metric)}; ${esc(l.leader)} ${fmtMetric(l.lead, l.metric)}</li>`).join("")}</ul>`).join("")}`;
+}
+
+// CRPS reduction of FluxFill against the best established method, per flux and view (bars right of zero = lower CRPS).
+function ovChart(res) {
+  const rows = OV_FLUX.map((k) => ({ k, v: OV_VIEWS.map(([id, name, c]) => {
+    const f = (res.find((r) => r.view === id) || { fluxes: [] }).fluxes.find((x) => x.flux === k);
+    return f ? { name, c, red: -f.pct, f } : null;
+  }) }));
+  const all = rows.flatMap((r) => r.v.filter(Boolean).map((x) => x.red));
+  const hi = Math.max(10, Math.ceil(Math.max(...all) / 10) * 10), lo = Math.min(0, Math.floor(Math.min(...all) / 10) * 10);
+  const width = 720, L = 64, R = 70, bar = 16, gap = 3, grp = 18, top = 4, axis = 26;
+  const H = top + rows.length * (2 * bar + gap + grp) - grp + axis;
+  const X = (v) => L + (v - lo) / (hi - lo) * (width - L - R);
+  let svg = `<svg viewBox="0 0 ${width} ${H}" role="img" aria-label="CRPS reduction of FluxFill against the best established method, per flux">`;
+  const yAx = H - axis + 6;
+  for (let t = lo; t <= hi; t += 10)
+    svg += `<line x1="${X(t)}" x2="${X(t)}" y1="${top}" y2="${yAx - 4}" class="bm-grid"/><text x="${X(t)}" y="${yAx + 10}" text-anchor="middle" class="bm-t q">${t}%</text>`;
+  rows.forEach((r, i) => {
+    const y0 = top + i * (2 * bar + gap + grp);
+    svg += `<text x="${L - 10}" y="${y0 + bar + 4}" text-anchor="end" class="bm-t ov-flux">${r.k}</text>`;
+    r.v.forEach((x, j) => {
+      if (!x) return;
+      const y = y0 + j * (bar + gap), x0 = X(Math.min(0, x.red)), w = Math.abs(X(x.red) - X(0));
+      const tip = `${r.k}, ${x.name} towers: FluxFill CRPS ${fmtMetric(x.f.ours_crps, "crps")} against ${fmtMetric(x.f.base_crps, "crps")} for ${x.f.base}; best on ${x.f.best_metrics} of ${x.f.metrics} metrics; ${fmtInt(x.f.n)} values`;
+      svg += `<g class="ov-bar"><rect x="${L}" y="${y - 1}" width="${width - L}" height="${bar + 2}" fill="transparent"/><rect x="${x0}" y="${y}" width="${Math.max(w, 1)}" height="${bar}" rx="3" fill="var(${x.c})"/><title>${esc(tip)}</title></g>`;
+      svg += `<text x="${X(Math.max(0, x.red)) + 6}" y="${y + bar * 0.75}" class="bm-t">${x.red >= 0 ? "−" : "+"}${fmt(Math.abs(x.red), 1)}%</text>`;
+    });
+  });
+  svg += `<line x1="${X(0)}" x2="${X(0)}" y1="${top}" y2="${yAx - 4}" stroke="var(--ink)" stroke-width="1"/>`;
+  return bmLegend(OV_VIEWS.map(([, name, c]) => [`${name} towers`, c])) + svg + "</svg>" +
+    `<p class="note">CRPS reduction (%) of FluxFill against the established method with the lowest CRPS for each flux. Hover a bar for the scores.</p>`;
 }
 
 // ---------- towers ----------
@@ -102,7 +150,7 @@ function opt(sel, values, labels) {
 }
 const METHOD_NAMES = { climatology: "Climatology", mds: "MDS (REddyProc)", irvin_rf: "RF ensemble (Irvin 2021)",
   vekuri_de: "Deep ensemble (Vekuri 2025)", liu_xgb: "XGBoost (Liu 2025)", saits: "SAITS", csdi: "CSDI",
-  chronos2: "Chronos-2 zero-shot", fluxfill: "FluxFill v3", "fluxfill-v4": "FluxFill v4 (v3 + site adaptation)" };
+  chronos2: "Chronos-2 zero-shot", fluxfill: "FluxFill" };
 const SPLIT_TEXT = {
   test: "Test tower: held out from training and from every model choice; FluxFill was scored on the test towers once.",
   validation: "Validation tower: held out from training; used to choose between model versions." };
@@ -132,7 +180,7 @@ function initWindows(idx) {
     opt($("#w-mask"), w ? w.masks : []);
     const ms = w ? w.methods : [];
     opt($("#w-method"), ms, ms.map((m) => METHOD_NAMES[m] || m));
-    const ff = ["fluxfill-v4", "fluxfill"].find((m) => ms.includes(m));
+    const ff = ["fluxfill"].find((m) => ms.includes(m));
     if (ff) $("#w-method").value = ff;
     drawWindow();
   };
@@ -361,7 +409,7 @@ function renderTables() {
 // The current FluxFill: the last "ours" method of the results file (results_dashboard.py lists earlier versions first).
 function currentFluxFill() {
   const ours = RES.methods.filter((m) => m.ours);
-  return ours.find((m) => m.id === "fluxfill-adapt") || ours.find((m) => m.id === "fluxfill") || ours.find((m) => m.id === "fluxfill-ref") || ours[ours.length - 1];
+  return ours.find((m) => m.id === "fluxfill") || ours.find((m) => m.id === "fluxfill-ref") || ours[ours.length - 1];
 }
 
 // Figure: CRPS relative to climatology by gap length, one panel per flux.
@@ -371,7 +419,8 @@ function drawChart() {
   const ch = RES.chart, F = ch.fluxes;
   const base = RES.methods.filter((m) => !m.ours && m.id !== "climatology");
   if (HIGHLIGHT && !base.some((m) => m.id === HIGHLIGHT)) HIGHLIGHT = null;   // not scored on this split
-  if (!HIGHLIGHT) {   // default: the baseline with the lowest mean CRPS relative to climatology over every panel and gap
+  if (!HIGHLIGHT && base.some((m) => m.id === "liu_xgb")) HIGHLIGHT = "liu_xgb";   // default: XGBoost (Liu 2025)
+  if (!HIGHLIGHT) {   // else the baseline with the lowest mean CRPS relative to climatology over every panel and gap
     let best = null, bv = Infinity;
     for (const m of base) {
       const r = []; for (const f of Object.values(F)) { const c = f.series.find((s) => s.method === "climatology"), s = f.series.find((x) => x.method === m.id); s.crps.forEach((v, j) => { if (v !== null && c.crps[j]) r.push(v / c.crps[j]); }); }
@@ -547,17 +596,15 @@ function renderReport(rep) {
 
 // ---------- boot ----------
 (async () => {
-  const [st, s, idx, res, rep, meth, scal, rtest, rch4, bm] = await Promise.all([getJSON("data/status.json"), getJSON("data/sites.json"), getJSON("data/windows/index.json"), getJSONgz("data/results.json"), getJSON("data/report.json"), getJSON("data/methods.json"), getJSON("data/scaling.json"), getJSONgz("data/results_test.json"), getJSONgz("data/results_ch4.json"), getJSON("data/benchmark.json")]);
+  const [st, s, idx, res, rep, meth, scal, rtest, bm] = await Promise.all([getJSON("data/status.json"), getJSON("data/sites.json"), getJSON("data/windows/index.json"), getJSONgz("data/results.json"), getJSON("data/report.json"), getJSON("data/methods.json"), getJSON("data/scaling.json"), getJSONgz("data/results_test.json"), getJSON("data/benchmark.json")]);
   SCALING = scal;
   renderStatus(st); initTowers(s); initWindows(idx); renderResults(res); renderMethods(meth); renderReport(rep); renderBenchmark(bm);
   const splitBtns = [...document.querySelectorAll("#r-split button")];
   const testBtn = splitBtns.find((b) => b.dataset.split === "test");
-  const ch4Btn = splitBtns.find((b) => b.dataset.split === "methane");
-  if (ch4Btn && !rch4) ch4Btn.disabled = true;
   if (!rtest) testBtn.disabled = true;               // validation sites are the default view
   for (const btn of splitBtns) btn.addEventListener("click", () => {
     for (const x of splitBtns) x.setAttribute("aria-checked", String(x === btn));
-    renderResults(btn.dataset.split === "test" ? rtest : btn.dataset.split === "methane" ? rch4 : res);
+    renderResults(btn.dataset.split === "test" ? rtest : res);
   });
   show(location.hash.slice(1) || "overview");
 })();

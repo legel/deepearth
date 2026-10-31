@@ -215,3 +215,29 @@ ol.refs li:target { background: var(--wash); }
 .bm-table td { white-space: nowrap; }
 .bm-bar { display: inline-block; height: 10px; margin-right: 8px; background: var(--series-1); border-radius: 0 3px 3px 0; vertical-align: -1px; max-width: 160px; }
 .sub-title { font-size: 0.86rem; color: var(--body); margin: 4px 0; }
+.ov-table td, .ov-table th[scope="row"] { vertical-align: top; }
+.ov-table .sub, .ov-table th .sub { display: block; font-size: 0.74rem; color: var(--quiet); letter-spacing: 0; text-transform: none; margin-top: 2px; }
+.ov-intro { font-size: 1.06rem; color: var(--ink); max-width: 860px; }
+.tile-group { font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin: 22px 0 -10px; }
+#status-tiles .grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.tile .l { line-height: 1.45; margin-top: 4px; }
+.ov-steps { list-style: none; counter-reset: st; padding: 0; margin: 14px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  border-top: 1px solid var(--hair); border-left: 1px solid var(--hair); }
+.ov-steps li { counter-increment: st; padding: 16px 18px; border-right: 1px solid var(--hair); border-bottom: 1px solid var(--hair); font-size: 0.92rem; }
+.ov-steps li::before { content: counter(st); display: block; font-family: "Cormorant Garamond", Georgia, serif; font-size: 2rem; font-weight: 600; color: var(--accent); line-height: 1; }
+.ov-steps strong { display: block; margin: 6px 0 4px; font-size: 0.74rem; letter-spacing: 0.14em; text-transform: uppercase; }
+#ov-chart svg { width: 100%; height: auto; display: block; margin: 6px 0; }
+#ov-chart .ov-flux { font-size: 13px; fill: var(--ink); font-weight: 700; }
+#ov-chart .ov-bar:hover rect:last-of-type { opacity: 0.8; }
+.ov-lost { padding-left: 18px; }
+.ov-lost li { margin: 2px 0; }
+.ov-updates { list-style: none; padding: 0; margin: 14px 0; border-top: 1px solid var(--hair); }
+.ov-updates li { display: grid; grid-template-columns: 110px 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--hair); }
+.ov-updates strong { display: block; }
+.ov-date { font-size: 0.78rem; letter-spacing: 0.1em; color: var(--quiet); font-variant-numeric: tabular-nums; padding-top: 2px; }
+@media (max-width: 560px) { .ov-updates li { grid-template-columns: 1fr; gap: 2px; } }
+#status-tiles .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+#status-tiles .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 760px) { #status-tiles .grid.cols-3, #status-tiles .grid.cols-4 { grid-template-columns: repeat(2, 1fr); } }
+#status-tiles .tile .l { font-size: 0.84rem; letter-spacing: 0; text-transform: none; color: var(--body); }
+#status-tiles .tile .v { white-space: nowrap; }

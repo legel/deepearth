@@ -1,0 +1,27 @@
+[
+ {
+  "date": "2026-10-30",
+  "title": "Site adaptation.",
+  "text": "Before filling a window, FluxFill is fine-tuned for 300 steps on the window's visible values and on 180-day windows from the tower's other years; hidden values are never used. The weights are reset after the window. In the tests that set these values, adaptation reduced CRPS on all hidden values of the 24 validation windows by 13.0%, with no tower worse, and FCH4 CRPS on 26 methane validation windows by 28.8%."
+ },
+ {
+  "date": "2026-10-30",
+  "title": "Methane validation towers.",
+  "text": "13 spatial blocks of training towers (21 towers, 13 measuring methane) moved to validation, drawn to match the ecosystem mix of the methane test towers. Methane towers are now 82 training, 18 validation and 21 test; the test towers are unchanged. Validation gains 102 methane windows. A model trained on this split is in training."
+ },
+ {
+  "date": "2026-10-30",
+  "title": "Longer training.",
+  "text": "A run of 48,000 steps reached validation CRPS 0.1612 at step 40,000, 2.6% below the 0.1655 of the current 24,000-step model."
+ },
+ {
+  "date": "2026-10-30",
+  "title": "Test baselines.",
+  "text": "XGBoost, the random forest ensemble and SAITS were scored on all 514 test windows and added to the test results."
+ },
+ {
+  "date": "2026-10-30",
+  "title": "Tower pages.",
+  "text": "795 of 823 towers on the Towers tab link to their AmeriFlux (401), ICOS (363) or FLUXNET (31) site pages."
+ }
+]

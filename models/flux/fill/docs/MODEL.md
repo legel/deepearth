@@ -72,7 +72,7 @@ Both enter as extra tokens in variable attention.
 - **Sampling.** Windows are balanced by IGBP class and climate. Site weights stop long records from dominating.
 - **Selection.** All selection uses validation-site CRPS. Test sites are untouched.
 
-## 6b. Site adaptation at inference (FluxFill v4)
+## 6b. Site adaptation at inference
 
 Before the first mask of a window is filled, the trained network is fine-tuned on that site's own data and reset
 to the trained weights after the window (`model/method.py`, `FluxFill.adapt`; `FLUXFILL_ADAPT_STEPS`,
@@ -83,7 +83,7 @@ to the trained weights after the window (`model/method.py`, `FluxFill.adapt`; `F
   any (a context shorter than one window is padded with unmeasured days). The values the benchmark hides are NaN
   when the method receives the window, so they never enter the loss.
 - **Optimiser.** AdamW, weight decay 0, betas (0.9, 0.98), gradient clip 1.0, batch 2, the training losses (NLL
-  and flow matching). 300 steps at lr 1e-4 is FluxFill v4.
+  and flow matching), FCH4 rows weighted 4 in the loss during adaptation only. FluxFill uses 300 steps at lr 3e-4.
 - **Why.** Per-site regressors such as XGBoost (Liu et al. 2025) refit on each site's record; adaptation gives the
   cross-site network the same access to the site's own driver-to-flux relation while keeping its prior.
 - **Cost.** About 40 s per window on one RTX 3090 at width 320 (5.7 s per mask on average, against 0.3 s without
