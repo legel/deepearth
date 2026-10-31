@@ -50,6 +50,10 @@ OPTIONS: Tuple[Option, ...] = (
            "NeRF positional encoding (Mildenhall et al. 2020)"),
     Option("--solar", dict(action="store_true", help="solar altitude and top-of-atmosphere radiation per half-hour"),
            "WeatherNext utils/solar_radiation.py"),
+    Option("--hh-read", dict(type=int, default=0, help="width of the read of values visible at each half-hour; 0 is off"),
+           "hypernetwork read-out, Ha et al. 2017; net.HalfHourRead"),
+    Option("--token-conv", dict(type=int, default=0, help="width of convolutions over a day-token's half-hours; 0 is off"),
+           "net.TokenConv"),
     Option("--off", dict(nargs="*", default=[], help="base components to remove: rope time_attn var_attn day_emb doy site "
                                                      "prov_emb var_emb mask_token"), "ablation"),
     Option("--ema-std", dict(type=float, default=0.0, help="power-function EMA of the weights with this relative std"),
@@ -59,7 +63,8 @@ OPTIONS: Tuple[Option, ...] = (
 _NET = ("d", "depth", "heads", "dropout", "flow_width", "flow_depth", "memory", "mem_residual", "img_nll", "components",
         "local_base", "gated_base", "gate_scale", "edge_continue", "memory_skew", "driver_anomaly", "scale_anchor",
         "year_anomaly", "sinr_place", "sinr_replace", "scale_anchor_fch4", "schedule", "off", "attn_gate", "rope_partial",
-        "rmsnorm", "swiglu", "mot", "quantile_head", "fgn_noise", "plr", "time_enc", "time_octaves", "solar")
+        "rmsnorm", "swiglu", "mot", "quantile_head", "fgn_noise", "plr", "time_enc", "time_octaves", "solar", "hh_read",
+        "token_conv")
 
 
 def add_arguments(ap) -> None:

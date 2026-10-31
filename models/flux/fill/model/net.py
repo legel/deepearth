@@ -377,7 +377,7 @@ class FluxFillNet(nn.Module):
                  sinr_replace: bool = False, scale_anchor_fch4: bool = False, schedule: str = "time,var",
                  off: Sequence[str] = (), attn_gate: bool = False, rope_partial: float = 1.0, rmsnorm: bool = False,
                  swiglu: bool = False, mot: str = "", quantile_head: bool = False, fgn_noise: int = 0, plr: bool = False,
-                 time_enc: str = "", time_octaves: int = 3, solar: bool = False):
+                 time_enc: str = "", time_octaves: int = 3, solar: bool = False, hh_read: int = 0, token_conv: int = 0):
         super().__init__()
         # Base components that --off removes, for ablation. The parameters stay, so the random numbers of the others do.
         self.off = frozenset(off)
@@ -501,6 +501,10 @@ class FluxFillNet(nn.Module):
         self.skip = {k for k, n in (("time", "time_attn"), ("var", "var_attn")) if n in self.off}
         self.norm = RMSNorm(d) if rmsnorm else nn.LayerNorm(d)
         self.head_t = StudentTHead(d, components, spread=not gated_base)
+        with torch.random.fork_rng(devices=[]):                                 # the other parameters keep their initial values
+            self.hh_read = HalfHourRead(d, hh_read) if hh_read else None
+            self.token_conv = TokenConv(5 if memory else 2, token_conv, d) if token_conv else None
+        assert not hh_read or gated_base, "--hh-read needs the two-component head of --gated-base"
         self.head_img = nn.Linear(d, (2 if img_nll else 1) * CLS_DIM)
         self.head_flow = FlowHead(d, flow_width, flow_depth)
         self.quantile = quantile_head
@@ -522,7 +526,10 @@ class FluxFillNet(nn.Module):
         if self.memory:                                                           # site memory channels
             mh = b["mem_h"].float()
             parts += [b["mem_m"] * mh, b["mem_s"] * mh, mh]
-        tab = self.tab_in(torch.cat(parts, -1))                                   # (B, V, D, d)
+        joined = torch.cat(parts, -1)
+        tab = self.tab_in(joined)                                                 # (B, V, D, d)
+        if self.token_conv is not None:
+            tab = tab + self.token_conv(joined)
         if self.memory_skew:
             tab = tab + self.skew_in(b["mem_k"] * b["mem_h"].float() * self.skew_rows.view(1, -1, 1, 1).float() / 5.0)
         empty = (obs.sum(-1, keepdim=True) == 0)
@@ -631,6 +638,9 @@ class FluxFillNet(nn.Module):
         if self.quantile:                                     # (B, V, D, 48, Q)
             return h, (self.head_q(h[:, :V_TAB]) + self.offset(b)[..., None],)
         params = self.head_t(h[:, :V_TAB])
+        if self.hh_read is not None:
+            e = self.hh_read(h[:, :V_TAB], b["z"], b["obs"])
+            params = (params[0] + e[..., :2], params[1] * e[..., 2:].clamp(-3, 3).exp()) + tuple(params[2:])
         if self.gated_base:
             return h, self.gated_params(b, params, h)
         off = self.offset(b)
@@ -717,6 +727,47 @@ def local_course_stats(z, obs, days: int = LOCAL_DAYS, min_count: int = LOCAL_MI
         S[:, :, :-k] += zo[:, :, k:]; C[:, :, :-k] += o[:, :, k:]          # day d + k
     ok = C >= min_count
     return torch.where(ok, S / C.clamp_min(1.0), torch.zeros_like(S)), ok, C
+
+
+class HalfHourRead(nn.Module):
+    """Read of what is visible at each half-hour. A small network embeds the visible value and flag of every row at one
+    half-hour; each day-token's state sets the weights of a linear read of that embedding (a hypernetwork, Ha et al.
+    2017). A token thus regresses on what is measured at the same half-hour, as per-tower regressions do; the single
+    embedding of a day-token averages this away. Returns (B, V, D, 48, 4): added locations of the two mixture
+    components and log factors of their scales, zero at initialisation. Only visible values enter (z * obs)."""
+
+    def __init__(self, d: int, width: int):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(2 * V_TAB + 4, 2 * width), nn.GELU(), nn.Linear(2 * width, width))
+        self.read = nn.Linear(d, 4 * width)
+        nn.init.zeros_(self.read.weight)
+        nn.init.zeros_(self.read.bias)
+
+    def forward(self, h, z, obs):
+        B, V, D, K_ = z.shape
+        t = 2 * math.pi * torch.arange(K_, device=z.device, dtype=z.dtype) / K_
+        hour = torch.stack([t.sin(), t.cos(), (2 * t).sin(), (2 * t).cos()], -1).expand(B, D, K_, 4)
+        o = obs.to(z.dtype)
+        c = self.net(torch.cat([(z * o).permute(0, 2, 3, 1), o.permute(0, 2, 3, 1), hour], -1))
+        w = self.read(h).unflatten(-1, (4, -1))                               # (B, V, D, 4, width)
+        return torch.einsum("bvdow,bdkw->bvdko", w.to(c.dtype), c).float()
+
+
+class TokenConv(nn.Module):
+    """Two convolutions over the half-hours of a day-token, added to its linear embedding; zero at initialisation."""
+
+    def __init__(self, channels: int, width: int, d: int):
+        super().__init__()
+        self.channels = channels
+        self.net = nn.Sequential(nn.Conv1d(channels, width, 5, padding=2), nn.GELU(), nn.Conv1d(width, width, 5, padding=2),
+                                 nn.GELU(), nn.AdaptiveAvgPool1d(6), nn.Flatten())
+        self.out = nn.Linear(6 * width, d)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+
+    def forward(self, parts):
+        x = parts.reshape(-1, self.channels, parts.shape[-1] // self.channels)
+        return self.out(self.net(x)).reshape(*parts.shape[:-1], -1)
 
 
 class StudentTHead(nn.Module):

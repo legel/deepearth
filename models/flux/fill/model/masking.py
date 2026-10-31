@@ -7,7 +7,8 @@ A mask is a (V, T) boolean array over the window's tabular rows (tower, reanalys
 - block_var: an independent block per tower variable, 1 half-hour to 90 days (the per-variable M2 variant);
 - short: many gaps of 1 to 64 half-hours (the short classes of M1), per variable or shared by all tower channels;
 - r3: every tower channel hidden for the whole window (regime R3);
-- mixed: block_all plus short gaps.
+- mixed: block_all plus short gaps;
+- sub_all, flux_short, m5 (off by default): the short forms the benchmark scores, as `regime_mask` draws them.
 Modality dropout (M4) is drawn on top: all tower meteorology, all ONEFlux reanalysis, all reanalysis-land drivers, or
 all imagery hidden for the window (independently; never a reanalysis modality under r3).
 Reveal (for masked generation, Li et al. 2024 arXiv:2406.11838): with probability `p_reveal`, a random fraction
@@ -40,9 +41,12 @@ class MaskConfig:
                                  # system down, meteorology up); 0 keeps the reference masks
     p_long: float = 0.0          # block_all/mixed block length drawn uniform in 90 days to the window instead of
                                  # log-uniform (more 90 to 180 d gaps, M2-90d/180d); 0 keeps the reference masks
+    p_sub_all: float = 0.0       # regime_mask families, in the same draw as the five above; 0 keeps the reference masks
+    p_flux_short: float = 0.0
+    p_m5: float = 0.0
 
 
-FAMILIES = ("block_all", "block_var", "short", "r3", "mixed")
+FAMILIES = ("block_all", "block_var", "short", "r3", "mixed", "sub_all", "flux_short", "m5")
 
 
 def _loguniform_int(rng, lo: int, hi: int) -> int:
@@ -54,14 +58,37 @@ def _block(rng, T: int, n: int) -> slice:
     return slice(a, a + n)
 
 
+def regime_mask(fam: str, rng: np.random.Generator, present: np.ndarray, n: int = 0) -> np.ndarray:
+    """(V, T) mask of a short form the benchmark scores (docs/BENCHMARK.md section 5):
+    - sub_all: one block of every tower channel, `n` half-hours, or 2 to 47 log-uniform (M2 sub-daily);
+    - flux_short: many gaps of 1 to 64 half-hours shared by the flux rows, meteorology visible (M1);
+    - m5: one block per tower and reanalysis row, one half-hour to 90 days, and one whole modality (M5)."""
+    V, T = present.shape[0], T_WIN
+    hide = np.zeros((V, T), bool)
+    tower = np.flatnonzero(present & IS_TOWER)
+    if fam == "sub_all":
+        hide[tower, _block(rng, T, n or _loguniform_int(rng, 2, 47))] = True
+    elif fam == "flux_short":
+        flux = np.flatnonzero(present & IS_FLUX)
+        for _ in range(rng.poisson(12) + 1):
+            hide[flux, _block(rng, T, _loguniform_int(rng, 1, 64))] = True
+    elif fam == "m5":
+        for v in np.flatnonzero(present & (IS_TOWER | IS_REAN)):
+            hide[v, _block(rng, T, _loguniform_int(rng, 1, 90 * STEPS_PER_DAY))] = True
+        hide[present & (IS_TOWER_MET, IS_REAN, IS_FLUX)[int(rng.integers(3))]] = True
+    return hide
+
+
 def draw(rng: np.random.Generator, present: np.ndarray, cfg: MaskConfig = MaskConfig()) -> Tuple[np.ndarray, np.ndarray, str]:
     """One training mask. present: (V,) rows the site measures in the window. Returns hide (V, T), imagery day
     hide (D,) and the family name."""
     V, T = present.shape[0], T_WIN
     hide = np.zeros((V, T), bool)
     tower = np.flatnonzero(present & IS_TOWER)
-    p = np.array([cfg.p_block_all, cfg.p_block_var, cfg.p_short, cfg.p_r3, cfg.p_mixed])
+    p = np.array([cfg.p_block_all, cfg.p_block_var, cfg.p_short, cfg.p_r3, cfg.p_mixed, cfg.p_sub_all, cfg.p_flux_short, cfg.p_m5])
     fam = FAMILIES[int(rng.choice(len(FAMILIES), p=p / p.sum()))]
+    if fam in ("sub_all", "flux_short", "m5"):
+        hide |= regime_mask(fam, rng, present)
     if fam in ("block_all", "mixed"):
         if cfg.p_long and rng.random() < cfg.p_long:
             n = int(rng.integers(min(90 * STEPS_PER_DAY, T), T + 1))

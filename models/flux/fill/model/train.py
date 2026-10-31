@@ -136,6 +136,28 @@ def val_examples(records, val, stats, imagery, n_per_site: int = 2, max_n: int =
     return out
 
 
+REGIME = (("val2h", "sub_all", 4), ("val6h", "sub_all", 12), ("valm1", "flux_short", 0), ("valm5", "m5", 0))
+
+
+def regime_examples(vex, records, val, stats, imagery, memory: bool = False, memory_skew: bool = False):
+    """The windows of `val_examples`, each under one of the short forms the benchmark scores, in turn. Scored apart
+    from the validation CRPS, which keeps its meaning."""
+    out = []
+    msmp = WindowSampler(records, val, stats, imagery, train=False, memory=True, memory_skew=memory_skew) if memory else None
+    for k, e in enumerate(vex):
+        s, start, _ = e["_id"]
+        name, fam, n = REGIME[k % len(REGIME)]
+        rec = records[s]
+        d = (pd.Timestamp(start) - rec.t0).days
+        present = np.isfinite(window_values(rec, d)).any(1)
+        hide = masking.regime_mask(fam, np.random.default_rng(seed_for(s, start, name)), present, n)
+        ex = make_example(rec, d, stats, hide, np.zeros(180, bool), imagery.get(s), msmp.window_memory(s, d) if memory else None)
+        if ex["tmask"].any():
+            ex["family"], ex["_id"] = name, (s, start, name)
+            out.append(ex)
+    return out
+
+
 def imagery_val_examples(records, val, stats, imagery, memory: bool, per_site: int = 4, frac: float = 0.3,
                          memory_skew: bool = False):
     """Validation windows at validation sites with Clay embeddings, for imagery scores only: up to `per_site` windows
@@ -309,6 +331,10 @@ def evaluate(net, exs, device, use_flow: bool, batch: int = 4, asinh: bool = Fal
     for fam, g in df_.groupby("fam"):
         summ[f"crps_{fam}"] = float(np.average(g.crps, weights=g.n))
         summ[f"cov95_{fam}"] = float(np.average(g.cov95, weights=g.n))
+        for fv in ("NEE", "LE", "H", "FCH4"):
+            okf = g[f"n_{fv}"] > 0
+            if okf.any():
+                summ[f"crps_{fam}_{fv}"] = float(np.average(g[f"crps_{fv}"][okf], weights=g[f"n_{fv}"][okf]))
     summ["_windows"] = df_[["id", "fam", "n", "n_flux", "crps", "crps_flux"]].to_dict("records")
     return summ, recs
 
@@ -393,6 +419,10 @@ def main():
                     help="E21: the gate's evidence features also scale each component's spread (with --gated-base)")
     ap.add_argument("--driver-anomaly", action="store_true",
                     help="E25: both anchors follow the ERA5 SW_IN, TA, VPD anomalies with per-token learned slopes")
+    ap.add_argument("--p-sub-all", type=float, default=0.0, help="share of masks of family sub_all (masking.regime_mask)")
+    ap.add_argument("--p-flux-short", type=float, default=0.0, help="share of masks of family flux_short")
+    ap.add_argument("--p-m5", type=float, default=0.0, help="share of masks of family m5")
+    ap.add_argument("--val-regime", action="store_true", help="also score the validation windows under M1, M2 2 h and 6 h, M5 forms")
     ap.add_argument("--p-long", type=float, default=0.0,
                     help="share of all-tower blocks drawn 90 days to the full window (long-gap training)")
     ap.add_argument("--p-fluxes-off", type=float, default=0.0,
@@ -451,6 +481,7 @@ def main():
           f"{sorted(imagery)}; {time.time() - t0:.0f} s", flush=True)
     vex = val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
     vimg = imagery_val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
+    vreg = regime_examples(vex, records, val, stats, imagery, a.memory, a.memory_skew or a.memory_skew_fluxes) if a.val_regime else []
     print(f"imagery validation: {len(vimg)} windows at {sorted({e['_id'][0] for e in vimg})}", flush=True)
     cfg = dict(vars(a), channels=CHANNELS, split=split_name, train_sites=train, val_sites=val, stats=stats.to_dict(),
                imagery_sites_used=sorted(imagery))
@@ -501,7 +532,8 @@ def main():
                 sw[s_] = sw.get(s_, 1.0) * a.ch4_site_boost
             print(f"FCH4 site boost x{a.ch4_site_boost:g} at {len(ch4)} of {len(train)} training sites", flush=True)
         smp = WindowSampler(records, train, stats, imagery, train=True, site_weights=sw, memory=a.memory,
-                            cfg=masking.MaskConfig(p_fluxes_off=a.p_fluxes_off, p_long=a.p_long),
+                            cfg=masking.MaskConfig(p_fluxes_off=a.p_fluxes_off, p_long=a.p_long, p_sub_all=a.p_sub_all,
+                                                   p_flux_short=a.p_flux_short, p_m5=a.p_m5),
                             memory_skew=a.memory_skew or a.memory_skew_fluxes, fast_memory=a.fast_memory)
         dl = torch.utils.data.DataLoader(Stream(smp, a.batch, a.seed), batch_size=None, num_workers=a.workers,
                                          persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None)
@@ -567,6 +599,8 @@ def main():
         if step % a.eval_every == 0 or step == a.steps or step == a.stop_at:
             scored = net if ema is None else ema.get()
             summ, recs = evaluate(scored, vex_use if a.mode == "overfit" else vex, device, a.flow, asinh=a.asinh)
+            if vreg:
+                summ.update({k: v for k, v in evaluate(scored, vreg, device, a.flow, asinh=a.asinh)[0].items() if k.startswith(("crps_val", "cov95_val"))})
             if a.mode != "overfit":
                 summ.update(evaluate_imagery(scored, vimg, device))
             per_window = summ.pop("_windows", [])
