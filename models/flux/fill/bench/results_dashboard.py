@@ -549,7 +549,7 @@ def main():
             sums[(flux, kind)] = gs
             note = (f"Sums of the half-hourly values over the hidden measured half-hours of each {kl} block, in {su}; "
                     f"n is the number of block sums. Sums are formed per sample; for methods whose samples are "
-                    f"independent per half-hour (climatology, MDS, RF, XGBoost, SAITS, Chronos-2, FluxFill v0) the "
+                    f"independent per half-hour (climatology, MDS, RF, XGBoost, SAITS, Chronos-2) the "
                     f"spread of a sum is the independence spread.")
             sum_tables.setdefault(flux, {})[kind] = {
                 mt: table_from(gs, methods, mt, su, f"{flux}: {METRICS[mt]['long']} of {kl} sums",

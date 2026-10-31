@@ -486,8 +486,7 @@ def fluxfill_card(model_root: Path, counts: dict) -> dict:
              ["learning rate", f"{c['lr']:g}, {c['warmup']} warm-up steps, cosine to 10% of the peak"],
              ["gradient clip", clip.group(1) if clip else "?"], ["batch", f"{c['batch']} × {c.get('accum', 1)} windows"],
              ["steps", f"{c['steps']:,}; scored at step {sc['step']:,}"],
-             ["v1 sampling", f"{rounds.group(1) if rounds else '?'} rounds, {flow_steps.group(1) if flow_steps else '?'} ODE "
-                             f"steps per token, {samples.group(1) if samples else '?'} samples"]]
+             ["samples", f"{samples.group(1) if samples else '?'} per window, coupled in time by the temporal copula"]]
     return dict(id="fluxfill", name="FluxFill", ref=["Li2024", "Lipman2023", "Chang2022"],
                 code="models/flux/fill/model (net.py, train.py, method.py)",
                 version=f"run {sc['run']}, step {sc['step']:,}",
@@ -502,11 +501,11 @@ def fluxfill_card(model_root: Path, counts: dict) -> dict:
                 training=f"{len(c.get('train_sites', []))} training sites of the frozen split, held-out years excluded; "
                          "selection on validation sites.",
                 uncertainty="Student-t mixture marginals per half-hour, with widths scaled by the evidence near each "
-                            "gap. Samples are independent per half-hour, so window sums under-cover; the joint flow "
-                            "head (v1) carries the dependence between half-hours.",
-                limits="On FCH4 at validation towers, RMSE, R² "
-                       "and bias are not yet best against every baseline; NEE under mixed masks (M5) was level with "
-                       "climatology on test; FCH4 at sites without FCH4 history remains open (E14).")
+                            "gap. A temporal copula fitted on validation windows couples the samples in time, so "
+                            "the half-hourly distributions are unchanged and sums carry the dependence between half-hours.",
+                limits="On FCH4 at validation towers, CRPS, MAE, RMSE, R² and WAPE are behind the per-tower random forest "
+                       "ensemble; at test towers Chronos-2 leads FCH4 at several gap lengths and XGBoost leads the short "
+                       "gaps of M1; FCH4 at sites without FCH4 history remains open.")
 
 
 def build(model_root: Path, counts: dict) -> dict:

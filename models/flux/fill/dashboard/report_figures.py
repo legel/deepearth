@@ -89,7 +89,8 @@ def test_frames():
           "mds": load([T0 / "mds.parquet", T / "mds_new.parquet"], "mds"),
           "irvin_rf": load([T / "irvin_rf_merged.parquet"], "irvin_rf"),
           "liu_xgb": load([T / "liu_xgb_merged.parquet"], "liu_xgb"),
-          "saits": load([T / "saits_merged.parquet"], "saits")}
+          "saits": load([T / "saits_merged.parquet"], "saits"),
+          "chronos2": load([T / "chronos2_merged.parquet"], "chronos2")}
     fin = [T / "fluxfill_final_a.parquet", T / "fluxfill_final_b.parquet"]
     final = all(p.exists() for p in fin) and load(fin)[["site", "window"]].drop_duplicates().shape[0] >= 514
     fr["fluxfill"] = load(fin if final else [T / "fluxfill_v3.parquet"], "fluxfill")
@@ -200,7 +201,7 @@ def fig3(out: Path, fr: dict, vals: dict):
         for g in ("M2-1d", "M2-180d"):
             sc = {m: agg(f[f.variable == v]).get("crps", np.nan) for m, f in per[g].items()}
             base = min((m for m in sc if m != "fluxfill"), key=lambda m: sc[m])
-            vals[f"gap_{v}_{g[3:]}"] = cmp(sc["fluxfill"], sc[base], 0)
+            vals[f"gap_{v}_{g[3:]}"] = cmp(sc["fluxfill"], sc[base], 1)
             vals[f"gap_{v}_{g[3:]}_base"] = NAMES[base]
 
 
@@ -389,7 +390,7 @@ def fmt(v, metric):
 
 
 def table_test(fr: dict, vals: dict, final: bool, prefix: str = "test") -> str:
-    mt = matched(fr)
+    mt = {m: f[f.gap_class == "all"] for m, f in matched(fr).items()}      # one row per cell; gap classes repeat its values
     metrics = [("crps", "CRPS", min), ("cov95", "95% cov.", lambda xs: min(xs, key=lambda x: abs(x - 0.95))),
                ("mae", "MAE", min), ("rmse", "RMSE", min), ("bias", "Bias", lambda xs: min(xs, key=abs)),
                ("r2", "R²", max), ("wape", "WAPE", min)]
@@ -397,6 +398,12 @@ def table_test(fr: dict, vals: dict, final: bool, prefix: str = "test") -> str:
     h += [f'<th class="num">{lab}</th>' for _, lab, _ in metrics] + ["</tr></thead><tbody>"]
     for v in FLUXES:
         rows = {m: agg(f[f.variable == v]) for m, f in mt.items()}
+        ref = mt["fluxfill"][mt["fluxfill"].variable == v]          # the same hidden values: older parts carry no truth sums
+        sst, sabs = ref.sum_y2.sum() - ref.sum_y.sum() ** 2 / ref.n.sum(), ref.sum_abs_y.sum()
+        for m, f in mt.items():
+            f = f[f.variable == v]
+            rows[m]["r2"] = float(1 - (f.rmse ** 2 * f.n).sum() / sst)
+            rows[m]["wape"] = float(100 * (f.mae * f.n).sum() / sabs)
         best = {k: pick([rows[m][k] for m in rows]) for k, _, pick in metrics}
         base = min((m for m in rows if m != "fluxfill"), key=lambda m: rows[m]["crps"])
         vals[f"{prefix}_{v}"] = {"cmp": cmp(rows["fluxfill"]["crps"], rows[base]["crps"], 1),
@@ -442,41 +449,6 @@ def timing_values() -> dict:
         per = x.drop_duplicates(["site", "window", "family"])["predict_s"]
         out[f.stem] = float(per.mean())
     return out
-
-
-def table_ablation(vals: dict) -> str:
-    """Training ablations at width 192 and 8,000 steps against the control with identical flags and seed, plus
-    inference ablations of the final recipe."""
-    def ev(run, step=8000):
-        p = R / "model" / run / "log.jsonl"
-        if not p.exists():
-            return None
-        e = [json.loads(x) for x in p.read_text().splitlines() if '"eval"' in x]
-        e = [x for x in e if x["step"] == step]
-        return e[-1] if e else None
-    ctl = ev("v4-ctl")
-    rows = [("abl-nomemory", "Without site memory (the other years' statistics and the year anomaly)"),
-            ("abl-noimagery", "Without Sentinel-2 imagery (Clay embeddings)"),
-            ("abl-noflow", "Without the flow head (independent marginals only)"),
-            ("abl-nogate", "Without the gated local course (memory mean as the only base)")]
-    h = ['<div class="table-wrap"><table class="rep-table"><thead><tr><th>Configuration</th>'
-         '<th class="num">CRPS, all</th><th class="num">NEE</th><th class="num">LE</th><th class="num">H</th><th class="num">FCH4</th>'
-         '<th class="num">95% cov.</th></tr></thead><tbody>']
-
-    def line(lab, e, ref=None, cls=""):
-        if e is None:
-            return f'<tr><td>{lab}</td><td class="num" colspan="6">running</td></tr>'
-        cell = lambda k: (f'{e[k]:.4f}' + (f'<span class="sub">{100 * (e[k] / ref[k] - 1):+.1f}%</span>' if ref else "")) if k in e else "–"
-        return (f'<tr class="{cls}"><td>{lab}</td><td class="num">{cell("val_crps")}</td>' + "".join(
-            f'<td class="num">{cell("val_crps_" + v)}</td>' for v in FLUXES) + f'<td class="num">{e["val_cov95"]:.3f}</td></tr>')
-    h.append(line("Full model (control)", ctl, cls="ours"))
-    for run, lab in rows:
-        e = ev(run)
-        h.append(line(lab, e, ctl))
-        if e:
-            vals[f"abl_{run}"] = f"{100 * (e['val_crps'] / ctl['val_crps'] - 1):+.1f}%"
-    h.append("</tbody></table></div>")
-    return "".join(h)
 
 
 def methane_v2(vals: dict):
@@ -530,7 +502,6 @@ def main():
     timing = timing_values()
     vals["timing"] = {k: f"{v:.2f}" for k, v in timing.items()}
     tables["table_methods"] = table_methods({k.replace("fluxfill-a0", "fluxfill_a0"): v for k, v in timing.items()})
-    tables["table_ablation"] = table_ablation(vals)
     (out / "tables.json").write_text(json.dumps(tables))
     (out / "values.json").write_text(json.dumps(vals, indent=1, default=str))
     print(json.dumps(vals, indent=1, default=str)[:6000])
