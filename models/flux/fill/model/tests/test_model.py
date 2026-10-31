@@ -775,3 +775,28 @@ print("OK")
         else:                                   # per-variable zero-initialised vectors grow with the row count
             assert k in ("edge_logit",) and torch.count_nonzero(ext[k]) == 0, k
     assert set(ext) - set(sa) == {"extra_emb.weight"}
+
+
+def test_copula_keeps_marginals_and_correlates_in_time():
+    """sample_copula: each half-hour's draws follow the head's mixture CDF (KS p-values uniform over positions), and
+    draws are correlated in time as the fitted copula says."""
+    from scipy import stats
+    from method import FluxFill
+    pvals = []
+    for seed in range(2):
+        f = FluxFill.__new__(FluxFill)
+        f.n, f.seed, f._copula_calls, f.copula = 500, seed, 0, {"_default": [0.6, 480.0, 4.0]}
+        rng = np.random.default_rng(seed + 10)
+        V, D, K, C = 3, 2, 48, 2
+        loc, scale = rng.normal(size=(V, D, K, C)), np.exp(0.3 * rng.normal(size=(V, D, K, C)))
+        df, logw = np.full((V, D, K, C), 5.0), rng.normal(size=(V, D, K, C))
+        x = f.sample_copula((loc, scale, df, logw))
+        for v in range(V):
+            for t in range(0, D * K, 9):
+                d, k = divmod(t, K)
+                w = np.exp(logw[v, d, k]) / np.exp(logw[v, d, k]).sum()
+                cdf = lambda y: sum(w[c] * stats.t.cdf((y - loc[v, d, k, c]) / scale[v, d, k, c], 5) for c in range(C))
+                pvals.append(stats.kstest(x[:, v, t], cdf).pvalue)
+    assert stats.kstest(pvals, "uniform").pvalue > 0.01
+    z = (x[:, 0] - x[:, 0].mean(0)) / x[:, 0].std(0)
+    assert np.corrcoef(z[:, 10], z[:, 11])[0, 1] > 0.6

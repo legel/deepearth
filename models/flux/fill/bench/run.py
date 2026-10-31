@@ -246,6 +246,10 @@ def run(methods, windows: List[Dict], tables: Dict[str, pd.DataFrame], regime: s
                 # Exact coverage for methods with a closed-form predictive CDF: the truth is handed over only after
                 # this mask's prediction has returned (and never with predict_many, whose last state is not per mask).
                 pit = m.pit(w.values) if hasattr(m, "pit") and not hasattr(m, "predict_many") else None
+                if pit is not None and os.environ.get("FLUXFILL_PIT_DUMP"):    # PIT of every hidden value, for
+                    d = Path(os.environ["FLUXFILL_PIT_DUMP"]); d.mkdir(parents=True, exist_ok=True)   # copula_fit.py
+                    np.savez_compressed(d / f"{site}_{start}_{name.replace(' ', '').replace(':', '_').replace(',', '')}.npz",
+                                        pit=np.where(mask, pit, np.nan).astype(np.float32), keys=np.array(w.keys))
                 rows += [dict(r, predict_s=dt) for r in score(m.name, regime, name, w, mask, s, pit)]
         if progress:
             print(f"{site} {start}: {len(rows)} rows", flush=True)
@@ -314,7 +318,8 @@ def fluxfill_method():
                     name=os.environ.get("FLUXFILL_NAME", "fluxfill" if mode == "marginal" else "fluxfill-v1"),
                     adapt_steps=int(os.environ.get("FLUXFILL_ADAPT_STEPS", "0")),
                     adapt_lr=float(os.environ.get("FLUXFILL_ADAPT_LR", "3e-4")),
-                    adapt_row_weight=dict(kv.split("=") for kv in os.environ.get("FLUXFILL_ADAPT_ROW_W", "FCH4=4").split(",") if kv))
+                    adapt_row_weight=dict(kv.split("=") for kv in os.environ.get("FLUXFILL_ADAPT_ROW_W", "FCH4=4").split(",") if kv),
+                    copula=os.environ.get("FLUXFILL_COPULA") or None)
 
 
 def main():

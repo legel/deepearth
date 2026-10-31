@@ -241,3 +241,20 @@ ol.refs li:target { background: var(--wash); }
 @media (max-width: 760px) { #status-tiles .grid.cols-3, #status-tiles .grid.cols-4 { grid-template-columns: repeat(2, 1fr); } }
 #status-tiles .tile .l { font-size: 0.84rem; letter-spacing: 0; text-transform: none; color: var(--body); }
 #status-tiles .tile .v { white-space: nowrap; }
+/* Report: article layout, figures, tables and equations */
+.rep-sec { max-width: 860px; }
+.rep-sec h4 { font-family: "Oxygen", Helvetica, Arial, sans-serif; font-size: 1rem; font-weight: 700; color: var(--ink); margin: 1.4em 0 0.4em; }
+.rep-sec p { text-align: justify; hyphens: auto; }
+.affil { font-size: 0.82rem; color: var(--quiet); margin: 0.2em 0 0; }
+.rep-abstract p { font-size: 0.98rem; color: var(--ink); }
+.rep-fig { margin: 22px 0 26px; max-width: 1060px; }
+.rep-fig img { width: 100%; height: auto; display: block; background: #fff; border: 1px solid var(--hair); }
+.rep-fig figcaption, .rep-tcap { font-size: 0.84rem; line-height: 1.5; color: var(--body); margin-top: 8px; text-align: justify; }
+.rep-fig-hero { max-width: 1060px; margin-top: 10px; }
+.rep-tcap { margin: 20px 0 4px; }
+.rep-table { font-size: 0.8rem; }
+.rep-table td, .rep-table th { padding: 4px 7px; }
+.rep-table tr.ours td { color: var(--ink); background: var(--wash); }
+.rep-table td b { color: var(--ink); }
+.eq { overflow-x: auto; overflow-y: hidden; margin: 10px 0 14px; font-size: 0.95rem; }
+mjx-container[display="true"] { margin: 0.4em 0 !important; }

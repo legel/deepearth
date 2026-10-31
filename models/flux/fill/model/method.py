@@ -46,7 +46,8 @@ class FluxFill:
     def __init__(self, ckpt: str, mode: str = "marginal", n_samples: int = 64, steps: int = 32, flow_steps: int = 24,
                  name: Optional[str] = None, device: str = "cuda", chunk: int = 32, seed: int = 0,
                  imagery: bool = True, imagery_sites=None, adapt_steps: int = 0, adapt_lr: float = 3e-4,
-                 adapt_batch: int = 2, adapt_row_weight: Optional[Dict[str, float]] = None):
+                 adapt_batch: int = 2, adapt_row_weight: Optional[Dict[str, float]] = None,
+                 copula: Optional[str] = None):
         ck = torch.load(ckpt, map_location="cpu", weights_only=False)
         c = ck["config"]
         self.stats = Stats.from_dict(c["stats"])
@@ -74,6 +75,9 @@ class FluxFill:
         self._img = {}
         self._memc = {}
         self.adapt_steps, self.adapt_lr, self.adapt_batch, self.seed = adapt_steps, adapt_lr, adapt_batch, seed
+        # Gaussian copula in time (sample_copula): JSON {variable: [w, L_slow, L_fast], "_default": [...]}; off if None.
+        self.copula = json.load(open(copula)) if copula else None
+        self._copula_calls = 0
         self.use_flow = bool(c.get("flow", False))
         self.adapt_row_w = None                                  # per-variable loss weight during adaptation
         if adapt_row_weight:
@@ -241,8 +245,47 @@ class FluxFill:
         with torch.autocast("cuda", dtype=torch.bfloat16):
             _, params = self.net(b)
         self._params_last = tuple(u[0].float().cpu().numpy().reshape(V_TAB, -1, *u.shape[4:]) for u in params)
+        if self.copula:
+            return self.sample_copula(self._params_last)
         s = sample_marginal_params(tuple(u[0] for u in params), self.n)
         return s.reshape(self.n, V_TAB, -1).float().cpu().numpy()
+
+    def sample_copula(self, params) -> np.ndarray:
+        """Draws with the marginals of `sample_marginal`, correlated in time by a Gaussian copula. For each row the
+        normal scores are sqrt(w) A_slow + sqrt(1 - w) A_fast, two stationary AR(1) processes with e-folding lengths
+        L_slow and L_fast (half-hours), so corr(lag k) = w exp(-k / L_slow) + (1 - w) exp(-k / L_fast). The
+        parameters are fitted to the autocorrelation of PIT normal scores of hidden values on validation windows
+        (model/copula_fit.py). The component of a mixture head is chosen by a second field with the same law, so
+        every value's marginal distribution is exactly that of `sample_marginal`; only sums change."""
+        from scipy import signal, stats
+        rng = np.random.default_rng(self.seed + self._copula_calls)
+        self._copula_calls += 1
+        V, T = params[0].shape[0], params[0].shape[1] * params[0].shape[2]
+        p = [u.reshape(V, T, -1) for u in params]                                     # (V, T, C)
+
+        def field():
+            g = np.empty((self.n, V, T))
+            for v in range(V):
+                w, ls, lf = self.copula.get(VARS[v], self.copula["_default"])
+                acc = 0.0
+                for wt, L in ((w, ls), (1.0 - w, lf)):
+                    r = math.exp(-1.0 / max(L, 1e-6))          # started from the stationary law: unit variance
+                    e = rng.standard_normal((self.n, T))
+                    zi = r * rng.standard_normal((self.n, 1))
+                    a, _ = signal.lfilter([math.sqrt(1 - r * r)], [1.0, -r], e, axis=-1, zi=zi)
+                    acc = acc + math.sqrt(wt) * a
+                g[:, v] = acc
+            return g
+        u = np.clip(stats.norm.cdf(field()), 1e-7, 1 - 1e-7)
+        if len(p) == 4:
+            loc, scale, df, logw = p
+            wts = np.exp(logw - logw.max(-1, keepdims=True)); wts /= wts.sum(-1, keepdims=True)
+            c = (stats.norm.cdf(field())[..., None] > np.cumsum(wts, -1)[None]).sum(-1).clip(0, wts.shape[-1] - 1)
+            pick = lambda x: np.take_along_axis(np.broadcast_to(x[None], (self.n,) + x.shape), c[..., None], -1)[..., 0]
+            loc, scale, df = pick(loc), pick(scale), pick(df)
+        else:
+            loc, scale, df = (x[None, ..., 0] for x in p)
+        return (loc + scale * stats.t.ppf(u, df)).astype(np.float32)
 
     def sample_joint(self, ex, hide: np.ndarray) -> np.ndarray:
         out = []

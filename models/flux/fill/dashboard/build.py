@@ -8,6 +8,7 @@ import argparse
 import csv
 import datetime as dt
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -209,7 +210,18 @@ def report_json(root: Path, counts: dict, meth: dict, results: dict, status: dic
              pypots_sites=bl.get("saits", {}).get("n_train_sites", 0),
              val_windows=scope.get("windows", 0), val_sites=scope.get("sites", 0),
              built=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d"), **bench_defaults())
-    v["arch"] = methods.render((HERE / "arch_svg.html").read_text(), arch_values(root, counts, 1), meth["references"])
+    v["arch"] = methods.render((HERE / "arch_svg.html").read_text(), arch_values(root, counts, 2), meth["references"])
+    # Figures, tables and numbers computed from the score files by report_figures.py (bench/dashboard/report/).
+    rd = root / "bench" / "dashboard" / "report"
+    if (rd / "values.json").exists():
+        def flat(prefix, x):
+            if isinstance(x, dict):
+                for k, y in x.items():
+                    yield from flat(f"{prefix}_{k}" if prefix else str(k), y)
+            elif not isinstance(x, list):
+                yield re.sub(r"[^a-z0-9_]", "_", prefix.lower()), x
+        v.update(dict(flat("", json.loads((rd / "values.json").read_text()))))
+        v.update(json.loads((rd / "tables.json").read_text()))
     body = methods.render((HERE / "report_draft.html").read_text(), v, meth["references"])
     return {"html": body, "references": meth["references"], "draft": True}
 
@@ -256,6 +268,11 @@ def main() -> None:
     meth = methods.build(root / "model", counts)
     meth["arch_html"] = methods.render((HERE / "arch_svg.html").read_text(), arch_values(root, counts, 1), meth["references"])
     (data / "methods.json").write_text(json.dumps(meth, separators=(",", ":"), ensure_ascii=False))
+    rd = root / "bench" / "dashboard" / "report"
+    if rd.exists():
+        (out / "img" / "report").mkdir(parents=True, exist_ok=True)
+        for f in rd.glob("fig*.svg"):
+            shutil.copy2(f, out / "img" / "report" / f.name)
     (data / "report.json").write_text(json.dumps(report_json(root, counts, meth, results, status_json(root, sites)),
                                                  separators=(",", ":"), ensure_ascii=False))
     win_src = root / "bench" / "dashboard" / "windows"

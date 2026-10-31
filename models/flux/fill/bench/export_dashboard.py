@@ -12,6 +12,7 @@ checkpoint from FLUXFILL_CKPT (run.fluxfill_method).
 import argparse
 import json
 import sys
+import os
 from pathlib import Path
 
 import numpy as np
@@ -108,6 +109,10 @@ def main():
         rows = [i for i in range(len(w.keys)) if (m[i] & w.measured[i]).any()]
         for meth in methods:
             s_all = meth.predict(visible, m, ctx)
+            if os.environ.get("FLUXFILL_SAMPLES_DUMP") and mkey.startswith("M2") and "30 d" in name:   # raw samples,
+                d = Path(os.environ["FLUXFILL_SAMPLES_DUMP"]); d.mkdir(parents=True, exist_ok=True)      # report figures
+                np.savez_compressed(d / f"{w.site}_{str(w.start)[:10]}_{meth.name}_M2-30d.npz", samples=s_all[:, rows].astype(np.float32),
+                                    keys=np.array([w.keys[i] for i in rows]), mask=m[rows])
             preds, scores = {}, {}
             for i in rows:
                 k, s = w.keys[i], s_all[:, i]

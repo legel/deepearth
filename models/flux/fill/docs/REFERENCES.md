@@ -114,3 +114,25 @@ version, commit, access date and checksum of what it used.
 - European Space Agency (2021). Copernicus DEM GLO-30. doi:10.5270/ESA-c5d3d65
 - Huffman, G. J. et al. (2023). GPM IMERG Late Precipitation L3 V07. NASA GES DISC. doi:10.5067/GPM/IMERG/3B-HH-L/07
 - Natural Earth (public domain), 1:110m land, v5.1.2, for the dashboard map.
+
+## Context of the report
+
+- Baldocchi, D. D. (2003). Assessing the eddy covariance technique for evaluating carbon dioxide exchange rates of
+  ecosystems: past, present and future. *Global Change Biology* 9, 479-492. doi:10.1046/j.1365-2486.2003.00629.x
+- Falge, E. et al. (2001). Gap filling strategies for defensible annual sums of net ecosystem exchange. *Agricultural
+  and Forest Meteorology* 107, 43-69. doi:10.1016/S0168-1923(00)00225-2
+- Kim, Y. et al. (2020). Gap-filling approaches for eddy covariance methane fluxes: a comparison of three machine
+  learning algorithms and a traditional method with principal component analysis. *Global Change Biology* 26,
+  1499-1518. doi:10.1111/gcb.14845
+- Jung, M. et al. (2020). Scaling carbon fluxes from eddy covariance sites to globe: synthesis and evaluation of the
+  FLUXCOM approach. *Biogeosciences* 17, 1343-1365. doi:10.5194/bg-17-1343-2020
+- Saunois, M. et al. (2020). The Global Methane Budget 2000-2017. *Earth System Science Data* 12, 1561-1623.
+  doi:10.5194/essd-12-1561-2020
+- He, K. et al. (2022). Masked autoencoders are scalable vision learners. *CVPR*. arXiv:2111.06377
+- Schefzik, R., Thorarinsdottir, T. L. and Gneiting, T. (2013). Uncertainty quantification in complex simulation
+  models using ensemble copula coupling. *Statistical Science* 28, 616-640. doi:10.1214/13-STS443
+- Clark, M. et al. (2004). The Schaake shuffle: a method for reconstructing space-time variability in forecasted
+  precipitation and temperature fields. *Journal of Hydrometeorology* 5, 243-262.
+  doi:10.1175/1525-7541(2004)005<0243:TSSAMF>2.0.CO;2
+- Kingma, D. P. and Ba, J. (2015). Adam: a method for stochastic optimization. *ICLR*. arXiv:1412.6980
+- Loshchilov, I. and Hutter, F. (2019). Decoupled weight decay regularization. *ICLR*. arXiv:1711.05101
