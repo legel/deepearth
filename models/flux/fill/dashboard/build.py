@@ -48,6 +48,17 @@ def sites_json(root: Path) -> dict:
     return {"sites": out}
 
 
+_BM = {}
+BASELINE_IDS = ("climatology", "mds", "irvin_rf", "vekuri_de", "liu_xgb", "saits", "csdi", "chronos2")
+
+
+def benchmark_data_cached(root: Path) -> dict:
+    import benchmark_data
+    if str(root) not in _BM:
+        _BM[str(root)] = benchmark_data.build(root)
+    return _BM[str(root)]
+
+
 def status_json(root: Path, sites: dict) -> dict:
     s2 = list((root / "sentinel2" / "status").glob("*.json")) if (root / "sentinel2" / "status").exists() else []
     chips = done = 0
@@ -58,27 +69,65 @@ def status_json(root: Path, sites: dict) -> dict:
             continue
         chips += int(st.get("chips", 0))
         done += bool(st.get("complete"))
-    clay_sites = len(list((root / "clay" / "sites").glob("*"))) if (root / "clay" / "sites").exists() else 0
+    ids = {x["id"] for x in sites["sites"]}
+    clay_sites = sum(1 for q in (root / "clay" / "sites").glob("*.zarr") if q.stem in ids) if (root / "clay" / "sites").exists() else 0
     n = len(sites["sites"])
-    rep_path = root / "towers" / "report.json"
-    rep = json.loads(rep_path.read_text()) if rep_path.exists() else {}
-    if rep:
-        sp = rep.get("split", {})
-        tiles = [{"value": rep["sites_included"], "label": f"towers in the dataset (of {rep['sites_candidate']} candidates)"},
-                 {"value": rep["usable_windows"], "label": "usable 180-day windows"},
-                 {"value": sp.get("train", 0), "label": "training towers"},
-                 {"value": sp.get("val", 0), "label": "validation towers"},
-                 {"value": sp.get("test", 0), "label": "test towers (held out)"},
-                 {"value": rep["sites_with_fch4"], "label": "towers measuring methane"}]
-    else:
-        tiles = [{"value": n, "label": "candidate towers"},
-                 {"value": sum(s["ch4"] for s in sites["sites"]), "label": "towers measuring methane"}]
-    tiles += [
-             {"value": done, "label": "towers with Sentinel-2 complete"},
-             {"value": chips, "label": "Sentinel-2 chips gathered"},
-             {"value": clay_sites, "label": "towers with Clay embeddings"}]
+    bm = benchmark_data_cached(root)
+    sp = bm["splits"]["frozen"]
+    towers = sum(v["towers"] for v in sp.values())
+    flux_kept = sum(q["final"] for q in bm["qc"] if q["variable"] in ("NEE", "LE", "H", "FCH4"))
+    res = overview_results(root)
+    val = next((r for r in res if r["view"] == "Validation sites"), None)
+    n_base = len(BASELINE_IDS)
+    mega = lambda v: f"{v / 1e6:.1f} M"
+    tiles = [{"group": "Data", "value": towers, "label": f"towers with measured half-hourly fluxes, of {n} candidates"},
+             {"group": "Data", "value": f"{sp['train']['towers']} / {sp['validation']['towers']} / {sp['test']['towers']}",
+              "label": "training / validation / test towers"},
+             {"group": "Data", "value": sum(v["methane"] for v in sp.values()), "label": "towers measuring methane"},
+             {"group": "Data", "value": mega(flux_kept), "label": "flux half-hours after quality control (NEE, LE, H, FCH4)"},
+             {"group": "Data", "value": mega(chips), "label": f"Sentinel-2 chips of 300 m at {done} towers"},
+             {"group": "Data", "value": clay_sites, "label": "towers with a Clay embedding of every chip"},
+             {"group": "Benchmark", "value": bm["test"]["n_windows"], "label": f"test windows of 180 days at {bm['test']['n_sites']} towers"},
+             {"group": "Benchmark", "value": mega(bm["test"].get("hidden_total", 0)), "label": "hidden measured values scored at test towers"},
+             {"group": "Benchmark", "value": n_base, "label": "established methods on identical windows and masks"},
+             {"group": "Benchmark", "value": val["windows"] if val else 0,
+              "label": f"validation windows at {val['sites'] if val else 0} towers, for model selection"}]
+    upd = HERE / "static_data" / "updates.json"
     return {"built_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M"), "tiles": tiles,
-            "note": "The dataset, benchmark and model are in construction; counts update with each build."}
+            "results": res, "updates": json.loads(upd.read_text()) if upd.exists() else [],
+            "note": "Counts and results update with each build."}
+
+
+def overview_results(root: Path) -> list:
+    """Overview: per result view and flux, the best FluxFill version against the best baseline on the cells every
+    method in that view fills (the view's summary table), and on how many metrics a FluxFill version is best."""
+    out = []
+    for name, fn in (("Validation sites", "results.json"), ("Test sites", "results_test.json")):
+        p = root / "bench" / "dashboard" / fn
+        if not p.exists():
+            continue
+        r = json.loads(p.read_text())
+        ours = {m["id"] for m in r["methods"] if m["ours"]}
+        short = {m["id"]: m["short"] for m in r["methods"]}
+        fluxes = []
+        for t in r["summary"]:
+            i = t["metrics"].index("crps")
+            vals = [(row["method"], row["cells"][i]["v"]) for row in t["rows"] if row["cells"][i]["v"] is not None]
+            o = min((x for x in vals if x[0] in ours), key=lambda x: x[1], default=None)
+            b = min((x for x in vals if x[0] not in ours), key=lambda x: x[1], default=None)
+            if not o or not b:
+                continue
+            best_all = t.get("best_all", [[x] for x in t["best"]])
+            wins = sum(any(t["rows"][j]["method"] in ours for j in ba) for ba in best_all)
+            ours_row = next(j for j, row in enumerate(t["rows"]) if row["method"] == o[0])
+            lost = [{"metric": t["metrics"][i], "ours": t["rows"][ours_row]["cells"][i]["v"],
+                     "leader": short[t["rows"][ba[0]]["method"]], "lead": t["rows"][ba[0]]["cells"][i]["v"]}
+                    for i, ba in enumerate(best_all) if ba and not any(t["rows"][j]["method"] in ours for j in ba)]
+            fluxes.append({"flux": t["flux"], "units": t["units"], "cells": t["cells"], "n": t["n"], "ours": short[o[0]],
+                           "ours_crps": o[1], "base": short[b[0]], "base_crps": b[1], "pct": 100 * (o[1] / b[1] - 1),
+                           "best_metrics": wins, "metrics": len(t["metrics"]), "methods": len(t["rows"]), "lost": lost})
+        out.append({"view": name, "windows": r["scope"]["windows"], "sites": r["scope"]["sites"], "fluxes": fluxes})
+    return out
 
 
 FLUXFILL_PY = Path("/home/photon/4tb/envs/fluxfill/bin/python")
@@ -193,9 +242,8 @@ def main() -> None:
         shutil.copy2(src, data / "results.json")
         (data / "results.json.gz").write_bytes(gzip.compress(src.read_bytes(), 9))
         results = json.loads(src.read_text())
-    import benchmark_data
-    (data / "benchmark.json").write_text(json.dumps(benchmark_data.build(root), separators=(",", ":")))
-    for name in ("results_test.json", "results_ch4.json"):          # test sites; methane validation windows
+    (data / "benchmark.json").write_text(json.dumps(benchmark_data_cached(root), separators=(",", ":")))
+    for name in ("results_test.json",):
         src_x = root / "bench" / "dashboard" / name
         if src_x.exists():
             shutil.copy2(src_x, data / name)

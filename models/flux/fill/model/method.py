@@ -45,7 +45,7 @@ K = STEPS_PER_DAY
 class FluxFill:
     def __init__(self, ckpt: str, mode: str = "marginal", n_samples: int = 64, steps: int = 32, flow_steps: int = 24,
                  name: Optional[str] = None, device: str = "cuda", chunk: int = 32, seed: int = 0,
-                 imagery: bool = True, imagery_sites=None, adapt_steps: int = 0, adapt_lr: float = 1e-4,
+                 imagery: bool = True, imagery_sites=None, adapt_steps: int = 0, adapt_lr: float = 3e-4,
                  adapt_batch: int = 2, adapt_row_weight: Optional[Dict[str, float]] = None):
         ck = torch.load(ckpt, map_location="cpu", weights_only=False)
         c = ck["config"]

@@ -38,12 +38,10 @@ LABEL = {"climatology": "climatology", "mds": "MDS (REddyProc)", "irvin_rf": "RF
          "saits": "SAITS + residual Gaussian", "csdi": "CSDI", "chronos2": "Chronos-2 zero-shot",
          "fluxfill-v0": "FluxFill v0 (Student-t marginals)", "fluxfill-v1": "FluxFill v1 (joint, masked generation)",
          "fluxfill-ref": "FluxFill v2 (width 192, depth 6)",
-         "fluxfill": "FluxFill v3 (v2 configuration at width 320, depth 10)",
-         "fluxfill-adapt": "FluxFill v4 (current: v3 + site adaptation, 300 steps on the site's own data before filling)"}
+         "fluxfill": "FluxFill"}
 SHORT = {"climatology": "climatology", "mds": "MDS", "irvin_rf": "the RF ensemble", "vekuri_de": "the deep ensemble",
          "liu_xgb": "XGBoost", "saits": "SAITS", "csdi": "CSDI", "chronos2": "Chronos-2", "fluxfill-v0": "FluxFill v0",
-         "fluxfill-v1": "FluxFill v1", "fluxfill-ref": "FluxFill v2", "fluxfill": "FluxFill v3",
-         "fluxfill-adapt": "FluxFill v4"}
+         "fluxfill-v1": "FluxFill v1", "fluxfill-ref": "FluxFill v2", "fluxfill": "FluxFill"}
 OURS = ("fluxfill-v0", "fluxfill-v1", "fluxfill-ref", "fluxfill", "fluxfill-adapt")
 FLUXES = ("NEE", "LE", "H", "FCH4")
 UNITS = {"NEE": "µmol m⁻² s⁻¹", "LE": "W m⁻²", "H": "W m⁻²", "FCH4": "nmol m⁻² s⁻¹"}

@@ -57,11 +57,14 @@ FluxFill and its benchmark address each limit:
 In construction since 2026-10-26. Results, every experiment and its outcome are on the dashboard
 (deepearth.ai/fluxfill, Results and Methods tabs).
 
-- **FluxFill v3** (width 320, depth 10, 24,000 steps) is the last model scored on the frozen test release 0.2
-  (514 windows, 131 test towers): CRPS 4.4% below v2.
-- **FluxFill v4** is v3 plus site adaptation at inference (`docs/MODEL.md`, section 6b). On the 24 validation
-  windows it lowers CRPS by 13.0% over all rows (NEE 13.0%, LE 9.8%, H 8.4%, FCH4 7.9%) with 95% coverage kept,
-  at every validation tower. It is scored on the test release once its settings are fixed on validation.
-- **Methane validation.** `data/towers/split_v2.py` writes `towers/split_v2.csv` (test towers unchanged); it moves 13 methane training blocks to
-  validation so that validation methane towers (18) follow the test mix; `model/methane_windows.py` gives 102
+- **Test scores.** The model last scored on the frozen test release 0.2 (514 windows, 131 test towers) has width
+  320, depth 10 and 24,000 training steps. Its CRPS is 15.5% (NEE), 20.3% (LE), 21.9% (H) and 2.6% (FCH4) below the
+  established method with the lowest CRPS, on the values every method fills.
+- **Site adaptation.** Before filling a window, FluxFill is fine-tuned for 300 steps on the window's visible values
+  and the tower's other years, then reset (`docs/MODEL.md`, section 6b). In the tests that set these values, it
+  lowered CRPS on all hidden values of the 24 validation windows by 13.0%, with no tower worse. It is scored on
+  the test release once its settings are fixed on validation.
+- **Methane validation.** `data/towers/split_v2.py` writes `towers/split_v2.csv` (test towers unchanged). It moves
+  13 training blocks (21 towers, 13 measuring methane) to validation, so that the 18 validation methane towers follow
+  the ecosystem mix of the test methane towers; `model/methane_windows.py` gives 102
   methane validation windows. `FLUXFILL_SPLIT=split_v2.csv` selects it.

@@ -42,13 +42,39 @@
 
 <main class="col">
 <section role="tabpanel" id="p-overview" aria-labelledby="t-overview">
-  <p>FluxFill learns the joint field of what is measured at and around eddy-covariance towers: carbon dioxide, water
-  vapour, sensible heat and methane fluxes, the tower's meteorology, reanalysis drivers, and Sentinel-2 imagery. It
-  learns by masking parts of 180-day windows and reconstructing them, with a probability distribution for every
-  value. Its first application is filling the gaps in tower records. Every modality can be absent, so the same
-  model fills a missing flux, a missing temperature sensor or a missing satellite image.</p>
-  <div class="grid" id="status-tiles"></div>
+  <p class="ov-intro">FluxFill is a masked generative model of the measurements at and around eddy-covariance towers.
+  Its input is a 180-day window of half-hourly data at one tower: the fluxes of carbon dioxide (NEE), latent heat
+  (LE), sensible heat (H) and methane (FCH4), the tower's meteorology, reanalysis drivers, and Clay embeddings of
+  Sentinel-2 images. In training, blocks of 1 to 180 days are hidden in any variable, including every variable at
+  once, and the model predicts a distribution for each hidden value. The first application is filling gaps in flux
+  tower records.</p>
+  <div id="status-tiles"></div>
   <p class="note" id="status-time"></p>
+
+  <h2>Filling a window</h2>
+  <ol class="ov-steps">
+    <li><strong>Window</strong>180 days of half-hourly values for every variable at one tower. The tower's other years
+    are available as context.</li>
+    <li><strong>Site adaptation</strong>300 fine-tuning steps on the window's visible values and the tower's other
+    years. The weights are reset after the window.</li>
+    <li><strong>Samples</strong>Joint samples of every hidden value. The samples give the fill, its 95% interval and
+    the uncertainty of daily and monthly sums.</li>
+    <li><strong>Scores</strong>CRPS, 95% coverage, MAE, RMSE, MSE, bias, R² and WAPE on hidden measured values, for
+    every method on the same windows and masks.</li>
+  </ol>
+
+  <h2>Results</h2>
+  <p>CRPS is the main score of a probabilistic fill; lower is better. Each comparison uses only the hidden values that
+  every method fills. Validation towers are used to select the model. Test towers are scored once for each final
+  model; the current test scores are from the model before site adaptation. Full tables:
+  <a href="#results" data-tab="results">Results</a>.</p>
+  <div id="ov-chart" class="viz"></div>
+  <div id="ov-results"></div>
+  <div id="ov-open"></div>
+
+  <h2>Latest work</h2>
+  <ul class="ov-updates" id="ov-updates"></ul>
+
   <h2>What it addresses</h2>
   <div class="table-wrap"><table>
     <thead><tr><th>Limit of published methods</th><th>FluxFill and FluxFill-Bench</th></tr></thead>
@@ -57,6 +83,8 @@
       <tr><td>No proper scoring rule; uncertainty calibrated on the test set or on short gaps only</td><td>CRPS as the primary score; calibration by gap length on sites and years never used for fitting</td></tr>
       <tr><td>No multi-site benchmark of contiguous gaps of weeks to months scored on sums</td><td>Blocks of 1 to 180 days at every season, scored on daily, monthly and window sums from joint samples</td></tr>
       <tr><td>Site-specific models that do not learn from other towers</td><td>One model trained on all towers, tested on 20% of sites held out with 50 km spatial blocking</td></tr>
+      <tr><td>Cross-site models that cannot use a tower's own record the way per-site regressions do</td><td>A cross-site model fine-tuned on each tower's own measurements before it fills a window, and reset after the window</td></tr>
+      <tr><td>Methane validation on a handful of wetland towers</td><td>18 methane validation towers drawn to match the ecosystem mix of the 21 methane test towers; 102 methane validation windows</td></tr>
       <tr><td>Ecosystem state seen through coarse vegetation indices</td><td>Every Sentinel-2 acquisition over 300 m around each tower, embedded by the Clay foundation model</td></tr>
     </tbody>
   </table></div>
@@ -149,7 +177,6 @@
   <div class="controls"><div class="seg" role="radiogroup" aria-label="Site split" id="r-split">
     <button role="radio" data-split="validation" aria-checked="true">Validation sites</button>
     <button role="radio" data-split="test" aria-checked="false">Test sites</button>
-    <button role="radio" data-split="methane" aria-checked="false">Methane sites</button>
   </div></div>
   <p class="scope" id="r-scope"></p>
   <div id="r-findings"></div>
