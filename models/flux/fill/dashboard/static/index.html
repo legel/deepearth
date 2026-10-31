@@ -41,6 +41,7 @@
 
 <main class="col">
 <section role="tabpanel" id="p-overview" aria-labelledby="t-overview">
+  <p class="rep-correction">Correction, 30 October 2026. We found a leak in our scoring of site adaptation: weights adapted under one mask were reused for other masks of the same window, so they had seen values those masks hide. Every score of FluxFill with site adaptation is invalid until rescored, including the validation tables, the methane split, the adaptation figure, Fig. 1d and the Windows tab. Test scores of FluxFill without adaptation, Fig. 1a-c and Fig. 4 are not affected. The bug is fixed and the rescoring is running.</p>
   <p class="ov-intro">FluxFill is a self-supervised AI foundation model trained to reconstruct masked and missing flux data, based on
   the DeepEarth neural network architecture.
   Its input is a 180-day window of half-hourly data at one tower: the fluxes of carbon dioxide (NEE), latent heat
@@ -221,5 +222,9 @@
 <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"></script>
 <script src="benchmark.js"></script>
 <script src="app.js"></script>
+<div id="fig-view" class="fig-view" hidden role="dialog" aria-modal="true" aria-label="Figure, full screen">
+  <button class="fig-close" type="button" aria-label="Close">×</button>
+  <div class="fig-scroll"><img alt=""></div>
+</div>
 </body>
 </html>

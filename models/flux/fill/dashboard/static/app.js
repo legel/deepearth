@@ -580,11 +580,42 @@ function renderMethods(m) {
 }
 
 // ---------- report ----------
+// Full-screen view of a report figure. The figures are vector graphics, so they stay sharp at any zoom: the first click
+// fits the figure to the screen, a click on it zooms to 300% at the clicked point, Escape or the button closes.
+function openFigure(img) {
+  const view = $("#fig-view"), big = view.querySelector("img");
+  big.src = img.src; big.alt = img.alt;
+  view.classList.remove("zoomed");
+  view.hidden = false;
+  view.querySelector(".fig-close").focus();
+}
+function initFigureView() {
+  const view = $("#fig-view"), big = view.querySelector("img"), box = view.querySelector(".fig-scroll");
+  const close = () => { view.hidden = true; };
+  view.querySelector(".fig-close").addEventListener("click", close);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !view.hidden) close(); });
+  big.addEventListener("click", (e) => {
+    const r = big.getBoundingClientRect();
+    const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+    view.classList.toggle("zoomed");
+    if (view.classList.contains("zoomed")) {
+      box.scrollLeft = fx * box.scrollWidth - box.clientWidth / 2;
+      box.scrollTop = fy * box.scrollHeight - box.clientHeight / 2;
+    }
+  });
+}
+
 function renderReport(rep) {
   if (!rep || !rep.html) { $("#rep-body").innerHTML = '<h2>Report</h2><div class="pending">The report draft is not available in this build.</div>'; return; }
   $("#rep-body").innerHTML = rep.html;
   const typeset = () => window.MathJax && MathJax.typesetPromise ? MathJax.typesetPromise([$("#rep-body")]) : setTimeout(typeset, 300);
   typeset();
+  for (const img of document.querySelectorAll("#rep-body .rep-fig img")) {
+    img.tabIndex = 0;
+    img.title = "Open full screen";
+    img.addEventListener("click", () => openFigure(img));
+    img.addEventListener("keydown", (e) => { if (e.key === "Enter") openFigure(img); });
+  }
   $("#rep-refs").innerHTML = rep.references ? `<section class="rep-sec"><div class="sec-label">07</div><h3 class="sec-title" id="references">References</h3><ol class="refs">${rep.references.map((r) => `<li id="ref-${r.n}">${r.html}</li>`).join("")}</ol></section>` : "";
 }
 
@@ -592,7 +623,7 @@ function renderReport(rep) {
 (async () => {
   const [st, s, idx, res, rep, meth, scal, rtest, bm] = await Promise.all([getJSON("data/status.json"), getJSON("data/sites.json"), getJSON("data/windows/index.json"), getJSONgz("data/results.json"), getJSON("data/report.json"), getJSON("data/methods.json"), getJSON("data/scaling.json"), getJSONgz("data/results_test.json"), getJSON("data/benchmark.json")]);
   SCALING = scal;
-  renderStatus(st); initTowers(s); initWindows(idx); renderResults(res); renderMethods(meth); renderReport(rep); renderBenchmark(bm);
+  renderStatus(st); initTowers(s); initWindows(idx); renderResults(res); renderMethods(meth); renderReport(rep); initFigureView(); renderBenchmark(bm);
   const splitBtns = [...document.querySelectorAll("#r-split button")];
   const testBtn = splitBtns.find((b) => b.dataset.split === "test");
   if (!rtest) testBtn.disabled = true;               // validation sites are the default view

@@ -504,7 +504,7 @@ def figure1(out: Path, vals: dict):
     for lab, yl_ in (("d", yd1 + 0.012), ("e", y0)):
         fig.text(0.02, yl_, lab, fontsize=10, fontweight="bold", va="center")
     with plt.rc_context({"svg.fonttype": "path"}):            # glyphs as paths: mathtext renders in every browser
-        fig.savefig(out / "fig0.svg", facecolor="white", bbox_inches="tight", pad_inches=0.05)
+        fig.savefig(out / "fig0.svg", facecolor="white", bbox_inches="tight", pad_inches=0.05, dpi=300)
         (out / "preview").mkdir(exist_ok=True)
         fig.savefig(out / "preview" / "fig0.png", facecolor="white", dpi=200, bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)

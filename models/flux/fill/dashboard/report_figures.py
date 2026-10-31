@@ -98,7 +98,7 @@ def test_frames():
 
 # ---------------------------------------------------------------- figures
 def save(fig, out: Path, name: str):
-    fig.savefig(out / name, bbox_inches="tight", facecolor="white")
+    fig.savefig(out / name, bbox_inches="tight", facecolor="white", dpi=300)     # raster parts of the SVG at 300 dpi
     plt.close(fig)
 
 
