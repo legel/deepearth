@@ -19,6 +19,13 @@ FLUX = ("NEE", "LE", "H", "FCH4")
 MAX_CELLS = 1500                # hidden values kept per example and flux
 
 
+class Config(Namespace):
+    """A run's saved arguments; an option newer than the run reads as off."""
+
+    def __getattr__(self, name):
+        return False
+
+
 def dump(ckpt, out, device="cpu"):
     import torch
     from data import V_TAB, VARS
@@ -28,7 +35,7 @@ def dump(ckpt, out, device="cpu"):
     from train import regime_examples, setup, val_examples
     ck = torch.load(ckpt, map_location="cpu", weights_only=False)
     c = ck["config"]
-    a = Namespace(**c)
+    a = Config(**c)
     records, train, val, _, stats, imagery = setup(a)
     net = FluxFillNet(**net_kwargs(c)).to(device).eval()
     net.load_state_dict(ck["model"])

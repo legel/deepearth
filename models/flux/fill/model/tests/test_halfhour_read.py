@@ -32,3 +32,10 @@ def test_token_conv_zero_at_start():
     m = TokenConv(5, 8, 32)
     out = m(torch.randn(2, V_TAB, 180, 5 * 48))
     assert out.shape == (2, V_TAB, 180, 32) and out.abs().max() == 0
+
+
+def test_bottleneck_width():
+    from net import Bottleneck
+    m = Bottleneck(32, 16)
+    h = torch.randn(1, V_TAB, 180, 32)
+    assert m.enc(h).shape[-1] == 16 and m(h).shape == h.shape

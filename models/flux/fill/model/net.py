@@ -377,7 +377,8 @@ class FluxFillNet(nn.Module):
                  sinr_replace: bool = False, scale_anchor_fch4: bool = False, schedule: str = "time,var",
                  off: Sequence[str] = (), attn_gate: bool = False, rope_partial: float = 1.0, rmsnorm: bool = False,
                  swiglu: bool = False, mot: str = "", quantile_head: bool = False, fgn_noise: int = 0, plr: bool = False,
-                 time_enc: str = "", time_octaves: int = 3, solar: bool = False, hh_read: int = 0, token_conv: int = 0):
+                 time_enc: str = "", time_octaves: int = 3, solar: bool = False, hh_read: int = 0, token_conv: int = 0,
+                 bottleneck: int = 0):
         super().__init__()
         # Base components that --off removes, for ablation. The parameters stay, so the random numbers of the others do.
         self.off = frozenset(off)
@@ -504,6 +505,7 @@ class FluxFillNet(nn.Module):
         with torch.random.fork_rng(devices=[]):                                 # the other parameters keep their initial values
             self.hh_read = HalfHourRead(d, hh_read) if hh_read else None
             self.token_conv = TokenConv(5 if memory else 2, token_conv, d) if token_conv else None
+            self.bottleneck = Bottleneck(d, bottleneck) if bottleneck else None
         assert not hh_read or gated_base, "--hh-read needs the two-component head of --gated-base"
         self.head_img = nn.Linear(d, (2 if img_nll else 1) * CLS_DIM)
         self.head_flow = FlowHead(d, flow_width, flow_depth)
@@ -631,8 +633,14 @@ class FluxFillNet(nn.Module):
             scale = scale * s[..., None].to(scale.dtype)
         return loc + base, scale, df, logw
 
+    def embed(self, b) -> torch.Tensor:
+        """(B, V + 1, D, width) posterior embedding of every variable and day, given what `b` shows."""
+        return self.bottleneck.enc(self.encode(b))
+
     def forward(self, b):
         h = self.encode(b)
+        if self.bottleneck is not None:
+            h = self.bottleneck(h)
         if self.fgn:                                          # one sample of every value, (B, V, D, 48)
             return h, (self.fgn_out(h[:, :V_TAB]).float() + self.offset(b),)
         if self.quantile:                                     # (B, V, D, 48, Q)
@@ -727,6 +735,18 @@ def local_course_stats(z, obs, days: int = LOCAL_DAYS, min_count: int = LOCAL_MI
         S[:, :, :-k] += zo[:, :, k:]; C[:, :, :-k] += o[:, :, k:]          # day d + k
     ok = C >= min_count
     return torch.where(ok, S / C.clamp_min(1.0), torch.zeros_like(S)), ok, C
+
+
+class Bottleneck(nn.Module):
+    """The token embedding: every head reads a token through `width` numbers, the posterior embedding a user can take."""
+
+    def __init__(self, d: int, width: int):
+        super().__init__()
+        self.enc = nn.Sequential(nn.Linear(d, width), nn.LayerNorm(width))
+        self.dec = nn.Linear(width, d)
+
+    def forward(self, h):
+        return self.dec(self.enc(h))
 
 
 class HalfHourRead(nn.Module):
