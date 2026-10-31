@@ -22,6 +22,7 @@ hidden values, the mask, and the context. Site location comes from `sites.parque
 import json
 import math
 import sys
+import zlib
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -147,16 +148,16 @@ class FluxFill:
         return self._memc[key]
 
     def adapt(self, w, ex: Dict, context: Dict):
-        """E36: fine-tune on the site's own data (see the module docstring); once per window. Each step's batch draws
-        from the context years (180-day windows of the other years, when the record has any) and from the target
-        window itself, with a fresh training mask over its visible values as targets (the benchmark's hidden values
-        stay hidden and never enter the loss)."""
-        key = (w.site, str(w.start.date()))
+        """E36: fine-tune on the site's own data (see the module docstring), from the trained weights, once per set of
+        visible values: a window filled under two masks is adapted twice, so that weights adapted under one mask never
+        fill another mask whose hidden values they saw. Each step's batch draws from the context years (180-day windows
+        of the other years, when the record has any) and from the target window itself, with a fresh training mask over
+        its visible values as targets (the mask's hidden values stay hidden and never enter the loss)."""
+        key = self.adapt_key(w, ex)
         if key == self._adapted:
             return
         self.net.load_state_dict(self._base)
         self._adapted = key
-        import zlib
         import masking
         from sampler import WindowSampler, collate
         from train import losses
@@ -170,7 +171,7 @@ class FluxFill:
             smp = WindowSampler({w.site: rec}, [w.site], self.stats, {w.site: self._img.get(w.site)}, train=False,
                                 memory=self.net.memory, memory_skew=self.net.memory_skew)
             smp = smp if smp.sites else None
-        rng = np.random.default_rng(self.seed + zlib.crc32("/".join(key).encode()))
+        rng = np.random.default_rng(self.seed + zlib.crc32("/".join(key[:2]).encode()))
         opt = torch.optim.AdamW(self.net.parameters(), lr=self.adapt_lr, weight_decay=0.0, betas=(0.9, 0.98))
         self.net.train()
         n_ctx = self.adapt_batch // 2 if smp is not None else 0
@@ -189,6 +190,12 @@ class FluxFill:
         self.net.eval()
         print(f"adapt {key}: {self.adapt_steps} steps, context starts "
               f"{len(smp.starts[w.site]) if smp is not None else 0}, last loss {float(L['total']):.3f}", file=sys.stderr)
+
+    @staticmethod
+    def adapt_key(w, ex: Dict):
+        """Identity of the adapted weights: the window and exactly which of its values and acquisitions are visible."""
+        seen = np.packbits(ex["obs"]).tobytes() + np.packbits(ex["img_obs"]).tobytes()
+        return w.site, str(w.start.date()), zlib.crc32(seen)
 
     @staticmethod
     def _self_example(ex: Dict, rng, masking, force: bool = False):

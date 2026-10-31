@@ -4,6 +4,7 @@
 <p class="authors">Mira Shivani Sankar<sup>1</sup>, Lance Legel<sup>1,2</sup>, Trevor Keenan<sup>1</sup></p>
 <p class="affil"><sup>1</sup>Quantitative Ecosystem Dynamics lab, Department of Environmental Science, Policy, and Management, University of California, Berkeley. <sup>2</sup>Ecological Intelligence, Inc.</p>
 </header>
+<p class="rep-correction">Correction, 30 October 2026. We found a leak in our scoring of site adaptation: weights adapted under one mask were reused for other masks of the same window, so they had seen values those masks hide. Every score of FluxFill with site adaptation is invalid until rescored, including the validation tables, the methane split, the adaptation figure, Fig. 1d and the Windows tab. Test scores of FluxFill without adaptation, Fig. 1a-c and Fig. 4 are not affected. The bug is fixed and the rescoring is running.</p>
 
 
 <figure class="rep-fig rep-fig-hero"><img src="img/report/fig0.svg" alt="One validation window with every modality partly hidden, the DeepEarth network, the reconstruction on the same axes, site adaptation, the predictive distribution and the table of methods">

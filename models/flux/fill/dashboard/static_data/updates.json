@@ -1,8 +1,13 @@
 [
  {
   "date": "2026-10-30",
+  "title": "Correction: site adaptation.",
+  "text": "Scores of FluxFill with site adaptation were inflated by a leak: weights adapted under one mask were reused for other masks of the same window. The bug is fixed and the scores are being recomputed."
+ },
+ {
+  "date": "2026-10-30",
   "title": "Site adaptation.",
-  "text": "Before filling a window, FluxFill is fine-tuned for 300 steps on the window's visible values and on 180-day windows from the tower's other years; hidden values are never used. The weights are reset after the window. In the tests that set these values, adaptation reduced CRPS on all hidden values of the 24 validation windows by 13.0%, with no tower worse, and FCH4 CRPS on 26 methane validation windows by 28.8%."
+  "text": "Before filling a window, FluxFill is fine-tuned for 300 steps on the window's visible values and on 180-day windows from the tower's other years; hidden values are never used. The weights are reset after the window. Its scores are being recomputed after the correction above."
  },
  {
   "date": "2026-10-30",
