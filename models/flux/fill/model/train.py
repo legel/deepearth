@@ -331,6 +331,8 @@ def main():
     ap.add_argument("--d", type=int, default=192)
     ap.add_argument("--depth", type=int, default=6)
     ap.add_argument("--heads", type=int, default=6)
+    ap.add_argument("--flow-width", type=int, default=256, help="width of the flow head MLP (scales with --d in the scaling study)")
+    ap.add_argument("--flow-depth", type=int, default=3, help="residual blocks of the flow head")
     ap.add_argument("--dropout", type=float, default=0.0, help="dropout in every encoder block")
     ap.add_argument("--site-drop", type=float, default=0.0, help="probability of hiding the site location per window")
     ap.add_argument("--memory", action="store_true", help="site memory channels (memory.py)")
@@ -409,6 +411,7 @@ def main():
                imagery_sites_used=sorted(imagery))
     (out / "config.json").write_text(json.dumps(cfg, indent=1, default=str))
     net = FluxFillNet(d=a.d, depth=a.depth, heads=a.heads, dropout=a.dropout, use_imagery=not a.no_imagery,
+                      flow_width=a.flow_width, flow_depth=a.flow_depth,
                       memory=a.memory, mem_residual=a.mem_residual, img_nll=a.img_nll,
                       components=a.components, local_base=a.local_base, gated_base=a.gated_base,
                       gate_scale=a.gate_scale, edge_continue=a.edge_continue, memory_skew=a.memory_skew,

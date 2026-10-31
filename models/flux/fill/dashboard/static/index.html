@@ -41,7 +41,8 @@
 
 <main class="col">
 <section role="tabpanel" id="p-overview" aria-labelledby="t-overview">
-  <p class="ov-intro">FluxFill is a masked generative model of the measurements at and around eddy-covariance towers.
+  <p class="ov-intro">FluxFill is a self-supervised AI foundation model trained to reconstruct masked and missing flux data, based on
+  the DeepEarth neural network architecture.
   Its input is a 180-day window of half-hourly data at one tower: the fluxes of carbon dioxide (NEE), latent heat
   (LE), sensible heat (H) and methane (FCH4), the tower's meteorology, reanalysis drivers, and Clay embeddings of
   Sentinel-2 images. In training, blocks of 1 to 180 days are hidden in any variable, including every variable at

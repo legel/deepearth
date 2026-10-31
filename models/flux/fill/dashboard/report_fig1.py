@@ -1,31 +1,39 @@
 """Figure 1 of the FluxFill report: one real validation window (US-YK2, from 2019-07-15) with its 30-day station
-outage (mask family M2), the network, the reconstruction with its predictive distribution, the established methods,
-and the eddy-covariance equations that define the fluxes.
+outage (mask family M2), the network, test-time site adaptation drawn as an unrolled recurrence over the weights,
+the reconstruction, the predictive distribution against the best established method on this window, and the table
+of all methods.
 
 Inputs: the window export of the final FluxFill (bench/dashboard/report/fig1_window), its raw samples for the 30-day
-mask (bench/dashboard/report/samples), the established methods' fills of the same window and mask
-(bench/dashboard/windows), the Sentinel-2 and Clay stores of the tower, and its half-hourly table.
+mask (bench/dashboard/report/samples), the established methods' fills of the same window and masks
+(bench/dashboard/report/fig1_window_base), the Sentinel-2 and Clay stores of the tower, its half-hourly table, and
+the test-tower CRPS of every method (`vals["fig1_table"]`, from report_figures.py).
+
+Time series are daily means on blocks aligned to the start of the hidden span, so every hidden block is exactly
+hidden and every visible block exactly visible.
 """
 
 import json
 from pathlib import Path
 
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import zarr
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Polygon, Rectangle
+from matplotlib.lines import Line2D
+from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, Patch, Polygon, Rectangle
 
 R = Path("/home/photon/4tb/fluxfill")
-SITE, START, KEY = "US-YK2", "2019-07-15", "US-YK2_2019-07-15"
+SITE, START, KEY, LAT, LON = "US-YK2", "2019-07-15", "US-YK2_2019-07-15", 61.2548, -163.259
 MASK = "M2: 30 d, all tower channels"
-C = {"flux": "#1d4466", "met": "#6b6f2e", "era": "#8a9a3a", "img": "#6e1f3f", "mem": "#1e2a35"}
-COMP = {"climatology": ("#9a9a9a", "Climatology"), "mds": ("#2a78d6", "MDS"), "irvin_rf": ("#1baf7a", "RF ensemble"),
-        "liu_xgb": ("#eb6834", "XGBoost"), "saits": ("#c2416b", "SAITS")}
+C = {"flux": "#1d4466", "met": "#6b6f2e", "era": "#8a9a3a", "img": "#6e1f3f", "mem": "#1e2a35", "loc": "#4a5a7a",
+     "adapt": "#8a5a00"}
+INK = "#1e2a35"
+TOP_C = "#eb6834"                      # the best established method on this window
+NAMES = {"climatology": "Climatology", "mds": "MDS", "irvin_rf": "RF ensemble", "liu_xgb": "XGBoost", "saits": "SAITS"}
 LAB = {"NEE": "NEE", "LE": "LE", "H": "H", "FCH4": r"FCH$_4$", "TA": "TA", "SW_IN": r"SW$_{in}$", "VPD": "VPD",
        "SWC_1": "SWC", "ERA5_TA": "TA", "ERA5_SW_IN": r"SW$_{in}$", "ERA5_VPD": "VPD"}
-MONO = {"family": "DejaVu Sans Mono", "size": 6.3, "weight": "bold"}
+MONO = {"family": "DejaVu Sans Mono", "size": 6.2, "weight": "bold"}
+B6 = 12                                # half-hours per block of the drawn series
 
 
 def series(w, key):
@@ -44,41 +52,36 @@ def pred(w, method, key):
     return out
 
 
-def daily(y):
+def blocks(y, a, L=B6):
+    """Means over blocks of L half-hours that start at a (mod L); returns block centres in days and the means."""
+    off = a % L
+    n = (len(y) - off) // L
+    z = y[off:off + n * L].reshape(n, L)
     with np.errstate(all="ignore"):
-        return np.nanmean(y.reshape(-1, 48), 1)
+        m = np.nanmean(z, 1)
+    return (off + (np.arange(n) + 0.5) * L) / 48, m
 
 
-def mini(fig, rect, color, y, a, b, label, hide=True, show_y=False):
-    ax = fig.add_axes(rect)
-    d = daily(y)
-    ax.plot(np.arange(180) + 0.5, d, color=color, lw=0.7)
-    if hide:
-        lo, hi = np.nanmin(d), np.nanmax(d)
-        pad = 0.08 * (hi - lo if hi > lo else 1)
-        ax.add_patch(Rectangle((a / 48, lo - pad), (b - a) / 48, hi - lo + 2 * pad, color="black", zorder=4, lw=0))
-        ax.text((a + b) / 96, (lo + hi) / 2, "?", color="white", ha="center", va="center", fontsize=7, fontweight="bold", zorder=5)
-    ax.set_xlim(0, 180)
-    ax.axis("off")
-    ax.text(-3, np.nanmean(d) if np.isfinite(np.nanmean(d)) else 0, label, ha="right", va="center", fontsize=5.6, color=color)
-    return ax
-
-
-def tri(fig, x, y, w, h, color, text, right=True):
+def tri(fig, x, y, w, h, color, text, right=True, size=7.5):
     """Outlined triangle: an encoder (base left, apex right) or a decoder (apex left, base right)."""
     pts = [(x, y - h / 2), (x, y + h / 2), (x + w, y)] if right else [(x + w, y - h / 2), (x + w, y + h / 2), (x, y)]
     fig.add_artist(Polygon(pts, closed=True, fill=False, ec=color, lw=1.1, transform=fig.transFigure))
-    fig.text(x + (w * 0.36 if right else w * 0.62), y, text, color=color, ha="center", va="center", fontsize=7.5,
-             fontstyle="italic", fontweight="bold", transform=fig.transFigure)
+    fig.text(x + (w * 0.36 if right else w * 0.64), y, text, color=color, ha="center", va="center", fontsize=size,
+             fontstyle="italic", fontweight="bold")
 
 
-def arrow(fig, p0, p1, color, ls="-", lw=0.9, cs="arc3"):
-    fig.add_artist(FancyArrowPatch(p0, p1, transform=fig.transFigure, arrowstyle="-|>", mutation_scale=6, color=color,
-                                   lw=lw, ls=ls, connectionstyle=cs))
+def arrow(fig, p0, p1, color, lw=0.9, ls="-", rad=0.0, scale=6):
+    fig.add_artist(FancyArrowPatch(p0, p1, transform=fig.transFigure, arrowstyle="-|>", mutation_scale=scale, color=color,
+                                   lw=lw, ls=ls, shrinkA=0, shrinkB=0, connectionstyle=f"arc3,rad={rad}"))
 
 
-def rlabel(fig, x, y, text, color):
-    fig.text(x, y, text, color=color, fontsize=5.4, ha="center", va="bottom", family="DejaVu Sans", transform=fig.transFigure)
+def line(fig, xs, ys, color, lw=0.8, ls="-"):
+    fig.add_artist(Line2D(xs, ys, color=color, lw=lw, ls=ls, transform=fig.transFigure))
+
+
+def box(fig, x, y, w, h, fc, ec, lw=0.8, r=0.01):
+    fig.add_artist(FancyBboxPatch((x, y), w, h, boxstyle=f"round,pad=0.003,rounding_size={r}", fc=fc, ec=ec, lw=lw,
+                                  transform=fig.transFigure))
 
 
 def chips():
@@ -122,211 +125,309 @@ def memory_band():
     return g.mean().reindex(range(180)).to_numpy(), g.std().reindex(range(180)).to_numpy(), sorted(set(t.time_lst.dt.year))
 
 
+def top_method(wc, key):
+    """The established method with the lowest CRPS on this window's 30-day mask for one variable."""
+    sc = {m: wc["scores"][m].get(MASK, {}).get(key, {}).get("crps") for m in wc["scores"]}
+    sc = {m: v for m, v in sc.items() if v is not None}
+    return min(sc, key=sc.get) if sc else None
+
+
+def grid_icon(fig, x, y, w, h, nv, nd, hl_row=None, hl_col=None, color="#1d4466", img_row=False):
+    """A token grid (variables x days); one row (time attention) or one column (variable attention) highlighted."""
+    n = nv + int(img_row)
+    cw, ch = w / nd, h / n
+    for i in range(n):
+        for j in range(nd):
+            on = (hl_row is not None and i == hl_row) or (hl_col is not None and j == hl_col)
+            fc = color if on else ("#efe6ea" if img_row and i == nv else "#e9ecf1")
+            fig.add_artist(Rectangle((x + j * cw, y + h - (i + 1) * ch), cw * 0.84, ch * 0.78, fc=fc, ec="none",
+                                     transform=fig.transFigure))
+
+
 def figure1(out: Path, vals: dict):
     w = json.load(open(R / "bench" / "dashboard" / "report" / "fig1_window" / f"{KEY}.json"))
-    wc = json.load(open(R / "bench" / "dashboard" / "report" / "fig1_window_base" / f"{KEY}.json"))   # established methods, same masks
+    wc = json.load(open(R / "bench" / "dashboard" / "report" / "fig1_window_base" / f"{KEY}.json"))
     sm = np.load(R / "bench" / "dashboard" / "report" / "samples" / f"{KEY}_fluxfill_M2-30d.npz")
     skeys = [str(k) for k in sm["keys"]]
     a, b = w["masks"][MASK]["NEE"][0]
-    fig = plt.figure(figsize=(7.2, 8.4))
-    heads = [(0.17, "MASKED WINDOW"), (0.345, "TOKEN\nENCODERS"), (0.455, "FACTORISED\nTRANSFORMER"), (0.565, "HEADS"),
-             (0.80, "RECONSTRUCTION")]
-    for x, h in heads:
-        fig.text(x, 0.972, h, ha="center", va="center", **MONO, color="#1e2a35")
+    fig = plt.figure(figsize=(7.2, 10.4))
+    XT0, XT1 = 0.425, 0.585                                   # the transformer, centred on the figure
+    XC = (XT0 + XT1) / 2
+    for x, h in [(0.19, "MASKED WINDOW"), (0.355, "ENCODERS"), (XC, "DEEPEARTH"), (0.637, "HEADS"),
+                 (0.845, "RECONSTRUCTION")]:
+        fig.text(x, 0.977, h, ha="center", va="center", **MONO, color=INK)
 
-    # ---- rows of the window (a) and their reconstruction (c)
+    # ---------------------------------------------------------------- a: the window, c: its reconstruction
     rows = [("flux", "I  TOWER FLUXES", ["NEE", "LE", "H", "FCH4"], True),
             ("met", "II  TOWER METEOROLOGY", ["TA", "SW_IN", "VPD", "SWC_1"], True),
             ("era", "III  REANALYSIS (ERA5)", ["ERA5_TA", "ERA5_SW_IN", "ERA5_VPD"], False)]
-    centers = {}
-    h_ax, gap = 0.023, 0.005
-    top = 0.945
+    centers, tops, h_ax, gap, top = {}, {}, 0.0175, 0.004, 0.952
+    z_lo, z_hi = max(0, a / 48 - 15), min(180, b / 48 + 15)
+    xs = None
     for kind, title, keys, hidden in rows:
-        fig.text(0.075, top + 0.006, title, color=C[kind], **MONO)
+        fig.text(0.07, top + 0.004, title, color=C[kind], **MONO)
+        tops[kind] = top
         ys = []
         for j, k in enumerate(keys):
             y0 = top - (j + 1) * (h_ax + gap)
             ys.append(y0 + h_ax / 2)
-            mini(fig, [0.105, y0, 0.215, h_ax], C[kind], series(w, k), a, b, LAB[k], hide=hidden)
-            if hidden:                                                              # reconstruction column
-                ax = fig.add_axes([0.66, y0, 0.315, h_ax])
-                y = series(w, k)
-                d = daily(y)
-                ax.plot(np.arange(180) + 0.5, np.where((np.arange(180) >= a / 48) & (np.arange(180) < b / 48), np.nan, d),
-                        color=C[kind], lw=0.7)
+            y = series(w, k)
+            yv = y.copy()
+            if hidden:
+                yv[a:b] = np.nan
+            ax = fig.add_axes([0.1, y0, 0.215, h_ax])
+            xb, mb = blocks(yv, a, 48)                                  # daily blocks aligned to the hidden span
+            ax.plot(xb, mb, color=C[kind], lw=0.6)
+            ax.set_xlim(0, 180); ax.axis("off")
+            if hidden:
+                ax.axvspan(a / 48, b / 48, color="black", lw=0)
+                ax.text((a + b) / 96, 0.5, "?", color="white", ha="center", va="center", fontsize=6, fontweight="bold",
+                        transform=ax.get_xaxis_transform())
+            ax.text(-0.015, 0.5, LAB[k], ha="right", va="center", fontsize=5.4, color=C[kind], transform=ax.transAxes)
+            if hidden:                                                              # c: reconstruction, zoomed
+                ax = fig.add_axes([0.725, y0, 0.2, h_ax])
+                ax.axvspan(a / 48, b / 48, color="#f3f1e7", lw=0, zorder=0)
+                xo, mo = blocks(yv, a, 48)
+                ax.plot(xo, mo, color="#666666", lw=0.6)
+                _, mt = blocks(np.where((np.arange(8640) >= a) & (np.arange(8640) < b), y, np.nan), a, 48)
+                ax.plot(xo, mt, color="black", lw=0, marker=".", ms=1.4)
                 p = pred(w, "fluxfill", k)
                 if p is not None:
-                    dd = np.arange(180) + 0.5
-                    ax.fill_between(dd, daily(p["q025"]), daily(p["q975"]), color=C[kind], alpha=0.18, lw=0)
-                    if kind == "flux":
-                        for m, (cc, _) in COMP.items():
-                            q = pred(wc, m, k)
-                            if q is not None:
-                                ax.plot(dd, daily(q["mean"]), color=cc, lw=0.45, alpha=0.75)
-                    ax.plot(dd, daily(p["mean"]), color=C[kind], lw=1.1)
-                    with np.errstate(all="ignore"):
-                        ax.plot(dd, np.where((dd >= a / 48) & (dd < b / 48), d, np.nan), color="#999999", lw=0.6, ls=(0, (1.2, 0.8)))
-                ax.set_xlim(max(0, a / 48 - 20), min(180, b / 48 + 20)); ax.axis("off")
-                ax.axvspan(a / 48, b / 48, color="#f3f1e7", lw=0, zorder=-1)
-                if np.isfinite(d).any():
-                    ax.text(max(0, a / 48 - 20) - 1, np.nanmean(d), LAB[k], ha="right", va="center", fontsize=5.6, color=C[kind])
+                    xs, lo = blocks(p["q025"], a, 48); _, hi = blocks(p["q975"], a, 48); _, mu = blocks(p["mean"], a, 48)
+                    ax.fill_between(xs, lo, hi, color=C[kind], alpha=0.2, lw=0)
+                    ax.plot(xs, mu, color=C[kind], lw=1.0)
+                tm = top_method(wc, k) if kind == "flux" else None
+                if tm:
+                    _, mt2 = blocks(pred(wc, tm, k)["mean"], a, 48)
+                    ax.plot(xo, mt2, color=TOP_C, lw=0.6)
+                    ax.text(1.01, 0.5, NAMES[tm], fontsize=4.7, color=TOP_C, va="center", transform=ax.transAxes)
+                ax.set_xlim(z_lo, z_hi); ax.axis("off")
+                ax.text(-0.01, 0.5, LAB[k], ha="right", va="center", fontsize=5.4, color=C[kind], transform=ax.transAxes)
         centers[kind] = np.mean(ys)
-        top = top - len(keys) * (h_ax + gap) - 0.028
+        top = top - len(keys) * (h_ax + gap) - 0.022
+    hand = [Line2D([], [], color=C["flux"], lw=1.0, label="FluxFill mean"), Patch(color=C["flux"], alpha=0.2, label="FluxFill 95% interval"),
+            Line2D([], [], color="black", lw=0, marker=".", ms=3, label="Measured, hidden"),
+            Line2D([], [], color="#666666", lw=0.6, label="Measured, visible"),
+            Line2D([], [], color=TOP_C, lw=0.6, label="Best established method\non this window (named)")]
+    fig.legend(handles=hand, loc="upper left", bbox_to_anchor=(0.715, tops["era"] + 0.006), fontsize=5.0, frameon=False,
+               handlelength=1.6, title="Hidden block (shaded) ± 15 days, daily means", title_fontsize=5.2, alignment="left")
 
-    from matplotlib.lines import Line2D
-    from matplotlib.patches import Patch
-    hand = [Line2D([], [], color=C["flux"], lw=1.1, label="FluxFill mean"), Patch(color=C["flux"], alpha=0.18, label="FluxFill 95% interval"),
-            Line2D([], [], color="#999999", lw=0.6, ls=(0, (1.2, 0.8)), label="Measured, hidden")] + \
-           [Line2D([], [], color=cc, lw=0.6, label=nm) for cc, nm in COMP.values()]
-    fig.legend(handles=hand, loc="center left", bbox_to_anchor=(0.66, centers["era"]), fontsize=5.4, frameon=False, ncol=2,
-               handlelength=1.6, title="c: 30-day block ± 20 days", title_fontsize=5.6)
-
-    # Sentinel-2 chips and Clay embeddings (IV)
-    fig.text(0.075, top + 0.006, "IV  SENTINEL-2 (300 m)  AND  CLAY EMBEDDINGS", color=C["img"], **MONO)
+    # IV Sentinel-2 and Clay
+    fig.text(0.07, top + 0.004, "IV  SENTINEL-2 (300 m) AND CLAY", color=C["img"], **MONO)
     cd, rgb, cdays, cls = chips()
     for d, im in zip(cd, rgb):
-        ax = fig.add_axes([0.105 + 0.215 * d / 180 - 0.016, top - 0.042, 0.032, 0.036])
+        ax = fig.add_axes([0.1 + 0.215 * d / 180 - 0.014, top - 0.032, 0.028, 0.028])
         ax.imshow(im, interpolation="nearest"); ax.set_xticks([]); ax.set_yticks([])
         for s in ax.spines.values():
             s.set_color(C["img"]); s.set_linewidth(0.6)
-    ax = fig.add_axes([0.105, top - 0.066, 0.215, 0.019])
-    order = np.argsort(cdays)
-    z = cls[order][:, :96].T
+    ax = fig.add_axes([0.1, top - 0.052, 0.215, 0.016])
+    z = cls[np.argsort(cdays)][:, :96].T
     z = (z - z.mean(1, keepdims=True)) / (z.std(1, keepdims=True) + 1e-6)
     ax.imshow(z, aspect="auto", cmap="RdPu", extent=[cdays.min(), cdays.max(), 0, 1], vmin=-2, vmax=2, interpolation="nearest")
     ax.set_xlim(0, 180); ax.axis("off")
-    fig.text(0.1, top - 0.057, "CLS", ha="right", va="center", fontsize=5.2, color=C["img"])
-    centers["img"] = top - 0.035
-    fig.text(0.66, centers["img"], f"{len(cdays)} acquisitions in the window, {len(cd)} clear ones shown;\n"
-             "an embedding is reconstructed when imagery is hidden (M4, M5)", fontsize=5.4, color=C["img"], va="center")
+    fig.text(0.097, top - 0.044, "Clay", ha="right", va="center", fontsize=5.2, color=C["img"])
+    centers["img"] = top - 0.027
+    fig.text(0.725, centers["img"], f"{len(cdays)} acquisitions in the window, {len(cd)} clear ones shown. An\n"
+             "embedding is reconstructed when imagery is hidden (M4, M5).", fontsize=5.0, color=C["img"], va="center")
+    top = top - 0.08
 
-    # Site memory (V)
-    top = top - 0.09
+    # V site memory
     mu, sd, yrs = memory_band()
-    fig.text(0.075, top + 0.006, f"V  SITE MEMORY: OTHER YEARS ({yrs[0]}-{yrs[-1]})", color=C["mem"], **MONO)
-    ax = fig.add_axes([0.105, top - 0.042, 0.215, 0.036])
+    fig.text(0.07, top + 0.004, f"V  SITE MEMORY (OTHER YEARS, {yrs[0]}-{yrs[-1]})", color=C["mem"], **MONO)
+    ax = fig.add_axes([0.1, top - 0.03, 0.215, 0.026])
     dd = np.arange(180) + 0.5
-    ax.fill_between(dd, mu - sd, mu + sd, color=C["mem"], alpha=0.15, lw=0); ax.plot(dd, mu, color=C["mem"], lw=0.8)
+    ax.fill_between(dd, mu - sd, mu + sd, color=C["mem"], alpha=0.15, lw=0); ax.plot(dd, mu, color=C["mem"], lw=0.7)
     ax.set_xlim(0, 180); ax.axis("off")
-    ax.text(-3, np.nanmean(mu), r"FCH$_4$", ha="right", va="center", fontsize=5.6, color=C["mem"])
-    centers["mem"] = top - 0.024
+    ax.text(-0.015, 0.5, r"FCH$_4$", ha="right", va="center", fontsize=5.4, color=C["mem"], transform=ax.transAxes)
+    centers["mem"] = top - 0.017
+    fig.text(0.1, top - 0.034, r"$(\mu,\sigma,n)$ at each half-hour and season: three channels of every tower token",
+             fontsize=4.8, color=C["mem"], va="top")
+    top = top - 0.058
 
-    # ---- network (b): encoders, factorised transformer, heads
+    # VI location: SINR encoder of the tower's coordinates
+    fig.text(0.07, top + 0.004, "VI  LOCATION", color=C["loc"], **MONO)
+    land = json.load(open(Path(__file__).parent / "static_data" / "ne_110m_land.geojson"))
+    ax = fig.add_axes([0.1, top - 0.045, 0.09, 0.042])
+    for feat in land["features"]:
+        g = feat["geometry"]
+        for poly in (g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]):
+            xy = np.array(poly[0]); ax.fill(xy[:, 0], xy[:, 1], color="#dde2ea", lw=0)
+    ax.plot(LON, LAT, "o", ms=3, color=C["loc"]); ax.set_xlim(-180, 180); ax.set_ylim(-60, 85); ax.axis("off")
+    fig.text(0.195, top - 0.024, f"{LAT:.2f}° N, {-LON:.2f}° W\n" r"$[\sin\phi,\cos\phi,\sin\lambda,\cos\lambda]$",
+             fontsize=4.9, color=C["loc"], va="center")
+    centers["loc"] = top - 0.024
+
+    # ---------------------------------------------------------------- b: the network
+    xe, xs_ = 0.338, 0.402
     for k in ("flux", "met", "era", "img"):
         y = centers[k]
-        arrow(fig, (0.325, y), (0.338, y), C[k])
-        tri(fig, 0.34, y, 0.035, 0.05, C[k], "e")
-        rlabel(fig, 0.392, y + 0.003, r"$\mathbb{R}^{320}$", C[k])
-        arrow(fig, (0.377, y), (0.41, y), C[k])
-    # memory: three channels (mean, s.d., count) of every tower token, added in the tower encoders
-    xm = 0.331
-    fig.add_artist(matplotlib.lines.Line2D([0.325, xm], [centers["mem"], centers["mem"]], color=C["mem"], lw=0.7, ls=(0, (2, 1.5)), transform=fig.transFigure))
-    fig.add_artist(matplotlib.lines.Line2D([xm, xm], [centers["mem"], centers["flux"]], color=C["mem"], lw=0.7, ls=(0, (2, 1.5)), transform=fig.transFigure))
+        arrow(fig, (0.322, y), (xe, y), C[k])
+        tri(fig, xe, y, 0.03, 0.04, C[k], "e")
+        arrow(fig, (xe + 0.03, y), (xs_ - 0.007, y), C[k])
+        fig.add_artist(Circle((xs_, y), 0.0068, fill=False, ec=INK, lw=0.8, transform=fig.transFigure))
+        fig.text(xs_, y, "+", ha="center", va="center", fontsize=6.5, color=INK)
+        arrow(fig, (xs_ + 0.0068, y), (XT0 - 0.004, y), INK)
+    line(fig, [0.322, 0.329], [centers["mem"]] * 2, C["mem"])
+    line(fig, [0.329, 0.329], [centers["mem"], centers["flux"] - 0.011], C["mem"])
     for k in ("flux", "met"):
-        arrow(fig, (xm, centers[k] - 0.012), (0.344, centers[k] - 0.012), C["mem"], lw=0.7)
-    fig.text(0.105, centers["mem"] - 0.03, r"mean, s.d. and count $(\mu, \sigma, n)$ at each half-hour and season enter every tower token",
-             fontsize=5.0, color=C["mem"], ha="left", va="top")
-    y_lo, y_hi = centers["mem"] - 0.01, 0.935
-    tb = FancyBboxPatch((0.412, y_lo), 0.087, y_hi - y_lo, boxstyle="round,pad=0.004,rounding_size=0.03", fc="white",
-                        ec="#1e2a35", lw=1.2, transform=fig.transFigure)
-    fig.add_artist(tb)
-    for i in range(10):
-        y = y_hi - 0.022 - i * (y_hi - y_lo - 0.035) / 10
-        fig.add_artist(Rectangle((0.42, y - 0.016), 0.033, 0.03, fc="#eef0e6", ec="#1e2a35", lw=0.5, transform=fig.transFigure))
-        fig.add_artist(Rectangle((0.458, y - 0.016), 0.033, 0.03, fc="#e8edf3", ec="#1e2a35", lw=0.5, transform=fig.transFigure))
-        if i == 0:
-            fig.text(0.4365, y - 0.001, "time", fontsize=4.8, ha="center", va="center")
-            fig.text(0.4745, y - 0.001, "var.", fontsize=4.8, ha="center", va="center")
-    fig.text(0.4555, y_lo - 0.006, "10 blocks, width 320", fontsize=4.9, ha="center", va="top")
-    for k in ("flux", "met", "img"):
+        arrow(fig, (0.329, centers[k] - 0.011), (xe + 0.005, centers[k] - 0.011), C["mem"], lw=0.7)
+    y = centers["loc"]
+    arrow(fig, (0.31, y), (xe, y), C["loc"])
+    tri(fig, xe, y, 0.03, 0.036, C["loc"], "s", size=6.5)
+    fig.text(xe + 0.012, y + 0.021, "SINR", fontsize=4.8, color=C["loc"], ha="center")
+    line(fig, [xe + 0.03, xs_], [y, y], C["loc"])
+    line(fig, [xs_, xs_], [y, centers["flux"] - 0.0068], C["loc"], lw=0.8)
+    fig.text(0.1, y - 0.027, "SINR location embedding, added to every token",
+             fontsize=4.5, color=C["loc"], va="top", ha="left")
+    # DeepEarth transformer: factorised attention
+    y_lo, y_hi = centers["loc"] - 0.03, tops["flux"] + 0.012
+    box(fig, XT0, y_lo, XT1 - XT0, y_hi - y_lo, "white", INK, lw=1.2, r=0.02)
+    fig.text(XC, y_hi - 0.012, "factorised attention", fontsize=5.0, ha="center", va="center", color="#555555")
+    gw, gh = 0.11, 0.075
+    gx = XC - gw / 2
+    gy1 = y_hi - 0.035 - gh
+    fig.text(XC, gy1 + gh + 0.005, "time attention", fontsize=5.6, ha="center", fontweight="bold")
+    grid_icon(fig, gx, gy1, gw, gh, 8, 16, hl_row=2, color=C["flux"])
+    fig.text(XC, gy1 - 0.004, "each variable over its 180 days\n(rotary day positions)", fontsize=4.6, ha="center", va="top")
+    gy2 = gy1 - 0.058 - gh
+    arrow(fig, (XC, gy1 - 0.025), (XC, gy2 + gh + 0.014), INK, lw=0.7)
+    fig.text(XC, gy2 + gh + 0.005, "variable attention", fontsize=5.6, ha="center", fontweight="bold")
+    grid_icon(fig, gx, gy2, gw, gh, 8, 16, hl_col=7, color=C["met"], img_row=True)
+    fig.text(XC, gy2 - 0.004, "each day across its variables\nand its image token", fontsize=4.6, ha="center", va="top")
+    gy3 = gy2 - 0.052
+    arrow(fig, (XC, gy2 - 0.025), (XC, gy3 + 0.016), INK, lw=0.7)
+    box(fig, XC - 0.035, gy3, 0.07, 0.014, "#f2f2f2", INK, lw=0.6, r=0.004)
+    fig.text(XC, gy3 + 0.007, "MLP", fontsize=5.4, ha="center", va="center")
+    arrow(fig, (XC + 0.037, gy3 + 0.007), (XC + 0.058, gy1 + gh * 0.6), INK, lw=0.7, rad=0.32)
+    fig.text(XC + 0.068, (gy1 + gy3) / 2 + 0.02, "×10", fontsize=7, ha="center", va="center", fontweight="bold")
+    fig.text(XC, gy3 - 0.01, "residual connections, layer norm;\nwidth 320, 8 heads, 28.1 M parameters",
+             fontsize=4.5, ha="center", va="top")
+    fig.text(XC, y_lo + 0.012, r"weights $\theta$", fontsize=5.6, ha="center", color=C["adapt"], fontweight="bold")
+    # heads
+    for k, lab in (("flux", r"$p_\theta(x\,|\,\mathbf{h})$"), ("met", r"$p_\theta(x\,|\,\mathbf{h})$"),
+                   ("img", r"$\mathcal{N}(\boldsymbol{\mu},\boldsymbol{\sigma}^2)$")):
         y = centers[k]
-        arrow(fig, (0.503, y), (0.53, y), "#1e2a35")
-        tri(fig, 0.532, y, 0.036, 0.05, C[k], "d", right=False)
-        arrow(fig, (0.57, y), (0.6, y), C[k])
-    rlabel(fig, 0.59, centers["flux"] + 0.006, r"$p_\theta(x\,|\,\cdot)$", C["flux"])
-    rlabel(fig, 0.59, centers["met"] + 0.006, r"$p_\theta(x\,|\,\cdot)$", C["met"])
-    rlabel(fig, 0.59, centers["img"] + 0.006, r"$\mathcal{N}(\mu,\sigma^2)$", C["img"])
-    fig.text(0.551, centers["flux"] - 0.034, "Student-t mixture\nper half-hour", fontsize=4.8, ha="center", va="top", color=C["flux"])
-    arrow(fig, (0.82, 0.958), (0.47, 0.951), "#6e7355", ls=(0, (3, 2)), lw=0.8, cs="arc3,rad=0.12")
-    fig.text(0.645, 0.993, "site adaptation: 300 steps on the visible values and the other years, then reset",
-             fontsize=5.2, color="#6e7355", ha="center")
+        arrow(fig, (XT1 + 0.004, y), (0.618, y), INK)
+        tri(fig, 0.62, y, 0.032, 0.04, C[k], "d", right=False)
+        arrow(fig, (0.652, y), (0.69, y), C[k])
+        fig.text(0.671, y + 0.005, lab, fontsize=5.0, color=C[k], ha="center", va="bottom")
+    fig.text(0.637, centers["flux"] - 0.026, "two-component\nStudent-t per\nhalf-hour", fontsize=4.5, ha="center", va="top", color=C["flux"])
 
-    # ---- (c) inside the gap, half-hourly, with the predictive distribution
-    # Zoom: the three days inside the gap with the most measured NEE and FCH4 (the smaller of the two counts).
-    yn, yc = np.isfinite(series(w, "NEE")), np.isfinite(series(w, "FCH4"))
-    best = max(range(0, (b - a) // 48 - 2), key=lambda d: min(yn[a + d * 48:a + (d + 3) * 48].sum(), yc[a + d * 48:a + (d + 3) * 48].sum()))
+    # ---------------------------------------------------------------- site adaptation: an unrolled recurrence over the weights
+    ya = y_lo - 0.105
+    box(fig, 0.07, ya - 0.012, 0.905, 0.078, "#fbf8f1", C["adapt"], lw=0.9, r=0.012)
+    fig.text(0.08, ya + 0.054, "TEST-TIME SITE ADAPTATION: 300 RECURRENT WEIGHT UPDATES PER WINDOW", color=C["adapt"], **MONO)
+    cells = [r"$\theta^\star$", r"$\theta_1$", r"$\theta_2$", r"$\cdots$", r"$\theta_{299}$", r"$\theta_w$"]
+    xs_c = np.linspace(XC - 0.33, XC + 0.33, len(cells))
+    yc = ya + 0.024
+    for i, lab in enumerate(cells):
+        if lab != r"$\cdots$":
+            fig.add_artist(Circle((xs_c[i], yc), 0.014, fc="white", ec=C["adapt"], lw=1.0, transform=fig.transFigure))
+        fig.text(xs_c[i], yc, lab, fontsize=6.4, ha="center", va="center", color=C["adapt"])
+        if i < len(cells) - 1:
+            x0, x1 = xs_c[i] + 0.016, xs_c[i + 1] - 0.016
+            arrow(fig, (x0, yc), (x1, yc), C["adapt"], lw=1.0)
+            if r"$\cdots$" not in (lab, cells[i + 1]):
+                xm = (x0 + x1) / 2
+                fig.text(xm, yc + 0.004, r"$-\eta\,\nabla_\theta\mathcal{L}_w$", fontsize=5.0, ha="center", va="bottom", color=C["adapt"])
+                arrow(fig, (xm, yc - 0.022), (xm, yc - 0.002), "#999999", lw=0.6)
+                fig.text(xm, yc - 0.023, r"fresh mask $\mathbf{M}'$ on $\mathbf{X}^{\mathrm{vis}}_w\cup\mathcal{C}_w$", fontsize=4.3,
+                         ha="center", va="top", color="#555555")
+    fig.text(xs_c[0], yc - 0.019, "trained weights", fontsize=4.6, ha="center", va="top", color=C["adapt"])
+    fig.text(xs_c[-1], yc - 0.019, "weights for window w", fontsize=4.6, ha="center", va="top", color=C["adapt"])
+    # links to the transformer: theta* copied in, theta_w used to fill every mask of w, then restored
+    arrow(fig, (XC - 0.02, y_lo - 0.002), (XC - 0.02, ya + 0.064), C["adapt"], lw=1.0)
+    arrow(fig, (XC + 0.02, ya + 0.064), (XC + 0.02, y_lo - 0.002), C["adapt"], lw=1.4)
+    fig.text(XC - 0.025, (y_lo + ya + 0.064) / 2, r"copy $\theta^\star$", fontsize=4.8, ha="right", va="center", color=C["adapt"])
+    fig.text(XC + 0.025, (y_lo + ya + 0.064) / 2, r"fill window $w$ with $\theta_w$; restore $\theta^\star$ after", fontsize=4.8,
+             ha="left", va="center", color=C["adapt"])
+    fig.text(0.965, ya + 0.054, r"AdamW, lr $3\times10^{-4}$, batch 2, FCH$_4$ loss weight 4; hidden values never enter $\mathcal{L}_w$",
+             fontsize=4.6, ha="right", va="bottom", color="#555555")
+
+    # ---------------------------------------------------------------- d: inside the gap, half-hourly
+    yn, yc_ = np.isfinite(series(w, "NEE")), np.isfinite(series(w, "FCH4"))
+    best = max(range(0, (b - a) // 48 - 2), key=lambda d: min(yn[a + d * 48:a + (d + 3) * 48].sum(), yc_[a + d * 48:a + (d + 3) * 48].sum()))
     z0 = a + best * 48; z1 = z0 + 3 * 48
     tt = np.arange(8640) / 48
-    yb = 0.205
-    panels = [("NEE", [0.075, yb, 0.27, 0.15], C["flux"]), ("FCH4", [0.395, yb, 0.27, 0.15], C["flux"])]
-    for k, rect, col in panels:
-        ax = fig.add_axes(rect)
+    yb = ya - 0.135
+    for i, k in enumerate(("NEE", "FCH4")):
+        ax = fig.add_axes([0.075 + i * 0.31, yb, 0.25, 0.085])
         y = series(w, k)
         s = sm["samples"][:, skeys.index(k)]
-        qs = np.nanquantile(s, [0.025, 0.1, 0.5, 0.9, 0.975], axis=0)
-        ax.fill_between(tt[z0:z1], qs[0, z0:z1], qs[4, z0:z1], color=col, alpha=0.13, lw=0, label="FluxFill 95%")
-        ax.fill_between(tt[z0:z1], qs[1, z0:z1], qs[3, z0:z1], color=col, alpha=0.22, lw=0, label="FluxFill 80%")
-        for m, (cc, nm) in COMP.items():
-            q = pred(wc, m, k)
-            if q is not None:
-                ax.plot(tt[z0:z1], q["mean"][z0:z1], color=cc, lw=0.5, alpha=0.8, label=nm)
-        ax.plot(tt[z0:z1], np.nanmean(s, 0)[z0:z1], color=col, lw=1.2, label="FluxFill mean")
-        ax.plot(tt[z0:z1], y[z0:z1], ".", color="black", ms=1.8, label="Measured (hidden)")
+        qs = np.nanquantile(s, [0.025, 0.1, 0.9, 0.975], axis=0)
+        ax.fill_between(tt[z0:z1], qs[0, z0:z1], qs[3, z0:z1], color=C["flux"], alpha=0.13, lw=0, label="FluxFill 95%")
+        ax.fill_between(tt[z0:z1], qs[1, z0:z1], qs[2, z0:z1], color=C["flux"], alpha=0.22, lw=0, label="FluxFill 80%")
+        tm = top_method(wc, k)
+        q = pred(wc, tm, k)
+        ax.plot(tt[z0:z1], q["mean"][z0:z1], color=TOP_C, lw=0.8, label=NAMES[tm])
+        ax.plot(tt[z0:z1], np.nanmean(s, 0)[z0:z1], color=C["flux"], lw=1.2, label="FluxFill mean")
+        ax.plot(tt[z0:z1], y[z0:z1], ".", color="black", ms=2, label="Measured")
         unit = r"µmol m$^{-2}$ s$^{-1}$" if k == "NEE" else r"nmol m$^{-2}$ s$^{-1}$"
-        ax.set_ylabel(f"{LAB[k]} ({unit})", fontsize=6.5); ax.tick_params(labelsize=6)
-        ax.set_xlabel("Day of window", fontsize=6.5)
-        for sp in ("top", "right"):
-            ax.spines[sp].set_visible(False)
-        if k == "NEE":
-            h_, l_ = ax.get_legend_handles_labels()
-            fig.legend(h_, l_, loc="lower left", bbox_to_anchor=(0.07, yb + 0.152), ncol=9, fontsize=5.3, frameon=False,
-                       handlelength=1.3, columnspacing=0.9)
-    # predictive distribution of one half-hour of FCH4 inside the gap: the hidden value with the median sample spread
+        ax.set_ylabel(f"{LAB[k]} ({unit})", fontsize=6.2); ax.tick_params(labelsize=5.8)
+        ax.set_xlabel("Day of window", fontsize=6.2)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3, fontsize=4.9, frameon=False, handlelength=1.3, columnspacing=0.8)
     k = "FCH4"
     y = series(w, k); s = sm["samples"][:, skeys.index(k)]
     cand = [t for t in range(z0, z1) if np.isfinite(y[t])]
     t_star = cand[len(cand) // 2]
-    ax = fig.add_axes([0.73, yb, 0.245, 0.15])
+    ax = fig.add_axes([0.72, yb, 0.255, 0.085])
     x = s[:, t_star]
     lo, hi = np.percentile(x, [0.5, 99.5]); span = hi - lo
-    grid = np.linspace(lo - 0.3 * span, hi + 0.3 * span, 300)
+    grid = np.linspace(lo - 0.4 * span, hi + 0.4 * span, 300)
     bw = 1.06 * x.std() * len(x) ** -0.2
     dens = np.exp(-0.5 * ((grid[:, None] - x[None]) / bw) ** 2).sum(1) / (len(x) * bw * np.sqrt(2 * np.pi))
-    ax.fill_between(grid, dens, color=C["flux"], alpha=0.25, lw=0); ax.plot(grid, dens, color=C["flux"], lw=1.0)
-    ax.axvline(y[t_star], color="black", lw=0.9)
-    ytop = dens.max()
-    for i, (m, (cc, nm)) in enumerate(COMP.items()):
-        q = pred(wc, m, k)
-        if q is None or not np.isfinite(q["mean"][t_star]):
-            continue
-        yy = -ytop * (0.12 + 0.1 * i)
-        ax.plot([q["q025"][t_star], q["q975"][t_star]], [yy, yy], color=cc, lw=0.7, alpha=0.85)
-        ax.plot(q["mean"][t_star], yy, "o", color=cc, ms=2)
-        ax.text(-0.02, yy, nm, fontsize=4.8, color=cc, va="center", ha="right", transform=ax.get_yaxis_transform())
-    ax.set_yticks([]); ax.spines[["left", "top", "right"]].set_visible(False); ax.tick_params(labelsize=6)
-    ax.set_xlabel(r"FCH$_4$ (nmol m$^{-2}$ s$^{-1}$), one hidden half-hour", fontsize=6.5)
-    ax.text(y[t_star], ytop * 1.03, "measured", fontsize=5.2, ha="center")
+    ax.fill_between(grid, dens, color=C["flux"], alpha=0.25, lw=0); ax.plot(grid, dens, color=C["flux"], lw=1.0, label="FluxFill (64 samples)")
+    ax.axvline(y[t_star], color="black", lw=0.9, label="Measured")
+    tm = top_method(wc, k); q = pred(wc, tm, k)
+    yy = -dens.max() * 0.15
+    ax.plot([q["q025"][t_star], q["q975"][t_star]], [yy, yy], color=TOP_C, lw=1.0, label=f"{NAMES[tm]} 95% interval")
+    ax.plot(q["mean"][t_star], yy, "o", color=TOP_C, ms=2.5)
+    ax.set_yticks([]); ax.spines[["left", "top", "right"]].set_visible(False); ax.tick_params(labelsize=5.8)
+    ax.set_xlabel(r"FCH$_4$ (nmol m$^{-2}$ s$^{-1}$), one hidden half-hour", fontsize=6.2)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), fontsize=4.9, frameon=False, handlelength=1.3)
     vals["fig1_t_star_day"] = f"{t_star / 48:.1f}"
 
-    # ---- (d) eddy covariance: the fluxes from the raw 10-20 Hz signals
-    fig.add_artist(FancyBboxPatch((0.075, 0.008), 0.9, 0.118, boxstyle="round,pad=0.004,rounding_size=0.01", fc="#f7f7f4",
-                                  ec="#d8d8d0", lw=0.6, transform=fig.transFigure))
-    fig.text(0.09, 0.113, "EDDY COVARIANCE: HALF-HOURLY FLUXES FROM 10-20 Hz WIND AND GAS SIGNALS", **MONO, color="#1e2a35")
-    eqs = [r"$x' = x - \overline{x}\quad(\overline{x}$: 30-min mean$)$",
-           r"$F_c = \overline{\rho}_d\,\overline{w' s_c'}$",
-           r"$\mathrm{NEE} = F_c + \int_0^{z_m} \frac{\partial \overline{c}}{\partial t}\,dz$",
-           r"$\mathrm{LE} = \lambda\,\overline{\rho}_d\,\overline{w' s_v'}$",
-           r"$H = \overline{\rho}_a\, c_p\, \overline{w' T_s'}$",
-           r"$F_{\mathrm{CH_4}} = \overline{\rho}_d\,\overline{w' s_m'}$"]
-    for i, e in enumerate(eqs):
-        fig.text(0.09 + (i % 3) * 0.3, 0.088 - (i // 3) * 0.03, e, fontsize=7.6, color="#1e2a35", va="center")
-    fig.text(0.09, 0.013, r"$w$: vertical wind (sonic anemometer); $s_c, s_v, s_m$: dry mole fractions of CO$_2$, H$_2$O and CH$_4$ "
-             r"(gas analyser); $T_s$: sonic temperature;" "\n" r"$\overline{\rho}_d, \overline{\rho}_a$: dry-air and air density; "
-             r"$\lambda$: latent heat of vaporisation; $c_p$: specific heat of air; $c$: CO$_2$ concentration; $z_m$: measurement height.",
-             fontsize=5.3, color="#555555", linespacing=1.5, va="bottom")
-    for lab, (x, y) in {"a": (0.012, 0.985), "b": (0.3, 0.985), "c": (0.62, 0.985), "d": (0.012, yb + 0.175), "e": (0.012, 0.12)}.items():
-        fig.text(x, y, lab, fontsize=10, fontweight="bold", transform=fig.transFigure)
-    with plt.rc_context({"svg.fonttype": "path"}):            # glyphs as paths: mathtext primes render in every browser
+    # ---------------------------------------------------------------- e: every method, test towers
+    tab = vals.get("fig1_table", {})
+    y0 = yb - 0.058
+    fig.text(0.075, y0 + 0.014, "CRPS at the test towers (all mask families; cells that every scored method fills; lower is better)",
+             fontsize=5.2, color="#555555")
+    heads = [("Method", 0.075, "left"), ("Model", 0.18, "left"), ("Uncertainty", 0.43, "left"), ("NEE", 0.64, "center"),
+             ("LE", 0.73, "center"), ("H", 0.82, "center"), (r"FCH$_4$", 0.91, "center")]
+    for lab, x, ha in heads:
+        fig.text(x, y0, lab, fontsize=5.6, fontweight="bold", ha=ha)
+    line(fig, [0.075, 0.975], [y0 - 0.004] * 2, "#999999", lw=0.5)
+    meth = [("climatology", "Climatology", "tower's other years, ±15 days", "empirical spread"),
+            ("mds", "MDS", "look-up of similar meteorology", "spread of look-up values"),
+            ("irvin_rf", "RF ensemble", "random forests per tower", "ensemble, Laplace"),
+            ("liu_xgb", "XGBoost", "boosted trees per tower", "quantile models"),
+            ("vekuri_de", "Deep ensemble", "neural networks per tower", "ensemble, Laplace"),
+            ("saits", "SAITS", "self-attention imputer, all towers", "dropout samples"),
+            ("csdi", "CSDI", "score-based diffusion, all towers", "diffusion samples"),
+            ("chronos2", "Chronos-2", "pretrained forecaster, zero-shot", "quantiles"),
+            ("fluxfill", "FluxFill", "DeepEarth network + site adaptation", "Student-t mixture")]
+    best = {v: min((tab[m][v] for m in tab if v in tab[m]), default=None) for v in ("NEE", "LE", "H", "FCH4")}
+    for i, (m, name, model, unc) in enumerate(meth):
+        yy = y0 - 0.014 - i * 0.0115
+        if m == "fluxfill":
+            fig.add_artist(Rectangle((0.07, yy - 0.0035), 0.905, 0.011, fc="#f3f1e7", ec="none", transform=fig.transFigure))
+        fig.text(0.075, yy, name, fontsize=5.5, fontweight="bold" if m == "fluxfill" else "normal")
+        fig.text(0.18, yy, model, fontsize=5.3)
+        fig.text(0.43, yy, unc, fontsize=5.3)
+        if m not in tab:
+            fig.text(0.775, yy, "not yet scored on every test window", fontsize=5.0, ha="center", color="#999999")
+            continue
+        for v, x in zip(("NEE", "LE", "H", "FCH4"), (0.64, 0.73, 0.82, 0.91)):
+            val = tab[m].get(v)
+            if val is None:
+                continue
+            fig.text(x, yy, f"{val:.3f}" if val < 10 else f"{val:.2f}", fontsize=5.3, ha="center",
+                     fontweight="bold" if np.isclose(val, best[v]) else "normal")
+    for lab, (x, y) in {"a": (0.012, 0.985), "b": (0.33, 0.985), "c": (0.7, 0.985), "d": (0.012, yb + 0.115),
+                        "e": (0.012, y0 + 0.014)}.items():
+        fig.text(x, y, lab, fontsize=10, fontweight="bold")
+    with plt.rc_context({"svg.fonttype": "path"}):            # glyphs as paths: mathtext renders in every browser
         fig.savefig(out / "fig0.svg", facecolor="white")
     plt.close(fig)
     vals["fig1_acquisitions"] = len(cdays)
