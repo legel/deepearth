@@ -35,7 +35,6 @@
       <button role="tab" id="t-results" aria-controls="p-results" aria-selected="false">Results</button>
       <button role="tab" id="t-methods" aria-controls="p-methods" aria-selected="false">Methods</button>
       <button role="tab" id="t-report" aria-controls="p-report" aria-selected="false">Report</button>
-      <button class="theme-toggle" id="theme" aria-label="Toggle dark mode">Theme</button>
     </nav>
   </div>
 </header>
@@ -57,8 +56,8 @@
     are available as context.</li>
     <li><strong>Site adaptation</strong>300 fine-tuning steps on the window's visible values and the tower's other
     years. The weights are reset after the window.</li>
-    <li><strong>Samples</strong>Joint samples of every hidden value. The samples give the fill, its 95% interval and
-    the uncertainty of daily and monthly sums.</li>
+    <li><strong>Samples</strong>64 samples of every hidden value from its predictive distribution. They give the fill
+    and its 95% interval; sums over days and months are formed per sample.</li>
     <li><strong>Scores</strong>CRPS, 95% coverage, MAE, RMSE, MSE, bias, R² and WAPE on hidden measured values, for
     every method on the same windows and masks.</li>
   </ol>
@@ -217,6 +216,8 @@
 
 <footer class="foot">&copy; 2026 Ecological Intelligence, Inc.</footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>window.MathJax = { tex: { inlineMath: [["\\(", "\\)"]], displayMath: [["\\[", "\\]"]] }, svg: { fontCache: "global" }, startup: { typeset: false } };</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"></script>
 <script src="benchmark.js"></script>
 <script src="app.js"></script>
 </body>

@@ -15,7 +15,7 @@ async function getJSONgz(p) {
 }
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-// ---------- tabs and theme ----------
+// ---------- tabs ----------
 const TABS = ["overview", "towers", "benchmark", "windows", "results", "methods", "report"];
 function show(tab) {
   if (!TABS.includes(tab)) tab = "overview";
@@ -40,14 +40,6 @@ document.addEventListener("click", (e) => {
 });
 for (const t of TABS) $("#t-" + t).addEventListener("click", () => { history.replaceState(null, "", "#" + t); show(t); });
 window.addEventListener("hashchange", () => show(location.hash.slice(1)));
-$("#theme").addEventListener("click", () => {
-  const cur = document.documentElement.getAttribute("data-theme");
-  const dark = cur ? cur === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
-  try { localStorage.setItem("fluxfill-theme", dark ? "light" : "dark"); } catch (e) { /* storage unavailable */ }
-  drawWindow(); drawChart(); drawScaling();
-});
-try { const th = localStorage.getItem("fluxfill-theme"); if (th) document.documentElement.setAttribute("data-theme", th); } catch (e) { /* none */ }
 
 // ---------- overview ----------
 const OV_FLUX = ["NEE", "LE", "H", "FCH4"];
@@ -591,6 +583,8 @@ function renderMethods(m) {
 function renderReport(rep) {
   if (!rep || !rep.html) { $("#rep-body").innerHTML = '<h2>Report</h2><div class="pending">The report draft is not available in this build.</div>'; return; }
   $("#rep-body").innerHTML = rep.html;
+  const typeset = () => window.MathJax && MathJax.typesetPromise ? MathJax.typesetPromise([$("#rep-body")]) : setTimeout(typeset, 300);
+  typeset();
   $("#rep-refs").innerHTML = rep.references ? `<section class="rep-sec"><div class="sec-label">07</div><h3 class="sec-title" id="references">References</h3><ol class="refs">${rep.references.map((r) => `<li id="ref-${r.n}">${r.html}</li>`).join("")}</ol></section>` : "";
 }
 
