@@ -628,7 +628,7 @@ function renderComponents(d) {
   const names = ["crps", "NEE", "LE", "H", "FCH4", "cov95"];
   const heads = ["CRPS, all", "NEE", "LE", "H", "FCH4", "95% cov."];
   const row = (lab, seeds, r) => `<tr><th scope="row">${esc(lab)}</th><td class="num">${seeds}</td>${names.map((n) => `<td class="num">${f(r[n])}</td>`).join("")}<td>${esc(r.decision || "")}</td></tr>`;
-  let h = `<p>One change at a time against a control of width 192 and depth 6, at ${d.step.toLocaleString()} steps, on 60 validation windows. Percentages are changes in validation CRPS (lower is better) and in 95% coverage, against the control of the same seed. ${d.rows.length} of ${d.total} components are finished. A row counts only when it exceeds the noise row on a second seed; FCH4 on one evaluation moves more than the noise row shows, because the two control seeds happen to agree at this step.</p>`;
+  let h = `<p>One change at a time against a control of width 192 and depth 6, at ${d.step.toLocaleString()} steps, on 60 validation windows. Percentages are changes in validation CRPS (lower is better) and in 95% coverage, against the control of the same seed. ${d.done} of ${d.total} components are finished. A row counts only when it exceeds the noise row on a second seed; FCH4 on one evaluation moves more than the noise row shows, because the two control seeds happen to agree at this step.</p>`;
   h += `<div class="table-wrap"><table class="results"><thead><tr><th scope="col">Component</th><th class="num">Seeds</th>${heads.map((x) => `<th class="num">${x}</th>`).join("")}<th scope="col">Decision</th></tr></thead><tbody>`;
   if (d.noise) h += row("Second control seed (noise)", "", d.noise);
   h += d.rows.map((r) => row(r.label, r.seeds, r)).join("") + "</tbody></table></div>";

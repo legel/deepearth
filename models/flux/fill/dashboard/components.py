@@ -15,10 +15,14 @@ SIZES = [("M", "width 320, depth 10", "v4-d320-48k"), ("XL", "width 640, depth 1
          ("XL", "width 640, depth 16", "scale-XL-lr1.5e-4"), ("XL", "width 640, depth 16", "scale-XL-lr6e-4")]
 SIZE_STEPS = (2000, 4000, 6000)
 # The decision on a component, by the rule of the study: adopted only when it holds on a second seed.
-DECISIONS = {"var_mean": "Adopted", "gate": "Adopted", "mot_all": "Combination decides; FCH4 differs by seed",
+DECISIONS = {"var_mean": "Adopted", "gate": "Adopted", "mot_all": "Adopted in the combination; alone FCH4 differs by seed",
              "mot_ffn": "No gain", "rope_half": "No gain", "tttv": "No gain", "asinh": "Rejected", "fgn": "Rejected: coverage",
              "swiglu": "Second seed queued", "quantile": "Second seed queued", "rmsnorm": "No gain", "plr": "No gain",
-             "time_prithvi": "No gain", "time_sinr": "No gain"}
+             "time_prithvi": "No gain", "time_sinr": "No gain", "solar": "No gain", "ema": "No gain",
+             "combo": "Adopted"}
+# Combinations of the additions above: (key, label); their runs are named as components are.
+COMBOS = [("combo", "Combination: per-variable loss, per-modality weights, attention gate"),
+          ("combo2", "The combination with SwiGLU"), ("combo3", "The combination with SwiGLU and the quantile head")]
 
 
 def recipe():
@@ -40,24 +44,25 @@ def evals(run_dir: Path) -> dict:
 def collect(model_root: Path) -> dict:
     ctl = [evals(model_root / n).get(STEP) for n in ("abl2-ctl", "abl2-ctl-s1")]
     pct = lambda r, c, k: 100 * (r[k] / c[k] - 1) if k in r and k in c else None
-    out = {"step": STEP, "control": None, "noise": None, "rows": [], "total": 0, "sizes": [], "size_steps": list(SIZE_STEPS)}
+    out = {"step": STEP, "control": None, "noise": None, "rows": [], "done": 0, "total": 0, "sizes": [], "size_steps": list(SIZE_STEPS)}
     comps = recipe().COMPONENTS
     out["total"] = len(comps)
     if ctl[0]:
         out["control"] = {n: ctl[0].get(k) for k, n in KEYS}
     if all(ctl):
         out["noise"] = {n: pct(ctl[1], ctl[0], k) for k, n in KEYS}
-    for c in comps:
-        seeds = [(evals(model_root / f"abl2-{c.key}").get(STEP), ctl[0]), (evals(model_root / f"abl2-{c.key}-s1").get(STEP), ctl[1])]
+    for key, label, group in [(c.key, c.label, c.group) for c in comps] + [(k, n, "combination") for k, n in COMBOS]:
+        seeds = [(evals(model_root / f"abl2-{key}").get(STEP), ctl[0]), (evals(model_root / f"abl2-{key}-s1").get(STEP), ctl[1])]
         seeds = [(r, b) for r, b in seeds if r and b]
         if not seeds:
             continue
-        row = {"key": c.key, "label": c.label, "group": c.group, "seeds": len(seeds), "decision": DECISIONS.get(c.key, "")}
+        row = {"key": key, "label": label, "group": group, "seeds": len(seeds), "decision": DECISIONS.get(key, "")}
         for k, n in KEYS:
             v = [pct(r, b, k) for r, b in seeds]
             v = [x for x in v if x is not None]
             row[n] = sum(v) / len(v) if v else None
         out["rows"].append(row)
+        out["done"] += group != "combination"
     for size, shape, run in SIZES:
         cfg, ev = model_root / run / "config.json", evals(model_root / run)
         if not cfg.exists() or not ev:

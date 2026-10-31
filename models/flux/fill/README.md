@@ -229,7 +229,7 @@ gain.
 One change at a time against a control of the same seed, width 192, depth 6, 8,000 steps, 60 validation windows
 ([`recipe.py`](model/recipe.py), [`ablate.py`](model/ablate.py)). Each technique is added in its published form, from
 the published code where it exists, behind its own flag. Percentages are changes in validation CRPS, averaged over the
-seeds shown, and in 95 % coverage. 14 of 34 components have run. The two control seeds differ by
+seeds shown, and in 95 % coverage. 16 of 34 components have run. The two control seeds differ by
 0.8 % on overall CRPS, and FCH4 moves from 0.60 to 0.88 within a run, so a row counts only when it holds on a second
 seed.
 
@@ -238,7 +238,7 @@ seed.
 | second control seed (noise) | | +0.8 % | −1.0 % | −0.8 % | −0.1 % | −0.4 % | +1.3 % | |
 | Per-variable loss (4M) | 2 | −0.4 % | −0.2 % | −0.3 % | −0.1 % | −16.0 % | +0.1 % | Adopted |
 | Per-modality MLPs (MoT) | 2 | −0.4 % | 0.0 % | −0.5 % | −1.1 % | −3.6 % | −0.1 % | No gain |
-| Per-modality weights (MoT) | 2 | −1.3 % | −1.1 % | −1.7 % | −0.7 % | +10.7 % | −0.5 % | Combination decides; FCH4 differs by seed |
+| Per-modality weights (MoT) | 2 | −1.3 % | −1.1 % | −1.7 % | −0.7 % | +10.7 % | −0.5 % | Adopted in the combination; alone FCH4 differs by seed |
 | Attention gate (Timestral) | 2 | −1.5 % | +0.2 % | −0.8 % | −0.7 % | −9.5 % | −0.2 % | Adopted |
 | Partial RoPE (Timestral) | 1 | +0.1 % | +0.5 % | −0.1 % | +0.6 % | +3.9 % | −0.3 % | No gain |
 | RMSNorm (Timestral) | 1 | +0.2 % | +0.1 % | +0.8 % | −0.2 % | −10.1 % | 0.0 % | No gain |
@@ -250,6 +250,9 @@ seed.
 | Periodic value embeddings (PLR) | 1 | −0.3 % | +0.6 % | +0.4 % | +0.3 % | −8.0 % | +0.2 % | No gain |
 | Time encoder (Prithvi) | 1 | +0.1 % | +0.4 % | −0.1 % | +0.2 % | −11.9 % | 0.0 % | No gain |
 | Time encoder (SINR form) | 1 | +0.3 % | +0.5 % | +0.5 % | +0.6 % | −0.9 % | +0.6 % | No gain |
+| Solar geometry | 1 | +0.2 % | −0.1 % | +0.2 % | −0.4 % | −8.0 % | +0.4 % | No gain |
+| Weight EMA (EDM2) | 1 | −0.5 % | −0.7 % | −0.7 % | +0.4 % | −0.5 % | −0.6 % | No gain |
+| Combination: per-variable loss, per-modality weights, attention gate | 2 | −1.4 % | −2.3 % | −2.4 % | −2.6 % | −16.8 % | +0.2 % | Adopted |
 
 The per-variable loss works because a plain mean over hidden cells gives FCH4 the weight of its 0.4 % share of tower
 values. The sizes differ as well: width 640, depth 16 (167,004,569 parameters) has not passed width 320, depth 10 at
