@@ -15,6 +15,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import components  # noqa: E402
+sys.path.insert(0, str(HERE))
 
 
 def truthy(v: str) -> bool:
@@ -188,6 +190,7 @@ def report_json(root: Path, counts: dict, meth: dict, results: dict, status: dic
     sc = counts.get("scored", {})
     bl = counts.get("baselines", {})
     s2 = {t["label"]: t["value"] for t in status.get("tiles", [])}
+    chips_tile = next(t for t in status["tiles"] if t["label"].startswith("Sentinel-2 chips"))
     scope = results.get("scope", {})
     sp, sf, mv = rep["split"], rep["split_fch4"], rep["measured_values"]
     v = dict(sites_candidate=rep["sites_candidate"], sites_included=rep["sites_included"],
@@ -197,8 +200,8 @@ def report_json(root: Path, counts: dict, meth: dict, results: dict, status: dic
              nee_measured=mv["NEE"], le_measured=mv["LE"], h_measured=mv["H"], fch4_measured=mv["FCH4"],
              release_version=man["version"], release_windows=man["n_windows"], release_sites=man["n_sites"],
              release_families=", ".join(man["families"]), split_sha=man["split_sha256"][:12],
-             s2_chips=s2.get("Sentinel-2 chips gathered", 0), s2_sites=s2.get("towers with Sentinel-2 complete", 0),
-             clay_sites=s2.get("towers with Clay embeddings", 0),
+             s2_chips=chips_tile["value"], s2_sites=int(re.search(r"at (\d+) towers", chips_tile["label"]).group(1)),
+             clay_sites=s2.get("towers with a Clay embedding of every chip", 0),
              model_params=f"{sc.get('n_params', 0):,}", scored_run=sc.get("run", "?"),
              scored_step=f"{sc.get('step', 0):,}", d=c.get("d", "?"), depth=c.get("depth", "?"),
              heads=c.get("heads", "?"), n_rows=len(c.get("stats", {}).get("vars", [])),
@@ -222,6 +225,9 @@ def report_json(root: Path, counts: dict, meth: dict, results: dict, status: dic
                 yield re.sub(r"[^a-z0-9_]", "_", prefix.lower()), x
         v.update(dict(flat("", json.loads((rd / "values.json").read_text()))))
         v.update(json.loads((rd / "tables.json").read_text()))
+    comp = components.collect(root / "model")
+    v.update(table_components=components.table_html(comp), comp_done=len(comp["rows"]), comp_total=comp["total"],
+             comp_noise=f"{abs(comp['noise']['crps']):.1f}%" if comp["noise"] else "–")
     body = methods.render((HERE / "report_draft.html").read_text(), v, meth["references"])
     return {"html": body, "references": meth["references"], "draft": True}
 
@@ -260,6 +266,7 @@ def main() -> None:
         if src_x.exists():
             shutil.copy2(src_x, data / name)
             (data / f"{name}.gz").write_bytes(gzip.compress(src_x.read_bytes(), 9))
+    (data / "components.json").write_text(json.dumps(components.collect(root / "model"), separators=(",", ":")))
     scaling = root / "model" / "scaling" / "scaling.json"
     if scaling.exists():
         shutil.copy2(scaling, data / "scaling.json")

@@ -575,7 +575,7 @@ function renderMethods(m) {
   $("#m-exp").innerHTML = `<h4 class="headline">${esc(head)}</h4><p class="sub-title">Generated at build time from each run's config.json and log.jsonl, its checkpoint (parameter count) and model/NOTES.md (experiment id, purpose, outcome). Newest first.${scored ? ` The run scored on the Results tab is ${esc(scored)} at step ${fmtInt(ex.scored.step)}.` : ""}</p>
   <div class="table-wrap"><table class="exp"><thead><tr><th>Run</th><th>Exp.</th><th class="num">Parameters</th><th class="num">Width</th><th class="num">Depth</th><th class="num">Heads</th><th>Head type</th><th>Flags</th><th class="num">Training sites</th><th class="num">Steps</th><th class="num">Best val. CRPS</th><th>Status</th></tr></thead>
   <tbody>${runs.map((r) => `<tr class="main${r.run === scored ? " ours" : ""}"><th scope="row"><code>${esc(r.run)}</code></th><td>${esc(r.exp)}</td><td class="num">${fmtInt(r.n_params)}</td><td class="num">${r.d ?? "–"}</td><td class="num">${r.depth ?? "–"}</td><td class="num">${r.heads_n ?? "–"}</td><td>${esc(r.head)}</td><td>${esc(r.flags.join(", ") || "–")}</td><td class="num">${fmtInt(r.train_sites)}<span class="sub">${esc(r.split)}</span></td><td class="num">${fmtInt(r.steps)}<span class="sub">of ${fmtInt(r.target)}</span></td><td class="num">${r.best_crps === null ? `<span class="muted">${r.mode === "overfit" ? "training windows" : "–"}</span>` : fmt(r.best_crps, 4) + `<span class="sub">step ${fmtInt(r.best_step)}</span>`}</td><td><span class="status s-${r.status}">${esc(r.status)}</span></td></tr><tr class="detail${r.run === scored ? " ours" : ""}"><td colspan="12"><b>Purpose</b> ${esc(r.purpose || "not recorded in NOTES.md")} <b>Outcome</b> ${esc(r.outcome || (r.status === "running" ? "in progress" : "not yet recorded in NOTES.md"))}</td></tr>`).join("")}</tbody></table></div>
-  <p class="defs"><b>Parameters</b>: trainable parameters of the run's checkpoint. <b>Width, depth, heads</b>: model width d, number of time-and-variable block pairs, attention heads. <b>Head type</b>: output distribution; "+ flow matching" means the v1 joint head is trained on the same encoder. <b>Training sites</b>: sites the run trains on, and the split (provisional: a hash split used before the frozen split existed; development only). <b>Steps</b>: optimiser steps logged, of the planned length. <b>Best val. CRPS</b>: lowest mean CRPS over all hidden values of the run's validation windows, in standardised units (each variable divided by its training standard deviation); frozen-split runs share 60 windows at the 54 validation sites, provisional runs used other sites and are not comparable. <b>Status</b>: complete (reached its planned steps), running (log written in the last 20 minutes) or stopped.</p>
+  <p class="defs"><b>Parameters</b>: trainable parameters of the run's checkpoint. <b>Width, depth, heads</b>: model width d, number of time-and-variable block pairs, attention heads. <b>Head type</b>: output distribution; "+ flow matching" means the joint head is trained on the same encoder. <b>Training sites</b>: sites the run trains on, and the split (provisional: a hash split used before the frozen split existed; development only). <b>Steps</b>: optimiser steps logged, of the planned length. <b>Best val. CRPS</b>: lowest mean CRPS over all hidden values of the run's validation windows, in standardised units (each variable divided by its training standard deviation); frozen-split runs share 60 windows at the 54 validation sites, provisional runs used other sites and are not comparable. <b>Status</b>: complete (reached its planned steps), running (log written in the last 20 minutes) or stopped.</p>
   <h4>Evaluations and diagnoses without a training run</h4><div class="table-wrap"><table><thead><tr><th>Exp.</th><th>Purpose</th><th>Outcome</th></tr></thead><tbody>${ex.evaluations.map((e) => `<tr><th scope="row">${esc(e.exp)}</th><td>${esc(e.purpose)}</td><td>${esc(e.outcome)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
@@ -619,10 +619,31 @@ function renderReport(rep) {
   $("#rep-refs").innerHTML = rep.references ? `<section class="rep-sec"><div class="sec-label">07</div><h3 class="sec-title" id="references">References</h3><ol class="refs">${rep.references.map((r) => `<li id="ref-${r.n}">${r.html}</li>`).join("")}</ol></section>` : "";
 }
 
+// ---------- component study ----------
+function renderComponents(d) {
+  const box = $("#r-components");
+  if (!box || !d || !d.rows.length) return;
+  const f = (v) => (v === null || v === undefined ? "–" : Math.abs(v) < 0.05 ? "0.0%" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`);
+  const names = ["crps", "NEE", "LE", "H", "FCH4", "cov95"];
+  const heads = ["CRPS, all", "NEE", "LE", "H", "FCH4", "95% cov."];
+  const row = (lab, seeds, r) => `<tr><th scope="row">${esc(lab)}</th><td class="num">${seeds}</td>${names.map((n) => `<td class="num">${f(r[n])}</td>`).join("")}</tr>`;
+  let h = `<p>One change at a time against a control of width 192 and depth 6, at ${d.step.toLocaleString()} steps, on 60 validation windows. Percentages are changes in validation CRPS (lower is better) and in 95% coverage, against the control of the same seed. ${d.rows.length} of ${d.total} components are finished. A row counts only when it exceeds the noise row on a second seed; FCH4 on one evaluation moves more than the noise row shows, because the two control seeds happen to agree at this step.</p>`;
+  h += `<div class="table-wrap"><table class="results"><thead><tr><th scope="col">Component</th><th class="num">Seeds</th>${heads.map((x) => `<th class="num">${x}</th>`).join("")}</tr></thead><tbody>`;
+  if (d.noise) h += row("Second control seed (noise)", "", d.noise);
+  h += d.rows.map((r) => row(r.label, r.seeds, r)).join("") + "</tbody></table></div>";
+  if (d.sizes.length) {
+    h += `<h4 class="headline">Size probes at matched steps</h4><p class="note">All on the same 48,000-step schedule. Validation CRPS of all variables, then of the four fluxes.</p>`;
+    h += `<div class="table-wrap"><table class="results"><thead><tr><th scope="col">Size</th><th class="num">Rate</th>${d.size_steps.map((s) => `<th class="num">${s.toLocaleString()} steps</th>`).join("")}</tr></thead><tbody>`;
+    h += d.sizes.map((s) => `<tr><th scope="row">${esc(s.size)}, ${esc(s.shape)}</th><td class="num">${s.lr}</td>${d.size_steps.map((k) => { const p = s.points[k]; return `<td class="num">${p ? `${p.crps.toFixed(4)} / ${p.flux.toFixed(4)}` : "–"}</td>`; }).join("")}</tr>`).join("") + "</tbody></table></div>";
+  }
+  box.innerHTML = h;
+}
+
 // ---------- boot ----------
 (async () => {
-  const [st, s, idx, res, rep, meth, scal, rtest, bm] = await Promise.all([getJSON("data/status.json"), getJSON("data/sites.json"), getJSON("data/windows/index.json"), getJSONgz("data/results.json"), getJSON("data/report.json"), getJSON("data/methods.json"), getJSON("data/scaling.json"), getJSONgz("data/results_test.json"), getJSON("data/benchmark.json")]);
+  const [st, s, idx, res, rep, meth, scal, rtest, bm, comp] = await Promise.all([getJSON("data/status.json"), getJSON("data/sites.json"), getJSON("data/windows/index.json"), getJSONgz("data/results.json"), getJSON("data/report.json"), getJSON("data/methods.json"), getJSON("data/scaling.json"), getJSONgz("data/results_test.json"), getJSON("data/benchmark.json"), getJSON("data/components.json")]);
   SCALING = scal;
+  renderComponents(comp);
   renderStatus(st); initTowers(s); initWindows(idx); renderResults(res); renderMethods(meth); renderReport(rep); initFigureView(); renderBenchmark(bm);
   const splitBtns = [...document.querySelectorAll("#r-split button")];
   const testBtn = splitBtns.find((b) => b.dataset.split === "test");
