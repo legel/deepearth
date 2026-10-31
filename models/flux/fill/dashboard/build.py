@@ -215,7 +215,7 @@ def report_json(root: Path, counts: dict, meth: dict, results: dict, status: dic
     """The draft report: dashboard/report_draft.html with values from the dataset, benchmark and run files."""
     import methods
     rep = json.loads((root / "towers" / "report.json").read_text())
-    man = json.loads((HERE.parent / "bench" / "release" / "MANIFEST.json").read_text())
+    man = json.loads((HERE.parent / "bench" / "release" / "0.2" / "MANIFEST.json").read_text())
     c = scored_config(root, counts)
     sc = counts.get("scored", {})
     bl = counts.get("baselines", {})

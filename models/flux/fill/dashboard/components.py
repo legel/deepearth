@@ -14,6 +14,10 @@ STEP = 8000
 SIZES = [("M", "width 320, depth 10", "v4-d320-48k"), ("XL", "width 640, depth 16", "scale-XL-lr3e-4"),
          ("XL", "width 640, depth 16", "scale-XL-lr1.5e-4"), ("XL", "width 640, depth 16", "scale-XL-lr6e-4")]
 SIZE_STEPS = (2000, 4000, 6000)
+# The decision on a component, by the rule of the study: adopted only when it holds on a second seed.
+DECISIONS = {"var_mean": "Adopted", "gate": "Adopted", "mot_all": "Combination decides; FCH4 differs by seed",
+             "mot_ffn": "No gain", "rope_half": "No gain", "tttv": "No gain", "asinh": "Rejected", "fgn": "Rejected: coverage",
+             "swiglu": "Second seed queued", "quantile": "Second seed queued", "rmsnorm": "One seed"}
 
 
 def recipe():
@@ -47,7 +51,7 @@ def collect(model_root: Path) -> dict:
         seeds = [(r, b) for r, b in seeds if r and b]
         if not seeds:
             continue
-        row = {"key": c.key, "label": c.label, "group": c.group, "seeds": len(seeds)}
+        row = {"key": c.key, "label": c.label, "group": c.group, "seeds": len(seeds), "decision": DECISIONS.get(c.key, "")}
         for k, n in KEYS:
             v = [pct(r, b, k) for r, b in seeds]
             v = [x for x in v if x is not None]
@@ -68,10 +72,10 @@ def table_html(d: dict) -> str:
     f = lambda v: "–" if v is None else "0.0%" if abs(v) < 0.05 else f"{v:+.1f}%"
     h = ['<div class="table-wrap"><table class="rep-table"><thead><tr><th>Added to the control</th><th class="num">Seeds</th>'
          '<th class="num">CRPS, all</th><th class="num">NEE</th><th class="num">LE</th><th class="num">H</th><th class="num">FCH4</th>'
-         '<th class="num">95% cov.</th></tr></thead><tbody>']
+         '<th class="num">95% cov.</th><th>Decision</th></tr></thead><tbody>']
     names = ("crps", "NEE", "LE", "H", "FCH4", "cov95")
     if d["noise"]:
-        h.append('<tr class="ours"><td>Second control seed (noise)</td><td class="num"></td>' + "".join(f'<td class="num">{f(d["noise"][n])}</td>' for n in names) + "</tr>")
+        h.append('<tr class="ours"><td>Second control seed (noise)</td><td class="num"></td>' + "".join(f'<td class="num">{f(d["noise"][n])}</td>' for n in names) + "<td></td></tr>")
     for r in d["rows"]:
-        h.append(f'<tr><td>{r["label"]}</td><td class="num">{r["seeds"]}</td>' + "".join(f'<td class="num">{f(r[n])}</td>' for n in names) + "</tr>")
+        h.append(f'<tr><td>{r["label"]}</td><td class="num">{r["seeds"]}</td>' + "".join(f'<td class="num">{f(r[n])}</td>' for n in names) + f'<td>{r["decision"]}</td></tr>')
     return "".join(h) + "</tbody></table></div>"
