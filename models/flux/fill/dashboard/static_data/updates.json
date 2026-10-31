@@ -1,6 +1,11 @@
 [
  {
   "date": "2026-10-31",
+  "title": "Full review of every tab.",
+  "text": "Report Table 2 and Fig. 1 now include the deep ensemble, which earlier builds left out. The Benchmark tab now lists families M1 to M5 as released, the scores actually computed and the test coverage of each method. Windows notes no longer describe site adaptation, removed on 30 October, and name the model shown. The report no longer states inference times: the runtime benchmark has not run. Discussion and Results sentences now state where FluxFill does not lead."
+ },
+ {
+  "date": "2026-10-31",
   "title": "Component study: SwiGLU in the combination.",
   "text": "The combination of per-variable loss, per-modality weights, attention gate and SwiGLU, against the control of the same seed at 8,000 steps: overall CRPS -4.1% on both seeds, NEE -4.5% and -2.8%, LE -4.2% and -4.0%, H -4.0% and -3.1%, FCH4 -19.6% and -19.7%, with 95% coverage 0.942 and 0.956. It is the lowest so far on all four fluxes and is adopted. Withholding site memory from FCH4 adds no gain to the first combination on one seed (FCH4 -19.7% against -18.1%, NEE, LE and H slightly worse), so the per-variable loss already delivers that gain."
  },

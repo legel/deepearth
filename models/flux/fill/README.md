@@ -8,7 +8,7 @@ is trained on 488 towers. Station outages remove 26 % of the record at those tow
 outages of 7 days or longer. On FluxFill-Bench, 514 windows at 131 test towers at least 50 km from any training tower,
 its CRPS is 14.2 % lower than the best established method for NEE, 17.7 % for LE, 18.1 % for H and 3.6 % for FCH4 on
 the values every method fills, with 95 % intervals that contain 0.948 to 0.955 of hidden values. It has the lowest
-CRPS for NEE, LE and H at every gap from 1 to 180 days. Chronos-2 and XGBoost lead at the shortest gaps, and FCH4 by
+CRPS for NEE, LE and H at every gap from 1 to 180 days. Chronos-2 and XGBoost lead at the shortest gaps, the deep ensemble leads on mixed per-variable gaps, and FCH4 by
 gap is open: FluxFill leads 2 of its 11 gap classes. These test scores are from the network trained for 24,000 steps;
 the final network (48,000 steps with a temporal copula) is scored once on these windows at the end of the component
 study.
@@ -144,6 +144,7 @@ Bold marks the best of each column within a flux (coverage: closest to 0.95; bia
 |  | MDS | 2.038 | 0.719 | 2.611 | 4.654 | −0.035 | 0.580 | 55.9% |
 |  | RF ensemble | 2.408 | 0.875 | 3.200 | 5.446 | −0.503 | 0.425 | 68.5% |
 |  | XGBoost | 2.493 | 0.772 | 3.256 | 5.518 | 0.245 | 0.410 | 69.7% |
+|  | Deep ensemble | 2.015 | 0.848 | 2.665 | 4.715 | 0.165 | 0.569 | 57.0% |
 |  | SAITS | 2.478 | 0.945 | 2.985 | 4.954 | 0.401 | 0.524 | 63.9% |
 |  | Chronos-2 | 19.79 | 0.934 | 294.0 | 26612.4 | −281.6 | −1.4e7 | 6292.5% |
 |  | **FluxFill** | **1.556** | **0.953** | **2.138** | **3.908** | **0.022** | **0.704** | **45.8%** |
@@ -151,6 +152,7 @@ Bold marks the best of each column within a flux (coverage: closest to 0.95; bia
 |  | MDS | 19.91 | 0.741 | 25.69 | 47.11 | −2.008 | 0.652 | 51.1% |
 |  | RF ensemble | 23.95 | 0.886 | 31.75 | 55.81 | −3.888 | 0.511 | 63.2% |
 |  | XGBoost | 31.90 | 0.729 | 42.91 | 70.48 | 15.47 | 0.221 | 85.4% |
+|  | Deep ensemble | 21.04 | 0.856 | 27.42 | 51.95 | −8.383 | 0.577 | 54.6% |
 |  | SAITS | 23.48 | 0.931 | 26.92 | 49.29 | −8.210 | 0.619 | 53.6% |
 |  | Chronos-2 | 17.30 | 0.941 | 24.42 | 44.80 | **0.014** | 0.685 | 48.6% |
 |  | **FluxFill** | **14.25** | **0.955** | **19.80** | **37.51** | −2.517 | **0.779** | **39.4%** |
@@ -158,6 +160,7 @@ Bold marks the best of each column within a flux (coverage: closest to 0.95; bia
 |  | MDS | 24.92 | 0.707 | 32.18 | 50.75 | −1.844 | 0.664 | 58.8% |
 |  | RF ensemble | 29.85 | 0.886 | 39.69 | 63.63 | −5.254 | 0.471 | 72.6% |
 |  | XGBoost | 38.99 | 0.706 | 50.08 | 81.26 | 11.93 | 0.137 | 91.6% |
+|  | Deep ensemble | 27.19 | 0.812 | 34.96 | 59.09 | −10.72 | 0.544 | 63.9% |
 |  | SAITS | 27.32 | 0.927 | 33.78 | 55.91 | −0.828 | 0.592 | 61.8% |
 |  | Chronos-2 | 21.03 | **0.950** | 29.49 | 49.83 | −0.679 | 0.676 | 53.9% |
 |  | **FluxFill** | **17.21** | 0.948 | **24.13** | **39.02** | −1.132 | **0.801** | **44.1%** |
@@ -165,6 +168,7 @@ Bold marks the best of each column within a flux (coverage: closest to 0.95; bia
 |  | MDS | 30.44 | 0.771 | 38.84 | 103.1 | −3.735 | 0.502 | 48.5% |
 |  | RF ensemble | 29.50 | 0.914 | **37.71** | 98.74 | −8.363 | 0.544 | **47.1%** |
 |  | XGBoost | 30.86 | 0.872 | 42.63 | 100.7 | **3.057** | 0.525 | 53.2% |
+|  | Deep ensemble | 30.85 | 0.896 | 40.01 | 101.6 | −11.88 | 0.517 | 49.9% |
 |  | SAITS | 49.41 | 0.800 | 57.29 | 128.2 | −39.75 | 0.231 | 71.5% |
 |  | Chronos-2 | 41.59 | 0.925 | 140.8 | 8874.1 | −93.33 | −3685 | 175.7% |
 |  | **FluxFill** | **28.44** | **0.953** | 37.97 | **96.73** | −10.12 | **0.562** | 47.4% |

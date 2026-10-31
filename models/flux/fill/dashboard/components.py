@@ -73,7 +73,33 @@ def collect(model_root: Path) -> dict:
         lr = json.loads(cfg.read_text())["lr"]
         points = {s: {"crps": ev[s]["val_crps"], "flux": ev[s]["val_crps_flux"]} for s in SIZE_STEPS if s in ev}
         out["sizes"].append({"size": size, "shape": shape, "lr": lr, "points": points})
+    out["story"] = story(out)
     return out
+
+
+def story(d: dict) -> str:
+    """What the study has found, in sentences, from the rows of `collect`."""
+    rows = {r["key"]: r for r in d["rows"]}
+    moved = lambda v: f"{'raises' if v > 0 else 'lowers'} it by {abs(v):.1f}%" if abs(v) >= 0.05 else "leaves it unchanged"
+    seeds = lambda r: f"{r['seeds']} seed{'s' if r['seeds'] > 1 else ''}"
+    out = []
+    if "combo2" in rows:
+        r = rows["combo2"]
+        out.append(f"The per-variable loss, per-modality weights, attention gate and SwiGLU together change validation CRPS by {r['crps']:+.1f}%, "
+                   f"NEE by {r['NEE']:+.1f}%, LE by {r['LE']:+.1f}%, H by {r['H']:+.1f}% and FCH4 by {r['FCH4']:+.1f}% on average over {seeds(r)}, "
+                   "and enter the next network.")
+    if "memory" in rows:
+        r = rows["memory"]
+        out.append(f"Site memory is the input with the largest effect: on {seeds(r)}, removing it raises overall CRPS by {r['crps']:.1f}% and NEE by {r['NEE']:.1f}%, "
+                   f"and lowers FCH4 by {abs(r['FCH4']):.1f}%.")
+    if "combo_nomemch4" in rows and "combo" in rows:
+        r, c = rows["combo_nomemch4"], rows["combo"]
+        out.append(f"Withholding memory from FCH4 alone changes FCH4 by {r['FCH4']:+.1f}% against {c['FCH4']:+.1f}% for the same combination with memory ({seeds(r)}).")
+    if "imagery" in rows:
+        r = rows["imagery"]
+        out.append(f"Removing the Sentinel-2 embeddings changes overall CRPS by {r['crps']:+.1f}% on {seeds(r)} at width 192 and {d['step']:,} steps, "
+                   "so this study has not yet measured a gain from imagery.")
+    return " ".join(out)
 
 
 def table_html(d: dict) -> str:

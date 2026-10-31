@@ -145,7 +145,7 @@ const METHOD_NAMES = { climatology: "Climatology", mds: "MDS (REddyProc)", irvin
   vekuri_de: "Deep ensemble (Vekuri 2025)", liu_xgb: "XGBoost (Liu 2025)", saits: "SAITS", csdi: "CSDI",
   chronos2: "Chronos-2 zero-shot", fluxfill: "FluxFill" };
 const SPLIT_TEXT = {
-  test: "Test tower: held out from training and from every model choice; FluxFill was scored on the test towers once.",
+  test: "Test tower: held out from training and from every model choice; each final FluxFill model is scored on the test towers once.",
   validation: "Validation tower: held out from training; used to choose between model versions." };
 let WSPLIT = "validation";
 function initWindows(idx) {
@@ -516,7 +516,7 @@ function drawScaling() {
   const box = $("#r-scaling");
   if (!box || $("#p-results").hidden) return;
   const runs = Array.isArray(SCALING) ? SCALING : (SCALING && SCALING.runs) || [];
-  const intro = '<p>Validation CRPS (standardised units, all variables and fluxes only) against model size and against the number of training sites, from <code>model/scaling/scaling.json</code>. A power law L = a·x<sup>−α</sup> + c is fitted to each series once it has 3 or more points.</p>';
+  const intro = '<p>Validation CRPS (standardised units, all variables and fluxes only) against model size and against the number of training sites, from <code>model/scaling/scaling.json</code>. A power law L = a·x<sup>−α</sup> + c is fitted to each series once it has 3 or more points. Points are runs trained in full on the whole training set; the size probes at matched steps are under Component study.</p>';
   if (!runs.length) { box.innerHTML = intro + '<div class="pending">Scaling runs are in progress. Points appear here as each run finishes; no point is plotted before it is measured.</div>'; return; }
   const axes = [{ id: "model", x: "n_params", lab: "parameters", title: "Validation CRPS against model size" }, { id: "data", x: "n_train_sites", lab: "training sites", title: "Validation CRPS against training sites" }];
   box.innerHTML = intro + `<div class="legend chart-legend"><span><i style="background:${css("--series-1")}"></i>all variables</span><span><i style="background:${css("--series-2")}"></i>fluxes only</span></div><div class="panels">${axes.map((a) => `<div class="viz panel" data-axis="${a.id}"></div>`).join("")}</div>`;
@@ -628,7 +628,7 @@ function renderComponents(d) {
   const names = ["crps", "NEE", "LE", "H", "FCH4", "cov95"];
   const heads = ["CRPS, all", "NEE", "LE", "H", "FCH4", "95% cov."];
   const row = (lab, seeds, r) => `<tr><th scope="row">${esc(lab)}</th><td class="num">${seeds}</td>${names.map((n) => `<td class="num">${f(r[n])}</td>`).join("")}<td>${esc(r.decision || "")}</td></tr>`;
-  let h = `<p>One change at a time against a control of width 192 and depth 6, at ${d.step.toLocaleString()} steps, on 60 validation windows. Percentages are changes in validation CRPS (lower is better) and in 95% coverage, against the control of the same seed. ${d.done} of ${d.total} components are finished. A row counts only when it exceeds the noise row on a second seed; FCH4 on one evaluation moves more than the noise row shows, because the two control seeds happen to agree at this step.</p>`;
+  let h = `<p>One change at a time against a control of width 192 and depth 6, at ${d.step.toLocaleString()} steps, on 60 validation windows. Percentages are changes in validation CRPS (lower is better) and in 95% coverage, against the control of the same seed. ${d.done} of ${d.total} components are finished. A row counts only when it exceeds the noise row on a second seed; FCH4 on one evaluation moves more than the noise row shows, because the two control seeds happen to agree at this step. Rows named "Without" remove a component; the others add one.</p>${d.story ? `<p>${esc(d.story)}</p>` : ""}`;
   h += `<div class="table-wrap"><table class="results"><thead><tr><th scope="col">Component</th><th class="num">Seeds</th>${heads.map((x) => `<th class="num">${x}</th>`).join("")}<th scope="col">Decision</th></tr></thead><tbody>`;
   if (d.noise) h += row("Second control seed (noise)", "", d.noise);
   h += d.rows.map((r) => row(r.label, r.seeds, r)).join("") + "</tbody></table></div>";

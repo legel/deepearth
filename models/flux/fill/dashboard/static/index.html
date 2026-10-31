@@ -55,8 +55,8 @@
   <ol class="ov-steps">
     <li><strong>Window</strong>180 days of half-hourly values for every variable at one tower. The tower's other years
     are available as context.</li>
-    <li><strong>Samples</strong>64 samples of every hidden value from its predictive distribution. They give the fill
-    and its 95% interval; sums over days and months are formed per sample.</li>
+    <li><strong>Samples</strong>64 samples of every hidden value from its predictive distribution. A temporal copula couples
+    them in time. They give the fill and its 95% interval; sums over days and months are formed per sample.</li>
     <li><strong>Scores</strong>CRPS, 95% coverage, MAE, RMSE, MSE, bias, R² and WAPE on hidden measured values, for
     every method on the same windows and masks.</li>
   </ol>
@@ -82,7 +82,7 @@
       <tr><td>No multi-site benchmark of contiguous gaps of weeks to months scored on sums</td><td>Blocks of 1 to 180 days at every season, scored on daily, monthly and window sums from joint samples</td></tr>
       <tr><td>Site-specific models that do not learn from other towers</td><td>One model trained on all towers, tested on 20% of sites held out with 50 km spatial blocking</td></tr>
       <tr><td>Cross-site models that cannot use a tower's own record the way per-site regressions do</td><td>Site memory: statistics of the tower's other years enter every token of a cross-site model</td></tr>
-      <tr><td>Methane validation on a handful of wetland towers</td><td>18 methane validation towers drawn to match the ecosystem mix of the 21 methane test towers; 102 methane validation windows</td></tr>
+      <tr><td>Methane validation on a handful of wetland towers</td><td>A second split with 18 methane validation towers drawn to match the ecosystem mix of the 21 methane test towers; 102 methane validation windows</td></tr>
       <tr><td>Ecosystem state seen through coarse vegetation indices</td><td>Every Sentinel-2 acquisition over 300 m around each tower, embedded by the Clay foundation model</td></tr>
     </tbody>
   </table></div>
@@ -119,28 +119,30 @@
     <tr><th>R2</th><td>Held-out final year at a training site.</td></tr>
     <tr><th>R3</th><td>No tower data: every tower channel masked for the whole window; reanalysis and imagery remain.</td></tr>
   </tbody></table>
+  <p class="note">Release 0.2 scores R1. R2 and R3 are defined and not yet scored.</p>
   <h3>Mask families</h3>
   <table><tbody>
     <tr><th>M1</th><td>Distribution-matched gaps (Irvin et al. 2021), for continuity with published numbers.</td></tr>
-    <tr><th>M2</th><td>One contiguous block of 1, 7, 30, 90 or 180 days, uniform over the window, on all tower channels.</td></tr>
+    <tr><th>M2</th><td>One contiguous block of 2 or 6 hours or 1, 7, 30, 90 or 180 days, uniform over the window, on all tower channels.</td></tr>
     <tr><th>M3</th><td>A real joint outage of all tower channels transplanted from another site-year.</td></tr>
-    <tr><th>M4</th><td>One modality removed for the whole window: tower meteorology, reanalysis or Sentinel-2.</td></tr>
+    <tr><th>M4</th><td>The reanalysis modality removed for the whole window, together with a 30-day M2 block.</td></tr>
+    <tr><th>M5</th><td>An independent block in each variable, of log-uniform length from one half-hour to 90 days, together with one whole modality.</td></tr>
   </tbody></table>
   <h3>Scores</h3>
-  <p>CRPS from joint samples (primary); CRPS and bias of daily, monthly and window sums; coverage of the 50%, 80% and
-  95% intervals and PIT histograms by gap length; MAE, MSE, RMSE, bias, R² and the weighted absolute percentage error
-  of the predictive mean for comparison with the literature; correlation of daily anomalies and interannual
-  variability; tail error. Definitions and formulas: <a href="#results" data-tab="results">Results, Metrics</a>.
+  <p>CRPS from 64 samples per value (primary); CRPS and coverage of daily, 30-day and window sums; coverage of the 50%,
+  80% and 95% intervals; MAE, MSE, RMSE, bias, R² and the weighted absolute percentage error of the predictive mean, for
+  comparison with the literature. Definitions and formulas: <a href="#results" data-tab="results">Results, Metrics</a>.
   Exact settings of every method: <a href="#methods" data-tab="methods">Methods</a>.</p>
   <h3>Baselines</h3>
-  <table><thead><tr><th>Method</th><th>Reference</th></tr></thead><tbody>
-    <tr><td>Marginal distribution sampling (MDS)</td><td>Reichstein et al. 2005; REddyProc, Wutzler et al. 2018</td></tr>
-    <tr><td>Random forest, XGBoost, ANN and Lasso ensembles</td><td>Irvin et al. 2021</td></tr>
-    <tr><td>XGBoost with vegetation state</td><td>Liu et al. 2025</td></tr>
-    <tr><td>Deep ensemble with a Laplace likelihood</td><td>Vekuri et al. 2025</td></tr>
-    <tr><td>SAITS, BRITS, ImputeFormer, CSDI</td><td>PyPOTS, Du et al. 2023</td></tr>
-    <tr><td>Chronos-2</td><td>Ansari et al. 2025</td></tr>
-    <tr><td>Climatology</td><td>site mean diurnal cycle per day of year</td></tr>
+  <table><thead><tr><th>Method</th><th>Reference</th><th>Scored on test windows</th></tr></thead><tbody>
+    <tr><td>Marginal distribution sampling (MDS)</td><td>Reichstein et al. 2005; REddyProc, Wutzler et al. 2018</td><td>M1, M2 up to 30 days, M4</td></tr>
+    <tr><td>Random forest ensemble</td><td>Irvin et al. 2021</td><td>All families</td></tr>
+    <tr><td>XGBoost with vegetation state</td><td>Liu et al. 2025</td><td>All families</td></tr>
+    <tr><td>Deep ensemble with a Laplace likelihood</td><td>Vekuri et al. 2025</td><td>All families</td></tr>
+    <tr><td>SAITS</td><td>PyPOTS, Du et al. 2023</td><td>All families</td></tr>
+    <tr><td>Chronos-2</td><td>Ansari et al. 2025</td><td>M2, M3, M4; most 180-day blocks stay unfilled</td></tr>
+    <tr><td>Climatology</td><td>The tower's other years at the same half-hour and season</td><td>All families</td></tr>
+    <tr><td>CSDI</td><td>PyPOTS, Tashiro et al. 2021</td><td>21 windows, not compared</td></tr>
   </tbody></table>
 </section>
 
