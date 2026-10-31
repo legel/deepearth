@@ -1,20 +1,11 @@
-![DeepEarth logo](docs/logo.png)
-## DeepEarth: AI for Planetary Science & Sustainability
+**DeepEarth** is a [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multi-modal](https://en.wikipedia.org/wiki/Multimodal_learning), [spatio-temporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) AI world model for the planet.
 
-DeepEarth is a [self-supervised](https://en.wikipedia.org/wiki/Self-supervised_learning), [multi-modal](https://en.wikipedia.org/wiki/Multimodal_learning), [spatio-temporal](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) GeoAI model for global environmental intelligence and optimization.
-
-![DeepEarth v.0.01 preview of architecture](docs/deepearth.png)
-
-DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen above). It uses a novel space-time positional encoder, [Earth4D](encoders/spacetime/README.md), especially for [earth observation](https://en.wikipedia.org/wiki/Earth_observation) data (as seen below).
-
-![Earth4D space-time encoder](docs/earth4d.png) 
-
-## Exciting News:
+#### News:
 - _October 31, 2026_  
-  **State-of-the-art climate simulation.** DeepEarth has exceeded all published models for masked carbon, water, wind, and temperature reconstruction across global flux towers. See [_report_](https://deepearth.ai/fluxfill/#report).
+  **State-of-the-art climate simulation.** DeepEarth simulates sun, water, wind, temperature, and carbon across global flux towers more accurately than all existing models. See [_report_](https://deepearth.ai/fluxfill/#report), [_code_](https://github.com/legel/deepearth/tree/main/models/flux/fill).
 
 - _October 5, 2026_  
-  **#1 model of native plant habitats.** DeepEarth has exceeded all published models for predicting distributions of all native plant species across the United States. See [_report_](https://deepearth.ai/native-habitats/).
+  **#1 model of native plant habitats.** DeepEarth has exceeded all published models for predicting distributions of all native plant species across the United States. See [_report_](https://deepearth.ai/native-habitats/), [_code_](https://github.com/legel/deepearth/tree/main/models/habitat/plant)
 
 - _July 16, 2026_  
   **NASA award.** [NASA's Commercial Satellite Data Acquisition](https://science.nasa.gov/earth-science/csda/) has awarded DeepEarth investigators at UC Berkeley 5 million km**2 of [Planet](https://www.planet.com/) data, approximately $200,000 in value.
@@ -59,13 +50,14 @@ DeepEarth learns by jointly reconstructing masked multi-modal datasets (as seen 
 - _June 23, 2025_  
   **Workshop in Chicago.** NSF funded a 3 hour workshop on DeepEarth in Chicago for a ["GeoAI for Sustainability"](https://i-guide.io/forum/forum-2025/workshops/) conference. 3 professors, 5 postdocs, and 2 PhD students contributed.
 
-#### Planetary Intelligence for Everyone
-DeepEarth is an open source project for solving intelligence across the planet 🌎. We aspire to help solve major sustainability challenges including [climate resilience and biodiversity](https://www.asla.org/climateandbiodiversityactionplan.aspx).
+#### Changing the World
+[DeepEarth.ai](https://deepearth.ai) now simulates sun, wind, water, soil, & plants across the United States with state-of-the-art accuracy at centimeter scale. 
 
-#### Invitation for Open Source Collaboration
-Collaborators welcomed! Contact [Lance Legel](https://linkedin.com/in/legel) at lance@ecodash.ai or submit an issue/PR here.
-
-For further details, see papers:
-- [Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding](https://arxiv.org/abs/2603.07039) (2026)
-- [Inductive Neural Networks for Ecology](https://doi.org/10.13140/RG.2.2.25523.90406) (2025)
-- [AI Foundation Models for Biogeography and Ecophysiology](https://doi.org/10.13140/RG.2.2.12102.13123) (2024)
+#### Sponsors
+- **NASA** _Earth Science Division_ Commercial Satellite Data Acquisition Award 
+- **U.S. National Science Foundation** _Institute for Geospatial Understanding_ Research Award (#2118329)
+- **U.S. Department of Energy** _Office of Science_ Supercomputing Award (#BER‑ERCAP0036969) 
+- **University of California Berkeley** _Quantitative Ecosystem Dynamics Lab_ (Visiting Scientist)
+- **University of Florida** _Institute for Food & Agricultural Sciences_ Research Award (LIFT-AI)
+- **Nebius** _2025 Nebius Robotics & Physical AI Awards_ Supercomputing Award
+- **Google** _Startups Cloud Program_ Supercomputing Award
