@@ -171,25 +171,26 @@ Bold marks the best of each column within a flux (coverage: closest to 0.95; bia
 
 Chronos-2 forecasts diverge on 11 of the 514 windows (RMSE above 1,000); they stay in the table and set its NEE and FCH4
 rows. Without those windows its CRPS is 2.541 for NEE, 21.78 for LE, 25.27 for H and 29.41 for FCH4, each pooled over
-its own cells. The deep ensemble joins the table when its test run finishes. CSDI takes about
+its own cells. CSDI takes about
 1.5 hours a window and covers 21 test windows, so it is not in the table.
 
-CRPS by gap at the test towers, FluxFill against the best other method of that column (each method on the cells it
-fills; Chronos-2 is not run on M1 and M5; units as above):
+CRPS by gap at the test towers, FluxFill against the best other method of that column (within a column, the cells that
+every method compared there fills, so a column's value can differ from the pooled table; Chronos-2 is not run on M1 and M5;
+units as above):
 
 | gap | NEE | LE | H | FCH4 |
 |---|---|---|---|---|
 | short gaps (M1) | 1.33 / **1.14** XGBoost | 14.1 / **12.3** XGBoost | 16.1 / **14.3** XGBoost | 16.2 / **13.4** XGBoost |
-| 2 h | **1.35** / 1.36 Chronos-2 | 12.6 / **12.5** Chronos-2 | **13.9** / 14.8 Chronos-2 | 21.5 / **20.1** Chronos-2 |
-| 6 h | **1.29** / 1.42 Chronos-2 | 11.7 / **11.3** Chronos-2 | 14.5 / **14.2** Chronos-2 | 21.4 / **17.5** Chronos-2 |
+| 2 h | **1.35** / 1.36 Chronos-2 | 12.6 / **12.5** Chronos-2 | **13.9** / 14.8 Chronos-2 | 20.6 / **20.3** Chronos-2 |
+| 6 h | **1.29** / 1.42 Chronos-2 | 11.7 / **11.3** Chronos-2 | 14.5 / **14.2** Chronos-2 | 19.5 / **15.7** Chronos-2 |
 | 1 d | **1.48** / 1.49 Chronos-2 | **13.6** / 14.4 Chronos-2 | **16.3** / 17.1 Chronos-2 | 17.9 / **16.4** Chronos-2 |
-| 7 d | **1.51** / 1.63 Chronos-2 | **14.0** / 15.3 Chronos-2 | **16.6** / 18.2 Chronos-2 | 25.0 / **23.7** RF ensemble |
-| 30 d | **1.58** / 1.81 climatology | **14.6** / 17.4 Chronos-2 | **17.1** / 20.2 Chronos-2 | 24.0 / **23.8** Chronos-2 |
-| 90 d | **1.72** / 1.80 climatology | **15.3** / 17.8 climatology | **17.9** / 21.7 climatology | 27.1 / **25.6** RF ensemble |
-| 180 d | **1.73** / 1.75 climatology | **15.8** / 17.6 climatology | **18.2** / 21.6 climatology | **26.3** / 26.5 climatology |
-| real outages (M3) | **1.48** / 1.76 climatology | **13.5** / 15.0 Chronos-2 | **16.1** / 18.6 Chronos-2 | 28.5 / **22.6** Chronos-2 |
+| 7 d | **1.51** / 1.63 Chronos-2 | **14.0** / 15.3 Chronos-2 | **16.6** / 18.2 Chronos-2 | 26.9 / **25.5** RF ensemble |
+| 30 d | **1.58** / 1.78 deep ensemble | **14.6** / 17.4 Chronos-2 | **17.1** / 20.2 Chronos-2 | 24.0 / **23.8** Chronos-2 |
+| 90 d | **1.71** / 1.79 climatology | **15.3** / 17.7 climatology | **17.8** / 21.7 climatology | 27.1 / **25.6** RF ensemble |
+| 180 d | **1.73** / 1.75 climatology | **15.8** / 17.6 climatology | **18.1** / 21.6 climatology | **26.3** / 26.5 climatology |
+| real outages (M3) | **1.48** / 1.74 deep ensemble | **13.5** / 15.0 Chronos-2 | **16.1** / 18.5 Chronos-2 | 28.5 / **22.6** Chronos-2 |
 | 30 d, no reanalysis | **1.66** / 1.89 climatology | **15.2** / 17.9 climatology | **18.9** / 21.9 climatology | **30.6** / 30.9 MDS |
-| mixed per-variable (M5) | 1.84 / **1.75** XGBoost | **15.9** / 16.6 XGBoost | **17.5** / 19.8 XGBoost | 33.6 / **30.9** XGBoost |
+| mixed per-variable (M5) | 1.84 / **1.67** deep ensemble | 15.9 / **15.5** deep ensemble | 17.5 / **17.0** deep ensemble | 33.6 / **30.9** XGBoost |
 
 FluxFill has the lowest CRPS in 28 of the 44 combinations, Chronos-2 in 8, XGBoost in 6 and the RF ensemble in 2.
 Beating XGBoost on M1 and Chronos-2 at sub-daily gaps and on FCH4 is the open work.
@@ -228,7 +229,7 @@ gain.
 One change at a time against a control of the same seed, width 192, depth 6, 8,000 steps, 60 validation windows
 ([`recipe.py`](model/recipe.py), [`ablate.py`](model/ablate.py)). Each technique is added in its published form, from
 the published code where it exists, behind its own flag. Percentages are changes in validation CRPS, averaged over the
-seeds shown, and in 95 % coverage. 11 of 34 components have run. The two control seeds differ by
+seeds shown, and in 95 % coverage. 14 of 34 components have run. The two control seeds differ by
 0.8 % on overall CRPS, and FCH4 moves from 0.60 to 0.88 within a run, so a row counts only when it holds on a second
 seed.
 
@@ -240,12 +241,15 @@ seed.
 | Per-modality weights (MoT) | 2 | −1.3 % | −1.1 % | −1.7 % | −0.7 % | +10.7 % | −0.5 % | Combination decides; FCH4 differs by seed |
 | Attention gate (Timestral) | 2 | −1.5 % | +0.2 % | −0.8 % | −0.7 % | −9.5 % | −0.2 % | Adopted |
 | Partial RoPE (Timestral) | 1 | +0.1 % | +0.5 % | −0.1 % | +0.6 % | +3.9 % | −0.3 % | No gain |
-| RMSNorm (Timestral) | 1 | +0.2 % | +0.1 % | +0.8 % | −0.2 % | −10.1 % | 0.0 % | One seed |
+| RMSNorm (Timestral) | 1 | +0.2 % | +0.1 % | +0.8 % | −0.2 % | −10.1 % | 0.0 % | No gain |
 | SwiGLU (Timestral) | 1 | −2.8 % | −0.8 % | −2.1 % | −2.4 % | −6.0 % | +0.2 % | Second seed queued |
 | Time-heavy schedule (Timestral) | 1 | +1.2 % | −0.4 % | +0.3 % | +0.7 % | −3.9 % | +0.2 % | No gain |
 | Quantile head (Timestral) | 1 | −2.3 % | −0.5 % | −2.5 % | −2.1 % | −19.9 % | +0.2 % | Second seed queued |
 | Asinh scaling (Timestral) | 1 | +3.4 % | +5.1 % | +1.3 % | +2.4 % | −5.1 % | −0.4 % | Rejected |
 | Fair CRPS and shared noise (FGN) | 1 | +6.9 % | −0.2 % | −0.2 % | +4.4 % | −13.1 % | −9.4 % | Rejected: coverage |
+| Periodic value embeddings (PLR) | 1 | −0.3 % | +0.6 % | +0.4 % | +0.3 % | −8.0 % | +0.2 % | No gain |
+| Time encoder (Prithvi) | 1 | +0.1 % | +0.4 % | −0.1 % | +0.2 % | −11.9 % | 0.0 % | No gain |
+| Time encoder (SINR form) | 1 | +0.3 % | +0.5 % | +0.5 % | +0.6 % | −0.9 % | +0.6 % | No gain |
 
 The per-variable loss works because a plain mean over hidden cells gives FCH4 the weight of its 0.4 % share of tower
 values. The sizes differ as well: width 640, depth 16 (167,004,569 parameters) has not passed width 320, depth 10 at

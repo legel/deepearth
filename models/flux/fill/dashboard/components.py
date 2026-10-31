@@ -17,7 +17,8 @@ SIZE_STEPS = (2000, 4000, 6000)
 # The decision on a component, by the rule of the study: adopted only when it holds on a second seed.
 DECISIONS = {"var_mean": "Adopted", "gate": "Adopted", "mot_all": "Combination decides; FCH4 differs by seed",
              "mot_ffn": "No gain", "rope_half": "No gain", "tttv": "No gain", "asinh": "Rejected", "fgn": "Rejected: coverage",
-             "swiglu": "Second seed queued", "quantile": "Second seed queued", "rmsnorm": "One seed"}
+             "swiglu": "Second seed queued", "quantile": "Second seed queued", "rmsnorm": "No gain", "plr": "No gain",
+             "time_prithvi": "No gain", "time_sinr": "No gain"}
 
 
 def recipe():
