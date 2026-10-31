@@ -1,6 +1,11 @@
 [
  {
   "date": "2026-10-31",
+  "title": "Component study: first combination holds on two seeds.",
+  "text": "The per-variable loss, per-modality weights and attention gate together, against the control of the same seed at 8,000 steps: overall CRPS -1.0% and -1.9%, NEE -3.1% and -1.5%, LE -2.2% and -2.5%, H -2.8% and -2.4%, FCH4 -18.1% and -15.5%, with 95% coverage 0.953 and 0.954. All four fluxes gain on both seeds, and the FCH4 instability of per-modality weights alone is gone. The combination is adopted. Solar geometry and the weight EMA show no gain. Combinations with SwiGLU and the quantile head are running."
+ },
+ {
+  "date": "2026-10-31",
   "title": "Deep ensemble on all test windows.",
   "text": "The per-tower deep ensemble of Vekuri et al. (2025) finished all 514 test windows and joins the test tables. Its CRPS on matched cells is 2.015 for NEE, 21.04 for LE, 27.19 for H and 30.85 for FCH4, so the margins of FluxFill do not change: NEE 14.2%, LE 17.7%, H 18.1% and FCH4 3.6% lower than the best other method. By gap, FluxFill now has the lowest CRPS in 26 of 44 flux and gap combinations, Chronos-2 in 8, XGBoost in 5, the deep ensemble in 3 and the random forest ensemble in 2. The deep ensemble takes the mixed per-variable family M5 on NEE, LE and H."
  },

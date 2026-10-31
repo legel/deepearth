@@ -256,7 +256,7 @@ def report_json(root: Path, counts: dict, meth: dict, results: dict, status: dic
         v.update(dict(flat("", json.loads((rd / "values.json").read_text()))))
         v.update(json.loads((rd / "tables.json").read_text()))
     comp = components.collect(root / "model")
-    v.update(table_components=components.table_html(comp), comp_done=len(comp["rows"]), comp_total=comp["total"],
+    v.update(table_components=components.table_html(comp), comp_done=comp["done"], comp_total=comp["total"],
              comp_noise=f"{abs(comp['noise']['crps']):.1f}%" if comp["noise"] else "–")
     body = methods.render((HERE / "report_draft.html").read_text(), v, meth["references"])
     return {"html": body, "references": meth["references"], "draft": True}
