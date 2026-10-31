@@ -1,5 +1,10 @@
 [
  {
+  "date": "2026-10-31",
+  "title": "Temporal copula adopted.",
+  "text": "Refitted on the final model without site adaptation. On 50 validation windows the 95% coverage of 30-day sums rises from 0.363 to 0.960 and of window sums from 0.361 to 0.965, the CRPS of those sums falls by 18.6% and 18.9%, and the CRPS of half-hourly values does not change. The fit used the same windows; the final test scoring measures the gain."
+ },
+ {
   "date": "2026-10-30",
   "title": "Methane validation towers.",
   "text": "13 spatial blocks of training towers (21 towers, 13 measuring methane) moved to validation, drawn to match the ecosystem mix of the methane test towers. Methane towers are now 82 training, 18 validation and 21 test; the test towers are unchanged. Validation gains 102 methane windows. A model trained on this split is in training."
