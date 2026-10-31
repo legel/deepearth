@@ -32,7 +32,7 @@ import masking  # noqa: E402
 from data import (CHANNELS, V_BASE, scaling_order, IS_TOWER, STEPS_PER_DAY, T_WIN, V_TAB, VARS, fit_stats, heldout_year, load_records, load_split,  # noqa: E402
                   table_dir, valid_starts, window_values)
 from imagery import load_imagery  # noqa: E402
-from net import FluxFillNet, imagery_scores, marginal_mean, marginal_nll, mixture_cdf, sample_marginal_params  # noqa: E402
+from net import FluxFillNet, imagery_scores, query_day, marginal_mean, marginal_nll, mixture_cdf, sample_marginal_params  # noqa: E402
 from recipe import add_arguments, net_kwargs  # noqa: E402
 from sampler import Stream, WindowSampler, collate, make_example  # noqa: E402
 
@@ -208,6 +208,57 @@ def evaluate_imagery(net, exs, device) -> dict:
     return {k: float(np.average(v, weights=w)) for k, v in tot.items()} | {"val_img_days": int(w.sum())}
 
 
+QUERY_N, QUERY_W = 32, 0.5
+QUERY_FORMS = (("place", 0, 0, 0), ("place_day", 1, 0, 0), ("place_day_var", 1, 1, 0), ("full", 1, 1, 1))
+
+
+def query_nll(net, b, h, n: int):
+    """Negative log-likelihood of `n` hidden day-tokens per window under the query head, each under a query form drawn
+    at random. Variables are drawn evenly, so a sparse flux counts as much as a dense one."""
+    tok = b["tmask"].any(-1)                                               # (B, V, D)
+    B = tok.shape[0]
+    wt = (tok.float() / tok.sum(2, keepdim=True).clamp_min(1)).reshape(B, -1) + 1e-9
+    pick = torch.multinomial(wt, n, replacement=True)
+    vi, di = pick // tok.shape[2], pick % tok.shape[2]
+    day = torch.gather(query_day(b), 1, di[..., None].expand(-1, -1, 5))
+    form = torch.randint(0, len(QUERY_FORMS), (B, n), device=tok.device)
+    use = torch.tensor([f[1:] for f in QUERY_FORMS], device=tok.device, dtype=torch.bool)[form]
+    q = net.query
+    z = q.embed(b["site"], day, vi, use[..., 0], use[..., 1], h.flatten(1, 2), use[..., 2])
+    params = q.read(z, day, vi)
+    idx = torch.arange(B, device=tok.device)[:, None]
+    return (marginal_nll(b["tgt"][idx, vi, di], params) * b["tmask"][idx, vi, di]).sum() / b["tmask"][idx, vi, di].sum().clamp_min(1)
+
+
+@torch.no_grad()
+def evaluate_query(net, exs, device, batch: int = 4) -> dict:
+    """CRPS of the query head on hidden flux values of the validation towers, per query form and flux, with the
+    embedding of each form; in standardised units, comparable with val_crps_<flux>."""
+    net.eval()
+    sums = {}
+    for i in range(0, len(exs), batch):
+        b = collate([{k: v for k, v in e.items() if k not in ("family", "_id")} for e in exs[i:i + batch]], device)
+        h = net.encode(b).flatten(1, 2)
+        days = query_day(b)
+        for fv in ("NEE", "LE", "H", "FCH4"):
+            v = VARS.index(fv)
+            tm = b["tmask"][:, v]                                          # (B, D, 48)
+            if not tm.any():
+                continue
+            D = tm.shape[1]
+            var = torch.full(tm.shape[:2], v, device=device)
+            for name, ud, uv, uc in QUERY_FORMS:
+                flag = lambda x: torch.full(tm.shape[:2], bool(x), device=device)
+                z = net.query.embed(b["site"], days, var, flag(ud), flag(uv), h, flag(uc))
+                loc, scale, df = (x.cpu().numpy() for x in net.query.read(z, days, var))
+                m = tm.cpu().numpy()
+                c = crps_student_t(loc[m], scale[m], df[m], b["tgt"][:, v].cpu().numpy()[m])
+                s = sums.setdefault((name, fv), [0.0, 0])
+                s[0] += float(np.sum(c)); s[1] += int(m.sum())
+    net.train()
+    return {f"qcrps_{n}_{fv}": s / max(c, 1) for (n, fv), (s, c) in sums.items()}
+
+
 def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, fwd=None, row_w=None, var_mean=False):
     """row_w: optional (V_TAB,) loss weight per row (E30b, --extra-weight); None weighs every hidden cell equally.
     var_mean (E46): mean NLL per variable, then the mean across all variables (an absent one counts zero), as in
@@ -230,6 +281,9 @@ def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, 
         nll = (per_cell[tm] * wt).sum() / wt.sum().clamp_min(1e-6)
     out = {"nll": nll}
     total = nll
+    if net.query is not None and tm.any():
+        out["query"] = query_nll(net, b, h, QUERY_N)
+        total = total + QUERY_W * out["query"]
     if b["img_tgt"].any():
         tgt = net.img_norm(b["img_tgt_cls"][b["img_tgt"]]).float()
         nll, out["img_mse"], out["img_cos"] = imagery_scores(net, h[:, V_TAB][b["img_tgt"]], tgt)
@@ -599,6 +653,8 @@ def main():
         if step % a.eval_every == 0 or step == a.steps or step == a.stop_at:
             scored = net if ema is None else ema.get()
             summ, recs = evaluate(scored, vex_use if a.mode == "overfit" else vex, device, a.flow, asinh=a.asinh)
+            if net.query is not None:
+                summ.update(evaluate_query(scored, vex, device))
             if vreg:
                 summ.update({k: v for k, v in evaluate(scored, vreg, device, a.flow, asinh=a.asinh)[0].items() if k.startswith(("crps_val", "cov95_val"))})
             if a.mode != "overfit":

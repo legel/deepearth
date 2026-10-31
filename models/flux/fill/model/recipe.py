@@ -52,6 +52,8 @@ OPTIONS: Tuple[Option, ...] = (
            "WeatherNext utils/solar_radiation.py"),
     Option("--bottleneck", dict(type=int, default=0, help="width of the token embedding every head reads through; 0 is off"),
            "net.Bottleneck; AlphaEarth Foundations uses a 64-dimensional embedding (Brown et al. 2025)"),
+    Option("--query-head", dict(type=int, default=0, help="embedding width of the query head; 0 is off"),
+           "neural process, Garnelo et al. 2018; net.QueryHead"),
     Option("--hh-read", dict(type=int, default=0, help="width of the read of values visible at each half-hour; 0 is off"),
            "hypernetwork read-out, Ha et al. 2017; net.HalfHourRead"),
     Option("--token-conv", dict(type=int, default=0, help="width of convolutions over a day-token's half-hours; 0 is off"),
@@ -66,7 +68,7 @@ _NET = ("d", "depth", "heads", "dropout", "flow_width", "flow_depth", "memory", 
         "local_base", "gated_base", "gate_scale", "edge_continue", "memory_skew", "driver_anomaly", "scale_anchor",
         "year_anomaly", "sinr_place", "sinr_replace", "scale_anchor_fch4", "schedule", "off", "attn_gate", "rope_partial",
         "rmsnorm", "swiglu", "mot", "quantile_head", "fgn_noise", "plr", "time_enc", "time_octaves", "solar", "hh_read",
-        "token_conv", "bottleneck")
+        "token_conv", "bottleneck", "query_head")
 
 
 def add_arguments(ap) -> None:

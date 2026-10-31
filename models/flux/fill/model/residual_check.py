@@ -1,6 +1,7 @@
 """What information does a FluxFill network leave unused? Gradient-boosted trees are fitted to its errors on hidden flux
-values from what is visible, on validation towers, fitted and scored on different towers. A gain means the information
-is present in the inputs and the network does not reach it. It costs no training run, so it comes before building a path.
+values from what is visible, on validation towers, fitted on other towers or on other months of the same tower, with
+the absolute error as objective (errors are heavy-tailed). A gain means the information is present in the inputs and the
+network does not reach it. It costs no training run, so it comes before building a path.
 
   dump:  python residual_check.py dump CKPT OUT.npz      (one network, on the CPU unless --device is given)
   score: python residual_check.py score OUT.npz          (needs xgboost)
@@ -85,21 +86,24 @@ def score(path):
             "imagery only": np.column_stack([time, z["img"]])}
     fams = np.array([f if f.startswith("val") else "M2 1-180 d" for f in z["fam"]])
     e = z["y"] - z["m"]
+    days = z["t"][:, 1].astype(int) // 30
+    towers = z["site"]
+    within = np.array([f"{s}|{d}" for s, d in zip(towers, days)])
     out = []
     for f, flux in enumerate(FLUX):
         for fam in np.unique(fams):
             sel = (z["flux"] == f) & (fams == fam)
-            groups = z["site"][sel]
-            if sel.sum() < 500 or len(set(groups)) < 4:
+            if sel.sum() < 300 or len(set(towers[sel])) < 2:
                 continue
-            row = {"flux": flux, "form": fam, "n": int(sel.sum()), "towers": len(set(groups)), "mae": float(np.abs(e[sel]).mean())}
-            for name, X in sets.items():
-                pred = np.zeros(sel.sum())
-                for tr, te in GroupKFold(4).split(X[sel], e[sel], groups):
-                    b = xgb.XGBRegressor(n_estimators=200, max_depth=5, learning_rate=0.05, subsample=0.7, colsample_bytree=0.5, n_jobs=3,
-                                         tree_method="hist").fit(X[sel][tr], e[sel][tr])
-                    pred[te] = b.predict(X[sel][te])
-                row[name] = float(100 * (np.abs(e[sel] - pred).mean() / row["mae"] - 1))
+            row = {"flux": flux, "form": fam, "n": int(sel.sum()), "towers": len(set(towers[sel])), "mae": float(np.abs(e[sel]).mean())}
+            for how, groups in (("other towers", towers[sel]), ("same tower, other months", within[sel])):
+                for name, X in sets.items():
+                    pred = np.zeros(sel.sum())
+                    for tr, te in GroupKFold(min(4, len(set(groups)))).split(X[sel], e[sel], groups):
+                        b = xgb.XGBRegressor(objective="reg:absoluteerror", n_estimators=120, max_depth=4, learning_rate=0.05, subsample=0.7,
+                                             colsample_bytree=0.5, n_jobs=3, tree_method="hist").fit(X[sel][tr], e[sel][tr])
+                        pred[te] = b.predict(X[sel][te])
+                    row[f"{how}: {name}"] = float(100 * (np.abs(e[sel] - pred).mean() / row["mae"] - 1))
             out.append(row)
             print(json.dumps(row), flush=True)
     json.dump(out, open(str(path) + ".json", "w"), indent=1)

@@ -378,7 +378,7 @@ class FluxFillNet(nn.Module):
                  off: Sequence[str] = (), attn_gate: bool = False, rope_partial: float = 1.0, rmsnorm: bool = False,
                  swiglu: bool = False, mot: str = "", quantile_head: bool = False, fgn_noise: int = 0, plr: bool = False,
                  time_enc: str = "", time_octaves: int = 3, solar: bool = False, hh_read: int = 0, token_conv: int = 0,
-                 bottleneck: int = 0):
+                 bottleneck: int = 0, query_head: int = 0):
         super().__init__()
         # Base components that --off removes, for ablation. The parameters stay, so the random numbers of the others do.
         self.off = frozenset(off)
@@ -506,6 +506,7 @@ class FluxFillNet(nn.Module):
             self.hh_read = HalfHourRead(d, hh_read) if hh_read else None
             self.token_conv = TokenConv(5 if memory else 2, token_conv, d) if token_conv else None
             self.bottleneck = Bottleneck(d, bottleneck) if bottleneck else None
+            self.query = QueryHead(d, query_head) if query_head else None
         assert not hh_read or gated_base, "--hh-read needs the two-component head of --gated-base"
         self.head_img = nn.Linear(d, (2 if img_nll else 1) * CLS_DIM)
         self.head_flow = FlowHead(d, flow_width, flow_depth)
@@ -735,6 +736,47 @@ def local_course_stats(z, obs, days: int = LOCAL_DAYS, min_count: int = LOCAL_MI
         S[:, :, :-k] += zo[:, :, k:]; C[:, :, :-k] += o[:, :, k:]          # day d + k
     ok = C >= min_count
     return torch.where(ok, S / C.clamp_min(1.0), torch.zeros_like(S)), ok, C
+
+
+class QueryHead(nn.Module):
+    """Any query to one posterior embedding, and any value read from it: a neural process (Garnelo et al. 2018) on the
+    encoder. A query always names a place; it may name a day, a variable and a window of context. `embed` maps it to
+    `width` numbers. `read` maps an embedding, a variable and a day to the distribution of that day's 48 half-hours,
+    so an embedding of a place alone must hold what the place implies for every variable and season. Training draws
+    the forms at random, each trained on hidden values only."""
+
+    def __init__(self, d: int, width: int):
+        super().__init__()
+        self.place = SinrPlace(d, n_freq=4)
+        self.site = nn.Sequential(nn.Linear(4, d), nn.GELU(), nn.Linear(d, d))
+        self.day = nn.Sequential(nn.Linear(5, d), nn.GELU(), nn.Linear(d, d))
+        self.var = nn.Embedding(V_TAB, d)
+        self.no_day = nn.Parameter(torch.zeros(d))
+        self.no_var = nn.Parameter(torch.zeros(d))
+        self.attn = nn.MultiheadAttention(d, 4, batch_first=True)
+        self.norm = nn.LayerNorm(d)
+        self.mix = nn.Sequential(nn.Linear(d, 2 * d), nn.GELU(), nn.Linear(2 * d, d))
+        self.enc = nn.Sequential(nn.Linear(d, width), nn.LayerNorm(width))
+        self.dec = nn.Sequential(nn.Linear(width + 2 * d, 2 * d), nn.GELU(), nn.Linear(2 * d, 2 * d), nn.GELU(), nn.Linear(2 * d, 3 * K))
+
+    def embed(self, site, day, var, use_day, use_var, h=None, use_ctx=None):
+        """(B, Q, width). site (B, 4); day (B, Q, 5); var (B, Q); use_day, use_var, use_ctx (B, Q) bool; h (B, N, d)."""
+        place = (self.site(site) + self.place(site))[:, None]
+        d_, v_ = self.day(day), self.var(var)
+        q = place + torch.where(use_day[..., None], d_, self.no_day.to(d_.dtype)) + torch.where(use_var[..., None], v_, self.no_var.to(v_.dtype))
+        if h is not None:
+            q = q + use_ctx[..., None] * self.attn(self.norm(q), h, h, need_weights=False)[0]
+        return self.enc(q + self.mix(q))
+
+    def read(self, z, day, var):
+        """(loc, scale, df), each (B, Q, 48), of variable `var` on `day`, from embeddings z."""
+        o = self.dec(torch.cat([z, self.day(day), self.var(var)], -1)).float().unflatten(-1, (3, K))
+        return o[..., 0, :], F.softplus(o[..., 1, :]) + 1e-3, 2.0 + 1e-2 + F.softplus(o[..., 2, :] + 2.0)
+
+
+def query_day(b):
+    """(B, D, 5) day coordinates of a window: the annual harmonics and the year, for QueryHead."""
+    return torch.cat([b["doy"], (b["time"][..., :1] - 2015.0) / 10.0], -1)
 
 
 class Bottleneck(nn.Module):
