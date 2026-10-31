@@ -16,6 +16,8 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
@@ -202,74 +204,76 @@ def fig3(out: Path, fr: dict, vals: dict):
             vals[f"gap_{v}_{g[3:]}_base"] = NAMES[base]
 
 
+FLUX_C = {"NEE": "#2f7d32", "LE": "#2a6fb0", "H": "#c8553d", "FCH4": "#7b4fa0"}
+FLUX_LAB = {"NEE": "NEE", "LE": "LE", "H": "H", "FCH4": r"FCH$_4$"}
+
+
 def fig4(out: Path, vals: dict):
-    """Two filled 30-day gaps at validation towers: daily means of the window and a five-day zoom."""
-    mk = "M2: 30 d, all tower channels"
-    # Rule: for each flux, the validation window with the most measured values inside its 30-day block.
-    idx = json.load(open(BENCH / "dashboard" / "windows" / "index.json"))["windows"]
-    cases = []
-    for var in ("NEE", "FCH4"):
-        best = (0, None)
-        for e in idx:
-            if e["split"] != "validation":
+    """Ten test windows, one hidden station outage each (report_fig4_data.py), the four fluxes per row: half-hourly for
+    gaps up to 7 days, daily means of each sample beyond. The x-axis of each row covers the gap and 40% of its length on
+    both sides (at least one day)."""
+    d = BENCH / "dashboard" / "report" / "fig4"
+    sel = pd.read_csv(d / "selection.csv")
+    sel["days"] = sel["mask"].str.extract(r"(\d+)d")[0].astype(int)
+    sel = sel[[(d / f"{r.site}_{r.start}_{r.mask}.npz").exists() for r in sel.itertuples()]]
+    sel = sel.sort_values(["days", "site"]).reset_index(drop=True)
+    n = len(sel)
+    fig, axs = plt.subplots(n, 4, figsize=(7.2, 0.72 * n + 0.45), squeeze=False)
+    fig.subplots_adjust(left=0.135, right=0.995, top=1 - 0.2 / (0.72 * n + 0.45), bottom=0.25 / (0.72 * n + 0.45), hspace=0.16, wspace=0.2)
+    hits, tot = {v: 0 for v in FLUXES}, {v: 0 for v in FLUXES}
+    for r, row in enumerate(sel.itertuples()):
+        z = np.load(d / f"{row.site}_{row.start}_{row.mask}.npz")
+        keys = [str(k) for k in z["keys"]]
+        a, b = (int(x) for x in z["span"])
+        ctx = max(48, int(0.4 * (b - a)))
+        lo_t, hi_t = max(0, a - ctx) / 48, min(z["y"].shape[1], b + ctx) / 48
+        for c, v in enumerate(FLUXES):
+            ax = axs[r, c]
+            if c == 0:
+                ax.text(-0.3, 0.5, f"{row.site}\n{row.igbp}, {row.days} d", transform=ax.transAxes, ha="right", va="center", fontsize=6)
+            if r == 0:
+                ax.set_title(f"{FLUX_LAB[v]} ({PUNITS[v]})", fontsize=6.5, color=FLUX_C[v], pad=3)
+            i = keys.index(v) if v in keys else None
+            if i is None or not np.isfinite(z["y"][i, a:b]).any():
+                ax.axis("off")
                 continue
-            w = json.load(open(BENCH / "dashboard" / "windows" / e["file"]))
-            keys = [v["key"] for v in w["variables"]]
-            if var not in keys or var not in w["masks"].get(mk, {}) or var not in w["predictions"].get("fluxfill", {}).get(mk, {}):
-                continue
-            a, b = w["masks"][mk][var][0]
-            n = sum(x is not None for x in w["variables"][keys.index(var)]["values"][a:b])
-            best = max(best, (n, e["file"][:-5]))
-        cases.append((best[1], var))
-    vals["ex_cases"] = [c[0] for c in cases]
-    fig, axs = plt.subplots(2, 2, figsize=(7.2, 4.2), gridspec_kw={"width_ratios": [2.2, 1]})
-    for r, (key, var) in enumerate(cases):
-        w = json.load(open(BENCH / "dashboard" / "windows" / f"{key}.json"))
-        vi = [v["key"] for v in w["variables"]].index(var)
-        y = np.array([np.nan if x is None else x for x in w["variables"][vi]["values"]], float)
-        a, b = w["masks"][mk][var][0]
-        T = len(y); t = np.arange(T) / 48
-        ax = axs[r, 0]
-        day = lambda z: np.nanmean(z.reshape(-1, 48), 1) if z.size % 48 == 0 else z
-        ax.axvspan(a / 48, b / 48, color="#f3f1e7", lw=0)
-        with np.errstate(all="ignore"):
-            ax.plot(np.arange(T // 48) + 0.5, day(y), color="#555555", lw=0.8, label="Measured (daily mean)")
-        for m in ("liu_xgb", "mds", "fluxfill"):
-            seg = w["predictions"].get(m, {}).get(mk, {}).get(var)
-            if not seg:
-                continue
-            s = seg[0]; mu = np.full(T, np.nan); mu[s["a"]:s["a"] + len(s["mean"])] = s["mean"]
-            with np.errstate(all="ignore"):
-                ax.plot(np.arange(T // 48) + 0.5, day(mu), color=COLORS[m], lw=1.6 if m == "fluxfill" else 1.0, label=NAMES[m])
-        ax.set_xlim(max(0, a / 48 - 25), min(T / 48, b / 48 + 25))
-        ax.set_ylabel(f"{var} ({PUNITS[var]})"); ax.set_title(f"{key.replace('_', ', ')}: 30-day gap, daily means", loc="left")
-        if r == 0:
-            ax.legend(loc="upper left", ncol=2)
-        ax = axs[r, 1]
-        z0 = a + 12 * 48; z1 = z0 + 3 * 48
-        ax.plot(t[z0:z1], y[z0:z1], color="#555555", lw=0.8, marker=".", ms=1.6, label="Measured")
-        seg = w["predictions"]["fluxfill"][mk][var][0]; o = seg["a"]
-        q = lambda k: np.array(seg[k], float)[z0 - o:z1 - o]
-        ax.fill_between(t[z0:z1], q("q025"), q("q975"), color="#000000", alpha=0.10, lw=0, label="FluxFill 95% interval")
-        ax.fill_between(t[z0:z1], q("q10"), q("q90"), color="#000000", alpha=0.16, lw=0, label="FluxFill 80% interval")
-        ax.plot(t[z0:z1], q("mean"), color="black", lw=1.2, label="FluxFill")
-        xs = w["predictions"].get("liu_xgb", {}).get(mk, {}).get(var)
-        if xs:
-            ax.plot(t[z0:z1], np.array(xs[0]["mean"], float)[z0 - xs[0]["a"]:z1 - xs[0]["a"]], color=COLORS["liu_xgb"], lw=0.9, label="XGBoost")
-        ax.set_title("Three days inside the gap, half-hourly", loc="left")
-        if r == 0:
-            ax.legend(loc="upper left", fontsize=6)
-        ax.set_xlabel("Day of window" if r == 1 else "")
-        inside = np.isfinite(y[a:b])
-        if inside.any():
-            mu = np.array(seg["mean"], float)[a - o:b - o]; lo = np.array(seg["q025"], float)[a - o:b - o]; hi = np.array(seg["q975"], float)[a - o:b - o]
-            vals[f"ex_{var}_cov95"] = f"{100 * np.mean((y[a:b][inside] >= lo[inside]) & (y[a:b][inside] <= hi[inside])):.0f}"
-            vals[f"ex_{var}_n"] = f"{int(inside.sum()):,}"
-    axs[1, 0].set_xlabel("Day of the 180-day window")
-    for i, ax in enumerate(axs.flat):
-        ax.text(-0.1 if i % 2 == 0 else -0.18, 1.1, "abcd"[i], transform=ax.transAxes, fontweight="bold", fontsize=10)
-    fig.tight_layout()
+            y, (mu, lo, hi) = z["y"][i], z["hh"][:, i]
+            inside = np.isfinite(y[a:b])
+            hits[v] += int(((y[a:b] >= lo[a:b]) & (y[a:b] <= hi[a:b]))[inside].sum()); tot[v] += int(inside.sum())
+            if row.days <= 7:
+                t, truth, m_, l_, h_ = np.arange(len(y)) / 48 + 1 / 96, y, mu, lo, hi
+            else:
+                t = (int(z["off"]) + (np.arange(z["yd"].shape[1]) + 0.5) * 48) / 48
+                truth, (m_, l_, h_) = z["yd"][i], z["dd"][:, i]
+            hid = (t > a / 48) & (t < b / 48)
+            show = (t >= lo_t) & (t <= hi_t)
+            ax.axvspan(a / 48, b / 48, color="#f1efe6", lw=0, zorder=0)
+            ax.plot(t, np.where(hid, np.nan, truth), color="#8a8f96", lw=0.6)
+            ax.fill_between(t[hid], l_[hid], h_[hid], color=FLUX_C[v], alpha=0.2, lw=0)
+            ax.plot(t[hid], m_[hid], color=FLUX_C[v], lw=0.9)
+            ax.plot(t[hid], truth[hid], ".", color="black", ms=1.5 if row.days <= 7 else 2.2, mew=0)
+            all_v = np.concatenate([truth[show], l_[hid], h_[hid]])
+            all_v = all_v[np.isfinite(all_v)]
+            pad = 0.06 * (all_v.max() - all_v.min() + 1e-9)
+            ax.set_xlim(lo_t, hi_t); ax.set_ylim(all_v.min() - pad, all_v.max() + pad)
+            ax.set_xticks([]); ax.yaxis.set_major_locator(plt.MaxNLocator(3))
+            ax.tick_params(labelsize=5, length=1.5, pad=1)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.spines[["left", "bottom"]].set_color("#c5c9cf"); ax.spines[["left", "bottom"]].set_linewidth(0.5)
+    hand = [Line2D([], [], color="#8a8f96", lw=0.6, label="measured, visible"),
+            Line2D([], [], color="black", lw=0, marker=".", ms=3, label="measured, hidden"),
+            Line2D([], [], color="#555555", lw=0.9, label="FluxFill mean"),
+            Patch(color="#555555", alpha=0.2, lw=0, label="FluxFill 95% interval"),
+            Patch(color="#f1efe6", lw=0, label="hidden span")]
+    fig.legend(handles=hand, loc="lower center", ncol=5, fontsize=6, frameon=False, handlelength=1.4, columnspacing=1.4,
+               bbox_to_anchor=(0.55, 0))
+    for v in FLUXES:
+        if tot[v]:
+            vals[f"ex_{v.lower()}_cov95"] = f"{100 * hits[v] / tot[v]:.0f}"
+            vals[f"ex_{v.lower()}_n"] = f"{tot[v]:,}"
+    vals["ex_windows"] = n
     save(fig, out, "fig4.svg")
+    fig.savefig(out / "preview" / "fig4.png", dpi=200)
 
 
 def fig5(out: Path, fr: dict, vals: dict):
