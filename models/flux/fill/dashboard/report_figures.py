@@ -390,7 +390,8 @@ def fmt(v, metric):
 
 
 def table_test(fr: dict, vals: dict, final: bool, prefix: str = "test") -> str:
-    mt = {m: f[f.gap_class == "all"] for m, f in matched(fr).items()}      # one row per cell; gap classes repeat its values
+    full = {m: f[f.fill_rate >= 1] for m, f in fr.items()}                 # identical values for every method, as in the Results tab
+    mt = {m: f[f.gap_class == "all"] for m, f in matched(full).items()}    # one row per cell; gap classes repeat its values
     metrics = [("crps", "CRPS", min), ("cov95", "95% cov.", lambda xs: min(xs, key=lambda x: abs(x - 0.95))),
                ("mae", "MAE", min), ("rmse", "RMSE", min), ("bias", "Bias", lambda xs: min(xs, key=abs)),
                ("r2", "R²", max), ("wape", "WAPE", min)]

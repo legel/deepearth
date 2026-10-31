@@ -97,7 +97,8 @@ def status_json(root: Path, sites: dict) -> dict:
               "label": f"validation windows at {val['sites'] if val else 0} towers, for model selection"}]
     upd = HERE / "static_data" / "updates.json"
     return {"built_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M"), "tiles": tiles,
-            "results": res, "updates": json.loads(upd.read_text()) if upd.exists() else [],
+            "results": res, "abstract": overview_abstract(root, res, sp["train"]["towers"]),
+            "updates": json.loads(upd.read_text()) if upd.exists() else [],
             "note": "Counts and results update with each build."}
 
 
@@ -123,14 +124,43 @@ def overview_results(root: Path) -> list:
             best_all = t.get("best_all", [[x] for x in t["best"]])
             wins = sum(any(t["rows"][j]["method"] in ours for j in ba) for ba in best_all)
             ours_row = next(j for j, row in enumerate(t["rows"]) if row["method"] == o[0])
+            cov = t["rows"][ours_row]["cells"][t["metrics"].index("cov95")]["v"]
             lost = [{"metric": t["metrics"][i], "ours": t["rows"][ours_row]["cells"][i]["v"],
                      "leader": short[t["rows"][ba[0]]["method"]], "lead": t["rows"][ba[0]]["cells"][i]["v"]}
                     for i, ba in enumerate(best_all) if ba and not any(t["rows"][j]["method"] in ours for j in ba)]
             fluxes.append({"flux": t["flux"], "units": t["units"], "cells": t["cells"], "n": t["n"], "ours": short[o[0]],
-                           "ours_crps": o[1], "base": short[b[0]], "base_crps": b[1], "pct": 100 * (o[1] / b[1] - 1),
+                           "ours_crps": o[1], "base": short[b[0]], "base_crps": b[1], "pct": 100 * (o[1] / b[1] - 1), "ours_cov95": cov,
                            "best_metrics": wins, "metrics": len(t["metrics"]), "methods": len(t["rows"]), "lost": lost})
         out.append({"view": name, "windows": r["scope"]["windows"], "sites": r["scope"]["sites"], "fluxes": fluxes})
     return out
+
+
+def overview_abstract(root: Path, res: list, train_towers: int) -> str:
+    """The Overview paragraph: the abstract with the numbers of the Overview table, so both change together."""
+    views = {r["view"]: {f["flux"]: f for f in r["fluxes"]} | {"n": r} for r in res}
+    t, v = views["Test sites"], views["Validation sites"]
+    cmp = lambda f: f"{abs(f['pct']):.1f}% {'lower' if f['pct'] < 0 else 'higher'}"
+    rep = root / "bench" / "dashboard" / "report" / "values.json"
+    vals = json.loads(rep.read_text()) if rep.exists() else {}
+    dec = root / "model" / "copula_final.decide.log"
+    cop = re.search(r"sum-30-day .*cov95 ([\d.]+) -> ([\d.]+)", dec.read_text()) if dec.exists() else None
+    return " ".join([
+        f"Eddy-covariance towers measure the exchange of carbon dioxide, water vapour, heat and methane every half-hour, and "
+        f"station outages remove {vals.get('outage_share', '?')}% of the record, {vals.get('gap_share_ge7d', '?')}% of that time in "
+        "outages of 7 days or longer.",
+        "FluxFill is a self-supervised AI foundation model trained to reconstruct masked and missing flux data, based on the "
+        "DeepEarth neural network architecture. It predicts a distribution for any hidden part of a 180-day window of half-hourly "
+        f"tower fluxes, tower meteorology, reanalysis drivers and Clay embeddings of Sentinel-2 images, and is trained on {train_towers} towers.",
+        f"On {t['n']['windows']} benchmark windows at {t['n']['sites']} test towers at least 50 km from any training tower, its "
+        f"continuous ranked probability score is {cmp(t['NEE'])} than that of the best established method for net ecosystem exchange "
+        f"(NEE), {cmp(t['LE'])} for latent heat (LE), {cmp(t['H'])} for sensible heat (H) and {cmp(t['FCH4'])} for methane (FCH4), "
+        f"and its 95% intervals contain {t['NEE']['ours_cov95']:.3f} of hidden NEE values.",
+        "It has the lowest score for NEE, LE and H at every gap length from 1 to 180 days.",
+        (f"On {v['n']['windows']} validation windows, a temporal copula raises the 95% coverage of 30-day sums from {cop.group(1)} to "
+         f"{cop.group(2)}; other methods reach 0.15 to 0.45." if cop else ""),
+        "Chronos-2 and XGBoost lead at the shortest gaps. On FCH4, Chronos-2 and the per-tower random forest ensemble lead at most gap "
+        f"lengths, and the random forest ensemble is {abs(v['FCH4']['pct']):.1f}% lower at validation towers.",
+        "These test scores are from the network trained for 24,000 steps; the final model is scored once at the end of the component study."])
 
 
 FLUXFILL_PY = Path("/home/photon/4tb/envs/fluxfill/bin/python")

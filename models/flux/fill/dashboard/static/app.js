@@ -47,6 +47,7 @@ const OV_VIEWS = [["Validation sites", "Validation", "--series-3"], ["Test sites
 const METRIC_LABEL = { crps: "CRPS", cov95: "95% coverage", mae: "MAE", rmse: "RMSE", mse: "MSE", bias: "bias", r2: "R²", wape: "WAPE" };
 function renderStatus(st) {
   if (!st) { $("#status-tiles").innerHTML = '<div class="tile"><div class="l">Status not available</div></div>'; return; }
+  if (st.abstract) $("#ov-intro").textContent = st.abstract;
   const groups = [...new Set(st.tiles.map((t) => t.group || ""))];
   $("#status-tiles").innerHTML = groups.map((g) => { const ts = st.tiles.filter((t) => (t.group || "") === g); return `${g ? `<div class="tile-group">${esc(g)}</div>` : ""}<div class="grid cols-${ts.length % 3 === 0 ? 3 : 4}">${ts.map((t) =>
     `<div class="tile"><div class="v">${typeof t.value === "string" ? esc(t.value) : fmt(t.value)}</div><div class="l">${esc(t.label)}</div></div>`).join("")}</div>`; }).join("");
