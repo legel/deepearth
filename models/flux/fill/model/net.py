@@ -574,15 +574,21 @@ class FlowHead(nn.Module):
         shift, scale = self.mod(c).chunk(2, -1)
         return self.out(self.norm(x) * (1 + scale) + shift)
 
-    def loss(self, cond, x1, tmask, zvis, obs, reps: int = 4):
+    def loss(self, cond, x1, tmask, zvis, obs, reps: int = 4, rows=None):
         """Conditional flow-matching loss on the target elements of N tokens, each repeated `reps` times with its
-        own time and noise (as Li et al. 2024 repeat the diffusion loss)."""
+        own time and noise (as Li et al. 2024 repeat the diffusion loss). rows (N,): variable of each token, for the
+        per-variable mean (E46); None weighs every element equally."""
         cond, x1, tmask, zvis, obs = (u.repeat(reps, 1) for u in (cond, x1, tmask, zvis, obs))
         t = torch.rand(x1.shape[0], device=x1.device)
         x0 = torch.randn_like(x1)
         xt = (1 - t[:, None]) * x0 + t[:, None] * x1
         v = self.forward(xt, t, cond, zvis, obs).float()
         err = ((v - (x1 - x0)) ** 2) * tmask
+        if rows is not None:
+            r = rows.repeat(reps)
+            s = torch.zeros(V_TAB, device=err.device).index_add(0, r, err.sum(-1))
+            n = torch.zeros(V_TAB, device=err.device).index_add(0, r, tmask.sum(-1))
+            return (s / n.clamp_min(1)).sum() / V_TAB
         return err.sum() / tmask.sum().clamp_min(1)
 
     @torch.no_grad()

@@ -164,16 +164,14 @@ def evaluate_imagery(net, exs, device) -> dict:
 
 def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, fwd=None, row_w=None, var_mean=False):
     """row_w: optional (V_TAB,) loss weight per row (E30b, --extra-weight); None weighs every hidden cell equally.
-    var_mean (E46): mean NLL per variable, then the mean across variables with hidden values in the batch, as 4M does
-    across modalities. Without it a variable counts by its number of cells: FCH4 is 0.4% of tower values, NEE 3.3%."""
+    var_mean (E46): mean NLL per variable, then the mean across all variables (an absent one counts zero), as in
+    4M (ml-4m fourm/models/fm.py). Without it a variable counts by its number of cells: FCH4 is 0.4% of tower values, NEE 3.3%."""
     h, params = (net if fwd is None else fwd)(b)          # fwd: the compiled forward (--compile), same module and weights
     tm = b["tmask"]
     if var_mean:
         cells = marginal_nll(b["tgt"], params) * tm
         axes = (0, *range(2, tm.dim()))
-        count = tm.sum(axes)
-        seen = count > 0
-        nll = (cells.sum(axes)[seen] / count[seen]).mean()
+        nll = (cells.sum(axes) / tm.sum(axes).clamp_min(1)).sum() / V_TAB        # 4M, fm.py: sum(mod_loss) / len(mod_loss)
     elif row_w is None:
         nll = marginal_nll(b["tgt"], params)[tm].mean()
     else:
@@ -196,7 +194,7 @@ def losses(net, b, use_flow: bool, img_w: float = 0.1, flow_tokens: int = 2048, 
         cond = h[bi, vi, di]
         x1 = b["tgt"][bi, vi, di] - net.offset(b)[bi, vi, di]          # residual from site memory (mem_residual)
         out["flow"] = net.head_flow.loss(cond, x1, tm[bi, vi, di].float() * (1.0 if row_w is None else row_w[vi][:, None]), b["z"][bi, vi, di],
-                                         b["obs"][bi, vi, di].float())
+                                         b["obs"][bi, vi, di].float(), rows=vi if var_mean else None)
         total = total + out["flow"]
     out["total"] = total
     return out

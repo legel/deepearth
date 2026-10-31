@@ -803,7 +803,7 @@ def test_copula_keeps_marginals_and_correlates_in_time():
 
 
 def test_var_mean_weighs_variables_equally():
-    """Per-variable mean: a variable's weight does not depend on how many of its cells are hidden."""
+    """Per-variable mean as in 4M: a variable's weight does not depend on how many of its cells are hidden."""
     tm = torch.zeros(1, 3, 4, 2, dtype=torch.bool)
     tm[0, 0] = True                                          # 8 cells of variable 0, 1 cell of variable 1, none of 2
     tm[0, 1, 0, 0] = True
@@ -811,9 +811,7 @@ def test_var_mean_weighs_variables_equally():
     cells[0, 0] = 1.0
     cells[0, 1, 0, 0] = 5.0
     masked, axes = cells * tm, (0, 2, 3)
-    count = tm.sum(axes)
-    seen = count > 0
-    assert (masked.sum(axes)[seen] / count[seen]).mean().item() == pytest.approx(3.0)
+    assert ((masked.sum(axes) / tm.sum(axes).clamp_min(1)).sum() / 3).item() == pytest.approx(2.0)
 
 
 def test_adaptation_is_redone_for_every_set_of_visible_values():
