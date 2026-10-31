@@ -72,7 +72,7 @@ def circle(fig, x, y, r, **kw):
 
 
 def line(fig, xs, ys, color, lw=0.8):
-    fig.add_artist(Line2D(xs, ys, color=color, lw=lw, transform=fig.transFigure, solid_capstyle="butt"))
+    fig.add_artist(Line2D(xs, ys, color=color, lw=lw, transform=fig.transFigure, solid_capstyle="projecting"))
 
 
 def box(fig, x, y, w, h, fc, ec, lw=0.8, r=0.01):

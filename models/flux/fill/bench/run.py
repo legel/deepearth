@@ -319,6 +319,7 @@ def fluxfill_method():
                     adapt_steps=int(os.environ.get("FLUXFILL_ADAPT_STEPS", "0")),
                     adapt_lr=float(os.environ.get("FLUXFILL_ADAPT_LR", "3e-4")),
                     adapt_row_weight=dict(kv.split("=") for kv in os.environ.get("FLUXFILL_ADAPT_ROW_W", "FCH4=4").split(",") if kv),
+                    adapt_scope=os.environ.get("FLUXFILL_ADAPT_SCOPE", "all"),
                     copula=os.environ.get("FLUXFILL_COPULA") or None)
 
 

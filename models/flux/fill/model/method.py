@@ -48,7 +48,7 @@ class FluxFill:
                  name: Optional[str] = None, device: str = "cuda", chunk: int = 32, seed: int = 0,
                  imagery: bool = True, imagery_sites=None, adapt_steps: int = 0, adapt_lr: float = 3e-4,
                  adapt_batch: int = 2, adapt_row_weight: Optional[Dict[str, float]] = None,
-                 copula: Optional[str] = None):
+                 adapt_scope: str = "all", copula: Optional[str] = None):
         ck = torch.load(ckpt, map_location="cpu", weights_only=False)
         c = ck["config"]
         self.stats = Stats.from_dict(c["stats"])
@@ -76,6 +76,7 @@ class FluxFill:
         self._img = {}
         self._memc = {}
         self.adapt_steps, self.adapt_lr, self.adapt_batch, self.seed = adapt_steps, adapt_lr, adapt_batch, seed
+        self.adapt_scope = adapt_scope                           # "all" weights, or the "head" only (E42)
         # Gaussian copula in time (sample_copula): JSON {variable: [w, L_slow, L_fast], "_default": [...]}; off if None.
         self.copula = json.load(open(copula)) if copula else None
         self._copula_calls = 0
@@ -172,7 +173,8 @@ class FluxFill:
                                 memory=self.net.memory, memory_skew=self.net.memory_skew)
             smp = smp if smp.sites else None
         rng = np.random.default_rng(self.seed + zlib.crc32("/".join(key[:2]).encode()))
-        opt = torch.optim.AdamW(self.net.parameters(), lr=self.adapt_lr, weight_decay=0.0, betas=(0.9, 0.98))
+        tuned = list(self.net.head_t.parameters() if self.adapt_scope == "head" else self.net.parameters())
+        opt = torch.optim.AdamW(tuned, lr=self.adapt_lr, weight_decay=0.0, betas=(0.9, 0.98))
         self.net.train()
         n_ctx = self.adapt_batch // 2 if smp is not None else 0
         with torch.enable_grad():
@@ -183,9 +185,9 @@ class FluxFill:
                             self.device)
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     L = losses(self.net, b, self.use_flow, row_w=self.adapt_row_w)
-                opt.zero_grad(set_to_none=True)
+                self.net.zero_grad(set_to_none=True)
                 L["total"].backward()
-                torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(tuned, 1.0)
                 opt.step()
         self.net.eval()
         print(f"adapt {key}: {self.adapt_steps} steps, context starts "
