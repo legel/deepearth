@@ -1,13 +1,18 @@
 [
  {
   "date": "2026-10-31",
+  "title": "Component study: second seeds.",
+  "text": "The per-variable loss of 4M lowers FCH4 CRPS by 16.9% and 15.1% on two seeds, and the attention gate of Timestral lowers overall CRPS by 1.5% on both; both enter the next model. Per-modality weights lower overall CRPS by 1.3% on both seeds, but FCH4 moves from -4.9% to +26.3%, so the combination runs decide. The quantile head (FCH4 -19.9%) and SwiGLU (overall CRPS -2.8%) wait for second seeds. Asinh scaling and the FGN loss are rejected."
+ },
+ {
+  "date": "2026-10-31",
   "title": "Chronos-2 on the test towers.",
   "text": "Chronos-2 finished the 514 test windows on families M2, M3 and M4. FluxFill keeps the lowest pooled CRPS on all four fluxes. By gap, Chronos-2 leads LE at 2 and 6 hours, H at 6 hours, and FCH4 at 2 and 6 hours, 1 and 30 days and real outages. CSDI was stopped at 21 test windows: at 1.5 hours per window the full set would take about 31 days. Chronos-2 forecasts diverge on 11 of the 514 windows; they stay in its scores and the Test note gives its CRPS without them."
  },
  {
   "date": "2026-10-31",
   "title": "Component study.",
-  "text": "One change at a time against a control, with the published form of each technique. Results appear in the Results tab and in report Table 5 as each run finishes. Rows are provisional until they hold on a second seed."
+  "text": "One change at a time against a control, with the published form of each technique. Results appear in the Results tab and in report Table 4 as each run finishes. Rows are provisional until they hold on a second seed."
  },
  {
   "date": "2026-10-31",
