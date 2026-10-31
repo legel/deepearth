@@ -19,7 +19,7 @@ DECISIONS = {"var_mean": "Adopted", "gate": "Adopted", "mot_all": "Adopted in th
              "mot_ffn": "No gain", "rope_half": "No gain", "tttv": "No gain", "asinh": "Rejected", "fgn": "Rejected: coverage",
              "swiglu": "Adopted", "quantile": "Second seed queued", "rmsnorm": "No gain", "plr": "No gain",
              "time_prithvi": "No gain", "time_sinr": "No gain", "solar": "No gain", "ema": "No gain",
-             "combo": "Adopted", "memory": "Kept; FCH4 without memory under test", "imagery": "One seed; no effect at this size",
+             "combo": "Adopted", "combo2": "Adopted; lowest so far", "combo_nomemch4": "One seed; no gain over the combination", "memory": "Kept", "imagery": "One seed; no effect at this size",
              "site": "One seed; no effect"}
 # Combinations of the additions above: (key, label); their runs are named as components are.
 COMBOS = [("combo", "Combination: per-variable loss, per-modality weights, attention gate"),

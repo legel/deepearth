@@ -1,6 +1,11 @@
 [
  {
   "date": "2026-10-31",
+  "title": "Component study: SwiGLU in the combination.",
+  "text": "The combination of per-variable loss, per-modality weights, attention gate and SwiGLU, against the control of the same seed at 8,000 steps: overall CRPS -4.1% on both seeds, NEE -4.5% and -2.8%, LE -4.2% and -4.0%, H -4.0% and -3.1%, FCH4 -19.6% and -19.7%, with 95% coverage 0.942 and 0.956. It is the lowest so far on all four fluxes and is adopted. Withholding site memory from FCH4 adds no gain to the first combination on one seed (FCH4 -19.7% against -18.1%, NEE, LE and H slightly worse), so the per-variable loss already delivers that gain."
+ },
+ {
+  "date": "2026-10-31",
   "title": "Component study: SwiGLU adopted; first input removals.",
   "text": "SwiGLU lowers overall CRPS by 2.8% and 3.4% on two seeds and is adopted. Removing site memory raises overall CRPS by 15.3% and NEE by 20.6%, and lowers FCH4 by 19.1% on one seed, so the combination with no site memory on FCH4 is now running on two seeds. Removing the Sentinel-2 Clay embeddings or the location features changes overall CRPS by 0.2% or less on one seed at width 192 and 8,000 steps."
  },

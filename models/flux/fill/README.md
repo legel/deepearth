@@ -236,7 +236,7 @@ seed.
 | change to the control | seeds | CRPS, all | NEE | LE | H | FCH4 | 95 % cov. | decision |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | second control seed (noise) | | +0.8 % | −1.0 % | −0.8 % | −0.1 % | −0.4 % | +1.3 % | |
-| Without: Site memory | 1 | +15.3 % | +20.6 % | +6.7 % | +16.1 % | −19.1 % | −0.7 % | Kept; FCH4 without memory under test |
+| Without: Site memory | 1 | +15.3 % | +20.6 % | +6.7 % | +16.1 % | −19.1 % | −0.7 % | Kept |
 | Without: Sentinel-2 / Clay | 1 | 0.0 % | −0.2 % | −0.1 % | +0.1 % | −10.4 % | −0.1 % | One seed; no effect at this size |
 | Without: Location (site features) | 1 | −0.2 % | −0.2 % | +0.4 % | +0.4 % | +5.6 % | −0.2 % | One seed; no effect |
 | Per-variable loss (4M) | 2 | −0.4 % | −0.2 % | −0.3 % | −0.1 % | −16.0 % | +0.1 % | Adopted |
@@ -256,6 +256,8 @@ seed.
 | Solar geometry | 1 | +0.2 % | −0.1 % | +0.2 % | −0.4 % | −8.0 % | +0.4 % | No gain |
 | Weight EMA (EDM2) | 1 | −0.5 % | −0.7 % | −0.7 % | +0.4 % | −0.5 % | −0.6 % | No gain |
 | Combination: per-variable loss, per-modality weights, attention gate | 2 | −1.4 % | −2.3 % | −2.4 % | −2.6 % | −16.8 % | +0.2 % | Adopted |
+| The combination with SwiGLU | 2 | −4.1 % | −3.7 % | −4.1 % | −3.5 % | −19.7 % | −0.3 % | Adopted; lowest so far |
+| The combination with no site memory on FCH4 | 1 | −0.5 % | −2.7 % | −1.6 % | −2.4 % | −19.7 % | +0.8 % | One seed; no gain over the combination |
 
 The per-variable loss works because a plain mean over hidden cells gives FCH4 the weight of its 0.4 % share of tower
 values. The sizes differ as well: width 640, depth 16 (167,004,569 parameters) has not passed width 320, depth 10 at
