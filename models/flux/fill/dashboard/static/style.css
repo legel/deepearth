@@ -265,5 +265,5 @@ mjx-container[display="true"] { margin: 0.4em 0 !important; }
 .fig-view[hidden] { display: none; }
 .fig-scroll { width: 100%; height: 100%; overflow: auto; display: flex; }
 .fig-scroll img { margin: auto; max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; background: #fff; cursor: zoom-in; }
-.fig-view.zoomed .fig-scroll img { flex: none; margin: 0; max-width: none; max-height: none; width: 300%; height: auto; cursor: zoom-out; }
+.fig-view.zoomed .fig-scroll img { flex: none; align-self: flex-start; margin: 0; max-width: none; max-height: none; width: 300%; height: auto; object-fit: fill; cursor: zoom-out; }
 .fig-close { position: fixed; top: 12px; right: 16px; z-index: 1001; width: 40px; height: 40px; border: 1px solid #c5c9cf; border-radius: 50%; background: #fff; color: #1e2a35; font-size: 22px; line-height: 1; cursor: pointer; }
