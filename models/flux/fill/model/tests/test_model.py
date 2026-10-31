@@ -802,29 +802,16 @@ def test_copula_keeps_marginals_and_correlates_in_time():
     assert np.corrcoef(z[:, 10], z[:, 11])[0, 1] > 0.6
 
 
-def test_adaptation_is_redone_for_every_set_of_visible_values():
-    """Weights adapted under one mask must not fill another: values hidden by the second were visible to the first."""
-    from types import SimpleNamespace
-    from method import FluxFill
-
-    class Restarted(Exception):
-        pass
-
-    def restart(_):
-        raise Restarted
-    f = FluxFill.__new__(FluxFill)
-    f.net, f._base = SimpleNamespace(load_state_dict=restart), {}
-    w = SimpleNamespace(site="XX-Xxx", start=pd.Timestamp("2020-01-01"))
-    obs = np.ones((4, 180, 48), bool)
-    first = {"obs": obs, "img_obs": np.ones(180, bool)}
-    hidden = obs.copy(); hidden[:, 30:60] = False
-    second = {"obs": hidden, "img_obs": np.ones(180, bool)}
-    fewer_images = {"obs": obs, "img_obs": np.arange(180) > 90}
-    f._adapted = FluxFill.adapt_key(w, first)
-    f.adapt(w, first, {})                                    # the same visible values: weights are reused
-    for other in (second, fewer_images):
-        with pytest.raises(Restarted):
-            f.adapt(w, other, {})
+def test_var_mean_weighs_variables_equally():
+    """Per-variable mean as in 4M: a variable's weight does not depend on how many of its cells are hidden."""
+    tm = torch.zeros(1, 3, 4, 2, dtype=torch.bool)
+    tm[0, 0] = True                                          # 8 cells of variable 0, 1 cell of variable 1, none of 2
+    tm[0, 1, 0, 0] = True
+    cells = torch.zeros(1, 3, 4, 2)
+    cells[0, 0] = 1.0
+    cells[0, 1, 0, 0] = 5.0
+    masked, axes = cells * tm, (0, 2, 3)
+    assert ((masked.sum(axes) / tm.sum(axes).clamp_min(1)).sum() / 3).item() == pytest.approx(2.0)
 
 
 def test_copula_layout_of_the_head():

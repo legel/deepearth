@@ -23,8 +23,9 @@ Heads:
   (after Peebles and Xie 2023, DiT) it follows.
 """
 
+import copy
 import math
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 
 import numpy as np
 import torch
@@ -35,6 +36,16 @@ from data import IS_FLUX, PROV_OF_VAR, STEPS_PER_DAY, V_BASE, V_TAB, VARS, WINDO
 from imagery import CLS_DIM, N_META
 
 K = STEPS_PER_DAY
+# Modalities of Mixture-of-Transformers (--mot): each row's weights by physical source.
+FLUX, TOWER_MET, REANALYSIS, LAND, IMAGERY = range(5)
+QUANTILE_KNOTS = (0.01, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9,
+                  0.95, 0.99)                                    # Timestral-28M config.json, quantile_knots
+
+
+def row_modalities() -> np.ndarray:
+    """(V_TAB + 1,) modality of each row; the last row is imagery."""
+    g = np.where(IS_FLUX, FLUX, np.select([PROV_OF_VAR == 1, PROV_OF_VAR == 2], [REANALYSIS, LAND], TOWER_MET))
+    return np.append(g, IMAGERY)
 
 
 def option_module(build, zero_prefix: Optional[str] = None):
@@ -93,6 +104,158 @@ class SinrPlace(nn.Module):
         return torch.where(known, self.out(h), torch.zeros_like(h[:, :1]).expand(-1, self.out.out_features))
 
 
+class TimeSinr(nn.Module):
+    """SINR's encoder (`SinrPlace`, Cole et al. 2023) applied to time. Inputs: sin and cos of 2^k 2 pi day-of-year / 365.25
+    for k = 0..n_freq (the NeRF ladder of Mildenhall et al. 2020), and of pi (year - 2015) / 15, which is SINR's sin/cos
+    of a coordinate scaled to [-1, 1]. Output projection zero at initialisation."""
+
+    def __init__(self, d: int, n_freq: int = 3, hidden: int = 256, blocks: int = 4):
+        super().__init__()
+        self.n_freq = n_freq
+        self.inp = nn.Sequential(nn.Linear(2 * (n_freq + 1) + 2, hidden), nn.ReLU())
+        self.blocks = nn.ModuleList([nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(), nn.Linear(hidden, hidden),
+                                                   nn.ReLU()) for _ in range(blocks)])
+        self.out = nn.Linear(hidden, d)
+
+    def forward(self, time: torch.Tensor) -> torch.Tensor:
+        """time (B, D, 2): calendar year and day of year -> (B, D, d)."""
+        year, doy = time.float().unbind(-1)
+        f = [torch.sin(math.pi * (year - 2015.0) / 15.0), torch.cos(math.pi * (year - 2015.0) / 15.0)]
+        for k in range(self.n_freq + 1):
+            a = 2.0 ** k * 2.0 * math.pi * doy / 365.25
+            f += [torch.sin(a), torch.cos(a)]
+        h = self.inp(torch.stack(f, -1))
+        for blk in self.blocks:
+            h = h + blk(h)
+        return self.out(h)
+
+
+def sincos_1d(embed_dim: int, pos: torch.Tensor) -> torch.Tensor:
+    """terratorch prithvi_mae._get_1d_sincos_embed_from_grid_torch: (M,) positions -> (M, embed_dim)."""
+    omega = 1.0 / 10000 ** (torch.arange(embed_dim // 2, dtype=pos.dtype, device=pos.device) / (embed_dim / 2.0))
+    out = torch.einsum("m,d->md", pos, omega)
+    return torch.cat([torch.sin(out), torch.cos(out)], 1)
+
+
+class PrithviTime(nn.Module):
+    """terratorch prithvi_mae.TemporalEncoder with trainable_scale: sin/cos embeddings of the year and the day of year,
+    concatenated, times a learned scale initialised at 0.1 (Szwarcman et al. 2024, Prithvi-EO-2.0)."""
+
+    def __init__(self, d: int):
+        super().__init__()
+        self.year_dim, self.day_dim = d // 2, d - d // 2
+        self.scale = nn.Parameter(torch.full((1,), 0.1))
+
+    def forward(self, time: torch.Tensor) -> torch.Tensor:
+        B, D, _ = time.shape
+        t = time.float()
+        emb = torch.cat([sincos_1d(self.year_dim, t[..., 0].flatten()), sincos_1d(self.day_dim, t[..., 1].flatten())], 1)
+        return self.scale * emb.reshape(B, D, -1)
+
+
+class PeriodicValues(nn.Module):
+    """PLR embeddings of the value channel (Gorishniy et al. 2022; rtdl_num_embeddings: _Periodic, then one shared linear
+    layer and ReLU, its `lite` form): weights per variable, trunc-normal with std sigma, 2 pi w z through cos and sin.
+    k and d_emb are 16 and 8 (package defaults 48 and 24), since each of 8,640 values per row is embedded."""
+
+    def __init__(self, n_rows: int, d: int, k: int = 16, d_emb: int = 8, sigma: float = 0.01):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(n_rows, k))
+        nn.init.trunc_normal_(self.weight, 0.0, sigma, a=-3 * sigma, b=3 * sigma)
+        self.lin = nn.Linear(2 * k, d_emb)
+        self.out = nn.Linear(K * d_emb, d, bias=False)
+        nn.init.zeros_(self.out.weight)
+
+    def forward(self, z: torch.Tensor, obs: torch.Tensor) -> torch.Tensor:
+        """z, obs (B, V, D, 48) -> (B, V, D, d); hidden values contribute nothing."""
+        a = 2 * math.pi * self.weight[None, :, None, None] * z[..., None].float()
+        e = torch.relu(self.lin(torch.cat([torch.cos(a), torch.sin(a)], -1))) * obs[..., None]
+        return self.out(e.flatten(-2))
+
+
+class RMSNorm(nn.Module):
+    """Timestral layers.RMSNorm."""
+
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.scale = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        xf = x.float()
+        return (xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)).type_as(x) * self.scale
+
+
+class FusedSwiGLU(nn.Module):
+    """Timestral layers.FusedSwiGLU: gate * silu(up); hidden width 1024 / 384 of d, as in Timestral-28M."""
+
+    def __init__(self, d: int, hidden: int):
+        super().__init__()
+        self.w12 = nn.Linear(d, 2 * hidden)
+        self.w3 = nn.Linear(hidden, d)
+
+    def forward(self, x):
+        gate, up = self.w12(x).chunk(2, -1)
+        return self.w3(gate * F.silu(up))
+
+
+class ResidualBlock(nn.Module):
+    """Timestral layers.ResidualBlock: output(silu(hidden(x))) + residual(x)."""
+
+    def __init__(self, n_in: int, n_hidden: int, n_out: int, bias: bool):
+        super().__init__()
+        self.hidden_layer = nn.Linear(n_in, n_hidden, bias=bias)
+        self.output_layer = nn.Linear(n_hidden, n_out, bias=bias)
+        self.residual_layer = nn.Linear(n_in, n_out, bias=bias)
+
+    def forward(self, x):
+        return self.output_layer(F.silu(self.hidden_layer(x))) + self.residual_layer(x)
+
+
+def monotone_quantiles(raw: torch.Tensor, levels: Sequence[float], width_factor: float = 2.0) -> torch.Tensor:
+    """Timestral model.monotone_quantiles: the median is free; the others fan out from it by
+    cumsum(width_factor * dp * softplus(raw)), dp the probability gap to the next level inward."""
+    m = levels.index(0.5)
+    widths = [0.0] * len(levels)
+    for i in range(m + 1, len(levels)):
+        widths[i] = levels[i] - levels[i - 1]
+    for i in range(m):
+        widths[i] = levels[i + 1] - levels[i]
+    inc = width_factor * torch.tensor(widths, device=raw.device, dtype=raw.dtype) * F.softplus(raw)
+    median = raw[..., m:m + 1]
+    up = torch.cumsum(inc[..., m + 1:], -1)
+    down = torch.flip(torch.cumsum(torch.flip(inc[..., :m], [-1]), -1), [-1])
+    return torch.cat([median - down, median, median + up], -1)
+
+
+class QuantileHead(nn.Module):
+    """Timestral model.QuantileHead: each token to 48 monotone quantile vectors, (B, V, D, 48, Q)."""
+
+    def __init__(self, d: int, knots: Sequence[float] = QUANTILE_KNOTS):
+        super().__init__()
+        self.knots = tuple(knots)
+        self.projection = ResidualBlock(d, 4 * d, K * len(knots), bias=False)
+
+    def forward(self, h):
+        raw = self.projection(h).float().unflatten(-1, (K, len(self.knots)))
+        return monotone_quantiles(raw, self.knots)
+
+
+class NormConditioning(nn.Module):
+    """WeatherNext utils/dense.py LinearNormConditioning: x * (1 + a) + b, (a, b) linear in the conditioning vector,
+    weights truncated normal with std 1e-8."""
+
+    def __init__(self, cond: int, d: int):
+        super().__init__()
+        self.lin = nn.Linear(cond, 2 * d)
+        nn.init.trunc_normal_(self.lin.weight, std=1e-8)
+        nn.init.zeros_(self.lin.bias)
+
+    def forward(self, x, c):
+        a, b = self.lin(c).view(c.shape[0], *([1] * (x.dim() - 2)), -1).chunk(2, -1)
+        return x * (a + 1.0) + b
+
+
 def rope_tables(n: int, dim: int, base: float = 10000.0, device=None):
     inv = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
     f = torch.outer(torch.arange(n, device=device).float(), inv)
@@ -100,49 +263,108 @@ def rope_tables(n: int, dim: int, base: float = 10000.0, device=None):
 
 
 def apply_rope(x, cos, sin):
-    """x (..., n, dim); rotate pairs (x[2i], x[2i+1])."""
-    x1, x2 = x[..., 0::2], x[..., 1::2]
-    return torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], -1).flatten(-2)
+    """x (..., n, dim); rotate pairs (x[2i], x[2i+1]). A table shorter than dim / 2 rotates the first dimensions only;
+    the rest pass unrotated (partial RoPE, Timestral layers.SinCosRoPE)."""
+    r = 2 * cos.shape[-1]
+    x1, x2 = x[..., :r:2], x[..., 1:r:2]
+    y = torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], -1).flatten(-2)
+    return y if r == x.shape[-1] else torch.cat([y, x[..., r:]], -1)
 
 
 class Attention(nn.Module):
-    def __init__(self, d: int, heads: int):
+    """Multi-head attention. `gate`: Timestral's sdpa_sigmoid, the attention output times sigmoid(gate(inputs))."""
+
+    def __init__(self, d: int, heads: int, gate: bool = False):
         super().__init__()
         self.h = heads
         self.qkv = nn.Linear(d, 3 * d)
         self.out = nn.Linear(d, d)
+        if gate:
+            with torch.random.fork_rng(devices=[]):
+                self.gate = nn.Linear(d, d)
+        else:
+            self.gate = None
 
-    def forward(self, x, key_ok: Optional[torch.Tensor] = None, rope=None):
-        n, L, d = x.shape
-        q, k, v = self.qkv(x).view(n, L, 3, self.h, d // self.h).permute(2, 0, 3, 1, 4)
+    def attend(self, qkv, inputs, key_ok: Optional[torch.Tensor] = None, rope=None):
+        """qkv (n, L, 3 d) -> (n, L, d), before the output projection."""
+        n, L, d3 = qkv.shape
+        d = d3 // 3
+        q, k, v = qkv.view(n, L, 3, self.h, d // self.h).permute(2, 0, 3, 1, 4)
         if rope is not None:
             q, k = apply_rope(q, *rope), apply_rope(k, *rope)
         mask = None if key_ok is None else key_ok[:, None, None, :]
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
-        return self.out(y.transpose(1, 2).reshape(n, L, d))
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask).transpose(1, 2).reshape(n, L, d)
+        return y if self.gate is None else y * self.gate(inputs).sigmoid()
+
+
+def untied(base, extra, x, groups, dim):
+    """Mixture-of-Transformers (Liang et al. 2024; BAGEL, Qwen2MoTDecoderLayer): each token goes through the weights of
+    its modality. groups: (index tensors per modality, inverse permutation) over the rows; `extra` holds the copies of
+    `base` for the modalities after the first. None: shared weights."""
+    if extra is None:
+        return base(x)
+    index, inverse = groups
+    parts = [m(x.index_select(dim, i)) for m, i in zip([base, *extra], index)]
+    return torch.cat(parts, dim).index_select(dim, inverse)
 
 
 class Block(nn.Module):
-    """Pre-norm attention + MLP over one axis of the (B, R, D, d) token grid."""
+    """One layer over the (B, R, D, d) token grid: pre-norm attention over the axes of `axis`, in order, then one MLP.
+    `axis`: "time", "var", or Timestral's "time_var" and "var_time" (layer kinds, config.LAYER_KIND_AXES), whose two
+    attentions share the MLP. Options: Timestral's RMSNorm, SwiGLU and attention gate; `mot` "ffn" unties the MLP per
+    modality, "all" every weight (norms, QKV, output, MLP); `cond` adds FGN's norm conditioning after every norm."""
 
-    def __init__(self, d: int, heads: int, axis: str, mlp: int = 4, dropout: float = 0.0):
+    def __init__(self, d: int, heads: int, axis: str, mlp: int = 4, dropout: float = 0.0, rms: bool = False,
+                 swiglu: bool = False, gate: bool = False, mot: str = "", cond: int = 0, n_mod: int = 5):
         super().__init__()
         self.axis = axis
-        self.n1, self.n2 = nn.LayerNorm(d), nn.LayerNorm(d)
-        self.attn = Attention(d, heads)
-        self.mlp = nn.Sequential(nn.Linear(d, mlp * d), nn.GELU(), nn.Linear(mlp * d, d))
+        self.axes = {"time": ("time",), "var": ("var",), "time_var": ("time", "var"), "var_time": ("var", "time")}[axis]
+        norm = (lambda: RMSNorm(d)) if rms else (lambda: nn.LayerNorm(d))
+        self.n1, self.n2 = norm(), norm()
+        self.attn = Attention(d, heads, gate)
+        self.mlp = FusedSwiGLU(d, round(d * 1024 / 384)) if swiglu else nn.Sequential(nn.Linear(d, mlp * d), nn.GELU(), nn.Linear(mlp * d, d))
         self.drop = nn.Dropout(dropout)
+        if len(self.axes) == 2:
+            self.n1b, self.attnb = norm(), Attention(d, heads, gate)
+        copies = lambda m: nn.ModuleList([copy.deepcopy(m) for _ in range(n_mod - 1)])
+        self.mlp_m = copies(self.mlp) if mot else None
+        self.tied = mot != "all"
+        if not self.tied:
+            self.n1_m, self.n2_m, self.qkv_m, self.out_m = copies(self.n1), copies(self.n2), copies(self.attn.qkv), copies(self.attn.out)
+            if len(self.axes) == 2:
+                self.n1b_m, self.qkvb_m, self.outb_m = copies(self.n1b), copies(self.attnb.qkv), copies(self.attnb.out)
+        self.c1 = self.c2 = self.c1b = None
+        if cond:
+            with torch.random.fork_rng(devices=[]):
+                self.c1, self.c2 = NormConditioning(cond, d), NormConditioning(cond, d)
+                if len(self.axes) == 2:
+                    self.c1b = NormConditioning(cond, d)
 
-    def forward(self, x, row_ok, rope):
+    def _attend(self, x, i, row_ok, rope, groups, c):
         B, R, D, d = x.shape
-        if self.axis == "time":
-            y = self.attn(self.n1(x).reshape(B * R, D, d), rope=rope).view(B, R, D, d)
-        else:
-            xt = self.n1(x).transpose(1, 2).reshape(B * D, R, d)
-            ok = row_ok[:, None, :].expand(B, D, R).reshape(B * D, R)
-            y = self.attn(xt, key_ok=ok).view(B, D, R, d).transpose(1, 2)
-        x = x + self.drop(y)
-        return x + self.drop(self.mlp(self.n2(x)))
+        second = i == 1
+        n, attn, cond = (self.n1b, self.attnb, self.c1b) if second else (self.n1, self.attn, self.c1)
+        m = (self.n1b_m, self.qkvb_m, self.outb_m) if second and not self.tied else (self.n1_m, self.qkv_m, self.out_m) if not self.tied else (None,) * 3
+        xn = untied(n, m[0], x, groups, 1)
+        if cond is not None:
+            xn = cond(xn, c)
+        if self.axes[i] == "time":
+            o = untied(attn.qkv, m[1], xn, groups, 1).reshape(B * R, D, 3 * d)
+            y = attn.attend(o, xn.reshape(B * R, D, d), rope=rope).view(B, R, D, d)
+            return untied(attn.out, m[2], y, groups, 1)
+        xt = xn.transpose(1, 2)
+        o = untied(attn.qkv, m[1], xt, groups, 2).reshape(B * D, R, 3 * d)
+        ok = row_ok[:, None, :].expand(B, D, R).reshape(B * D, R)
+        y = attn.attend(o, xt.reshape(B * D, R, d), key_ok=ok).view(B, D, R, d)
+        return untied(attn.out, m[2], y, groups, 2).transpose(1, 2)
+
+    def forward(self, x, row_ok, rope, groups=None, c=None):
+        for i in range(len(self.axes)):
+            x = x + self.drop(self._attend(x, i, row_ok, rope, groups, c))
+        y = untied(self.n2, None if self.tied else self.n2_m, x, groups, 1)
+        if self.c2 is not None:
+            y = self.c2(y, c)
+        return x + self.drop(untied(self.mlp, self.mlp_m, y, groups, 1))
 
 
 class FluxFillNet(nn.Module):
@@ -152,8 +374,15 @@ class FluxFillNet(nn.Module):
                  gated_base: bool = False, gate_scale: bool = False, edge_continue: bool = False,
                  memory_skew: bool = False, driver_anomaly: bool = False, memory_skew_fluxes_only: bool = False,
                  scale_anchor: bool = False, year_anomaly: bool = False, sinr_place: int = -1,
-                 sinr_replace: bool = False, scale_anchor_fch4: bool = False):
+                 sinr_replace: bool = False, scale_anchor_fch4: bool = False, schedule: str = "time,var",
+                 off: Sequence[str] = (), attn_gate: bool = False, rope_partial: float = 1.0, rmsnorm: bool = False,
+                 swiglu: bool = False, mot: str = "", quantile_head: bool = False, fgn_noise: int = 0, plr: bool = False,
+                 time_enc: str = "", time_octaves: int = 3, solar: bool = False):
         super().__init__()
+        # Base components that --off removes, for ablation. The parameters stay, so the random numbers of the others do.
+        self.off = frozenset(off)
+        unknown = self.off - {"rope", "time_attn", "var_attn", "day_emb", "doy", "site", "prov_emb", "var_emb", "mask_token"}
+        assert not unknown, f"unknown --off names {sorted(unknown)}"
         # img_nll: the imagery head is a diagonal Gaussian (mean and log-scale per Clay dimension) trained on its
         # negative log-likelihood, a proper score; otherwise a point head trained on MSE (v0, kept for old checkpoints).
         self.img_nll = img_nll
@@ -238,17 +467,50 @@ class FluxFillNet(nn.Module):
         if sinr_place >= 0:
             self.place = option_module(lambda: SinrPlace(d, n_freq=sinr_place), zero_prefix="out.")
         self.register_buffer("prov", torch.tensor(list(PROV_OF_VAR) + [3]), persistent=False)
+        self.time_enc = time_enc
+        if time_enc == "sinr":
+            self.time_in = option_module(lambda: TimeSinr(d, time_octaves), zero_prefix="out.")
+        elif time_enc == "prithvi":
+            self.time_in = PrithviTime(d)
+        else:
+            assert not time_enc, f"unknown --time-enc {time_enc}"
+        self.solar = solar
+        if solar:
+            self.sun_in = option_module(lambda: nn.Linear(2 * K, d))
+        self.plr = option_module(lambda: PeriodicValues(V_TAB, d), zero_prefix="out.") if plr else None
+        self.fgn = fgn_noise
+        cond = 0
+        if fgn_noise:                      # WeatherNext 2: noise encoded by a dense layer, then norm conditioning everywhere
+            cond = d
+            with torch.random.fork_rng(devices=[]):
+                self.fgn_enc = nn.Sequential(nn.Linear(fgn_noise, d), nn.SiLU(), nn.Linear(d, d))
+                self.fgn_out = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, K))
+                self.final_cond = NormConditioning(d, d)
+        self.mot = mot
+        mods = row_modalities()
+        index = [torch.tensor(np.flatnonzero(mods == g)) for g in range(IMAGERY + 1)]
+        self.mod_index = [i for i in index if i.numel()]
+        for j, i in enumerate(self.mod_index):
+            self.register_buffer(f"mod_index_{j}", i, persistent=False)
+        self.register_buffer("mod_inverse", torch.argsort(torch.cat(self.mod_index)), persistent=False)
         self.blocks = nn.ModuleList()
         for _ in range(depth):
-            self.blocks.append(Block(d, heads, "time", mlp, dropout))
-            self.blocks.append(Block(d, heads, "var", mlp, dropout))
-        self.norm = nn.LayerNorm(d)
+            for kind in schedule.split(","):
+                self.blocks.append(Block(d, heads, kind, mlp, dropout, rms=rmsnorm, swiglu=swiglu, gate=attn_gate, mot=mot,
+                                         cond=cond, n_mod=len(self.mod_index)))
+        self.skip = {k for k, n in (("time", "time_attn"), ("var", "var_attn")) if n in self.off}
+        self.norm = RMSNorm(d) if rmsnorm else nn.LayerNorm(d)
         self.head_t = StudentTHead(d, components, spread=not gated_base)
         self.head_img = nn.Linear(d, (2 if img_nll else 1) * CLS_DIM)
         self.head_flow = FlowHead(d, flow_width, flow_depth)
+        self.quantile = quantile_head
+        if quantile_head:
+            with torch.random.fork_rng(devices=[]):
+                self.head_q = QuantileHead(d)
         nn.init.normal_(self.mask_tab, std=0.02)
         nn.init.normal_(self.mask_img, std=0.02)
-        cos, sin = rope_tables(WINDOW_DAYS, d // heads)
+        hd = d // heads
+        cos, sin = rope_tables(WINDOW_DAYS, hd if rope_partial >= 1.0 else int(hd * rope_partial) // 2 * 2)
         self.register_buffer("rope_cos", cos, persistent=False)
         self.register_buffer("rope_sin", sin, persistent=False)
 
@@ -266,25 +528,46 @@ class FluxFillNet(nn.Module):
         empty = (obs.sum(-1, keepdim=True) == 0)
         # A token with no visible value: the learned mask vector, plus its memory channels when memory is on (the value
         # channels of such a token are zero, so tab - bias is exactly the memory part of the projection).
-        tab = torch.where(empty, self.mask_tab.to(tab.dtype) + tab - self.tab_in.bias.to(tab.dtype), tab)
+        if "mask_token" not in self.off:
+            tab = torch.where(empty, self.mask_tab.to(tab.dtype) + tab - self.tab_in.bias.to(tab.dtype), tab)
+        if self.plr is not None:
+            tab = tab + self.plr(z, b["obs"]).to(tab.dtype)
         io = b["img_obs"][..., None]
         img = self.img_in(self.img_norm(b["img_cls"])) + self.img_meta(b["img_meta"])
         img = torch.where(io, img, self.mask_img.to(img.dtype))[:, None]          # (B, 1, D, d)
         x = torch.cat([tab, img], 1)
         R = x.shape[1]
-        x = x + self.var_table()[None, :, None] + self.prov_emb(self.prov)[None, :, None]
-        x = x + self.day_emb.weight[None, None] + self.doy_in(b["doy"])[:, None]
-        if not self.sinr_replace:
+        if "var_emb" not in self.off:
+            x = x + self.var_table()[None, :, None]
+        if "prov_emb" not in self.off:
+            x = x + self.prov_emb(self.prov)[None, :, None]
+        if "day_emb" not in self.off:
+            x = x + self.day_emb.weight[None, None]
+        if "doy" not in self.off:
+            x = x + self.doy_in(b["doy"])[:, None]
+        if self.time_enc:
+            x = x + self.time_in(b["time"]).to(x.dtype)[:, None]
+        if self.solar:                                       # a window whose location is hidden hides its sun too
+            known = (b["site"] != 0).any(-1).to(x.dtype)
+            x = x + (self.sun_in(b["sun"]).to(x.dtype) * known[:, None, None])[:, None]
+        if not self.sinr_replace and "site" not in self.off:
             x = x + self.site_in(b["site"])[:, None, None]
         if self.sinr_place >= 0:
             x = x + self.place(b["site"]).to(x.dtype)[:, None, None]
         img_ok = b["img_present"].reshape(B, 1) & torch.tensor(self.use_imagery, device=z.device)
         row_ok = torch.cat([b["present"], img_ok], 1)
         row_ok = row_ok | ~row_ok.any(1, keepdim=True)
-        rope = (self.rope_cos, self.rope_sin)
+        rope = None if "rope" in self.off else (self.rope_cos, self.rope_sin)
+        groups = ([getattr(self, f"mod_index_{j}") for j in range(len(self.mod_index))], self.mod_inverse) if self.mot else None
+        c = None
+        if self.fgn:                                          # one noise vector per window, shared by every token
+            e = b["fgn_z"] if "fgn_z" in b else torch.randn(B, self.fgn, device=z.device)
+            c = self.fgn_enc(e.to(x.dtype))
         for blk in self.blocks:
-            x = blk(x, row_ok, rope)
-        return self.norm(x)
+            if blk.axis not in self.skip:
+                x = blk(x, row_ok, rope, groups, c)
+        x = self.norm(x)
+        return self.final_cond(x, c) if self.fgn else x
 
     def var_table(self) -> torch.Tensor:
         """(V_TAB + 1, d) embeddings of the rows in order: base variables, extra variables (E30), imagery."""
@@ -343,6 +626,10 @@ class FluxFillNet(nn.Module):
 
     def forward(self, b):
         h = self.encode(b)
+        if self.fgn:                                          # one sample of every value, (B, V, D, 48)
+            return h, (self.fgn_out(h[:, :V_TAB]).float() + self.offset(b),)
+        if self.quantile:                                     # (B, V, D, 48, Q)
+            return h, (self.head_q(h[:, :V_TAB]) + self.offset(b)[..., None],)
         params = self.head_t(h[:, :V_TAB])
         if self.gated_base:
             return h, self.gated_params(b, params, h)
@@ -461,8 +748,28 @@ class StudentTHead(nn.Module):
         return loc, scale, df, logw
 
 
+def pinball(y, q, knots=QUANTILE_KNOTS):
+    """Mean pinball loss over the knots, times 2: the quantile form of the CRPS (Gneiting and Raftery 2007)."""
+    t = torch.tensor(knots, device=q.device, dtype=q.dtype)
+    e = y[..., None] - q
+    return 2 * torch.maximum(t * e, (t - 1) * e).mean(-1)
+
+
+def quantile_inverse(q, u, knots=QUANTILE_KNOTS):
+    """Piecewise-linear quantile function at probabilities u (..., 48), the outer segments extended; q (..., 48, Q)."""
+    t = torch.tensor(knots, device=q.device, dtype=q.dtype)
+    i = torch.searchsorted(t, u.contiguous()).clamp(1, len(knots) - 1)
+    a, b = t[i - 1], t[i]
+    qa = torch.gather(q, -1, (i - 1)[..., None])[..., 0]
+    qb = torch.gather(q, -1, i[..., None])[..., 0]
+    return qa + (qb - qa) * (u - a) / (b - a)
+
+
 def marginal_nll(y, params):
-    """Negative log-likelihood of y (..., 48) under a Student-t or a Student-t mixture (head output)."""
+    """Training loss per value of y (..., 48) under the head output: the negative log-likelihood of a Student-t or a
+    Student-t mixture, or the pinball loss of the quantile head."""
+    if len(params) == 1:
+        return pinball(y, params[0])
     if len(params) == 3:
         return student_t_nll(y, *params)
     loc, scale, df, logw = params
@@ -475,6 +782,11 @@ def mixture_cdf(params, y):
     so coverage and the PIT follow from F(y) without sampling."""
     from scipy import stats as sst
     y = np.asarray(y, np.float64)
+    if len(params) == 1:                                     # quantile head: linear between the knots, clipped to [0, 1]
+        q, t = np.asarray(params[0], np.float64), np.array(QUANTILE_KNOTS)
+        i = np.clip((q <= y[..., None]).sum(-1), 1, len(t) - 1)
+        qa, qb = np.take_along_axis(q, i[..., None] - 1, -1)[..., 0], np.take_along_axis(q, i[..., None], -1)[..., 0]
+        return np.clip(t[i - 1] + (t[i] - t[i - 1]) * (y - qa) / np.maximum(qb - qa, 1e-12), 0.0, 1.0)
     if len(params) == 3:
         loc, scale, df = (np.asarray(u, np.float64) for u in params)
         return sst.t.cdf((y - loc) / scale, df)
@@ -483,6 +795,11 @@ def mixture_cdf(params, y):
 
 
 def marginal_mean(params):
+    if len(params) == 1:
+        t = torch.tensor(QUANTILE_KNOTS, device=params[0].device, dtype=params[0].dtype)
+        gap = torch.diff(t, prepend=2 * t[:1] - t[1:2], append=2 * t[-1:] - t[-2:-1])
+        w = gap[:-1] + gap[1:]                               # trapezoid weights of the quantile function
+        return (params[0] * w).sum(-1) / w.sum()
     if len(params) == 3:
         return params[0]
     loc, _, _, logw = params
@@ -491,6 +808,9 @@ def marginal_mean(params):
 
 def sample_marginal_params(params, n: int):
     """n independent draws per half-hour from the head output, (n, ...)."""
+    if len(params) == 1:
+        q = params[0]
+        return quantile_inverse(q.expand((n,) + q.shape), torch.rand((n,) + q.shape[:-1], device=q.device, dtype=q.dtype))
     if len(params) == 3:
         return sample_student_t(*params, n)
     loc, scale, df, logw = params
@@ -574,15 +894,21 @@ class FlowHead(nn.Module):
         shift, scale = self.mod(c).chunk(2, -1)
         return self.out(self.norm(x) * (1 + scale) + shift)
 
-    def loss(self, cond, x1, tmask, zvis, obs, reps: int = 4):
+    def loss(self, cond, x1, tmask, zvis, obs, reps: int = 4, rows=None):
         """Conditional flow-matching loss on the target elements of N tokens, each repeated `reps` times with its
-        own time and noise (as Li et al. 2024 repeat the diffusion loss)."""
+        own time and noise (as Li et al. 2024 repeat the diffusion loss). rows (N,): variable of each token, for the
+        per-variable mean (E46); None weighs every element equally."""
         cond, x1, tmask, zvis, obs = (u.repeat(reps, 1) for u in (cond, x1, tmask, zvis, obs))
         t = torch.rand(x1.shape[0], device=x1.device)
         x0 = torch.randn_like(x1)
         xt = (1 - t[:, None]) * x0 + t[:, None] * x1
         v = self.forward(xt, t, cond, zvis, obs).float()
         err = ((v - (x1 - x0)) ** 2) * tmask
+        if rows is not None:
+            r = rows.repeat(reps)
+            s = torch.zeros(V_TAB, device=err.device).index_add(0, r, err.sum(-1))
+            n = torch.zeros(V_TAB, device=err.device).index_add(0, r, tmask.sum(-1))
+            return (s / n.clamp_min(1)).sum() / V_TAB
         return err.sum() / tmask.sum().clamp_min(1)
 
     @torch.no_grad()

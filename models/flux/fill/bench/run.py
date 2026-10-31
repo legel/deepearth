@@ -307,18 +307,13 @@ def method_registry() -> Dict:
 def fluxfill_method():
     """FluxFill (models/flux/fill/model) as a runner method. Checkpoint from FLUXFILL_CKPT; FLUXFILL_MODE marginal (v0,
     exact coverage from its predictive CDF) or joint (v1); FLUXFILL_DEVICE (default cuda); FLUXFILL_SAMPLES (64);
-    FLUXFILL_NAME, the method name in the rows (default fluxfill, or fluxfill-v1 in joint mode); FLUXFILL_ADAPT_STEPS,
-    FLUXFILL_ADAPT_LR, FLUXFILL_ADAPT_ROW_W (E36 site adaptation; default 0 steps, off; FluxFill uses 300 steps,
-    lr 3e-4 and FCH4 loss weight 4 during adaptation)."""
+    FLUXFILL_NAME, the method name in the rows (default fluxfill, or fluxfill-v1 in joint mode)."""
     sys.path.insert(0, str(HERE.parent / "model"))
     from method import FluxFill
     mode = os.environ.get("FLUXFILL_MODE", "marginal")
     return FluxFill(os.environ["FLUXFILL_CKPT"], mode=mode, n_samples=int(os.environ.get("FLUXFILL_SAMPLES", "64")),
                     device=os.environ.get("FLUXFILL_DEVICE", "cuda"),
                     name=os.environ.get("FLUXFILL_NAME", "fluxfill" if mode == "marginal" else "fluxfill-v1"),
-                    adapt_steps=int(os.environ.get("FLUXFILL_ADAPT_STEPS", "0")),
-                    adapt_lr=float(os.environ.get("FLUXFILL_ADAPT_LR", "3e-4")),
-                    adapt_row_weight=dict(kv.split("=") for kv in os.environ.get("FLUXFILL_ADAPT_ROW_W", "FCH4=4").split(",") if kv),
                     copula=os.environ.get("FLUXFILL_COPULA") or None)
 
 

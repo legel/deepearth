@@ -263,24 +263,26 @@ def load_records(sites: Sequence[str], root: Path = TOWERS, verbose: bool = True
 class Stats:
     mean: np.ndarray       # (V_TAB,)
     std: np.ndarray        # (V_TAB,)
+    asinh: bool = False    # --asinh: values are asinh((x - mean) / std) (Timestral, scaler.apply_affine_asinh_masked)
 
     def norm(self, x: np.ndarray, rows: Optional[np.ndarray] = None) -> np.ndarray:
         r = slice(None) if rows is None else rows
-        return (x - self.mean[r, None]) / self.std[r, None]
+        z = (x - self.mean[r, None]) / self.std[r, None]
+        return np.arcsinh(z) if self.asinh else z
 
     def denorm(self, z, rows: Optional[np.ndarray] = None):
         r = slice(None) if rows is None else rows
-        return z * self.std[r, None] + self.mean[r, None]
+        return (np.sinh(z) if self.asinh else z) * self.std[r, None] + self.mean[r, None]
 
     def to_dict(self):
-        return {"vars": list(VARS), "mean": self.mean.tolist(), "std": self.std.tolist()}
+        return {"vars": list(VARS), "mean": self.mean.tolist(), "std": self.std.tolist(), "asinh": self.asinh}
 
     @staticmethod
     def from_dict(d):
         assert tuple(d["vars"]) == VARS, (
             f"variable list changed: the checkpoint has {len(d['vars'])} rows, this process {len(VARS)} "
             f"(FLUXFILL_CHANNELS={CHANNELS}; a checkpoint trained with --extra-channels needs FLUXFILL_CHANNELS=extended)")
-        return Stats(np.array(d["mean"], np.float64), np.array(d["std"], np.float64))
+        return Stats(np.array(d["mean"], np.float64), np.array(d["std"], np.float64), bool(d.get("asinh", False)))
 
 
 def fit_stats(records: Dict[str, SiteRecord], train_sites: Sequence[str]) -> Stats:
@@ -317,6 +319,12 @@ def doy_features(start: pd.Timestamp, n_days: int = WINDOW_DAYS) -> np.ndarray:
     d = pd.date_range(start + pd.Timedelta(hours=12), periods=n_days, freq="D")
     a = 2 * np.pi * (d.day_of_year.to_numpy() - 0.5) / 365.25
     return np.stack([np.sin(a), np.cos(a), np.sin(2 * a), np.cos(2 * a)], 1).astype(np.float32)
+
+
+def time_features(start: pd.Timestamp, n_days: int = WINDOW_DAYS) -> np.ndarray:
+    """(n_days, 2): calendar year and day of year of each day (the temporal coordinates of Prithvi-EO-2.0)."""
+    d = pd.date_range(start, periods=n_days, freq="D")
+    return np.stack([d.year.to_numpy(), d.day_of_year.to_numpy()], 1).astype(np.float32)
 
 
 def window_tokens(values: np.ndarray, stats: Stats) -> Tuple[np.ndarray, np.ndarray]:

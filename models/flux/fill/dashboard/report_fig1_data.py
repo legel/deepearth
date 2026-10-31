@@ -3,8 +3,7 @@ every reconstructed modality.
 
 The mask is the benchmark's 30-day station outage of this window (M2, all tower channels, days 99 to 129), plus 20
 days of the reanalysis rows and the Sentinel-2 acquisitions of 30 days, each placed outside the outage. FluxFill runs
-as scored: checkpoint FLUXFILL_CKPT, 300 steps of site adaptation on the visible values and the tower's other years,
-64 samples coupled in time by the temporal copula (FLUXFILL_COPULA). Hidden values never enter adaptation.
+as scored: checkpoint FLUXFILL_CKPT, 64 samples coupled in time by the temporal copula (FLUXFILL_COPULA).
 
 Output (bench/dashboard/report/fig1_all.npz): the window's values and keys, the mask, samples of every row, and for
 every day with a Sentinel-2 acquisition the layer-normalised Clay embedding, whether it was hidden, and the imagery
@@ -46,8 +45,7 @@ def main():
     idx = lst_index(tab)
     years = list(range(w.t[0].year, w.t[-1].year + 1))
     ctx = {"table": tab[~idx.year.isin(years)], "index": idx[~idx.year.isin(years)]}
-    ff = FluxFill(os.environ["FLUXFILL_CKPT"], name="fluxfill", adapt_steps=300, adapt_lr=3e-4,
-                  adapt_row_weight={"FCH4": 4.0}, copula=os.environ.get("FLUXFILL_COPULA"))
+    ff = FluxFill(os.environ["FLUXFILL_CKPT"], name="fluxfill", copula=os.environ.get("FLUXFILL_COPULA"))
 
     busy = m.any(0).reshape(180, 48).any(1)
     busy = np.convolve(busy, np.ones(11), "same") > 0                     # 5 days apart from the outage
@@ -66,7 +64,6 @@ def main():
     ex["img_obs"] = has & ~img_hide
     ex["img_cls"] = np.where(img_hide[:, None], 0.0, ex["img_cls"]).astype(np.float32)
 
-    ff.adapt(visible, ex, ctx)
     rows, pos = ff.window_rows(w)
     with torch.no_grad():
         z = ff.sample_marginal(ex)

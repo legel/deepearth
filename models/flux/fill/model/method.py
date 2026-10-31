@@ -10,11 +10,6 @@ Two sampling modes from one checkpoint:
   (Chang et al. 2022, CVPR) used by Li et al. Repeating with independent orders and noise gives joint samples over
   the window.
 
-Test-time site adaptation (E36, `adapt_steps` > 0): before the first mask of a window, the weights are fine-tuned for
-`adapt_steps` steps with the training losses on windows drawn from the runner's context table (the site's other years,
-never the target window), with fresh training masks and site memory built without each drawn window's own years. The
-adapted weights serve every mask of that window and are reset to the checkpoint before the next window.
-
 The method reads only what the runner passes: the window with hidden values set to NaN and `measured` False on
 hidden values, the mask, and the context. Site location comes from `sites.parquet`; imagery from the Clay store.
 """
@@ -22,7 +17,6 @@ hidden values, the mask, and the context. Site location comes from `sites.parque
 import json
 import math
 import sys
-import zlib
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -33,12 +27,14 @@ import torch
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from data import (IS_LAND, STEPS_PER_DAY, V_TAB, VARS, WINDOW_DAYS, Stats, doy_features, land_matrix,  # noqa: E402
+from data import (IS_LAND, STEPS_PER_DAY, V_TAB, VARS, WINDOW_DAYS, Stats, doy_features, land_matrix, time_features,  # noqa: E402
                   record_from_table, site_features, sites_table)
 from memory import memory_from_table, memory_from_table_skew  # noqa: E402
 from sampler import mem_arrays  # noqa: E402
 from imagery import load_imagery, window_imagery  # noqa: E402
-from net import FluxFillNet, mixture_cdf, sample_marginal_params  # noqa: E402
+from net import QUANTILE_KNOTS, FluxFillNet, mixture_cdf, sample_marginal_params  # noqa: E402
+from recipe import net_kwargs  # noqa: E402
+from solar import sun_features  # noqa: E402
 
 K = STEPS_PER_DAY
 
@@ -46,22 +42,11 @@ K = STEPS_PER_DAY
 class FluxFill:
     def __init__(self, ckpt: str, mode: str = "marginal", n_samples: int = 64, steps: int = 32, flow_steps: int = 24,
                  name: Optional[str] = None, device: str = "cuda", chunk: int = 32, seed: int = 0,
-                 imagery: bool = True, imagery_sites=None, adapt_steps: int = 0, adapt_lr: float = 3e-4,
-                 adapt_batch: int = 2, adapt_row_weight: Optional[Dict[str, float]] = None,
-                 copula: Optional[str] = None):
+                 imagery: bool = True, imagery_sites=None, copula: Optional[str] = None):
         ck = torch.load(ckpt, map_location="cpu", weights_only=False)
         c = ck["config"]
         self.stats = Stats.from_dict(c["stats"])
-        self.net = FluxFillNet(d=c["d"], depth=c["depth"], heads=c["heads"], use_imagery=not c.get("no_imagery", False),
-                               flow_width=c.get("flow_width", 256), flow_depth=c.get("flow_depth", 3),
-                               memory=c.get("memory", False), mem_residual=c.get("mem_residual", False),
-                               img_nll=c.get("img_nll", False), components=c.get("components", 1),
-                               local_base=c.get("local_base", False), gated_base=c.get("gated_base", False),
-                               gate_scale=c.get("gate_scale", False), edge_continue=c.get("edge_continue", False),
-                               memory_skew=c.get("memory_skew", False), driver_anomaly=c.get("driver_anomaly", False),
-                               memory_skew_fluxes_only=c.get("memory_skew_fluxes", False),
-                               scale_anchor=c.get("scale_anchor", False), year_anomaly=c.get("year_anomaly", False),
-                               sinr_place=c.get("sinr_place", -1), sinr_replace=c.get("sinr_replace", False), scale_anchor_fch4=c.get("scale_anchor_fch4", False))
+        self.net = FluxFillNet(**net_kwargs(c))
         self.net.load_state_dict(ck["model"])
         self.net.use_imagery = self.net.use_imagery and imagery      # False: imagery modality removed (M4)
         # Imagery only at these sites (None: every site with a Clay store). Defaults to the list the checkpoint was
@@ -75,19 +60,11 @@ class FluxFill:
         self.gen = torch.Generator(device=device).manual_seed(seed)
         self._img = {}
         self._memc = {}
-        self.adapt_steps, self.adapt_lr, self.adapt_batch, self.seed = adapt_steps, adapt_lr, adapt_batch, seed
+        self.seed = seed
         # Gaussian copula in time (sample_copula): JSON {variable: [w, L_slow, L_fast], "_default": [...]}; off if None.
         self.copula = json.load(open(copula)) if copula else None
         self._copula_calls = 0
         self.use_flow = bool(c.get("flow", False))
-        self.adapt_row_w = None                                  # per-variable loss weight during adaptation
-        if adapt_row_weight:
-            rw = torch.ones(V_TAB, device=device)
-            for k, v in adapt_row_weight.items():
-                rw[VARS.index(k)] = float(v)
-            self.adapt_row_w = rw
-        self._base = {k: v.detach().clone() for k, v in self.net.state_dict().items()} if adapt_steps else None
-        self._adapted = None
 
     # ------------------------------------------------------------------------------------------------ inputs
     @staticmethod
@@ -120,7 +97,8 @@ class FluxFill:
         mem = self.memory(w, context) if self.net.memory else None
         return {**mem_arrays(mem), "z": z, "obs": meas.reshape(V_TAB, WINDOW_DAYS, K), "present": present,
                 "img_cls": cls, "img_meta": meta, "img_obs": has, "img_present": np.array(img is not None and has.any()),
-                "doy": doy_features(w.start), "site": site_features(lat, lon, elev)}
+                "doy": doy_features(w.start), "site": site_features(lat, lon, elev), "time": time_features(w.start),
+                "sun": sun_features(w.start, WINDOW_DAYS, lat, lon, off)}
 
     def utc_offset(self, context: Dict, site: str = "") -> float:
         """Local standard time minus UTC (hours) from the context table, else from the site table (the R3 regime
@@ -147,72 +125,6 @@ class FluxFill:
             self._memc = {key: f(rec.values, rec.t0, self.stats, w.start)}
         return self._memc[key]
 
-    def adapt(self, w, ex: Dict, context: Dict):
-        """E36: fine-tune on the site's own data (see the module docstring), from the trained weights, once per set of
-        visible values: a window filled under two masks is adapted twice, so that weights adapted under one mask never
-        fill another mask whose hidden values they saw. Each step's batch draws from the context years (180-day windows
-        of the other years, when the record has any) and from the target window itself, with a fresh training mask over
-        its visible values as targets (the mask's hidden values stay hidden and never enter the loss)."""
-        key = self.adapt_key(w, ex)
-        if key == self._adapted:
-            return
-        self.net.load_state_dict(self._base)
-        self._adapted = key
-        import masking
-        from sampler import WindowSampler, collate
-        from train import losses
-        smp = None
-        tab = context.get("table") if context else None
-        if tab is not None and len(tab):
-            rec = record_from_table(tab, w.site, self.sites)
-            if rec.n_days < WINDOW_DAYS:            # a context shorter than one window: pad with unmeasured days
-                pad = WINDOW_DAYS * K - rec.values.shape[1]
-                rec.values = np.concatenate([rec.values, np.full((rec.values.shape[0], pad), np.nan, np.float32)], 1)
-            smp = WindowSampler({w.site: rec}, [w.site], self.stats, {w.site: self._img.get(w.site)}, train=False,
-                                memory=self.net.memory, memory_skew=self.net.memory_skew)
-            smp = smp if smp.sites else None
-        rng = np.random.default_rng(self.seed + zlib.crc32("/".join(key[:2]).encode()))
-        opt = torch.optim.AdamW(self.net.parameters(), lr=self.adapt_lr, weight_decay=0.0, betas=(0.9, 0.98))
-        self.net.train()
-        n_ctx = self.adapt_batch // 2 if smp is not None else 0
-        with torch.enable_grad():
-            for _ in range(self.adapt_steps):
-                exs = [smp.draw(rng) for _ in range(n_ctx)]
-                exs += [self._self_example(ex, rng, masking) for _ in range(self.adapt_batch - n_ctx)]
-                b = collate([e for e in exs if e is not None] or [self._self_example(ex, rng, masking, force=True)],
-                            self.device)
-                with torch.autocast("cuda", dtype=torch.bfloat16):
-                    L = losses(self.net, b, self.use_flow, row_w=self.adapt_row_w)
-                opt.zero_grad(set_to_none=True)
-                L["total"].backward()
-                torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1.0)
-                opt.step()
-        self.net.eval()
-        print(f"adapt {key}: {self.adapt_steps} steps, context starts "
-              f"{len(smp.starts[w.site]) if smp is not None else 0}, last loss {float(L['total']):.3f}", file=sys.stderr)
-
-    @staticmethod
-    def adapt_key(w, ex: Dict):
-        """Identity of the adapted weights: the window and exactly which of its values and acquisitions are visible."""
-        seen = np.packbits(ex["obs"]).tobytes() + np.packbits(ex["img_obs"]).tobytes()
-        return w.site, str(w.start.date()), zlib.crc32(seen)
-
-    @staticmethod
-    def _self_example(ex: Dict, rng, masking, force: bool = False):
-        """A training example from the target window: a fresh training mask over its visible values."""
-        obs = ex["obs"].reshape(V_TAB, -1)
-        for _ in range(20 if not force else 200):
-            hide, _, fam = masking.draw(rng, obs.any(1), masking.MaskConfig())
-            tm = obs & hide
-            if tm.any():
-                break
-        else:
-            return None
-        sh = ex["obs"].shape
-        tm, keep = tm.reshape(sh), (obs & ~hide).reshape(sh)
-        return {**ex, "z": np.where(keep, ex["z"], 0.0).astype(np.float32), "obs": keep, "tgt": ex["z"], "tmask": tm,
-                "img_tgt_cls": ex["img_cls"], "img_tgt": np.zeros(ex["img_obs"].shape, bool), "family": fam}
-
     def _batch(self, ex, n):
         return {k: torch.as_tensor(np.array(v), device=self.device)[None].expand(n, *v.shape).clone()
                 for k, v in ex.items()}
@@ -221,8 +133,6 @@ class FluxFill:
     @torch.no_grad()
     def predict(self, w, mask: np.ndarray, context: Dict) -> np.ndarray:
         ex = self.example(w, context)
-        if self.adapt_steps:
-            self.adapt(w, ex, context)
         rows, pos = self.window_rows(w)
         hide = np.zeros((V_TAB, mask.shape[1]), bool)
         hide[rows] = mask[pos]
@@ -239,15 +149,27 @@ class FluxFill:
         """Exact PIT F(y) of `values` (the window's rows, raw units) under the predictive distribution of the last
         `predict` call (marginal mode only; NaN in joint mode, whose flow samples have no closed-form CDF). The runner
         calls it after `predict` has returned, with the truth, to score coverage exactly."""
-        if self.mode != "marginal" or getattr(self, "_last", None) is None:
-            return np.full(values.shape, np.nan)
+        if self.mode != "marginal" or getattr(self, "_last", None) is None or self.net.fgn:
+            return np.full(values.shape, np.nan)            # FGN gives samples: no closed-form CDF
         rows, pos, params = self._last
         out = np.full(values.shape, np.nan)
-        z = (values[pos] - self.stats.mean[rows, None]) / self.stats.std[rows, None]
+        z = self.stats.norm(values[pos], rows)
         out[pos] = mixture_cdf([u[rows] for u in params], z)
         return out
 
+    def sample_members(self, ex) -> np.ndarray:
+        """FGN: n forward passes, each with one noise vector for the whole window; (S, V_TAB, T), standardised."""
+        out = []
+        for i in range(0, self.n, self.chunk):
+            k = min(self.chunk, self.n - i)
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                out.append(self.net(self._batch(ex, k))[1][0].float().cpu().numpy())
+        self._params_last = None
+        return np.concatenate(out).reshape(self.n, V_TAB, -1)
+
     def sample_marginal(self, ex) -> np.ndarray:
+        if self.net.fgn:
+            return self.sample_members(ex)
         b = self._batch(ex, 1)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             _, params = self.net(b)
@@ -267,6 +189,8 @@ class FluxFill:
         from scipy import signal, stats
         rng = np.random.default_rng(self.seed + self._copula_calls)
         self._copula_calls += 1
+        if len(params) == 1:                                                        # quantile head: (V, T, Q)
+            return self._copula_quantiles(params[0], rng)
         V = params[0].shape[0]
         C = params[3].shape[-1] if len(params) == 4 else 1                           # mixture components
         T = params[0].size // (V * C)
@@ -295,6 +219,28 @@ class FluxFill:
         else:
             loc, scale, df = (x[None, ..., 0] for x in p)
         return (loc + scale * stats.t.ppf(u, df)).astype(np.float32)
+
+    def _copula_quantiles(self, q, rng):
+        from scipy import signal, stats
+        V, Q = q.shape[0], q.shape[-1]
+        T = q.size // (V * Q)
+        q = q.reshape(V, T, Q)
+        t = np.array(QUANTILE_KNOTS)
+        out = np.empty((self.n, V, T), np.float32)
+        for v in range(V):
+            w, ls, lf = self.copula.get(VARS[v], self.copula["_default"])
+            g = 0.0
+            for wt, L in ((w, ls), (1.0 - w, lf)):
+                r = math.exp(-1.0 / max(L, 1e-6))
+                a, _ = signal.lfilter([math.sqrt(1 - r * r)], [1.0, -r], rng.standard_normal((self.n, T)), axis=-1,
+                                      zi=r * rng.standard_normal((self.n, 1)))
+                g = g + math.sqrt(wt) * a
+            u = np.clip(stats.norm.cdf(g), 1e-7, 1 - 1e-7)
+            i = np.clip(np.searchsorted(t, u), 1, Q - 1)
+            lo = q[v, np.arange(T)[None], i - 1]
+            hi = q[v, np.arange(T)[None], i]
+            out[:, v] = lo + (hi - lo) * (u - t[i - 1]) / (t[i] - t[i - 1])
+        return out
 
     def sample_joint(self, ex, hide: np.ndarray) -> np.ndarray:
         out = []

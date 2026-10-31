@@ -1,7 +1,6 @@
 """Figure 1 of the FluxFill report: one real validation window (US-YK2, from 2019-07-15) with part of every
-reconstructed modality hidden (left), the network (centre), the reconstruction on the same axes (right), test-time
-site adaptation as an unrolled recurrence over the weights, the predictive distribution inside the outage, and the
-table of all methods.
+reconstructed modality hidden (left), the network (centre), the reconstruction on the same axes (right), the
+predictive distribution inside the outage, and the table of all methods.
 
 Inputs: the final FluxFill on this window under one mask (bench/dashboard/report/fig1_all.npz, report_fig1_data.py),
 the raw samples of FluxFill and the established methods' fills of the benchmark's 30-day mask (samples/,
@@ -26,8 +25,7 @@ R = Path("/home/photon/4tb/fluxfill")
 REP = R / "bench" / "dashboard" / "report"
 SITE, START, KEY, LAT, LON = "US-YK2", "2019-07-15", "US-YK2_2019-07-15", 61.2548, -163.259
 MASK = "M2: 30 d, all tower channels"
-C = {"flux": "#1d4466", "met": "#6b6f2e", "era": "#8a9a3a", "img": "#6e1f3f", "mem": "#1e2a35", "loc": "#4a5a7a",
-     "adapt": "#8a5a00"}
+C = {"flux": "#1d4466", "met": "#6b6f2e", "era": "#8a9a3a", "img": "#6e1f3f", "mem": "#1e2a35", "loc": "#4a5a7a"}
 INK, GREY, SHADE = "#1e2a35", "#6b6f76", "#f1efe6"
 TOP_C = "#eb6834"                      # the best established method on this window
 NAMES = {"climatology": "Climatology", "mds": "MDS", "irvin_rf": "RF ensemble", "liu_xgb": "XGBoost", "saits": "SAITS"}
@@ -72,7 +70,7 @@ def circle(fig, x, y, r, **kw):
 
 
 def line(fig, xs, ys, color, lw=0.8):
-    fig.add_artist(Line2D(xs, ys, color=color, lw=lw, transform=fig.transFigure, solid_capstyle="butt"))
+    fig.add_artist(Line2D(xs, ys, color=color, lw=lw, transform=fig.transFigure, solid_capstyle="projecting"))
 
 
 def box(fig, x, y, w, h, fc, ec, lw=0.8, r=0.01):
@@ -376,7 +374,6 @@ def figure1(out: Path, vals: dict):
     arrow(fig, (XC, yt), (XC, gy1 + gh + 0.02), INK, lw=0.7)
     fig.text(XC + 0.018, (gy2 + gy3 + 0.016) / 2, "×10", fontsize=7, ha="left", va="center", fontweight="bold", color=INK)
     fig.text(XC, y_lo + 0.03, "28.1 M parameters", fontsize=5.2, ha="center", color=GREY)
-    fig.text(XC, y_lo + 0.012, r"$\theta$", fontsize=8, ha="center", color=C["adapt"])
     # heads
     for k in ("flux", "met", "era", "img"):
         yk = centers[k][0]
@@ -386,36 +383,6 @@ def figure1(out: Path, vals: dict):
         if len(centers[k]) == 3:
             line(fig, [R0 - 0.004] * 2, [centers[k][1], centers[k][2]], C[k], lw=0.6)
 
-    # ---------------------------------------------------------------- site adaptation: unrolled recurrence over the weights
-    yb1 = bottom - 0.03
-    yb0 = yb1 - 0.072
-    box(fig, L0, yb0, R1 - L0, yb1 - yb0, "#fbf8f1", C["adapt"], lw=0.8, r=0.008)
-    fig.text(L0 + 0.01, yb0 + 0.011, "SITE ADAPTATION, 300 STEPS PER WINDOW", color=C["adapt"], **MONO, va="center")
-    fig.text(R1 - 0.01, yb0 + 0.011, "each step: a new mask over visible values and other years", fontsize=5.2, ha="right",
-             va="center", color=GREY)
-    cells = [r"$\theta^\star$", r"$\theta_1$", r"$\theta_2$", r"$\cdots$", r"$\theta_{299}$", r"$\theta_w$"]
-    xs_c = np.linspace(L0 + 0.06, R1 - 0.06, len(cells))
-    yc_ = yb0 + 0.041
-    rc = 0.016
-    for i, lab in enumerate(cells):
-        if lab != r"$\cdots$":
-            circle(fig, xs_c[i], yc_, rc, fc="white", ec=C["adapt"], lw=0.9)
-        fig.text(xs_c[i], yc_, lab, fontsize=6.2, ha="center", va="center", color=C["adapt"])
-        if i < len(cells) - 1:
-            x0, x1 = xs_c[i] + rc + 0.003, xs_c[i + 1] - rc - 0.003
-            arrow(fig, (x0, yc_), (x1, yc_), C["adapt"], lw=0.9)
-            if r"$\cdots$" not in (lab, cells[i + 1]):
-                fig.text((x0 + x1) / 2, yc_ + 0.004, r"$-\eta\nabla_\theta\mathcal{L}_w$", fontsize=5.4, ha="center",
-                         va="bottom", color=C["adapt"])
-    yr = (y_lo + yb1) / 2                                    # weights in and out of the network, on one routing line
-    xa, xb_ = XC - 0.035, XC + 0.035
-    line(fig, [xa, xa], [y_lo, yr], C["adapt"], lw=0.9)
-    line(fig, [xs_c[0], xa], [yr, yr], C["adapt"], lw=0.9)
-    arrow(fig, (xs_c[0], yr), (xs_c[0], yc_ + rc * ASPECT), C["adapt"], lw=0.9)
-    line(fig, [xs_c[-1], xs_c[-1]], [yc_ + rc * ASPECT, yr], C["adapt"], lw=1.2)
-    line(fig, [xb_, xs_c[-1]], [yr, yr], C["adapt"], lw=1.2)
-    arrow(fig, (xb_, yr), (xb_, y_lo), C["adapt"], lw=1.2)
-
     # ---------------------------------------------------------------- d: inside the outage, half-hourly
     i_n, i_c = keys.index("NEE"), keys.index("FCH4")
     a, b = spans["flux"]
@@ -423,7 +390,7 @@ def figure1(out: Path, vals: dict):
     best = max(range(0, (b - a) // 48 - 2), key=lambda d: min(yn[a + d * 48:a + (d + 3) * 48].sum(), ycf[a + d * 48:a + (d + 3) * 48].sum()))
     z0 = a + best * 48; z1 = z0 + 3 * 48
     tt = np.arange(8640) / 48
-    yd1 = yb0 - 0.05
+    yd1 = bottom - 0.05
     yd0 = yd1 - 0.085
     pw = (R1 - L0 - 2 * 0.05) / 3
     for i, k in enumerate(("NEE", "FCH4")):
@@ -484,7 +451,7 @@ def figure1(out: Path, vals: dict):
             ("saits", "SAITS", "self-attention imputer"),
             ("csdi", "CSDI", "score-based diffusion"),
             ("chronos2", "Chronos-2", "pretrained forecaster"),
-            ("fluxfill", "FluxFill", "DeepEarth + site adaptation")]
+            ("fluxfill", "FluxFill", "DeepEarth network")]
     best = {v: min((tab[m][v] for m in tab if v in tab[m]), default=None) for v in ("NEE", "LE", "H", "FCH4")}
     for i, (m, name, model) in enumerate(meth):
         yy = y0 - 0.0125 - i * 0.0105

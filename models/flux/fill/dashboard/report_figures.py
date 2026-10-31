@@ -310,47 +310,6 @@ def fig5(out: Path, fr: dict, vals: dict):
     save(fig, out, "fig5.svg")
 
 
-def fig6(out: Path, vals: dict):
-    """Site adaptation on the 24 validation windows: settings, and the change at each tower."""
-    V = BENCH / "val" / "parts"
-    arms = [("fluxfill-v3.m2", "No adaptation"), ("fluxfill-v3-a120", "120 steps, lr 1e-4"),
-            ("fluxfill-v3-a300", "300 steps, lr 1e-4"), ("fluxfill-v3-a300lr3p", "300 steps, lr 3e-4"),
-            ("fluxfill-v3-a300lr3p-w4", "+ FCH4 weight 4"), ("fluxfill-48k-a300lr3p-w4", "+ 48,000 training steps")]
-    arms = [(f, l) for f, l in arms if (V / f"{f}.parquet").exists()]
-    fr = {l: load([V / f"{f}.parquet"]) for f, l in arms}
-    fr = {l: f[f.family.str.startswith("M2")] for l, f in fr.items()}
-    mt = matched(fr)
-    base = mt[arms[0][1]]
-    fig, axs = plt.subplots(1, 2, figsize=(7.2, 2.6), gridspec_kw={"width_ratios": [1.5, 1]})
-    ax = axs[0]
-    width = 0.8 / (len(arms) - 1)
-    grey = ["#d0d0d0", "#a8a8a8", "#808080", "#555555", "#000000"]
-    for j, (f, l) in enumerate(arms[1:]):
-        ch = []
-        for v in FLUXES + [None]:
-            sel = (lambda d: d[d.variable == v]) if v else (lambda d: d)
-            ch.append(100 * (agg(sel(mt[l]))["crps"] / agg(sel(base))["crps"] - 1))
-        ax.bar(np.arange(5) + (j - (len(arms) - 2) / 2) * width, ch, width=width * 0.92, color=grey[j % 5], label=l)
-        vals[f"adapt_{f}"] = {k: f"{-c:.1f}" for k, c in zip(FLUXES + ["all"], ch)}   # reduction, %
-    ax.axhline(0, color="black", lw=0.6)
-    ax.set_xticks(range(5)); ax.set_xticklabels(FLUXES + ["All variables"])
-    ax.set_ylabel("CRPS change against no adaptation (%)"); ax.legend(loc="lower left", fontsize=6, ncol=2)
-    ax = axs[1]
-    fin = arms[-1][1]
-    sites = sorted(base.site.unique())
-    ch = [100 * (agg(mt[fin][mt[fin].site == s])["crps"] / agg(base[base.site == s])["crps"] - 1) for s in sites]
-    order = np.argsort(ch)
-    ax.barh(range(len(sites)), np.array(ch)[order], color="#000000", height=0.65)
-    ax.set_yticks(range(len(sites))); ax.set_yticklabels(np.array(sites)[order], fontsize=6.5)
-    ax.axvline(0, color="black", lw=0.6); ax.set_xlabel("CRPS change at each tower (%)")
-    ax.set_title(f"{fin} against no adaptation", fontsize=7)
-    vals["adapt_tower_range"] = f"{min(ch):.1f}% to {max(ch):.1f}%".replace("-", "−")
-    for i, ax in enumerate(axs):
-        ax.text(-0.12 if i == 0 else -0.3, 1.05, "ab"[i], transform=ax.transAxes, fontweight="bold", fontsize=10)
-    fig.tight_layout()
-    save(fig, out, "fig6.svg")
-
-
 def fig7(out: Path, vals: dict):
     """Validation CRPS during training for the model sizes and lengths that were trained in full."""
     runs = [("v2-final", "Width 192, depth 6, 24,000 steps", "#a8a8a8"),
@@ -462,7 +421,7 @@ def table_methods(timing: dict) -> str:
             ("saits", "Self-attention imputation [[Du2023]]", "All tower and reanalysis rows", "Dropout samples", "Training towers"),
             ("csdi", "Conditional score-based diffusion [[Tashiro2021]]", "All tower and reanalysis rows", "Diffusion samples", "Training towers"),
             ("chronos2", "Pretrained time-series foundation model [[Ansari2025]]", "Each series with covariates", "Quantiles", "Pretrained"),
-            ("fluxfill", "DeepEarth network with test-time site adaptation (this work)", "Tower, reanalysis, Sentinel-2 (Clay), site memory", "Joint samples", "Training towers, then 300 steps per window")]
+            ("fluxfill", "DeepEarth network (this work)", "Tower, reanalysis, Sentinel-2 (Clay), site memory", "Samples", "Training towers")]
     h = ['<div class="table-wrap"><table class="rep-table"><thead><tr><th>Method</th><th>Model</th><th>Inputs</th>'
          '<th>Uncertainty</th><th>Fitted on</th><th class="num">Seconds per mask</th></tr></thead><tbody>']
     for m, model, inp, unc, fit in rows:
@@ -521,24 +480,22 @@ def table_ablation(vals: dict) -> str:
 
 
 def methane_v2(vals: dict):
-    """Split v2 (18 methane validation towers, 102 methane windows): the network retrained on split v2, with and
-    without site adaptation, against climatology, MDS, the RF ensemble and XGBoost on matched M2 cells."""
+    """Split v2 (18 methane validation towers, 102 methane windows): the network retrained on split v2 against
+    climatology, MDS, the RF ensemble and XGBoost on matched M2 cells."""
     import glob
     V = BENCH / "val"
-    if not (V / "fch4v2_parts" / "fluxfill-s2-a300.parquet").exists():
-        return
     fr = {"climatology": load([V / "fch4v2_parts" / "climatology.parquet"]), "mds": load([V / "fch4v2_parts" / "mds.parquet"]),
           "irvin_rf": load(sorted(glob.glob(str(V / "fch4v2_win" / "irvin_rf" / "*.parquet")))),
           "liu_xgb": load(sorted(glob.glob(str(V / "fch4v2_win" / "liu_xgb" / "*.parquet")))),
-          "a0": load([V / "fch4v2_parts" / "fluxfill-s2-a0.parquet"]), "fluxfill": load([V / "fch4v2_parts" / "fluxfill-s2-a300.parquet"])}
+          "fluxfill": load([V / "fch4v2_parts" / "fluxfill-s2-a0.parquet"])}
     fr = {m: f[f.variable.isin(FLUXES) & f.family.str.startswith("M2")] for m, f in fr.items()}
     mt = matched(fr)
     vals["v2_windows"] = mt["fluxfill"][["site", "window"]].drop_duplicates().shape[0]
     for v in FLUXES:
         sc = {m: agg(f[f.variable == v]) for m, f in mt.items()}
-        base = min((m for m in sc if m not in ("fluxfill", "a0")), key=lambda m: sc[m]["crps"])
+        base = min((m for m in sc if m != "fluxfill"), key=lambda m: sc[m]["crps"])
         vals[f"v2_{v}"] = {"cmp": cmp(sc["fluxfill"]["crps"], sc[base]["crps"], 1), "base": NAMES[base],
-                           "a0_cmp": cmp(sc["a0"]["crps"], sc[base]["crps"], 1), "cov95": f"{sc['fluxfill']['cov95']:.3f}",
+                           "a0_cmp": cmp(sc["fluxfill"]["crps"], sc[base]["crps"], 1), "cov95": f"{sc['fluxfill']['cov95']:.3f}",
                            "base_cov95": f"{sc[base]['cov95']:.3f}"}
 
 
@@ -549,8 +506,7 @@ def main():
     vals, tables = {}, {}
     fr, final = test_frames()
     vals["test_final"] = final
-    vals["test_model"] = ("the final model (48,000 training steps, site adaptation)" if final else
-                          "the model of 24,000 training steps without site adaptation, scored before site adaptation was developed")
+    vals["test_model"] = "the network trained for 48,000 steps" if final else "the network trained for 24,000 steps"
     mt = matched(fr)                                 # Figure 1e: CRPS of every method scored on all test windows
     vals["fig1_table"] = {m: {v: agg(f[f.variable == v])["crps"] for v in FLUXES} for m, f in mt.items()}
     from report_fig1 import KEY, figure1            # Figure 1 of the report (fig0.svg), once its exports exist
@@ -562,7 +518,6 @@ def main():
     fig3(out, fr, vals)
     fig4(out, vals)
     fig5(out, fr, vals)
-    fig6(out, vals)
     fig7(out, vals)
     fig8(out, fr, vals)
     methane_v2(vals)
