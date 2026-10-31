@@ -17,9 +17,9 @@ SIZE_STEPS = (2000, 4000, 6000)
 # The decision on a component, by the rule of the study: adopted only when it holds on a second seed.
 DECISIONS = {"var_mean": "Adopted", "gate": "Adopted", "mot_all": "Adopted in the combination; alone FCH4 differs by seed",
              "mot_ffn": "No gain", "rope_half": "No gain", "tttv": "No gain", "asinh": "Rejected", "fgn": "Rejected: coverage",
-             "swiglu": "Adopted", "quantile": "Second seed queued", "rmsnorm": "No gain", "plr": "No gain",
+             "swiglu": "Adopted", "quantile": "Holds on CRPS; NEE differs by seed; combination decides", "rmsnorm": "No gain", "plr": "No gain",
              "time_prithvi": "No gain", "time_sinr": "No gain", "solar": "No gain", "ema": "No gain",
-             "combo": "Adopted", "combo2": "Adopted; lowest so far", "combo_nomemch4": "One seed; no gain over the combination", "memory": "Kept", "imagery": "One seed; no effect at this size",
+             "combo": "Adopted", "combo2": "Adopted; lowest so far", "combo_nomemch4": "No gain", "memory": "Kept", "imagery": "One seed; no effect at this size",
              "site": "One seed; no effect"}
 # Combinations of the additions above: (key, label); their runs are named as components are.
 COMBOS = [("combo", "Combination: per-variable loss, per-modality weights, attention gate"),
@@ -97,7 +97,7 @@ def story(d: dict) -> str:
         out.append(f"Withholding memory from FCH4 alone changes FCH4 by {r['FCH4']:+.1f}% against {c['FCH4']:+.1f}% for the same combination with memory ({seeds(r)}).")
     if "imagery" in rows:
         r = rows["imagery"]
-        out.append(f"Removing the Sentinel-2 embeddings changes overall CRPS by {r['crps']:+.1f}% on {seeds(r)} at width 192 and {d['step']:,} steps, "
+        out.append(f"Removing the Sentinel-2 embeddings changes overall CRPS by {abs(r['crps']):.1f}% on {seeds(r)} at width 192 and {d['step']:,} steps, "
                    "so this study has not yet measured a gain from imagery.")
     return " ".join(out)
 

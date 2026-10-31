@@ -1,6 +1,11 @@
 [
  {
   "date": "2026-10-31",
+  "title": "Component study: quantile head and methane memory.",
+  "text": "The quantile head lowers overall CRPS by 2.3% and 2.0% and FCH4 by 19.9% and 13.7% on two seeds, and NEE moves by -0.5% and +2.5%, so the combination with SwiGLU decides. Withholding site memory from FCH4 adds no gain on two seeds. Validation in this study scored only blocks of 1 to 180 days, so new runs also score the 2-hour, 6-hour, M1 and M5 forms where other methods lead, with a half-hourly read and these mask forms in training."
+ },
+ {
+  "date": "2026-10-31",
   "title": "Full review of every tab.",
   "text": "Report Table 2 and Fig. 1 now include the deep ensemble, which earlier builds left out. The Benchmark tab now lists families M1 to M5 as released, the scores actually computed and the test coverage of each method. Windows notes no longer describe site adaptation, removed on 30 October, and name the model shown. The report no longer states inference times: the runtime benchmark has not run. Discussion and Results sentences now state where FluxFill does not lead."
  },

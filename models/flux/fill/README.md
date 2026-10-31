@@ -251,7 +251,7 @@ seed.
 | RMSNorm (Timestral) | 1 | +0.2 % | +0.1 % | +0.8 % | −0.2 % | −10.1 % | 0.0 % | No gain |
 | SwiGLU (Timestral) | 2 | −3.1 % | −0.6 % | −1.5 % | −2.3 % | −3.5 % | +0.3 % | Adopted |
 | Time-heavy schedule (Timestral) | 1 | +1.2 % | −0.4 % | +0.3 % | +0.7 % | −3.9 % | +0.2 % | No gain |
-| Quantile head (Timestral) | 1 | −2.3 % | −0.5 % | −2.5 % | −2.1 % | −19.9 % | +0.2 % | Second seed queued |
+| Quantile head (Timestral) | 2 | −2.2 % | +1.0 % | −2.0 % | −2.0 % | −16.8 % | +0.5 % | Holds on CRPS; NEE differs by seed; combination decides |
 | Asinh scaling (Timestral) | 1 | +3.4 % | +5.1 % | +1.3 % | +2.4 % | −5.1 % | −0.4 % | Rejected |
 | Fair CRPS and shared noise (FGN) | 1 | +6.9 % | −0.2 % | −0.2 % | +4.4 % | −13.1 % | −9.4 % | Rejected: coverage |
 | Periodic value embeddings (PLR) | 1 | −0.3 % | +0.6 % | +0.4 % | +0.3 % | −8.0 % | +0.2 % | No gain |
@@ -261,7 +261,7 @@ seed.
 | Weight EMA (EDM2) | 1 | −0.5 % | −0.7 % | −0.7 % | +0.4 % | −0.5 % | −0.6 % | No gain |
 | Combination: per-variable loss, per-modality weights, attention gate | 2 | −1.4 % | −2.3 % | −2.4 % | −2.6 % | −16.8 % | +0.2 % | Adopted |
 | The combination with SwiGLU | 2 | −4.1 % | −3.7 % | −4.1 % | −3.5 % | −19.7 % | −0.3 % | Adopted; lowest so far |
-| The combination with no site memory on FCH4 | 1 | −0.5 % | −2.7 % | −1.6 % | −2.4 % | −19.7 % | +0.8 % | One seed; no gain over the combination |
+| The combination with no site memory on FCH4 | 2 | −1.3 % | −1.8 % | −1.6 % | −2.4 % | −16.0 % | +0.4 % | No gain |
 
 The per-variable loss works because a plain mean over hidden cells gives FCH4 the weight of its 0.4 % share of tower
 values. The sizes differ as well: width 640, depth 16 (167,004,569 parameters) has not passed width 320, depth 10 at
