@@ -260,8 +260,10 @@ class FluxFill:
         from scipy import signal, stats
         rng = np.random.default_rng(self.seed + self._copula_calls)
         self._copula_calls += 1
-        V, T = params[0].shape[0], params[0].shape[1] * params[0].shape[2]
-        p = [u.reshape(V, T, -1) for u in params]                                     # (V, T, C)
+        V = params[0].shape[0]
+        C = params[3].shape[-1] if len(params) == 4 else 1                           # mixture components
+        T = params[0].size // (V * C)
+        p = [np.asarray(u).reshape(V, T, C) for u in params]                          # (V, T, C)
 
         def field():
             g = np.empty((self.n, V, T))

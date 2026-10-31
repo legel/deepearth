@@ -800,3 +800,16 @@ def test_copula_keeps_marginals_and_correlates_in_time():
     assert stats.kstest(pvals, "uniform").pvalue > 0.01
     z = (x[:, 0] - x[:, 0].mean(0)) / x[:, 0].std(0)
     assert np.corrcoef(z[:, 10], z[:, 11])[0, 1] > 0.6
+
+
+def test_copula_layout_of_the_head():
+    """sample_copula takes the head parameters as predict stores them, (V, T, C) with T = 8640, and returns (S, V, T)."""
+    from method import FluxFill
+    f = FluxFill.__new__(FluxFill)
+    f.n, f.seed, f._copula_calls, f.copula = 4, 0, 0, {"_default": [0.2, 1500.0, 1.5]}
+    V, T, C = 3, 8640, 2
+    rng = np.random.default_rng(0)
+    x = f.sample_copula((rng.normal(size=(V, T, C)), np.ones((V, T, C)), np.full((V, T, C), 5.0), np.zeros((V, T, C))))
+    assert x.shape == (4, V, T)
+    x1 = f.sample_copula((rng.normal(size=(V, T)), np.ones((V, T)), np.full((V, T), 5.0)))
+    assert x1.shape == (4, V, T)
