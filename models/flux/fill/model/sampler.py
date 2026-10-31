@@ -9,6 +9,7 @@ One example holds, for the 22 tabular rows (V) and 180 days (D) of 48 half-hours
 - `doy` (D, 4) and `site` (4,) features.
 """
 
+import os
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -17,7 +18,7 @@ import pandas as pd
 import torch
 
 import masking
-from data import (STEPS_PER_DAY, V_TAB, WINDOW_DAYS, SiteRecord, Stats, doy_features, site_features, time_features,
+from data import (STEPS_PER_DAY, V_TAB, VARS, WINDOW_DAYS, SiteRecord, Stats, doy_features, site_features, time_features,
                   valid_starts, window_tokens, window_values)
 from imagery import N_META, SiteImagery, window_imagery
 from solar import sun_features
@@ -47,6 +48,10 @@ def make_example(rec: SiteRecord, start_day: int, stats: Stats, hide: np.ndarray
     }
 
 
+# Rows given no site memory (FLUXFILL_NO_MEMORY, comma-separated names): the network treats them as new to the tower.
+NO_MEMORY = [VARS.index(v) for v in os.environ.get("FLUXFILL_NO_MEMORY", "").split(",") if v]
+
+
 def mem_arrays(mem) -> Dict[str, np.ndarray]:
     if mem is None:
         z = np.zeros((V_TAB, WINDOW_DAYS, STEPS_PER_DAY), np.float32)
@@ -55,8 +60,10 @@ def mem_arrays(mem) -> Dict[str, np.ndarray]:
         m, s_, k, h = mem
     else:
         (m, s_, h), k = mem, np.zeros(np.shape(mem[0]), np.float32)
+    h = np.array(h, bool)
+    h[NO_MEMORY] = False
     return {"mem_m": np.asarray(m, np.float32), "mem_s": np.asarray(s_, np.float32), "mem_k": np.asarray(k, np.float32),
-            "mem_h": np.asarray(h, bool)}
+            "mem_h": h}
 
 
 class WindowSampler:

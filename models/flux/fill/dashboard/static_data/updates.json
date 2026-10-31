@@ -1,6 +1,11 @@
 [
  {
   "date": "2026-10-31",
+  "title": "Component study: SwiGLU adopted; first input removals.",
+  "text": "SwiGLU lowers overall CRPS by 2.8% and 3.4% on two seeds and is adopted. Removing site memory raises overall CRPS by 15.3% and NEE by 20.6%, and lowers FCH4 by 19.1% on one seed, so the combination with no site memory on FCH4 is now running on two seeds. Removing the Sentinel-2 Clay embeddings or the location features changes overall CRPS by 0.2% or less on one seed at width 192 and 8,000 steps."
+ },
+ {
+  "date": "2026-10-31",
   "title": "Component study: first combination holds on two seeds.",
   "text": "The per-variable loss, per-modality weights and attention gate together, against the control of the same seed at 8,000 steps: overall CRPS -1.0% and -1.9%, NEE -3.1% and -1.5%, LE -2.2% and -2.5%, H -2.8% and -2.4%, FCH4 -18.1% and -15.5%, with 95% coverage 0.953 and 0.954. All four fluxes gain on both seeds, and the FCH4 instability of per-modality weights alone is gone. The combination is adopted. Solar geometry and the weight EMA show no gain. Combinations with SwiGLU and the quantile head are running."
  },
