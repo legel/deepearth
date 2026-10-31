@@ -136,3 +136,5 @@ version, commit, access date and checksum of what it used.
   doi:10.1175/1525-7541(2004)005<0243:TSSAMF>2.0.CO;2
 - Kingma, D. P. and Ba, J. (2015). Adam: a method for stochastic optimization. *ICLR*. arXiv:1412.6980
 - Loshchilov, I. and Hutter, F. (2019). Decoupled weight decay regularization. *ICLR*. arXiv:1711.05101
+- Cole, E. et al. (2023). Spatial implicit neural representations for global-scale species mapping. *ICML*.
+  arXiv:2306.02564

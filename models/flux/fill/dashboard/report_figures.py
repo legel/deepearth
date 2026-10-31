@@ -137,6 +137,10 @@ def fig1(out: Path, vals: dict):
     vals["gap_share_ge30d"] = f"{share[labels.index('30 d'):].sum():.0f}"
     vals["outage_n"] = f"{o['n']:,}"; vals["outage_tower_years"] = f"{o['tower_years']:,}"
     vals["gap_count_lt1d"] = f"{100 * sum(o['count'][:5]) / sum(o['count']):.0f}"   # bins below 48 half-hours
+    tot = sum(o["halfhours"])                                                       # half-hours inside station outages
+    vals["outage_halfhours_m"] = f"{tot / 1e6:.1f}"
+    vals["outage_years"] = f"{tot / 17520:,.0f}"
+    vals["outage_share"] = f"{100 * tot / (17520 * o['tower_years']):.0f}"
     ax.text(-0.18, 1.04, "b", transform=ax.transAxes, fontweight="bold", fontsize=10)
 
     ax = fig.add_axes([0.55, 0.06, 0.43, 0.33])
@@ -454,7 +458,7 @@ def table_methods(timing: dict) -> str:
             ("saits", "Self-attention imputation [[Du2023]]", "All tower and reanalysis rows", "Dropout samples", "Training towers"),
             ("csdi", "Conditional score-based diffusion [[Tashiro2021]]", "All tower and reanalysis rows", "Diffusion samples", "Training towers"),
             ("chronos2", "Pretrained time-series foundation model [[Ansari2025]]", "Each series with covariates", "Quantiles", "Pretrained"),
-            ("fluxfill", "Masked generative transformer with site adaptation (this work)", "Tower, reanalysis, Sentinel-2 (Clay), site memory", "Joint samples", "Training towers, then 300 steps per window")]
+            ("fluxfill", "DeepEarth network with test-time site adaptation (this work)", "Tower, reanalysis, Sentinel-2 (Clay), site memory", "Joint samples", "Training towers, then 300 steps per window")]
     h = ['<div class="table-wrap"><table class="rep-table"><thead><tr><th>Method</th><th>Model</th><th>Inputs</th>'
          '<th>Uncertainty</th><th>Fitted on</th><th class="num">Seconds per mask</th></tr></thead><tbody>']
     for m, model, inp, unc, fit in rows:
@@ -543,6 +547,8 @@ def main():
     vals["test_final"] = final
     vals["test_model"] = ("the final model (48,000 training steps, site adaptation)" if final else
                           "the model of 24,000 training steps without site adaptation, scored before site adaptation was developed")
+    mt = matched(fr)                                 # Figure 1e: CRPS of every method scored on all test windows
+    vals["fig1_table"] = {m: {v: agg(f[f.variable == v])["crps"] for v in FLUXES} for m, f in mt.items()}
     from report_fig1 import KEY, figure1            # Figure 1 of the report (fig0.svg), once its exports exist
     if (out / "fig1_window_base" / f"{KEY}.json").exists():
         figure1(out, vals)
