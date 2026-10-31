@@ -512,6 +512,28 @@ def table_ablation(vals: dict) -> str:
     return "".join(h)
 
 
+def methane_v2(vals: dict):
+    """Split v2 (18 methane validation towers, 102 methane windows): the network retrained on split v2, with and
+    without site adaptation, against climatology, MDS, the RF ensemble and XGBoost on matched M2 cells."""
+    import glob
+    V = BENCH / "val"
+    if not (V / "fch4v2_parts" / "fluxfill-s2-a300.parquet").exists():
+        return
+    fr = {"climatology": load([V / "fch4v2_parts" / "climatology.parquet"]), "mds": load([V / "fch4v2_parts" / "mds.parquet"]),
+          "irvin_rf": load(sorted(glob.glob(str(V / "fch4v2_win" / "irvin_rf" / "*.parquet")))),
+          "liu_xgb": load(sorted(glob.glob(str(V / "fch4v2_win" / "liu_xgb" / "*.parquet")))),
+          "a0": load([V / "fch4v2_parts" / "fluxfill-s2-a0.parquet"]), "fluxfill": load([V / "fch4v2_parts" / "fluxfill-s2-a300.parquet"])}
+    fr = {m: f[f.variable.isin(FLUXES) & f.family.str.startswith("M2")] for m, f in fr.items()}
+    mt = matched(fr)
+    vals["v2_windows"] = mt["fluxfill"][["site", "window"]].drop_duplicates().shape[0]
+    for v in FLUXES:
+        sc = {m: agg(f[f.variable == v]) for m, f in mt.items()}
+        base = min((m for m in sc if m not in ("fluxfill", "a0")), key=lambda m: sc[m]["crps"])
+        vals[f"v2_{v}"] = {"cmp": cmp(sc["fluxfill"]["crps"], sc[base]["crps"], 1), "base": NAMES[base],
+                           "a0_cmp": cmp(sc["a0"]["crps"], sc[base]["crps"], 1), "cov95": f"{sc['fluxfill']['cov95']:.3f}",
+                           "base_cov95": f"{sc[base]['cov95']:.3f}"}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(BENCH / "dashboard" / "report"))
@@ -533,6 +555,7 @@ def main():
     fig6(out, vals)
     fig7(out, vals)
     fig8(out, fr, vals)
+    methane_v2(vals)
     tables["table_test"] = table_test(fr, vals, final)
     VA = BENCH / "val" / "parts_all"
     vf = {m: load([VA / f"{f}.parquet"], m) for m, f in (("climatology", "climatology"), ("mds", "mds"), ("irvin_rf", "irvin_rf"),
