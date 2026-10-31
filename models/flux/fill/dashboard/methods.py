@@ -504,8 +504,9 @@ def fluxfill_card(model_root: Path, counts: dict) -> dict:
                             "gap. A temporal copula fitted on validation windows couples the samples in time, so "
                             "the half-hourly distributions are unchanged and sums carry the dependence between half-hours.",
                 limits="On FCH4 at validation towers, CRPS, MAE, RMSE, R² and WAPE are behind the per-tower random forest "
-                       "ensemble; at test towers Chronos-2 leads FCH4 at several gap lengths and XGBoost leads the short "
-                       "gaps of M1; FCH4 at sites without FCH4 history remains open.")
+                       "ensemble; at test towers Chronos-2 and the random forest ensemble lead FCH4 at most gap lengths, "
+                       "XGBoost leads the short gaps of M1, Chronos-2 leads LE at 2 and 6 hours and H at 6 hours, and the "
+                       "deep ensemble leads the mixed per-variable gaps of M5 on NEE, LE and H; FCH4 at sites without FCH4 history remains open.")
 
 
 def build(model_root: Path, counts: dict) -> dict:

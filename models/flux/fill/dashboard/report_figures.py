@@ -89,6 +89,7 @@ def test_frames():
           "mds": load([T0 / "mds.parquet", T / "mds_new.parquet"], "mds"),
           "irvin_rf": load([T / "irvin_rf_merged.parquet"], "irvin_rf"),
           "liu_xgb": load([T / "liu_xgb_merged.parquet"], "liu_xgb"),
+          "vekuri_de": load([T / "vekuri_de_merged.parquet"], "vekuri_de"),
           "saits": load([T / "saits_merged.parquet"], "saits"),
           "chronos2": load([T / "chronos2_merged.parquet"], "chronos2")}
     fin = [T / "fluxfill_final_a.parquet", T / "fluxfill_final_b.parquet"]

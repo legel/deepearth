@@ -64,7 +64,7 @@ Masks apply only where the truth is measured. Each family is drawn with a fixed 
 | M2 contiguous blocks | one block per window of length 1 d, 7 d, 30 d, 90 d or 180 d, placed with uniform start over the window; every season covered |
 | M2 sub-daily blocks | one block of 2 h or 6 h on all tower channels, uniform start (release 0.2) |
 | M3 transplanted outages | the real joint missingness pattern of all tower channels from another site-year, applied to this window |
-| M4 modality dropout | one modality fully removed for the whole window: tower meteorology, reanalysis, or Sentinel-2 |
+| M4 modality dropout | one modality fully removed for the whole window; release 0.2 removes reanalysis, together with a 30-day M2 block |
 | M5 mixed | an independent block per tower and reanalysis variable, each with its own placement and a log-uniform length from one half-hour to 90 days, plus one whole modality hidden for the window (tower meteorology, reanalysis or all fluxes, chosen by the seed) (release 0.2) |
 
 M2 and M3 apply to all tower channels together by default: a station outage removes fluxes and meteorology at
@@ -94,6 +94,8 @@ length class (1 half-hour; 2 to 8; 9 to 64; 65 to 576; more than 576 half-hours)
   literature. Pooled over cells: MSE = sum n rmse^2 / sum n; R2 = 1 - sum n rmse^2 / (sum y^2 - (sum y)^2 / N), with
   the truth sums that `bench/run.py` writes per cell (`bench/truth_stats.py` recomputes them for older parts). R2
   and WAPE are reported only on cells a method fills completely.
+- **Not yet computed.** Variability and tails below, and PIT histograms, are specified and not in the results of
+  release 0.2. Release 0.2 scores regime R1 only.
 - **Variability.** Correlation of predicted and true daily anomalies, and of window means across years at one
   site (interannual variability).
 - **Tails.** The 90th percentile of absolute error, and CRPS on the top 5% of |flux| values (CH4 pulses,
@@ -104,10 +106,10 @@ length class (1 half-hour; 2 to 8; 9 to 64; 65 to 576; more than 576 half-hours)
 | method | reference | uncertainty | notes |
 |---|---|---|---|
 | MDS | Reichstein et al. 2005; REddyProc (Wutzler et al. 2018) | spread of similar conditions | the operational standard |
-| RF, XGBoost, ANN, Lasso ensembles | Irvin et al. 2021 | ensemble spread, Platt scaling fitted on validation masks | released harness, `delta` feature corrected |
+| RF ensemble | Irvin et al. 2021 | ensemble spread, Platt scaling fitted on held-out blocks | released harness, `delta` feature corrected |
 | XGBoost with vegetation state | Liu et al. 2025 | none | with Clay embeddings in place of PhenoCam |
 | Deep ensemble, Laplace likelihood | Vekuri et al. 2025 | aleatoric plus epistemic | strongest published uncertainty baseline |
-| SAITS, BRITS, ImputeFormer, CSDI | PyPOTS (Du et al. 2023) | CSDI samples; others point | generic imputers |
+| SAITS, CSDI | PyPOTS (Du et al. 2023) | residual Gaussian; CSDI samples | generic imputers; CSDI covers 21 test windows |
 | Chronos-2 | Ansari et al. 2025 | quantiles | zero-shot with covariates |
 | climatology | site mean diurnal cycle per day of year | empirical spread | floor reference |
 

@@ -460,7 +460,7 @@ def figure1(out: Path, vals: dict):
         fig.text(L0, yy, name, fontsize=5.4, fontweight="bold" if m == "fluxfill" else "normal", color=INK)
         fig.text(0.25, yy, model, fontsize=5.2, color=INK)
         if m not in tab:
-            fig.text(0.88, yy, "pending", fontsize=5.0, ha="right", color="#9aa0a6")
+            fig.text(0.88, yy, "21 windows, not compared", fontsize=5.0, ha="right", color="#9aa0a6")
             continue
         for v, x in cols:
             val = tab[m].get(v)

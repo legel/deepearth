@@ -81,18 +81,18 @@ def status_json(root: Path, sites: dict) -> dict:
     flux_kept = sum(q["final"] for q in bm["qc"] if q["variable"] in ("NEE", "LE", "H", "FCH4"))
     res = overview_results(root)
     val = next((r for r in res if r["view"] == "Validation sites"), None)
-    n_base = len(BASELINE_IDS)
+    n_base = len(BASELINE_IDS) - 1                                         # CSDI covers 21 test windows
     mega = lambda v: f"{v / 1e6:.1f} M"
     tiles = [{"group": "Data", "value": towers, "label": f"towers with measured half-hourly fluxes, of {n} candidates"},
              {"group": "Data", "value": f"{sp['train']['towers']} / {sp['validation']['towers']} / {sp['test']['towers']}",
               "label": "training / validation / test towers"},
              {"group": "Data", "value": sum(v["methane"] for v in sp.values()), "label": "towers measuring methane"},
              {"group": "Data", "value": mega(flux_kept), "label": "flux half-hours after quality control (NEE, LE, H, FCH4)"},
-             {"group": "Data", "value": mega(chips), "label": f"Sentinel-2 chips of 300 m at {done} towers"},
+             {"group": "Data", "value": mega(chips), "label": f"Sentinel-2 chips of 300 m at {clay_sites} towers, complete at {done}"},
              {"group": "Data", "value": clay_sites, "label": "towers with a Clay embedding of every chip"},
              {"group": "Benchmark", "value": bm["test"]["n_windows"], "label": f"test windows of 180 days at {bm['test']['n_sites']} towers"},
              {"group": "Benchmark", "value": mega(bm["test"].get("hidden_total", 0)), "label": "hidden measured values scored at test towers"},
-             {"group": "Benchmark", "value": n_base, "label": "established methods on identical windows and masks"},
+             {"group": "Benchmark", "value": n_base, "label": "established methods on identical test windows and masks; CSDI covers 21 windows and is not compared"},
              {"group": "Benchmark", "value": val["windows"] if val else 0,
               "label": f"validation windows at {val['sites'] if val else 0} towers, for model selection"}]
     upd = HERE / "static_data" / "updates.json"
@@ -256,7 +256,7 @@ def report_json(root: Path, counts: dict, meth: dict, results: dict, status: dic
         v.update(dict(flat("", json.loads((rd / "values.json").read_text()))))
         v.update(json.loads((rd / "tables.json").read_text()))
     comp = components.collect(root / "model")
-    v.update(table_components=components.table_html(comp), comp_done=comp["done"], comp_total=comp["total"],
+    v.update(table_components=components.table_html(comp), comp_story=comp["story"], comp_done=comp["done"], comp_total=comp["total"],
              comp_noise=f"{abs(comp['noise']['crps']):.1f}%" if comp["noise"] else "–")
     body = methods.render((HERE / "report_draft.html").read_text(), v, meth["references"])
     return {"html": body, "references": meth["references"], "draft": True}
