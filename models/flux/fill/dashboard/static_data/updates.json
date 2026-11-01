@@ -2,7 +2,7 @@
  {
   "date": "2026-10-31",
   "title": "Component study: validation towers.",
-  "text": "The 60 windows stop at the first 31 of 54 validation towers in alphabetical order (AU to JP), so no US tower is scored, and FCH4 comes from one tower (BR-SM1, two windows). The FCH4 column is not evidence across towers; the adopted changes are being rerun on 53 towers, with 30 methane windows at all 5 methane towers."
+  "text": "The 60 windows stop at the first 31 of 54 validation towers in alphabetical order (AU to JP), so no US tower is scored, and FCH4 comes from one tower (BR-SM1, two windows). The FCH4 column is not evidence across towers. Rerun of the adopted combination on 53 towers, one seed: CRPS -4.2%, NEE -5.9%, LE -1.3%, H -5.3%, and on 30 windows at all 5 methane towers FCH4 +7.0% at 8,000 steps and -6.9% at 6,000, which is no measured FCH4 gain; second seed running."
  },
  {
   "date": "2026-10-31",
