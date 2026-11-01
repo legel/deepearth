@@ -1,6 +1,11 @@
 [
  {
   "date": "2026-10-31",
+  "title": "Component study: validation towers.",
+  "text": "The 60 windows stop at the first 31 of 54 validation towers in alphabetical order (AU to JP), so no US tower is scored, and FCH4 comes from one tower (BR-SM1, two windows). The FCH4 column is not evidence across towers; the adopted changes are being rerun on 53 towers, with 30 methane windows at all 5 methane towers."
+ },
+ {
+  "date": "2026-10-31",
   "title": "Component study: quantile head and methane memory.",
   "text": "The quantile head lowers overall CRPS by 2.3% and 2.0% and FCH4 by 19.9% and 13.7% on two seeds, and NEE moves by -0.5% and +2.5%, so the combination with SwiGLU decides. Withholding site memory from FCH4 adds no gain on two seeds. Validation in this study scored only blocks of 1 to 180 days, so new runs also score the 2-hour, 6-hour, M1 and M5 forms where other methods lead, with a half-hourly read and these mask forms in training."
  },

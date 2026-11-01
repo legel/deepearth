@@ -158,6 +158,45 @@ def regime_examples(vex, records, val, stats, imagery, memory: bool = False, mem
     return out
 
 
+CH4_WINDOWS = 6                 # validation windows per methane tower
+
+
+def wide_examples(records, val, stats, imagery, memory: bool = False, memory_skew: bool = False):
+    """Every validation tower, which the cap of `val_examples` stops short of in alphabetical order: `valwide` is the
+    middle usable window of each tower, and `valch4` up to `CH4_WINDOWS` windows of each methane tower, each with
+    its M2 block over measured FCH4. Scored apart from the validation CRPS."""
+    out = []
+    k = 0
+    v = VARS.index("FCH4")
+    msmp = WindowSampler(records, val, stats, imagery, train=False, memory=True, memory_skew=memory_skew) if memory else None
+    for s in val:
+        if s not in records:
+            continue
+        rec = records[s]
+        st = valid_starts(rec, exclude_heldout=False)
+        if st.size == 0:
+            continue
+        ch4 = st[[np.isfinite(window_values(rec, int(d))[v]).sum() >= 480 for d in st]]
+        picks = [("valwide", int(st[st.size // 2]))]
+        picks += [("valch4", int(d)) for d in np.unique(ch4[np.linspace(0, ch4.size - 1, CH4_WINDOWS).astype(int)])] if ch4.size else []
+        for name, d in picks:
+            vals = window_values(rec, d)
+            present = np.isfinite(vals).any(1)
+            days = BLOCK_DAYS[k % len(BLOCK_DAYS)]
+            k += 1
+            start = str((rec.t0 + pd.Timedelta(days=d)).date())
+            for attempt in range(8):
+                hide = contiguous_block(np.flatnonzero(present & IS_TOWER), V_TAB, T_WIN, days,
+                                        np.random.default_rng(seed_for(s, start, name, days + 1000 * attempt)))
+                if name == "valwide" or (hide[v] & np.isfinite(vals[v])).any():
+                    break
+            ex = make_example(rec, d, stats, hide, np.zeros(180, bool), imagery.get(s), msmp.window_memory(s, d) if memory else None)
+            if ex["tmask"][v if name == "valch4" else Ellipsis].any():
+                ex["family"], ex["_id"] = name, (s, start, name)
+                out.append(ex)
+    return out
+
+
 def imagery_val_examples(records, val, stats, imagery, memory: bool, per_site: int = 4, frac: float = 0.3,
                          memory_skew: bool = False):
     """Validation windows at validation sites with Clay embeddings, for imagery scores only: up to `per_site` windows
@@ -536,6 +575,7 @@ def main():
     vex = val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
     vimg = imagery_val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
     vreg = regime_examples(vex, records, val, stats, imagery, a.memory, a.memory_skew or a.memory_skew_fluxes) if a.val_regime else []
+    vreg += wide_examples(records, val, stats, imagery, a.memory, a.memory_skew or a.memory_skew_fluxes) if a.val_regime else []
     print(f"imagery validation: {len(vimg)} windows at {sorted({e['_id'][0] for e in vimg})}", flush=True)
     cfg = dict(vars(a), channels=CHANNELS, split=split_name, train_sites=train, val_sites=val, stats=stats.to_dict(),
                imagery_sites_used=sorted(imagery))

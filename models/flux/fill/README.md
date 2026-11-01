@@ -236,6 +236,7 @@ the published code where it exists, behind its own flag. Percentages are changes
 seeds shown, and in 95 % coverage. 19 of 34 components have run. The two control seeds differ by
 0.8 % on overall CRPS, and FCH4 moves from 0.60 to 0.88 within a run, so a row counts only when it holds on a second
 seed.
+The 60 windows stop at the first 31 of 54 validation towers in alphabetical order (AU to JP), so no US tower is scored, and FCH4 comes from one tower (BR-SM1, two windows). The FCH4 column is not evidence across towers; the adopted changes are being rerun on 53 towers, with 30 methane windows at all 5 methane towers.
 
 | change to the control | seeds | CRPS, all | NEE | LE | H | FCH4 | 95 % cov. | decision |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
@@ -260,8 +261,9 @@ seed.
 | Solar geometry | 1 | +0.2 % | −0.1 % | +0.2 % | −0.4 % | −8.0 % | +0.4 % | No gain |
 | Weight EMA (EDM2) | 1 | −0.5 % | −0.7 % | −0.7 % | +0.4 % | −0.5 % | −0.6 % | No gain |
 | Combination: per-variable loss, per-modality weights, attention gate | 2 | −1.4 % | −2.3 % | −2.4 % | −2.6 % | −16.8 % | +0.2 % | Adopted |
-| The combination with SwiGLU | 2 | −4.1 % | −3.7 % | −4.1 % | −3.5 % | −19.7 % | −0.3 % | Adopted; lowest so far |
-| The combination with no site memory on FCH4 | 2 | −1.3 % | −1.8 % | −1.6 % | −2.4 % | −16.0 % | +0.4 % | No gain |
+| The combination with SwiGLU | 2 | −4.1 % | −3.7 % | −4.1 % | −3.5 % | −19.7 % | −0.3 % | Adopted; rerun on all towers |
+| The combination with SwiGLU and the quantile head | 1 | −5.1 % | −4.4 % | −5.5 % | −4.2 % | −20.7 % | +1.6 % | One seed; rerun on all towers |
+| The combination with no site memory on FCH4 | 2 | −1.3 % | −1.8 % | −1.6 % | −2.4 % | −16.0 % | +0.4 % | FCH4 on one tower; undecided |
 
 The per-variable loss works because a plain mean over hidden cells gives FCH4 the weight of its 0.4 % share of tower
 values. The sizes differ as well: width 640, depth 16 (167,004,569 parameters) has not passed width 320, depth 10 at
