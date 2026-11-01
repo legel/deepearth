@@ -8,16 +8,21 @@ network does not reach it. It costs no training run, so it comes before building
 
 Feature sets: `drivers` every row's visible value and flag at the same half-hour, with hour and day of year; `memory`
 adds the tower's other years at that half-hour; `imagery` adds 16 principal components of the nearest visible Clay
-embedding; `imagery only` is those components with hour and day of year."""
+embedding; `imagery only` is those components with hour and day of year; `olmoearth` adds 16 principal components of the
+tower's OlmoEarth v1.3 embedding averaged over years outside the window's calendar years, and `olmoearth only` is those
+components with hour and day of year."""
 
 import json
+import os
 import sys
 from argparse import Namespace
 
 import numpy as np
+import pandas as pd
 
 FLUX = ("NEE", "LE", "H", "FCH4")
 MAX_CELLS = 1500                # hidden values kept per example and flux
+OLMO = os.environ.get("FLUXFILL_OLMO", "/home/photon/4tb/fluxfill/olmoearth")
 
 
 class Config(Namespace):
@@ -33,7 +38,7 @@ def dump(ckpt, out, device="cpu"):
     from net import FluxFillNet, marginal_mean
     from recipe import net_kwargs
     from sampler import collate
-    from train import regime_examples, setup, val_examples
+    from train import regime_examples, setup, val_examples, wide_examples
     ck = torch.load(ckpt, map_location="cpu", weights_only=False)
     c = ck["config"]
     a = Config(**c)
@@ -41,12 +46,12 @@ def dump(ckpt, out, device="cpu"):
     net = FluxFillNet(**net_kwargs(c)).to(device).eval()
     net.load_state_dict(ck["model"])
     vex = val_examples(records, val, stats, imagery, memory=True)
-    exs = vex + regime_examples(vex, records, val, stats, imagery, True)
+    exs = vex + regime_examples(vex, records, val, stats, imagery, True) + wide_examples(records, val, stats, imagery, True)
     cls = np.concatenate([e["img_cls"][e["img_obs"]] for e in vex if e["img_obs"].any()])
     mu = cls.mean(0)
     pcs = np.linalg.svd((cls - mu)[:: max(1, len(cls) // 4000)], full_matrices=False)[2][:16]
     rng = np.random.default_rng(0)
-    rows = {k: [] for k in ("site", "fam", "flux", "y", "m", "x", "mem", "img", "t")}
+    rows = {k: [] for k in ("site", "fam", "flux", "y", "m", "x", "mem", "img", "t", "years")}
     for n, ex in enumerate(exs):
         with torch.no_grad():
             mean = marginal_mean(net(collate([{k: v for k, v in ex.items() if k not in ("family", "_id")}], device))[1])[0].float().cpu().numpy()
@@ -61,6 +66,8 @@ def dump(ckpt, out, device="cpu"):
                 keep = rng.choice(d_.size, MAX_CELLS, replace=False)
                 d_, h_ = d_[keep], h_[keep]
             near = days[np.abs(days[None] - d_[:, None]).argmin(1)] if days.size else None
+            first = pd.Timestamp(ex["_id"][1])
+            rows["years"].append(np.tile([first.year, (first + pd.Timedelta(days=179)).year], (d_.size, 1)).astype(np.int16))
             rows["site"] += [ex["_id"][0]] * d_.size
             rows["fam"] += [ex["family"]] * d_.size
             rows["flux"].append(np.full(d_.size, f))
@@ -75,6 +82,24 @@ def dump(ckpt, out, device="cpu"):
     np.savez_compressed(out, **{k: (np.array(v) if k in ("site", "fam") else np.concatenate(v)) for k, v in rows.items()})
 
 
+def olmo_features(sites, years, k=16):
+    """Components of each row's OlmoEarth embedding, from years outside its window; NaN where a tower has no such year."""
+    keys = {(s, *y): i for i, (s, y) in enumerate(dict.fromkeys(zip(sites, map(tuple, years.tolist()))))}
+    means = np.full((len(keys), 128), np.nan)
+    for (s, y0, y1), i in keys.items():
+        f = f"{OLMO}/{s}.npz"
+        if os.path.exists(f):
+            with np.load(f) as e:
+                keep = (e["years"] < y0) | (e["years"] > y1)
+                if keep.any():
+                    means[i] = e["center"][keep].mean(0)
+    ok = ~np.isnan(means).any(1)
+    mu = means[ok].mean(0)
+    pcs = np.linalg.svd(means[ok] - mu, full_matrices=False)[2][:k]
+    comp = (means - mu) @ pcs.T
+    return comp[[keys[(s, y[0], y[1])] for s, y in zip(sites, years.tolist())]], float(ok.mean())
+
+
 def score(path):
     import xgboost as xgb
     from sklearn.model_selection import GroupKFold
@@ -84,6 +109,10 @@ def score(path):
     base = np.column_stack([z["x"], time])
     sets = {"drivers": base, "memory": np.column_stack([base, z["mem"]]), "imagery": np.column_stack([base, z["mem"], z["img"]]),
             "imagery only": np.column_stack([time, z["img"]])}
+    if "years" in z:
+        olmo, have = olmo_features(z["site"], z["years"])
+        print(f"OlmoEarth from other years on {have:.0%} of tower and window pairs", flush=True)
+        sets |= {"olmoearth": np.column_stack([base, z["mem"], olmo]), "olmoearth only": np.column_stack([time, olmo])}
     fams = np.array([f if f.startswith("val") else "M2 1-180 d" for f in z["fam"]])
     e = z["y"] - z["m"]
     days = z["t"][:, 1].astype(int) // 30
