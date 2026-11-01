@@ -19,7 +19,7 @@ DECISIONS = {"var_mean": "Adopted", "gate": "Adopted", "mot_all": "Adopted in th
              "mot_ffn": "No gain", "rope_half": "No gain", "tttv": "No gain", "asinh": "Rejected", "fgn": "Rejected: coverage",
              "swiglu": "Adopted", "quantile": "Holds on CRPS; NEE differs by seed; combination decides", "rmsnorm": "No gain", "plr": "No gain",
              "time_prithvi": "No gain", "time_sinr": "No gain", "solar": "No gain", "ema": "No gain",
-             "combo": "Adopted", "combo2": "Adopted; rerun on all towers", "combo3": "One seed; rerun on all towers", "combo_nomemch4": "FCH4 on one tower; undecided", "memory": "Kept", "imagery": "One seed; no effect at this size",
+             "combo": "Adopted", "combo2": "Adopted for NEE, LE, H; FCH4 gain not seen at 5 methane towers", "combo3": "One seed; rerun on all towers", "combo_nomemch4": "FCH4 on one tower; undecided", "memory": "Kept", "imagery": "One seed; no effect at this size",
              "site": "One seed; no effect"}
 # Combinations of the additions above: (key, label); their runs are named as components are.
 COMBOS = [("combo", "Combination: per-variable loss, per-modality weights, attention gate"),
@@ -83,7 +83,7 @@ def story(d: dict) -> str:
     moved = lambda v: f"{'raises' if v > 0 else 'lowers'} it by {abs(v):.1f}%" if abs(v) >= 0.05 else "leaves it unchanged"
     seeds = lambda r: f"{r['seeds']} seed{'s' if r['seeds'] > 1 else ''}"
     out = []
-    out.append("The 60 windows stop at the first 31 of 54 validation towers in alphabetical order (AU to JP), so no US tower is scored, and FCH4 comes from one tower (BR-SM1, two windows). The FCH4 column is not evidence across towers; the adopted changes are being rerun on 53 towers, with 30 methane windows at all 5 methane towers.")
+    out.append("The 60 windows stop at the first 31 of 54 validation towers in alphabetical order (AU to JP), so no US tower is scored, and FCH4 comes from one tower (BR-SM1, two windows). The FCH4 column is not evidence across towers. Rerun of the adopted combination on 53 towers, one seed: CRPS -4.2%, NEE -5.9%, LE -1.3%, H -5.3%, and on 30 windows at all 5 methane towers FCH4 +7.0% at 8,000 steps and -6.9% at 6,000, which is no measured FCH4 gain; second seed running.")
     if "combo2" in rows:
         r = rows["combo2"]
         out.append(f"The per-variable loss, per-modality weights, attention gate and SwiGLU together change validation CRPS by {r['crps']:+.1f}%, "

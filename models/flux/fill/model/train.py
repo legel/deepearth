@@ -428,7 +428,7 @@ def evaluate(net, exs, device, use_flow: bool, batch: int = 4, asinh: bool = Fal
             okf = g[f"n_{fv}"] > 0
             if okf.any():
                 summ[f"crps_{fam}_{fv}"] = float(np.average(g[f"crps_{fv}"][okf], weights=g[f"n_{fv}"][okf]))
-    summ["_windows"] = df_[["id", "fam", "n", "n_flux", "crps", "crps_flux"]].to_dict("records")
+    summ["_windows"] = df_[["id", "fam", "n", "n_flux", "crps", "crps_flux", "crps_FCH4", "n_FCH4"]].to_dict("records")
     return summ, recs
 
 
@@ -696,7 +696,10 @@ def main():
             if net.query is not None:
                 summ.update(evaluate_query(scored, vex, device))
             if vreg:
-                summ.update({k: v for k, v in evaluate(scored, vreg, device, a.flow, asinh=a.asinh)[0].items() if k.startswith(("crps_val", "cov95_val"))})
+                reg = evaluate(scored, vreg, device, a.flow, asinh=a.asinh)[0]
+                summ.update({k: v for k, v in reg.items() if k.startswith(("crps_val", "cov95_val"))})
+                (out / "val_windows").mkdir(exist_ok=True)
+                (out / "val_windows" / f"regime{step:06d}.json").write_text(json.dumps(reg["_windows"]))
             if a.mode != "overfit":
                 summ.update(evaluate_imagery(scored, vimg, device))
             per_window = summ.pop("_windows", [])
