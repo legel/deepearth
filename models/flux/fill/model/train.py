@@ -139,14 +139,15 @@ def val_examples(records, val, stats, imagery, n_per_site: int = 2, max_n: int =
 REGIME = (("val2h", "sub_all", 4), ("val6h", "sub_all", 12), ("valm1", "flux_short", 0), ("valm5", "m5", 0))
 
 
-def regime_examples(vex, records, val, stats, imagery, memory: bool = False, memory_skew: bool = False):
+def regime_examples(vex, records, val, stats, imagery, memory: bool = False, memory_skew: bool = False, tag: str = "val", shift: int = 0):
     """The windows of `val_examples`, each under one of the short forms the benchmark scores, in turn. Scored apart
     from the validation CRPS, which keeps its meaning."""
     out = []
     msmp = WindowSampler(records, val, stats, imagery, train=False, memory=True, memory_skew=memory_skew) if memory else None
     for k, e in enumerate(vex):
         s, start, _ = e["_id"]
-        name, fam, n = REGIME[k % len(REGIME)]
+        name, fam, n = REGIME[(k + shift) % len(REGIME)]
+        name = tag + name[3:]
         rec = records[s]
         d = (pd.Timestamp(start) - rec.t0).days
         present = np.isfinite(window_values(rec, d)).any(1)
@@ -575,7 +576,11 @@ def main():
     vex = val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
     vimg = imagery_val_examples(records, val, stats, imagery, memory=a.memory, memory_skew=a.memory_skew or a.memory_skew_fluxes)
     vreg = regime_examples(vex, records, val, stats, imagery, a.memory, a.memory_skew or a.memory_skew_fluxes) if a.val_regime else []
-    vreg += wide_examples(records, val, stats, imagery, a.memory, a.memory_skew or a.memory_skew_fluxes) if a.val_regime else []
+    if a.val_regime:
+        wide = wide_examples(records, val, stats, imagery, a.memory, a.memory_skew or a.memory_skew_fluxes)
+        tower = [e for e in wide if e["family"] == "valwide"]     # short forms at every tower, each form on half of them
+        vreg += wide + [x for shift in (0, 2) for x in regime_examples(tower, records, val, stats, imagery, a.memory,
+                                                                       a.memory_skew or a.memory_skew_fluxes, "valw", shift)]
     print(f"imagery validation: {len(vimg)} windows at {sorted({e['_id'][0] for e in vimg})}", flush=True)
     cfg = dict(vars(a), channels=CHANNELS, split=split_name, train_sites=train, val_sites=val, stats=stats.to_dict(),
                imagery_sites_used=sorted(imagery))
