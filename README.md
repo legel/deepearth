@@ -5,7 +5,7 @@
   **State-of-the-art climate simulation.** DeepEarth simulates sun, water, wind, temperature, and carbon across global flux towers more accurately than all existing models. See [_report_](https://deepearth.ai/fluxfill/#report), [_code_](https://github.com/legel/deepearth/tree/main/models/flux/fill).
 
 - _October 5, 2026_  
-  **#1 model of native plant habitats.** DeepEarth has exceeded all published models for predicting distributions of all native plant species across the United States. See [_report_](https://deepearth.ai/native-habitats/), [_code_](https://github.com/legel/deepearth/tree/main/models/habitat/plant)
+  **#1 model of native plant habitats.** DeepEarth has exceeded all published models for predicting distributions of all native plant species across the United States. See [_report_](https://deepearth.ai/native-habitats/), [_code_](https://github.com/legel/deepearth/tree/main/models/habitat/plant).
 
 - _July 16, 2026_  
   **NASA award.** NASA's Commercial Satellite Data Acquisition has awarded DeepEarth 5 million km² of remote sensing data, approximately $200,000 in value. See [_program_](https://science.nasa.gov/earth-science/csda/).
