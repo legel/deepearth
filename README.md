@@ -5,7 +5,7 @@
   **SkyDeck award.** UC Berkeley awarded $1.3 million in resources (including $325k in Google + Microsoft computing) to a new DeepEarth company. See [incubator](https://skydeck.berkeley.edu/).
 
 - _October 31, 2026_  
-  **State-of-the-art climate simulation.** DeepEarth simulates carbon, sun, water, wind, and temperature across global flux towers more accurately than all existing models. See [_report_](https://deepearth.ai/fluxfill/#report).
+  **State-of-the-art climate simulation.** DeepEarth simulates sun, water, wind, temperature, and carbon across global flux towers more accurately than all existing models. See [_report_](https://deepearth.ai/fluxfill/#report).
 
 - _October 5, 2026_  
   **#1 model of native plant habitats.** DeepEarth has exceeded all published models for predicting distributions of over 20,000 native plant species across the United States. See [_report_](https://deepearth.ai/native-habitats/).
