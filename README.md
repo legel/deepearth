@@ -2,7 +2,7 @@
 
 #### News:
 - _November 3, 2026_  
-  **SkyDeck award.** UC Berkeley has awarded $1.3 million in resources (_e.g._ $325k in cloud computing from Google + Microsoft) to a new DeepEarth startup company. See [incubator](https://skydeck.berkeley.edu/).
+  **SkyDeck award.** UC Berkeley awarded $1.3 million in startup resources (_e.g._ $325k in computing from Google + Microsoft) to a new DeepEarth company. See [incubator](https://skydeck.berkeley.edu/).
 
 - _October 31, 2026_  
   **State-of-the-art climate simulation.** DeepEarth simulates sun, water, wind, temperature, and carbon across global flux towers more accurately than all existing models. See [_report_](https://deepearth.ai/fluxfill/#report).
@@ -25,9 +25,6 @@
 - _December 19, 2025_  
   **Supercomputing award.** US DOE National Energy Research Scientific Computing Center has awarded a DeepEarth team with supercomputing access in 2026. See [_program_](https://www.nersc.gov/).
     
-- _November 16, 2025_  
-  **23% error reduction in space-time encoder.** Learned hash probing in Earth4D led to state-of-the-art R² on an ecological forecasting benchmark. See [_commit_](https://github.com/legel/deepearth/commit/aa2a4b7).
-
 - _October 27, 2025_  
   **Battle-hardened (_x_, _y_, _z_, _t_) AI.**  For our spatio-temporal multi-resolution hash encoding, we've fixed a numerical bug in NVIDIA's CUDA kernels based on profiling of hash collisions. See [_commit_](https://github.com/legel/deepearth/pull/7).
 
