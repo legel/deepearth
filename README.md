@@ -14,7 +14,7 @@
   **ASLA keynote.** The American Society of Landscape Architects invited a presentation in Los Angeles on _"AI Optimization of Ecological Planting Design with DeepEarth"_. See [slides](https://ecological.dev/asla2026).
 
 - _July 16, 2026_  
-  **NASA award.** NASA's Commercial Satellite Data Acquisition has awarded DeepEarth 5 million km² of remote sensing data, approximately $200,000 in value. See [_program_](https://science.nasa.gov/earth-science/csda/).
+  **NASA award.** NASA's Commercial Satellite Data Acquisition program has awarded DeepEarth 5 million km² of remote sensing data, approximately $200,000 in value. See [_program_](https://science.nasa.gov/earth-science/csda/).
 
 - _March 7, 2026_  
   **Paper on arXiv.** _"Self-Supervised Multi-Modal World Model with 4D Space-Time Embedding"_, following peer-review through the 2026 World Modeling Workshop is now on arXiv. See [_paper_](https://arxiv.org/abs/2603.07039).
