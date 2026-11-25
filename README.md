@@ -2,7 +2,7 @@
 
 #### News:
 - _November 3, 2026_  
-  **SkyDeck award.** UC Berkeley awarded $1.3 million in startup resources (_e.g._ $325k in computing from Google + Microsoft) to a new DeepEarth company. See [incubator](https://skydeck.berkeley.edu/).
+  **SkyDeck award.** UC Berkeley awarded $1.3 million in resources (including $325k in Google + Microsoft computing) to a new DeepEarth company. See [incubator](https://skydeck.berkeley.edu/).
 
 - _October 31, 2026_  
   **State-of-the-art climate simulation.** DeepEarth simulates sun, water, wind, temperature, and carbon across global flux towers more accurately than all existing models. See [_report_](https://deepearth.ai/fluxfill/#report).
