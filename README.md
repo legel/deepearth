@@ -5,10 +5,13 @@
   **SkyDeck award.** UC Berkeley has awarded $1.3 million in resources (_e.g._ $325k in cloud computing from Google + Microsoft) to a new DeepEarth startup company. See [incubator](https://skydeck.berkeley.edu/).
 
 - _October 31, 2026_  
-  **State-of-the-art climate simulation.** DeepEarth simulates sun, water, wind, temperature, and carbon across global flux towers more accurately than all existing models. See [_report_](https://deepearth.ai/fluxfill/#report), [_code_](https://github.com/legel/deepearth/tree/main/models/flux/fill).
+  **State-of-the-art climate simulation.** DeepEarth simulates sun, water, wind, temperature, and carbon across global flux towers more accurately than all existing models. See [_report_](https://deepearth.ai/fluxfill/#report).
 
 - _October 5, 2026_  
-  **#1 model of native plant habitats.** DeepEarth has exceeded all published models for predicting distributions of all native plant species across the United States. See [_report_](https://deepearth.ai/native-habitats/), [_code_](https://github.com/legel/deepearth/tree/main/models/habitat/plant).
+  **#1 model of native plant habitats.** DeepEarth has exceeded all published models for predicting distributions of over 20,000 native plant species across the United States. See [_report_](https://deepearth.ai/native-habitats/).
+
+- _September 17, 2026_  
+  **ASLA keynote.** The American Society of Landscape Architects invited a presentation in Los Angeles on _"AI Optimization of Ecological Planting Design with DeepEarth"_. See [slides](https://ecological.dev/asla2026).
 
 - _July 16, 2026_  
   **NASA award.** NASA's Commercial Satellite Data Acquisition has awarded DeepEarth 5 million km² of remote sensing data, approximately $200,000 in value. See [_program_](https://science.nasa.gov/earth-science/csda/).
@@ -38,7 +41,7 @@
   **Workshop in Chicago.** NSF funded a 3 hour workshop on DeepEarth in Chicago for a "GeoAI for Sustainability" conference. 3 professors, 5 postdocs, and 2 PhD students contributed. See [_program_](https://i-guide.io/forum/forum-2025/workshops/).
 
 #### Changing the World
-[DeepEarth.ai](https://deepearth.ai) now simulates sun, wind, water, soil, & plants across the United States with state-of-the-art accuracy at centimeter scale. 
+[DeepEarth.ai](https://deepearth.ai) now simulates plant ecosystems across the United States with state-of-the-art accuracy. 
 
 #### Sponsors
 - **NASA** _Earth Science Division_ Commercial Satellite Data Acquisition Award 
