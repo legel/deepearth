@@ -1,6 +1,9 @@
 **DeepEarth** is a [_self-supervised_](https://en.wikipedia.org/wiki/Self-supervised_learning), [_multi-modal_](https://en.wikipedia.org/wiki/Multimodal_learning), [_spatio-temporal_](https://www.sciencedirect.com/topics/social-sciences/spatio-temporal-model) AI world model for the planet.
 
 #### News:
+- _November 3, 2026_  
+  **SkyDeck award.** UC Berkeley has awarded $1.3 million in resources (_e.g._ $325k in cloud computing from Google + Microsoft) to a new DeepEarth startup company. See [incubator](https://skydeck.berkeley.edu/).
+
 - _October 31, 2026_  
   **State-of-the-art climate simulation.** DeepEarth simulates sun, water, wind, temperature, and carbon across global flux towers more accurately than all existing models. See [_report_](https://deepearth.ai/fluxfill/#report), [_code_](https://github.com/legel/deepearth/tree/main/models/flux/fill).
 
@@ -44,4 +47,5 @@
 - **University of California Berkeley** _Quantitative Ecosystem Dynamics Lab_ (Visiting Scientist)
 - **University of Florida** _Institute for Food & Agricultural Sciences_ Research Award (LIFT-AI)
 - **Nebius** _2025 Nebius Robotics & Physical AI Awards_ Supercomputing Award
+- **Microsoft** _Microsoft for Startups_ Supercomputing Award
 - **Google** _Startups Cloud Program_ Supercomputing Award
